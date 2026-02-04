@@ -1,5 +1,5 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import { streamText, tool, stepCountIs } from "ai";
+import { streamText, tool, stepCountIs, convertToCoreMessages } from "ai";
 import { z } from "zod";
 import { search_restaurant, add_calendar_event } from "@/lib/tools";
 
@@ -22,6 +22,8 @@ export async function POST(req: Request) {
       return new Response("No messages provided", { status: 400 });
     }
 
+    const coreMessages = convertToCoreMessages(messages);
+
     const locationContext = userLocation 
       ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}. Use these coordinates for 'nearby' requests.`
       : "The user's location is unknown. If they ask for 'nearby' or don't specify a location, ask for it.";
@@ -31,7 +33,7 @@ export async function POST(req: Request) {
 
     const result = streamText({
       model: openai(modelName),
-      messages,
+      messages: coreMessages,
       system: `You are a helpful assistant that can search for restaurants and add events to the user's calendar.
       Use search_restaurant to find places and add_calendar_event to schedule them.
       

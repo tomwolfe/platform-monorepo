@@ -1,10 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuditLog, updateAuditLog } from "@/lib/audit";
 import { executeTool } from "@/lib/tools";
+import { z } from "zod";
+
+const ExecuteRequestSchema = z.object({
+  audit_log_id: z.string().min(1),
+  step_index: z.number().min(0),
+  user_confirmed: z.boolean().optional().default(false),
+});
 
 export async function POST(req: NextRequest) {
   try {
-    const { audit_log_id, step_index, user_confirmed } = await req.json();
+    const rawBody = await req.json();
+    const validatedBody = ExecuteRequestSchema.safeParse(rawBody);
+
+    if (!validatedBody.success) {
+      return NextResponse.json({ error: "Invalid request parameters", details: validatedBody.error.format() }, { status: 400 });
+    }
+
+    const { audit_log_id, step_index, user_confirmed } = validatedBody.data;
 
     const log = await getAuditLog(audit_log_id);
     if (!log || !log.plan) {

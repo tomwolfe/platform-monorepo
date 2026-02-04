@@ -1,9 +1,10 @@
 import { Plan, PlanSchema } from "./schema";
+import { env } from "./config";
 
 export async function generatePlan(intent: string, userLocation?: { lat: number; lng: number } | null): Promise<Plan> {
-  const apiKey = process.env.LLM_API_KEY;
-  const baseUrl = process.env.LLM_BASE_URL || "https://api.z.ai/api/paas/v4";
-  const model = process.env.LLM_MODEL || "glm-4.7-flash";
+  const apiKey = env.LLM_API_KEY;
+  const baseUrl = env.LLM_BASE_URL;
+  const model = env.LLM_MODEL;
 
   const locationContext = userLocation 
     ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}. Use these coordinates for 'nearby' requests.`

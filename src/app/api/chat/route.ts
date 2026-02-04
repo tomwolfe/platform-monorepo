@@ -2,23 +2,40 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { streamText, tool, stepCountIs, convertToModelMessages } from "ai";
 import { z } from "zod";
 import { search_restaurant, add_calendar_event } from "@/lib/tools";
+import { env } from "@/lib/config";
 
 export const maxDuration = 30;
 
 const openai = createOpenAI({
-  apiKey: process.env.LLM_API_KEY,
-  baseURL: process.env.LLM_BASE_URL || "https://api.z.ai/api/paas/v4",
+  apiKey: env.LLM_API_KEY,
+  baseURL: env.LLM_BASE_URL,
+});
+
+const ChatRequestSchema = z.object({
+  messages: z.array(z.any()),
+  userLocation: z.object({
+    lat: z.number().min(-90).max(90),
+    lng: z.number().min(-180).max(180),
+  }).nullable().optional(),
 });
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const { messages, userLocation } = body;
+    const rawBody = await req.json();
+    const validatedBody = ChatRequestSchema.safeParse(rawBody);
+
+    if (!validatedBody.success) {
+      return new Response(JSON.stringify({ error: "Invalid request parameters", details: validatedBody.error.format() }), { 
+        status: 400,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    const { messages, userLocation } = validatedBody.data;
 
     console.log(`Received chat request with ${messages?.length || 0} messages`);
 
-    if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      console.error("No messages provided in the request body");
+    if (messages.length === 0) {
       return new Response("No messages provided", { status: 400 });
     }
 
@@ -28,19 +45,20 @@ export async function POST(req: Request) {
       ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}. Use these coordinates for 'nearby' requests.`
       : "The user's location is unknown. If they ask for 'nearby' or don't specify a location, ask for it.";
 
-    const modelName = process.env.LLM_MODEL || "glm-4.7-flash";
-    console.log(`Using model: ${modelName} with base URL: ${process.env.LLM_BASE_URL || "https://api.z.ai/api/paas/v4"}`);
+    const modelName = env.LLM_MODEL;
+    console.log(`Using model: ${modelName} with base URL: ${env.LLM_BASE_URL}`);
 
     const result = streamText({
       model: openai.chat(modelName),
       messages: coreMessages,
-      system: `You are a helpful assistant that can search for restaurants and add events to the user's calendar.
-      Use search_restaurant to find places and add_calendar_event to schedule them.
-      
-      Context:
-      ${locationContext}
-      
-      If you don't know the user's location and need it for a tool, ask the user.`,
+      system: `You are an Intention Engine, a specialized assistant for planning and execution.
+      Strict Rules:
+      1. Use search_restaurant to find dining options.
+      2. Use add_calendar_event to schedule events.
+      3. ONLY output valid tool calls or concise natural language responses.
+      4. If a location (lat/lon) is required but unknown, STOP and ask the user for their location or a city name.
+      5. ${locationContext}
+      6. For calendar events, ensure start_time and end_time are in valid ISO format.`,
       tools: {
         search_restaurant: tool({
           description: "Search for restaurants nearby based on cuisine and location.",

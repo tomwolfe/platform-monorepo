@@ -1,4 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+
+const DownloadIcsSchema = z.object({
+  title: z.string().default('Event'),
+  start: z.string().min(1),
+  end: z.string().optional().nullable(),
+  location: z.string().optional().default(''),
+});
 
 function formatICalDate(date: Date): string {
   return date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
@@ -34,17 +42,21 @@ function parseDateTime(dt: string): Date {
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const title = searchParams.get('title') || 'Event';
-  const startStr = searchParams.get('start') || '';
-  const endStr = searchParams.get('end') || '';
-  const location = searchParams.get('location') || '';
+  const params = Object.fromEntries(searchParams.entries());
+  
+  const validatedParams = DownloadIcsSchema.safeParse(params);
+  if (!validatedParams.success) {
+    return NextResponse.json({ error: "Invalid parameters", details: validatedParams.error.format() }, { status: 400 });
+  }
+
+  const { title, start: startStr, end: endStr, location } = validatedParams.data;
 
   const startDate = parseDateTime(startStr);
-  const endDate = parseDateTime(endStr);
+  let endDate = endStr ? parseDateTime(endStr) : new Date(startDate.getTime() + 60 * 60 * 1000);
 
   // If endDate is invalid or before startDate, make it 1 hour after startDate
   if (isNaN(endDate.getTime()) || endDate <= startDate) {
-    endDate.setTime(startDate.getTime() + 60 * 60 * 1000);
+    endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
   }
 
   const icsContent = [

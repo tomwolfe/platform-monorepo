@@ -2,14 +2,26 @@ import { NextRequest, NextResponse } from "next/server";
 import { generatePlan } from "@/lib/llm";
 import { createAuditLog, updateAuditLog } from "@/lib/audit";
 import { PlanSchema } from "@/lib/schema";
+import { z } from "zod";
+
+const IntentRequestSchema = z.object({
+  intent: z.string().min(1),
+  user_location: z.object({
+    lat: z.number().min(-90).max(90),
+    lng: z.number().min(-180).max(180),
+  }).nullable().optional(),
+});
 
 export async function POST(req: NextRequest) {
   try {
-    const { intent, user_location } = await req.json();
+    const rawBody = await req.json();
+    const validatedBody = IntentRequestSchema.safeParse(rawBody);
 
-    if (!intent) {
-      return NextResponse.json({ error: "Intent is required" }, { status: 400 });
+    if (!validatedBody.success) {
+      return NextResponse.json({ error: "Invalid request parameters", details: validatedBody.error.format() }, { status: 400 });
     }
+
+    const { intent, user_location } = validatedBody.data;
 
     const auditLog = await createAuditLog(intent);
 

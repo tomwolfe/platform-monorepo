@@ -8,12 +8,17 @@ import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls, isTo
 export default function Home() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [input, setInput] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   const { messages, setMessages, status, sendMessage, addToolOutput } = useChat({
     transport: new DefaultChatTransport({
       api: "/api/chat",
     }),
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    onError(err) {
+      console.error("Chat error:", err);
+      setError(err.message || "An unexpected error occurred. Please try again.");
+    },
     async onToolCall({ toolCall }) {
       // Server-side execution is handled in route.ts
     },
@@ -21,56 +26,39 @@ export default function Home() {
 
   const isLoading = status === "streaming" || status === "submitted";
 
-  // Load chat history from localStorage
-  useEffect(() => {
-    const savedChat = localStorage.getItem("chat_history");
-    if (savedChat) {
-      try {
-        setMessages(JSON.parse(savedChat));
-      } catch (e) {
-        console.error("Failed to parse chat history", e);
-      }
-    }
-  }, [setMessages]);
-
-  // Save chat history to localStorage
-  useEffect(() => {
-    if (messages.length > 0) {
-      localStorage.setItem("chat_history", JSON.stringify(messages));
-    }
-  }, [messages]);
-
-  useEffect(() => {
-    if (typeof window !== "undefined" && navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setUserLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          });
-        },
-        (err) => {
-          console.error("Error getting location:", err);
-        }
-      );
-    }
-  }, []);
-
   const handleClearChat = () => {
     setMessages([]);
+    setError(null);
     localStorage.removeItem("chat_history");
   };
 
-  const onFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const onFormSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!input.trim()) return;
 
-    sendMessage({ text: input }, {
-      body: {
-        userLocation
+    setError(null);
+    try {
+      await sendMessage({ text: input }, {
+        body: {
+          userLocation
+        }
+      });
+      setInput("");
+    } catch (err: any) {
+      setError(err.message || "Failed to send message");
+    }
+  };
+
+  const handleRetry = () => {
+    if (messages.length > 0) {
+      const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
+      if (lastUserMessage) {
+        setError(null);
+        sendMessage({ text: (lastUserMessage.parts.find(p => p.type === 'text') as any)?.text || "" }, {
+          body: { userLocation }
+        });
       }
-    });
-    setInput("");
+    }
   };
 
   return (
@@ -87,6 +75,18 @@ export default function Home() {
           </button>
         )}
       </div>
+      
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-8 flex justify-between items-center">
+          <p className="text-sm">{error}</p>
+          <button 
+            onClick={handleRetry}
+            className="text-xs bg-red-100 hover:bg-red-200 px-3 py-1 rounded font-bold transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
       
       <div className="bg-white p-6 rounded-lg shadow-sm border mb-8">
         <form onSubmit={onFormSubmit} className="space-y-4">

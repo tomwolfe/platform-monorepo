@@ -1,7 +1,35 @@
 import { RestaurantResultSchema } from "./schema";
+import { Redis } from "@upstash/redis";
+import { env } from "./config";
+
+const redis = (env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN)
+  ? new Redis({
+      url: env.UPSTASH_REDIS_REST_URL,
+      token: env.UPSTASH_REDIS_REST_TOKEN,
+    })
+  : null;
 
 export async function search_restaurant(params: { cuisine?: string; lat: number; lon: number }) {
   const { cuisine, lat, lon } = params;
+  
+  // Cache key based on cuisine and rounded coordinates (approx 100m precision)
+  const cacheKey = `restaurant:${cuisine || 'any'}:${lat.toFixed(3)}:${lon.toFixed(3)}`;
+
+  if (redis) {
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        console.log(`Using cached results for ${cacheKey}`);
+        return {
+          success: true,
+          result: cached
+        };
+      }
+    } catch (err) {
+      console.warn("Redis cache read failed:", err);
+    }
+  }
+
   console.log(`Searching for ${cuisine || 'restaurants'} near ${lat}, ${lon}...`);
 
   try {
@@ -73,6 +101,14 @@ export async function search_restaurant(params: { cuisine?: string; lat: number;
       const validated = RestaurantResultSchema.safeParse(rawResult);
       return validated.success ? validated.data : null;
     }).filter(Boolean).slice(0, 5); // Limit to top 5
+
+    if (redis && results.length > 0) {
+      try {
+        await redis.setex(cacheKey, 3600, results);
+      } catch (err) {
+        console.warn("Redis cache write failed:", err);
+      }
+    }
 
     return {
       success: true,

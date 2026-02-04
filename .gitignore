@@ -71,3 +71,4 @@ static/js/
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+__pycache__/

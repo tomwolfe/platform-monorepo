@@ -1,0 +1,80 @@
+import { Plan, PlanSchema } from "./schema";
+
+export async function generatePlan(intent: string): Promise<Plan> {
+  const apiKey = process.env.LLM_API_KEY;
+  const baseUrl = process.env.LLM_BASE_URL || "https://api.openai.com/v1";
+  const model = process.env.LLM_MODEL || "glm-4.7-flash";
+
+  if (!apiKey) {
+    // For demonstration purposes if no API key is provided, we return a mock plan
+    // for the specific example "plan a dinner and add to calendar"
+    if (intent.toLowerCase().includes("dinner") && intent.toLowerCase().includes("calendar")) {
+      return {
+        intent_type: "plan_dinner_and_calendar",
+        constraints: ["dinner time at 7 PM", "cuisine: Italian"],
+        ordered_steps: [
+          {
+            tool_name: "search_restaurant",
+            parameters: { cuisine: "Italian", location: "nearby" },
+            requires_confirmation: false,
+            description: "Search for a highly-rated Italian restaurant nearby.",
+          },
+          {
+            tool_name: "add_calendar_event",
+            parameters: { 
+              title: "Dinner at [Restaurant]", 
+              start_time: "2026-02-03T19:00:00", 
+              end_time: "2026-02-03T21:00:00" 
+            },
+            requires_confirmation: true,
+            description: "Add the dinner reservation to your calendar.",
+          }
+        ],
+        summary: "I will find an Italian restaurant and add a 7 PM reservation to your calendar."
+      };
+    }
+    throw new Error("LLM_API_KEY is not set and no mock available for this intent.");
+  }
+
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: model,
+      messages: [
+        {
+          role: "system",
+          content: `You are an Intention Engine. Convert user intent into a structured JSON plan.
+          Follow this schema strictly:
+          ${JSON.stringify(PlanSchema.shape)}
+          
+          Available tools:
+          - search_restaurant(cuisine, location)
+          - add_calendar_event(title, start_time, end_time)
+          - send_message(recipient, body)
+          
+          Return ONLY pure JSON. No free text.`
+        },
+        {
+          role: "user",
+          content: intent
+        }
+      ],
+      response_format: { type: "json_object" }
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`LLM call failed: ${error}`);
+  }
+
+  const data = await response.json();
+  const planJson = JSON.parse(data.choices[0].message.content);
+  
+  // Validate against schema
+  return PlanSchema.parse(planJson);
+}

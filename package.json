@@ -22,6 +22,9 @@
   },
   "homepage": "https://github.com/tomwolfe/IntentionEngine#readme",
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.25",
+    "@ai-sdk/react": "^3.0.71",
+    "ai": "^6.0.69",
     "clsx": "^2.1.1",
     "lucide-react": "^0.563.0",
     "next": "^16.1.6",

@@ -2,7 +2,7 @@ import { Plan, PlanSchema } from "./schema";
 
 export async function generatePlan(intent: string, userLocation?: { lat: number; lng: number } | null): Promise<Plan> {
   const apiKey = process.env.LLM_API_KEY;
-  const baseUrl = process.env.LLM_BASE_URL || "https://api.openai.com/v1";
+  const baseUrl = process.env.LLM_BASE_URL || "https://api.z.ai/api/paas/v4";
   const model = process.env.LLM_MODEL || "glm-4.7-flash";
 
   const locationContext = userLocation 

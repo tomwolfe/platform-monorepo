@@ -25,7 +25,12 @@ export async function search_restaurant(params: { cuisine?: string; lat: number;
       `;
 
     const overpassUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-    const overpassRes = await fetch(overpassUrl);
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    const overpassRes = await fetch(overpassUrl, { signal: controller.signal });
+    clearTimeout(timeoutId);
     
     if (!overpassRes.ok) {
       throw new Error(`Overpass API error: ${overpassRes.statusText}`);

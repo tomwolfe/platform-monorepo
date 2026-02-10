@@ -272,6 +272,7 @@ export interface ToolDefinition {
   name: string;
   description: string;
   parameters: z.ZodObject<any>;
+  responseSchema?: z.ZodType<any>;
   execute: (params: any) => Promise<{ success: boolean; result?: any; error?: string }>;
 }
 
@@ -289,138 +290,31 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     name: "geocode_location",
     description: "Converts a city or place name to lat/lon coordinates.",
     parameters: GeocodeSchema,
+    responseSchema: z.object({
+      lat: z.number(),
+      lon: z.number()
+    }),
     execute: geocode_location
   }],
   ["search_restaurant", {
     name: "search_restaurant",
     description: "Searches for highly-rated restaurants nearby or in a specific location.",
     parameters: SearchRestaurantSchema,
+    responseSchema: z.array(RestaurantResultSchema),
     execute: search_restaurant
   }],
   ["add_calendar_event", {
     name: "add_calendar_event",
     description: "Adds an event to the calendar. Can accept multiple events for bulk scheduling.",
     parameters: AddCalendarEventSchema,
+    responseSchema: z.object({
+      status: z.string(),
+      count: z.number(),
+      download_url: z.string(),
+      events: z.array(z.any())
+    }),
     execute: add_calendar_event
   }]
 ]);
 
-export async function executeTool(
-  tool_name: string, 
-  parameters: any, 
-  context?: { audit_log_id: string; step_index: number }
-): Promise<ExecuteToolResult> {
-  const toolDef = TOOLS.get(tool_name);
-  if (!toolDef) {
-    throw new Error(`Tool ${tool_name} not found`);
-  }
-
-  const startTime = Date.now();
-  let result: any;
-  let attempts = 0;
-  const maxRetries = 3;
-
-  while (attempts < maxRetries) {
-    try {
-      result = await toolDef.execute(parameters);
-      
-      // Technical vs Logical error detection
-      const technicalErrorKeywords = ["429", "network", "timeout", "fetch", "socket", "hang up", "overpass api error"];
-      const isTechnicalError = !result.success && result.error && technicalErrorKeywords.some(k => result.error.toLowerCase().includes(k));
-
-      if (isTechnicalError && attempts < maxRetries - 1) {
-        throw new Error(result.error); // Trigger retry
-      }
-      
-      break; 
-    } catch (error: any) {
-      attempts++;
-      const errorMessage = error.message?.toLowerCase() || "";
-      const isRetryable = errorMessage.includes('429') || 
-                          errorMessage.includes('network') || 
-                          errorMessage.includes('timeout') || 
-                          errorMessage.includes('fetch') ||
-                          errorMessage.includes('overpass api error');
-      
-      if (isRetryable && attempts < maxRetries) {
-        const delay = Math.pow(2, attempts) * 1000;
-        console.warn(`Technical error in ${tool_name}, retrying in ${delay}ms... (Attempt ${attempts}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
-      }
-      
-      result = { success: false, error: error.message || "Unknown error" };
-      break;
-    }
-  }
-
-  const duration = Date.now() - startTime;
-
-  if (context) {
-    const { getAuditLog, updateAuditLog } = await import("./audit");
-    const log = await getAuditLog(context.audit_log_id);
-    if (log) {
-      const toolExecutionLatencies = log.toolExecutionLatencies || { latencies: {}, totalToolExecutionTime: 0 };
-      const latencies = toolExecutionLatencies.latencies[tool_name] || [];
-      latencies.push(duration);
-      toolExecutionLatencies.latencies[tool_name] = latencies;
-      toolExecutionLatencies.totalToolExecutionTime = (toolExecutionLatencies.totalToolExecutionTime || 0) + duration;
-
-      const newStep = {
-        step_index: context.step_index,
-        tool_name,
-        status: (result.success ? "executed" : "failed") as any,
-        input: parameters,
-        output: result.result,
-        error: result.error,
-        timestamp: new Date().toISOString(),
-        latency: duration // Added latency to step
-      };
-
-      const updatedSteps = [...log.steps, newStep];
-
-      await updateAuditLog(context.audit_log_id, { 
-        toolExecutionLatencies,
-        steps: updatedSteps
-      });
-
-      if (result.success === false) {
-        console.log(`Tool ${tool_name} returned success: false, triggering re-plan...`);
-        const { replan } = await import("./llm");
-
-        if (log.plan) {
-          try {
-            const errorExplanation = `Step ${context.step_index} (${tool_name}) failed: ${result.error || "Unknown error"}`;
-            console.log(`Re-planning with explanation: ${errorExplanation}`);
-            
-            // Step 1: Pass entire context (parameters + result)
-            const newPlan = await replan(
-              log.intent, 
-              { ...log, steps: updatedSteps }, 
-              context.step_index, 
-              result.error || "Tool returned failure",
-              { parameters, result }
-            );
-            
-            await updateAuditLog(context.audit_log_id, {
-              plan: newPlan,
-              final_outcome: `Re-planned due to failure in ${tool_name}. ${errorExplanation}`
-            });
-
-            return {
-              ...result,
-              replanned: true,
-              new_plan: newPlan,
-              error_explanation: errorExplanation
-            };
-          } catch (replanError: any) {
-            console.error("Re-planning failed after tool failure:", replanError);
-          }
-        }
-      }
-    }
-  }
-
-  return result;
-}
 

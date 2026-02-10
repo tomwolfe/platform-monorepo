@@ -1,32 +1,7 @@
 import React from 'react';
 import { CheckCircle2, XCircle, Clock, ChevronRight, Activity } from 'lucide-react';
+import { AuditLog } from '@/lib/types';
 
-interface AuditStep {
-  step_index: number;
-  tool_name: string;
-  status: "pending" | "executed" | "rejected" | "failed";
-  input: any;
-  output?: any;
-  error?: string;
-  timestamp: string;
-  latency?: number;
-}
-
-interface AuditLog {
-  id: string;
-  timestamp: string;
-  intent: string;
-  plan?: {
-    summary: string;
-    ordered_steps: any[];
-  };
-  steps: AuditStep[];
-  final_outcome?: string;
-  toolExecutionLatencies?: {
-    latencies: { [tool_name: string]: number[] };
-    totalToolExecutionTime?: number;
-  };
-}
 
 interface AuditLogViewerProps {
   logs: AuditLog[];
@@ -50,8 +25,12 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({ logs }) => {
       <div className="space-y-4">
         {logs.map((log) => {
           const successfulSteps = log.steps.filter(s => s.status === 'executed').length;
-          const totalSteps = log.steps.length;
-          const efficiencyScore = totalSteps > 0 ? (successfulSteps / totalSteps).toFixed(2) : "1.00";
+          const replans = log.replanned_count || 0;
+          // Efficiency Score: ratio of successful steps to total re-plans
+          // We'll use (success) / (success + replans) as a normalized score
+          const efficiencyScore = (successfulSteps + replans) > 0 
+            ? (successfulSteps / (successfulSteps + replans)).toFixed(2) 
+            : "1.00";
 
           return (
             <div key={log.id} className="border rounded-lg bg-white overflow-hidden shadow-sm">

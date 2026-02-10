@@ -17,10 +17,14 @@ export interface IntentInferenceResult {
  * Infer intent from raw text.
  * Uses generateObject to ensure strict enforcement of the Intent interface.
  */
-export async function inferIntent(text: string): Promise<IntentInferenceResult> {
+export async function inferIntent(text: string, avoidTools: string[] = []): Promise<IntentInferenceResult> {
   if (!text || text.trim().length === 0) {
     throw new Error("Input text is empty");
   }
+
+  const avoidToolsContext = avoidTools.length > 0 
+    ? `\nPREVIOUSLY FAILED TOOLS (AVOID IF POSSIBLE): ${avoidTools.join(", ")}`
+    : "";
 
   const { object } = await generateObject({
     model: customOpenAI(env.LLM_MODEL),
@@ -31,10 +35,20 @@ Your task is to convert raw user text into a structured JSON Intent object.
 - confidence: A score between 0 and 1.
 - parameters: Extract key variables (e.g., dates, locations, topics).
 - rawText: Exactly match the user's input.
+- question: If confidence < 0.7, you MUST return an intent type of 'clarification_needed' and provide a specific question to ask the user to clarify their intent.
 
-Use PLANNING if the request requires multiple steps (e.g., finding a place and then scheduling it).`,
+Use PLANNING if the request requires multiple steps (e.g., finding a place and then scheduling it).
+${avoidToolsContext}`,
     prompt: text,
   });
+
+  // Post-process for confidence threshold (Phase 2.2)
+  if (object.confidence < 0.7 && object.type !== 'clarification_needed') {
+    object.type = 'clarification_needed';
+    if (!object.question) {
+        object.question = "I'm not quite sure what you mean. Could you please provide more details?";
+    }
+  }
 
   return {
     intent: object,

@@ -123,7 +123,8 @@ export async function replan(
   auditLog: any, 
   failedStepIndex: number, 
   error: string,
-  failedStepContext?: { parameters: any; result: any }
+  failedStepContext?: { parameters: any; result: any },
+  errorType?: "validation" | "technical" | "logic"
 ): Promise<Plan> {
   const apiKey = env.LLM_API_KEY;
   const baseUrl = env.LLM_BASE_URL;
@@ -142,6 +143,10 @@ export async function replan(
     ? `\nFailed Step Context:\nParameters: ${JSON.stringify(failedStepContext.parameters)}\nResult/Output: ${JSON.stringify(failedStepContext.result)}`
     : "";
 
+  const validationInstruction = errorType === "validation" 
+    ? "\nYour previous tool parameters were invalid. Do not change the goal, only correct the schema."
+    : "";
+
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -157,6 +162,7 @@ export async function replan(
           A previous plan failed at step ${failedStepIndex}.
           Specific Error: ${error}
           ${contextSnippet}
+          ${validationInstruction}
           
           Original Intent: ${originalIntent}
           

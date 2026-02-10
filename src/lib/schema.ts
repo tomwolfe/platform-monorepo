@@ -10,7 +10,9 @@ export const IntentTypeSchema = z.enum([
   "ACTION",   // Requests to perform a specific operation or state change
   "QUERY",    // General knowledge questions or status checks
   "PLANNING", // Multi-step goals requiring complex orchestration
-  "UNKNOWN"   // Fallback when the intent is ambiguous or unsupported
+  "UNKNOWN",  // Fallback when the intent is ambiguous or unsupported
+  "clarification_needed", // NEW: Added for Phase 2 Confidence Thresholds
+  "ANALYSIS"  // NEW: Added for Phase 3 Multi-Provider Support
 ]);
 
 export type IntentType = z.infer<typeof IntentTypeSchema>;
@@ -24,6 +26,7 @@ export const IntentSchema = z.object({
   confidence: z.number().min(0).max(1), // 0 to 1 score of how certain the model is
   parameters: z.record(z.string(), z.any()), // Key-value map of extracted parameters (e.g., date, location)
   rawText: z.string(), // The original input that generated this intent
+  question: z.string().optional(), // NEW: Specific question if confidence is low
 });
 
 export type Intent = z.infer<typeof IntentSchema>;

@@ -1,37 +1,7 @@
 import { Redis } from "@upstash/redis";
 import { Plan } from "./schema";
 import { env } from "./config";
-
-export interface AuditLog {
-  id: string;
-  timestamp: string;
-  intent: string;
-  plan?: Plan;
-  userLocation?: { lat: number; lng: number };
-  rawModelResponse?: string;
-  inferenceLatencies?: {
-    intentInference?: number;
-    planGeneration?: number;
-    total?: number;
-  };
-  toolExecutionLatencies?: {
-    latencies: { [tool_name: string]: number[] };
-    totalToolExecutionTime?: number;
-  };
-  validation_error?: string;
-  steps: Array<{
-    step_index: number;
-    tool_name: string;
-    status: "pending" | "executed" | "rejected" | "failed";
-    input: any;
-    output?: any;
-    error?: string;
-    confirmed_by_user?: boolean;
-    timestamp: string;
-    latency?: number;
-  }>;
-  final_outcome?: string;
-}
+import { AuditLog } from "./types";
 
 const redis = (env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN)
   ? new Redis({

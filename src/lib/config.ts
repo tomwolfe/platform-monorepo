@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const envSchema = z.object({
   LLM_API_KEY: z.string().min(1),
+  OPENAI_API_KEY: z.string().optional(),
   LLM_BASE_URL: z.string().url().optional().default("https://api.z.ai/api/paas/v4"),
   LLM_MODEL: z.string().min(1).default("glm-4.7-flash"),
   UPSTASH_REDIS_REST_URL: z.string().url().optional(),

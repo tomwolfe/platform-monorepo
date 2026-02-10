@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuditLog, updateAuditLog } from "@/lib/audit";
-import { executeTool } from "@/lib/tools";
+import { executeToolWithContext } from "@/app/actions";
 import { replan } from "@/lib/llm";
 import { z } from "zod";
 
@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
     });
 
     try {
-      const result = await executeTool(step.tool_name, resolvedParameters, { 
+      const result = await executeToolWithContext(step.tool_name, resolvedParameters, { 
         audit_log_id, 
         step_index 
       });
@@ -180,6 +180,7 @@ export async function POST(req: NextRequest) {
       await updateAuditLog(audit_log_id, { 
         steps: updatedSteps, 
         plan: newPlan || log.plan,
+        replanned_count: (log.replanned_count || 0) + (newPlan ? 1 : 0),
         final_outcome: newPlan ? "Re-planned due to execution error." : "Failed: Execution error and re-planning failed." 
       });
       

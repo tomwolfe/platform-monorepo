@@ -56,7 +56,7 @@ export async function POST(req: Request) {
     let recentLogs: any[] = [];
 
     const { createAuditLog, updateAuditLog, getUserAuditLogs } = await import("@/lib/audit");
-    const { executeTool } = await import("@/lib/tools");
+    const { executeToolWithContext, getPlanWithAvoidance, getProvider } = await import("@/app/actions");
 
     if (redis) {
       try {
@@ -112,7 +112,8 @@ export async function POST(req: Request) {
     let rawModelResponse = "";
     try {
       const intentStart = Date.now();
-      const inferenceResult = await inferIntent(userText);
+      const { avoidTools } = await getPlanWithAvoidance(userText, userIp);
+      const inferenceResult = await inferIntent(userText, avoidTools);
       intentInferenceLatency = Date.now() - intentStart;
       intent = inferenceResult.intent;
       rawModelResponse = inferenceResult.rawResponse;
@@ -154,6 +155,8 @@ export async function POST(req: Request) {
 
     ${failureWarnings}
 
+    ${intent.type === 'clarification_needed' ? `IMPORTANT: Your confidence in the user's intent is LOW. You MUST ask the following clarification question: "${intent.question}"` : ""}
+
     If a tool returns success: false, you MUST acknowledge the error and attempt to REPLAN. 
     Explain what went wrong and provide a modified plan or alternative action to the user.
     Do not simply repeat the same failed call.
@@ -173,7 +176,7 @@ export async function POST(req: Request) {
         }),
         execute: async (params) => {
           console.log("Executing geocode_location", params);
-          const result = await executeTool("geocode_location", { ...params, userLocation: userLocation || undefined }, {
+          const result = await executeToolWithContext("geocode_location", { ...params, userLocation: userLocation || undefined }, {
             audit_log_id: auditLog.id,
             step_index: auditLog.steps.length
           });
@@ -190,7 +193,7 @@ export async function POST(req: Request) {
         }),
         execute: async (params: any) => {
           console.log("Executing search_restaurant", params);
-          const result = await executeTool("search_restaurant", { ...params, userLocation: userLocation || undefined }, {
+          const result = await executeToolWithContext("search_restaurant", { ...params, userLocation: userLocation || undefined }, {
             audit_log_id: auditLog.id,
             step_index: auditLog.steps.length
           });
@@ -227,7 +230,7 @@ export async function POST(req: Request) {
         }),
         execute: async (params: any) => {
           console.log("Executing add_calendar_event", params);
-          const result = await executeTool("add_calendar_event", params, {
+          const result = await executeToolWithContext("add_calendar_event", params, {
             audit_log_id: auditLog.id,
             step_index: auditLog.steps.length
           });
@@ -249,8 +252,14 @@ export async function POST(req: Request) {
       enabledTools = allTools; // Action can be anything
     }
 
+    const providerConfig = await getProvider(intent.type);
+    const customProvider = createOpenAI({
+      apiKey: providerConfig.apiKey,
+      baseURL: providerConfig.baseUrl,
+    });
+
     const result = streamText({
-      model: openai.chat(env.LLM_MODEL),
+      model: customProvider.chat(providerConfig.model),
       messages: coreMessages,
       system: systemPrompt,
       tools: enabledTools,

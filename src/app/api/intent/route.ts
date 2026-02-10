@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { inferIntent } from "@/lib/intent";
 import { generatePlan } from "@/lib/llm";
 import { createAuditLog } from "@/lib/audit";
+import { getPlanWithAvoidance } from "@/app/actions";
 import { z } from "zod";
 
 export const runtime = "edge";
@@ -23,9 +24,11 @@ export async function POST(req: NextRequest) {
     }
 
     const { text } = validatedBody.data;
+    const userId = req.headers.get("x-forwarded-for") || "anonymous";
 
     try {
-      const { intent, rawResponse } = await inferIntent(text);
+      const { avoidTools } = await getPlanWithAvoidance(text, userId);
+      const { intent, rawResponse } = await inferIntent(text, avoidTools);
       
       let plan = null;
       let auditLogId = null;

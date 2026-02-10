@@ -15,7 +15,7 @@ export interface AuditLog {
     total?: number;
   };
   toolExecutionLatencies?: {
-    [tool_name: string]: number[];
+    latencies: { [tool_name: string]: number[] };
     totalToolExecutionTime?: number;
   };
   validation_error?: string;

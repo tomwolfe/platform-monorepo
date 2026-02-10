@@ -5,9 +5,9 @@ export const runtime = "edge";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const id = params.id;
+  const { id } = await params;
 
   if (!id) {
     return NextResponse.json({ error: "Missing audit ID" }, { status: 400 });

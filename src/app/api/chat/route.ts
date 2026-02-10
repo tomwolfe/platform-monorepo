@@ -139,8 +139,8 @@ export async function POST(req: Request) {
           
           // Log tool execution
           const currentLog = await (await import("@/lib/audit")).getAuditLog(auditLog.id);
-          const updatedLatencies = currentLog?.toolExecutionLatencies || {};
-          const toolLatencies = updatedLatencies["geocode_location"] || [];
+          const toolExecutionLatencies = currentLog?.toolExecutionLatencies || { latencies: {}, totalToolExecutionTime: 0 };
+          const toolLatencies = toolExecutionLatencies.latencies["geocode_location"] || [];
           
           await updateAuditLog(auditLog.id, {
             steps: [...(auditLog.steps || []), {
@@ -153,9 +153,11 @@ export async function POST(req: Request) {
               timestamp: new Date().toISOString()
             }],
             toolExecutionLatencies: {
-              ...updatedLatencies,
-              "geocode_location": [...toolLatencies, toolLatency],
-              totalToolExecutionTime: (updatedLatencies.totalToolExecutionTime || 0) + toolLatency
+              latencies: {
+                ...toolExecutionLatencies.latencies,
+                "geocode_location": [...toolLatencies, toolLatency],
+              },
+              totalToolExecutionTime: (toolExecutionLatencies.totalToolExecutionTime || 0) + toolLatency
             }
           });
 
@@ -178,8 +180,8 @@ export async function POST(req: Request) {
           
           // Log tool execution
           const currentLog = await (await import("@/lib/audit")).getAuditLog(auditLog.id);
-          const updatedLatencies = currentLog?.toolExecutionLatencies || {};
-          const toolLatencies = updatedLatencies["search_restaurant"] || [];
+          const toolExecutionLatencies = currentLog?.toolExecutionLatencies || { latencies: {}, totalToolExecutionTime: 0 };
+          const toolLatencies = toolExecutionLatencies.latencies["search_restaurant"] || [];
 
           await updateAuditLog(auditLog.id, {
             steps: [...(auditLog.steps || []), {
@@ -192,9 +194,11 @@ export async function POST(req: Request) {
               timestamp: new Date().toISOString()
             }],
             toolExecutionLatencies: {
-              ...updatedLatencies,
-              "search_restaurant": [...toolLatencies, toolLatency],
-              totalToolExecutionTime: (updatedLatencies.totalToolExecutionTime || 0) + toolLatency
+              latencies: {
+                ...toolExecutionLatencies.latencies,
+                "search_restaurant": [...toolLatencies, toolLatency],
+              },
+              totalToolExecutionTime: (toolExecutionLatencies.totalToolExecutionTime || 0) + toolLatency
             }
           });
 
@@ -269,8 +273,8 @@ export async function POST(req: Request) {
 
           // Log tool execution
           const currentLog = await (await import("@/lib/audit")).getAuditLog(auditLog.id);
-          const updatedLatencies = currentLog?.toolExecutionLatencies || {};
-          const toolLatencies = updatedLatencies["add_calendar_event"] || [];
+          const toolExecutionLatencies = currentLog?.toolExecutionLatencies || { latencies: {}, totalToolExecutionTime: 0 };
+          const toolLatencies = toolExecutionLatencies.latencies["add_calendar_event"] || [];
 
           await updateAuditLog(auditLog.id, {
             steps: [...(auditLog.steps || []), {
@@ -283,9 +287,11 @@ export async function POST(req: Request) {
               timestamp: new Date().toISOString()
             }],
             toolExecutionLatencies: {
-              ...updatedLatencies,
-              "add_calendar_event": [...toolLatencies, toolLatency],
-              totalToolExecutionTime: (updatedLatencies.totalToolExecutionTime || 0) + toolLatency
+              latencies: {
+                ...toolExecutionLatencies.latencies,
+                "add_calendar_event": [...toolLatencies, toolLatency],
+              },
+              totalToolExecutionTime: (toolExecutionLatencies.totalToolExecutionTime || 0) + toolLatency
             }
           });
 

@@ -274,18 +274,32 @@ export default function Home() {
                           <p className="text-xs text-red-600 font-mono bg-white p-2 border border-red-50 rounded">
                             {toolInvocation.errorText}
                           </p>
-                          <button
-                            onClick={() => {
-                              sendMessage({ 
-                                text: `The tool "${toolName}" failed with error: "${toolInvocation.errorText}". Please retry the operation with appropriate adjustments or more specific parameters.` 
-                              }, {
-                                body: { userLocation }
-                              });
-                            }}
-                            className="text-xs bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors font-bold shadow-sm"
-                          >
-                            Re-try with Context
-                          </button>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                sendMessage({ 
+                                  text: `The tool "${toolName}" failed with error: "${toolInvocation.errorText}". Please retry the operation with appropriate adjustments or more specific parameters.` 
+                                }, {
+                                  body: { userLocation }
+                                });
+                              }}
+                              className="text-xs bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors font-bold shadow-sm"
+                            >
+                              Retry
+                            </button>
+                            <button
+                              onClick={() => {
+                                sendMessage({ 
+                                  text: `Analyze and fix the failure for tool "${toolName}" with parameters ${JSON.stringify(toolInvocation.input)}. Error: "${toolInvocation.errorText}". Propose a corrected set of parameters or an alternative approach.` 
+                                }, {
+                                  body: { userLocation }
+                                });
+                              }}
+                              className="text-xs bg-slate-800 text-white px-4 py-2 rounded hover:bg-slate-900 transition-colors font-bold shadow-sm"
+                            >
+                              Analyze & Fix
+                            </button>
+                          </div>
                         </div>
                       ) : (
                         <div className="flex items-center gap-2 text-sm text-slate-500 animate-pulse">

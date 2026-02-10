@@ -29,15 +29,10 @@ export async function inferIntent(text: string, avoidTools: string[] = []): Prom
   const { object } = await generateObject({
     model: customOpenAI(env.LLM_MODEL),
     schema: IntentSchema,
-    system: `You are a precision Intent Inference Engine. 
-Your task is to convert raw user text into a structured JSON Intent object.
-- type: Categorize into SCHEDULE, SEARCH, ACTION, QUERY, PLANNING, or UNKNOWN.
-- confidence: A score between 0 and 1.
-- parameters: Extract key variables (e.g., dates, locations, topics).
-- rawText: Exactly match the user's input.
-- question: If confidence < 0.7, you MUST return an intent type of 'clarification_needed' and provide a specific question to ask the user to clarify their intent.
-
-Use PLANNING if the request requires multiple steps (e.g., finding a place and then scheduling it).
+    system: `Precision Intent Inference: Convert user text to JSON.
+Categories: SCHEDULE, SEARCH, ACTION, QUERY, PLANNING, UNKNOWN.
+Confidence < 0.7: Use 'clarification_needed' + question.
+PLANNING: Use for multi-step tasks.
 ${avoidToolsContext}`,
     prompt: text,
   });

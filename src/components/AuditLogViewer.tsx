@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, XCircle, Clock, ChevronRight, Activity } from 'lucide-react';
+import { CheckCircle2, XCircle, Clock, ChevronRight, Activity, AlertTriangle } from 'lucide-react';
 import { AuditLog } from '@/lib/types';
 
 
@@ -42,6 +42,12 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({ logs }) => {
                 <div className="text-right flex flex-col items-end gap-1">
                   <span className="text-xs text-slate-500 block">{new Date(log.timestamp).toLocaleString()}</span>
                   <div className="flex gap-2 items-center">
+                    {log.efficiency_flag === "LOW" && (
+                      <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-red-500 text-white animate-pulse">
+                        <AlertTriangle size={10} />
+                        Low Efficiency
+                      </span>
+                    )}
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-blue-100 text-blue-700">
                       Efficiency: {efficiencyScore}
                     </span>

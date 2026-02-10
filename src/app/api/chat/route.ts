@@ -83,7 +83,7 @@ export async function POST(req: Request) {
         .join("\n");
     }
 
-    // Step 2: Semantic Memory & Proactive Retrieval
+    // Step 2: Semantic Memory & Proactive Retrieval (Phase 2 Upgrade)
     const getRelevantFailures = function(text: string, logs: any[]) {
       const keywords = text.toLowerCase().split(/\W+/).filter(w => w.length > 3);
       const failures: string[] = [];
@@ -91,9 +91,20 @@ export async function POST(req: Request) {
         if (log.steps) {
           for (const step of log.steps) {
             if (step.status === "failed") {
-              const stepContext = `${step.tool_name} ${step.error} ${JSON.stringify(step.input)}`.toLowerCase();
-              if (keywords.some(k => stepContext.includes(k))) {
-                failures.push(`Warning: A previous "${step.tool_name}" failed. Error: "${step.error}". Previous Params: ${JSON.stringify(step.input)}`);
+              const inputStr = JSON.stringify(step.input).toLowerCase();
+              const hasOverlap = keywords.some(k => inputStr.includes(k));
+              
+              if (hasOverlap) {
+                let specificWarning = `Previous attempt at ${step.tool_name} with parameters ${JSON.stringify(step.input)} failed with error: "${step.error}".`;
+                
+                // Specific advice based on tool and error
+                if (step.tool_name === "search_restaurant" && step.input.location) {
+                  specificWarning = `Previous attempt to search restaurants in "${step.input.location}" failed with "${step.error}"; try an alternative coordinate or broader search radius.`;
+                } else if (step.tool_name === "geocode_location") {
+                  specificWarning = `Previous attempt to geocode "${step.input.location}" failed; try providing a more specific city or landmark name.`;
+                }
+                
+                failures.push(specificWarning);
               }
             }
           }
@@ -104,7 +115,7 @@ export async function POST(req: Request) {
 
     const relevantFailures = getRelevantFailures(userText, recentLogs);
     const failureWarnings = relevantFailures.length > 0
-      ? `\nPROACTIVE WARNINGS (Avoid these previous mistakes):\n${relevantFailures.join('\n')}`
+      ? `\n### DO NOT REPEAT THESE MISTAKES:\n${relevantFailures.map(f => `- ${f}`).join('\n')}`
       : "";
 
     let intent;
@@ -239,16 +250,22 @@ export async function POST(req: Request) {
       }),
     };
 
-    // Filter tools based on intent to minimize surface area (Phase 4 Logic)
+    // Filter tools based on intent to minimize surface area (Phase 3: Tool Scoping)
     let enabledTools: any = {};
-    if (intent.type === "SEARCH" || intent.type === "UNKNOWN" || intent.type === "PLANNING") {
+    const intentType = intent.type.toUpperCase();
+
+    if (intentType === "SEARCH" || intentType === "RESTAURANT" || intentType === "UNKNOWN" || intentType === "PLANNING") {
       enabledTools.search_restaurant = allTools.search_restaurant;
       enabledTools.geocode_location = allTools.geocode_location;
     }
-    if (intent.type === "SCHEDULE" || intent.type === "UNKNOWN" || intent.type === "PLANNING") {
+    
+    // Only provide calendar tool if it's explicitly about scheduling, or planning, or unknown.
+    // Specifically NOT provided for RESTAURANT intent in the first turn as per requirements.
+    if (intentType === "SCHEDULE" || intentType === "UNKNOWN" || intentType === "PLANNING") {
       enabledTools.add_calendar_event = allTools.add_calendar_event;
     }
-    if (intent.type === "ACTION") {
+
+    if (intentType === "ACTION") {
       enabledTools = allTools; // Action can be anything
     }
 

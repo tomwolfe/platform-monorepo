@@ -25,7 +25,11 @@ export async function executeToolWithContext(
       result = await toolDef.execute(parameters);
       
       // Technical vs Logical error detection
-      const technicalErrorKeywords = ["429", "network", "timeout", "fetch", "socket", "hang up", "overpass api error"];
+      const technicalErrorKeywords = [
+        "429", "network", "timeout", "fetch", "socket", "hang up", 
+        "overpass api error", "rate limit", "503", "502", "504", 
+        "internal server error", "connection refused"
+      ];
       const isTechnicalError = !result.success && result.error && technicalErrorKeywords.some(k => result.error.toLowerCase().includes(k));
 
       if (isTechnicalError && attempts < maxRetries - 1) {
@@ -40,7 +44,11 @@ export async function executeToolWithContext(
                           errorMessage.includes('network') || 
                           errorMessage.includes('timeout') || 
                           errorMessage.includes('fetch') ||
-                          errorMessage.includes('overpass api error');
+                          errorMessage.includes('overpass api error') ||
+                          errorMessage.includes('rate limit') ||
+                          errorMessage.includes('503') ||
+                          errorMessage.includes('502') ||
+                          errorMessage.includes('504');
       
       if (isRetryable && attempts < maxRetries) {
         const delay = Math.pow(2, attempts) * 1000;
@@ -56,15 +64,19 @@ export async function executeToolWithContext(
 
   // Schema Enforcement (Phase 1.2)
   if (result.success && toolDef.responseSchema) {
-    const validation = toolDef.responseSchema.safeParse(result.result);
-    if (!validation.success) {
-      console.error(`Malformed tool output from ${tool_name}:`, validation.error.format());
-      result = { 
-        success: false, 
-        error: `Validation Error: Tool output did not match expected schema. ${JSON.stringify(validation.error.format())}` 
-      };
-    } else {
-        result.result = validation.data;
+    try {
+      // Use parse to throw ZodError and catch it for logical-error wrapping
+      result.result = toolDef.responseSchema.parse(result.result);
+    } catch (validationError: any) {
+      if (validationError.name === "ZodError") {
+        console.error(`Malformed tool output from ${tool_name}:`, validationError.format());
+        result = { 
+          success: false, 
+          error: `Logical Error (Validation): Tool output did not match expected schema. ${JSON.stringify(validationError.format())}` 
+        };
+      } else {
+        throw validationError;
+      }
     }
   }
 

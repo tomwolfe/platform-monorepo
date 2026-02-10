@@ -84,7 +84,7 @@ export async function POST(req: Request) {
     }
 
     // Step 2: Semantic Memory & Proactive Retrieval
-    function getRelevantFailures(text: string, logs: any[]) {
+    const getRelevantFailures = function(text: string, logs: any[]) {
       const keywords = text.toLowerCase().split(/\W+/).filter(w => w.length > 3);
       const failures: string[] = [];
       for (const log of logs) {

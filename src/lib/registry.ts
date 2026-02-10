@@ -24,7 +24,7 @@ export function registerDynamicTool(definition: {
   const dynamicTool: ToolDefinition = {
     name,
     description,
-    parameters: z.record(z.any()) as any, // Generic validation for dynamic tools
+    parameters: z.record(z.string(), z.any()) as any, // Generic validation for dynamic tools
     execute: execute || (async (params: any) => {
       if (!endpoint) {
         return { success: false, error: `No execution logic or endpoint provided for tool: ${name}` };

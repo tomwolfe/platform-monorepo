@@ -1,5 +1,32 @@
 import { z } from "zod";
 
+/**
+ * IntentType defines the broad categories of user goals.
+ * Keeping this under 5 types to maintain clarity and focus as per Phase 1.
+ */
+export const IntentTypeSchema = z.enum([
+  "SCHEDULE", // Tasks related to time, calendar, or reminders
+  "SEARCH",   // Informational searches or finding physical locations/entities
+  "ACTION",   // Requests to perform a specific operation or state change
+  "QUERY",    // General knowledge questions or status checks
+  "UNKNOWN"   // Fallback when the intent is ambiguous or unsupported
+]);
+
+export type IntentType = z.infer<typeof IntentTypeSchema>;
+
+/**
+ * The canonical Intent schema.
+ * This represents the structured interpretation of a raw user input.
+ */
+export const IntentSchema = z.object({
+  type: IntentTypeSchema,
+  confidence: z.number().min(0).max(1), // 0 to 1 score of how certain the model is
+  entities: z.record(z.string(), z.any()), // Key-value map of extracted parameters (e.g., date, location)
+  rawText: z.string(), // The original input that generated this intent
+});
+
+export type Intent = z.infer<typeof IntentSchema>;
+
 export const RestaurantResultSchema = z.object({
   name: z.string(),
   address: z.string(),

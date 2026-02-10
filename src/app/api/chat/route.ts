@@ -3,6 +3,7 @@ import { streamText, tool, stepCountIs, convertToModelMessages } from "ai";
 import { z } from "zod";
 import { search_restaurant, add_calendar_event, geocode_location } from "@/lib/tools";
 import { env } from "@/lib/config";
+import { inferIntent } from "@/lib/intent";
 
 export const runtime = "edge";
 export const maxDuration = 30;
@@ -34,75 +35,107 @@ export async function POST(req: Request) {
 
     const { messages, userLocation } = validatedBody.data;
 
-    console.log(`Received chat request with ${messages?.length || 0} messages`);
-
     if (messages.length === 0) {
       return new Response("No messages provided", { status: 400 });
     }
 
     const coreMessages = await convertToModelMessages(messages);
 
-    const locationContext = userLocation 
-      ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}. Use these coordinates for 'nearby' requests.`
-      : "The user's location is unknown. If they ask for 'nearby' or don't specify a location, ask for it.";
+    // Phase 4: Consume structured intent to drive logic
+    const lastUserMessage = [...coreMessages].reverse().find(m => m.role === "user");
+    let userText = "";
+    if (typeof lastUserMessage?.content === "string") {
+      userText = lastUserMessage.content;
+    } else if (Array.isArray(lastUserMessage?.content)) {
+      userText = lastUserMessage.content
+        .filter(part => part.type === "text")
+        .map(part => (part as any).text)
+        .join("\n");
+    }
 
-    const modelName = env.LLM_MODEL;
-    console.log(`Using model: ${modelName} with base URL: ${env.LLM_BASE_URL}`);
+    let intent;
+    try {
+      const inferenceResult = await inferIntent(userText);
+      intent = inferenceResult.intent;
+      console.log("[Phase 4] Structured Intent Inferred:", intent.type, "Confidence:", intent.confidence);
+    } catch (e) {
+      console.error("Intent inference failed, falling back to UNKNOWN", e);
+      intent = { type: "UNKNOWN", confidence: 0, entities: {}, rawText: userText };
+    }
+
+    const locationContext = userLocation 
+      ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}.`
+      : "The user's location is unknown.";
+
+    // Logic driven by intent:
+    // 1. Dynamic System Prompt
+    // 2. Filtered Toolset
+    let systemPrompt = `You are an Intention Engine.
+    The user's inferred intent is: ${intent.type} (Confidence: ${intent.confidence})
+    Extracted Entities: ${JSON.stringify(intent.entities)}
+    
+    ${locationContext}
+    `;
+
+    const allTools = {
+      geocode_location: tool({
+        description: "Converts a city or place name to lat/lon coordinates.",
+        inputSchema: z.object({
+          location: z.string().describe("The city or place name to geocode"),
+        }),
+        execute: async (params) => {
+          console.log("Executing geocode_location", params);
+          return await geocode_location(params);
+        },
+      }),
+      search_restaurant: tool({
+        description: "Search for restaurants nearby based on cuisine and location.",
+        inputSchema: z.object({
+          cuisine: z.string().optional().describe("The type of cuisine, e.g. 'Italian', 'Sushi'"),
+          lat: z.number().optional().describe("The latitude coordinate"),
+          lon: z.number().optional().describe("The longitude coordinate"),
+          location: z.string().optional().describe("The city or place name if lat/lon are not available"),
+        }),
+        execute: async (params: any) => {
+          console.log("Executing search_restaurant", params);
+          return await search_restaurant(params);
+        },
+      }),
+      add_calendar_event: tool({
+        description: "Add an event to the user's calendar.",
+        inputSchema: z.object({
+          title: z.string().describe("The title of the event"),
+          start_time: z.string().describe("The start time in ISO format"),
+          end_time: z.string().describe("The end time in ISO format"),
+          location: z.string().optional().describe("The location of the event"),
+          restaurant_name: z.string().optional().describe("Name of the restaurant"),
+          restaurant_address: z.string().optional().describe("Address of the restaurant"),
+        }),
+        execute: async (params: any) => {
+          console.log("Executing add_calendar_event", params);
+          return await add_calendar_event(params);
+        },
+      }),
+    };
+
+    // Filter tools based on intent to minimize surface area (Phase 4 Logic)
+    let enabledTools: any = {};
+    if (intent.type === "SEARCH" || intent.type === "UNKNOWN") {
+      enabledTools.search_restaurant = allTools.search_restaurant;
+      enabledTools.geocode_location = allTools.geocode_location;
+    }
+    if (intent.type === "SCHEDULE" || intent.type === "UNKNOWN") {
+      enabledTools.add_calendar_event = allTools.add_calendar_event;
+    }
+    if (intent.type === "ACTION") {
+      enabledTools = allTools; // Action can be anything
+    }
 
     const result = streamText({
-      model: openai.chat(modelName),
+      model: openai.chat(env.LLM_MODEL),
       messages: coreMessages,
-      system: `You are an Intention Engine, a specialized assistant for planning and execution.
-      Strict Rules:
-      1. Restaurant search and user confirmation MUST precede calendar event creation.
-      2. Always assume a 2-hour duration for dinner events.
-      3. For romantic dinner requests:
-         - Prioritize 'romantic' atmosphere in search or description.
-         - NEVER suggest pizza or Mexican cuisine.
-      4. If a location (lat/lon) is required but unknown, use geocode_location first.
-      5. ${locationContext}
-      6. For calendar events, ensure start_time and end_time are in valid ISO format.
-      7. When adding a calendar event for a restaurant, include 'restaurant_name' and 'restaurant_address' parameters.`,
-      tools: {
-        geocode_location: tool({
-          description: "Converts a city or place name to lat/lon coordinates.",
-          inputSchema: z.object({
-            location: z.string().describe("The city or place name to geocode"),
-          }),
-          execute: async (params) => {
-            console.log("Executing geocode_location", params);
-            return await geocode_location(params);
-          },
-        }),
-        search_restaurant: tool({
-          description: "Search for restaurants nearby based on cuisine and location.",
-          inputSchema: z.object({
-            cuisine: z.string().optional().describe("The type of cuisine, e.g. 'Italian', 'Sushi'"),
-            lat: z.number().optional().describe("The latitude coordinate"),
-            lon: z.number().optional().describe("The longitude coordinate"),
-            location: z.string().optional().describe("The city or place name if lat/lon are not available"),
-          }),
-          execute: async (params: any) => {
-            console.log("Executing search_restaurant", params);
-            return await search_restaurant(params);
-          },
-        }),
-        add_calendar_event: tool({
-          description: "Add an event to the user's calendar.",
-          inputSchema: z.object({
-            title: z.string().describe("The title of the event"),
-            start_time: z.string().describe("The start time in ISO format"),
-            end_time: z.string().describe("The end time in ISO format"),
-            location: z.string().optional().describe("The location of the event"),
-            restaurant_name: z.string().optional().describe("Name of the restaurant"),
-            restaurant_address: z.string().optional().describe("Address of the restaurant"),
-          }),
-          execute: async (params: any) => {
-            console.log("Executing add_calendar_event", params);
-            return await add_calendar_event(params);
-          },
-        }),
-      },
+      system: systemPrompt,
+      tools: enabledTools,
       stopWhen: stepCountIs(5),
     });
 

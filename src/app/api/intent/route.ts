@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generatePlan } from "@/lib/llm";
-import { createAuditLog, updateAuditLog } from "@/lib/audit";
-import { PlanSchema } from "@/lib/schema";
+import { inferIntent } from "@/lib/intent";
 import { z } from "zod";
 
 export const runtime = "edge";
 
 const IntentRequestSchema = z.object({
-  intent: z.string().min(1),
-  user_location: z.object({
-    lat: z.number().min(-90).max(90),
-    lng: z.number().min(-180).max(180),
-  }).nullable().optional(),
+  text: z.string().min(1),
 });
 
 export async function POST(req: NextRequest) {
@@ -20,37 +14,42 @@ export async function POST(req: NextRequest) {
     const validatedBody = IntentRequestSchema.safeParse(rawBody);
 
     if (!validatedBody.success) {
-      return NextResponse.json({ error: "Invalid request parameters", details: validatedBody.error.format() }, { status: 400 });
+      return NextResponse.json({ 
+        error: "Invalid request parameters", 
+        details: validatedBody.error.format() 
+      }, { status: 400 });
     }
 
-    const { intent, user_location } = validatedBody.data;
-
-    const auditLog = await createAuditLog(intent);
+    const { text } = validatedBody.data;
 
     try {
-      const plan = await generatePlan(intent, user_location);
+      const { intent, rawResponse } = await inferIntent(text);
       
-      // Secondary validation just in case
-      PlanSchema.parse(plan);
-
-      await updateAuditLog(auditLog.id, { plan });
+      // Phase 3: Debuggability & Inspection
+      console.log("[Intent Engine] Input:", text);
+      console.log("[Intent Engine] Inferred Intent:", JSON.stringify(intent, null, 2));
+      console.log("[Intent Engine] Raw LLM Output:", rawResponse);
 
       return NextResponse.json({
-        plan,
-        audit_log_id: auditLog.id,
+        success: true,
+        intent,
+        // Phase 3: Raw model output is accessible
+        _debug: {
+          timestamp: new Date().toISOString(),
+          model: "glm-4.7-flash",
+          rawResponse,
+        }
       });
     } catch (error: any) {
-      console.error("Plan generation failed:", error);
-      await updateAuditLog(auditLog.id, { 
-        validation_error: error.message || "Unknown error during plan generation" 
-      });
+      console.error("[Intent Engine] Inference Error:", error);
+      
       return NextResponse.json({ 
-        error: "Failed to generate execution plan", 
+        success: false,
+        error: "Failed to infer intent", 
         details: error.message,
-        audit_log_id: auditLog.id 
       }, { status: 500 });
     }
   } catch (error: any) {
-    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+    return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
   }
 }

@@ -25,7 +25,7 @@ import {
   EngineErrorCode,
 } from "../engine/types";
 import { createInitialState, transitionState, validateStateTransition } from "../engine/state-machine";
-import { executePlan, ExecutionResult } from "../engine/executor";
+import { executePlan, ExecutionResult } from "../engine/orchestrator";
 import { ToolRegistry, getToolRegistry, resetToolRegistry } from "../engine/tools/registry";
 import { ExecutionTracer } from "../engine/tracing";
 

@@ -1,16 +1,9 @@
 /**
  * IntentionEngine - Observability/Tracing
  * Phase 8: Execution tracing with latency, token, and model tracking
- * 
- * Constraints:
- * - ExecutionTrace object per execution
- * - Latency recording at step level
- * - Token recording per LLM call
- * - Model recording
- * - Trace returned via API
- * - No overwriting trace data
  */
 
+import { trace, Span } from "@opentelemetry/api";
 import {
   ExecutionTrace,
   ExecutionTraceSchema,
@@ -21,9 +14,34 @@ import {
 } from "./types";
 import { saveExecutionTrace, loadExecutionTrace } from "./memory";
 
+/**
+ * Tracer provides a high-level API for OpenTelemetry tracing.
+ */
+export class Tracer {
+  private static tracer = trace.getTracer("intention-engine");
+
+  static async startActiveSpan<T>(
+    name: string,
+    fn: (span: Span) => Promise<T>
+  ): Promise<T> {
+    return this.tracer.startActiveSpan(name, async (span) => {
+      try {
+        const result = await fn(span);
+        span.setStatus({ code: 1 }); // OK
+        return result;
+      } catch (error: any) {
+        span.recordException(error);
+        span.setStatus({ code: 2, message: error.message }); // ERROR
+        throw error;
+      } finally {
+        span.end();
+      }
+    });
+  }
+}
+
 // ============================================================================
 // TRACER CONFIGURATION
-// Configuration options for the tracer
 // ============================================================================
 
 export interface TracerConfig {
@@ -40,7 +58,6 @@ export const DEFAULT_TRACER_CONFIG: TracerConfig = {
 
 // ============================================================================
 // TRACER RESULT
-// Result of trace operations
 // ============================================================================
 
 export interface TracerResult {
@@ -56,7 +73,6 @@ export interface TracerResult {
 
 // ============================================================================
 // EXECUTION TRACER
-// Main tracing class for collecting execution events
 // ============================================================================
 
 export class ExecutionTracer {
@@ -78,11 +94,7 @@ export class ExecutionTracer {
     });
   }
 
-  /**
-   * Add a trace entry
-   */
   addEntry(entry: Omit<TraceEntry, "timestamp"> & { timestamp?: string }): TraceEntry {
-    // Check max entries limit
     if (this.trace.entries.length >= this.config.maxEntries) {
       console.warn(`Trace entry limit (${this.config.maxEntries}) reached, dropping entry`);
       return this.trace.entries[this.trace.entries.length - 1];
@@ -95,7 +107,6 @@ export class ExecutionTracer {
       timestamp,
     });
 
-    // Optionally redact input/output for privacy
     if (!this.config.includeInputOutput) {
       const redactedEntry = {
         ...fullEntry,
@@ -107,7 +118,6 @@ export class ExecutionTracer {
       this.trace.entries.push(fullEntry);
     }
 
-    // Persist if configured
     if (this.config.persistToMemory) {
       this.persist().catch(console.error);
     }
@@ -115,9 +125,6 @@ export class ExecutionTracer {
     return fullEntry;
   }
 
-  /**
-   * Add intent parsing trace entry
-   */
   addIntentEntry(
     input: string,
     output: unknown,
@@ -142,9 +149,6 @@ export class ExecutionTracer {
     });
   }
 
-  /**
-   * Add planning trace entry
-   */
   addPlanningEntry(
     input: unknown,
     output: unknown,
@@ -169,9 +173,6 @@ export class ExecutionTracer {
     });
   }
 
-  /**
-   * Add execution step trace entry
-   */
   addExecutionEntry(
     stepId: string,
     event: "step_started" | "step_completed" | "step_failed" | "step_error",
@@ -191,9 +192,6 @@ export class ExecutionTracer {
     });
   }
 
-  /**
-   * Add system trace entry
-   */
   addSystemEntry(
     event: string,
     details?: unknown
@@ -205,9 +203,6 @@ export class ExecutionTracer {
     });
   }
 
-  /**
-   * Add state transition trace entry
-   */
   addStateTransitionEntry(
     fromState: string,
     toState: string,
@@ -221,9 +216,6 @@ export class ExecutionTracer {
     });
   }
 
-  /**
-   * Add error trace entry
-   */
   addErrorEntry(
     phase: TraceEntry["phase"],
     errorCode: string,
@@ -240,13 +232,9 @@ export class ExecutionTracer {
     });
   }
 
-  /**
-   * Finalize the trace
-   */
   finalize(): TracerResult {
     const timestamp = new Date().toISOString();
     
-    // Calculate totals
     const totalLatencyMs = this.trace.entries.reduce(
       (sum, entry) => sum + (entry.latency_ms || 0),
       0
@@ -266,7 +254,6 @@ export class ExecutionTracer {
       { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
     );
 
-    // Update trace
     this.trace = ExecutionTraceSchema.parse({
       ...this.trace,
       ended_at: timestamp,
@@ -278,7 +265,6 @@ export class ExecutionTracer {
       },
     });
 
-    // Final persist
     if (this.config.persistToMemory) {
       this.persist().catch(console.error);
     }
@@ -291,58 +277,10 @@ export class ExecutionTracer {
     };
   }
 
-  /**
-   * Get the current trace
-   */
   getTrace(): ExecutionTrace {
     return this.trace;
   }
 
-  /**
-   * Get trace as JSON string
-   */
-  toJSON(): string {
-    return JSON.stringify(this.trace, null, 2);
-  }
-
-  /**
-   * Get trace summary
-   */
-  getSummary(): {
-    executionId: string;
-    entryCount: number;
-    durationMs: number;
-    phases: Record<string, number>;
-    errors: number;
-  } {
-    const now = new Date().toISOString();
-    const startTime = new Date(this.trace.started_at).getTime();
-    const endTime = this.trace.ended_at
-      ? new Date(this.trace.ended_at).getTime()
-      : new Date(now).getTime();
-
-    const phases: Record<string, number> = {};
-    let errors = 0;
-
-    for (const entry of this.trace.entries) {
-      phases[entry.phase] = (phases[entry.phase] || 0) + 1;
-      if (entry.event === "error" || entry.error) {
-        errors++;
-      }
-    }
-
-    return {
-      executionId: this.executionId,
-      entryCount: this.trace.entries.length,
-      durationMs: endTime - startTime,
-      phases,
-      errors,
-    };
-  }
-
-  /**
-   * Persist trace to memory
-   */
   private async persist(): Promise<void> {
     try {
       await saveExecutionTrace(this.trace);
@@ -352,125 +290,9 @@ export class ExecutionTracer {
   }
 }
 
-// ============================================================================
-// TRACE LOADER
-// Load traces from memory
-// ============================================================================
-
 export async function loadTrace(executionId: string): Promise<ExecutionTrace | null> {
   return loadExecutionTrace(executionId);
 }
-
-// ============================================================================
-// TRACE ANALYZER
-// Analyze traces for patterns and insights
-// ============================================================================
-
-export interface TraceAnalysis {
-  totalExecutions: number;
-  averageDurationMs: number;
-  averageLatencyPerPhase: Record<string, number>;
-  totalTokensUsed: { prompt: number; completion: number };
-  errorRate: number;
-  mostUsedModels: Array<{ modelId: string; count: number }>;
-  bottleneckPhases: string[];
-}
-
-export function analyzeTraces(traces: ExecutionTrace[]): TraceAnalysis {
-  if (traces.length === 0) {
-    return {
-      totalExecutions: 0,
-      averageDurationMs: 0,
-      averageLatencyPerPhase: {},
-      totalTokensUsed: { prompt: 0, completion: 0 },
-      errorRate: 0,
-      mostUsedModels: [],
-      bottleneckPhases: [],
-    };
-  }
-
-  // Calculate averages
-  const totalDuration = traces.reduce((sum, trace) => {
-    if (trace.started_at && trace.ended_at) {
-      return sum + (new Date(trace.ended_at).getTime() - new Date(trace.started_at).getTime());
-    }
-    return sum;
-  }, 0);
-
-  // Phase latency
-  const phaseLatencies: Record<string, number[]> = {};
-  for (const trace of traces) {
-    for (const entry of trace.entries) {
-      if (entry.latency_ms) {
-        if (!phaseLatencies[entry.phase]) {
-          phaseLatencies[entry.phase] = [];
-        }
-        phaseLatencies[entry.phase].push(entry.latency_ms);
-      }
-    }
-  }
-
-  const averageLatencyPerPhase: Record<string, number> = {};
-  for (const [phase, latencies] of Object.entries(phaseLatencies)) {
-    averageLatencyPerPhase[phase] = latencies.reduce((a, b) => a + b, 0) / latencies.length;
-  }
-
-  // Token usage
-  const totalTokensUsed = traces.reduce(
-    (sum, trace) => {
-      if (trace.total_token_usage) {
-        return {
-          prompt: sum.prompt + trace.total_token_usage.prompt_tokens,
-          completion: sum.completion + trace.total_token_usage.completion_tokens,
-        };
-      }
-      return sum;
-    },
-    { prompt: 0, completion: 0 }
-  );
-
-  // Error rate
-  const totalErrors = traces.reduce((sum, trace) => {
-    return sum + trace.entries.filter((e) => e.event === "error" || e.error).length;
-  }, 0);
-  const totalEntries = traces.reduce((sum, trace) => sum + trace.entries.length, 0);
-  const errorRate = totalEntries > 0 ? totalErrors / totalEntries : 0;
-
-  // Most used models
-  const modelCounts: Record<string, number> = {};
-  for (const trace of traces) {
-    for (const entry of trace.entries) {
-      if (entry.model_id) {
-        modelCounts[entry.model_id] = (modelCounts[entry.model_id] || 0) + 1;
-      }
-    }
-  }
-  const mostUsedModels = Object.entries(modelCounts)
-    .map(([modelId, count]) => ({ modelId, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 5);
-
-  // Identify bottleneck phases (above average latency)
-  const avgLatency = Object.values(averageLatencyPerPhase).reduce((a, b) => a + b, 0) / Object.keys(phaseLatencies).length;
-  const bottleneckPhases = Object.entries(averageLatencyPerPhase)
-    .filter(([, latency]) => latency > avgLatency * 1.5)
-    .map(([phase]) => phase);
-
-  return {
-    totalExecutions: traces.length,
-    averageDurationMs: totalDuration / traces.length,
-    averageLatencyPerPhase,
-    totalTokensUsed,
-    errorRate,
-    mostUsedModels,
-    bottleneckPhases,
-  };
-}
-
-// ============================================================================
-// EXPORT FACTORY
-// Convenience function to create tracer
-// ============================================================================
 
 export function createTracer(
   executionId: string,

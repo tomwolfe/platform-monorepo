@@ -479,6 +479,7 @@ export const EngineErrorCodeSchema = z.enum([
   "LLM_TIMEOUT",
   "TOKEN_BUDGET_EXCEEDED",
   "MAX_STEPS_EXCEEDED",
+  "INFRASTRUCTURE_ERROR",
   "UNKNOWN_ERROR",
 ]);
 

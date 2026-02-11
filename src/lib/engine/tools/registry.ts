@@ -13,6 +13,7 @@
  */
 
 import { z } from "zod";
+import { PersistenceProvider } from "../../../infrastructure/PersistenceProvider";
 import {
   ToolDefinition,
   ToolDefinitionSchema,
@@ -411,7 +412,7 @@ export class ToolRegistry {
   }
 
   /**
-   * Create a ToolExecutor for use with ExecutionEngine
+   * Create a ToolExecutor for use with ExecutionOrchestrator
    */
   createToolExecutor(): {
     execute: (
@@ -535,6 +536,25 @@ export const BuiltInTools: ToolDefinition[] = [
     category: "data",
     requires_confirmation: false,
   },
+  {
+    name: "self_reflect",
+    version: "1.0.0",
+    description: "Access execution history to self-reflect on previous state transitions. Use this when stuck in a loop or needing to understand past decisions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        intentId: {
+          type: "string",
+          description: "The ID of the current intent/execution to retrieve history for.",
+        },
+      },
+      required: ["intentId"],
+    },
+    return_schema: { type: "object", properties: { history: { type: "array" } } },
+    timeout_ms: 10000,
+    category: "data",
+    requires_confirmation: false,
+  },
 ];
 
 // ============================================================================
@@ -543,6 +563,7 @@ export const BuiltInTools: ToolDefinition[] = [
 
 export function registerBuiltInTools(): void {
   const registry = getToolRegistry();
+  const persistence = new PersistenceProvider();
 
   // Wait tool
   registry.register(BuiltInTools[0], async (params) => {
@@ -563,6 +584,23 @@ export function registerBuiltInTools(): void {
       success: true,
       output: { logged: true },
     };
+  });
+
+  // Self-reflect tool
+  registry.register(BuiltInTools[2], async (params) => {
+    const intentId = params.intentId as string;
+    try {
+      const history = await persistence.getHistory(intentId);
+      return {
+        success: true,
+        output: { history },
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: `Failed to retrieve history: ${error.message}`,
+      };
+    }
   });
 }
 

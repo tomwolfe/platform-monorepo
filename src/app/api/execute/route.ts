@@ -35,10 +35,10 @@ import {
 import { parseIntent, ParseResult } from "@/lib/engine/intent";
 import { generatePlan, PlannerResult } from "@/lib/engine/planner";
 import {
-  executePlan,
+  ExecutionOrchestrator,
   ExecutionResult,
   ToolExecutor,
-} from "@/lib/engine/executor";
+} from "@/lib/engine/orchestrator";
 import {
   createInitialState,
   transitionState,
@@ -162,6 +162,10 @@ interface OrchestrationResult {
   };
 }
 
+import { getRegistryManager } from "@/lib/engine/registry";
+
+// ... existing imports ...
+
 async function orchestrateExecution(
   input: string,
   context: { execution_id?: string; user_context?: Record<string, unknown> } = {},
@@ -169,6 +173,10 @@ async function orchestrateExecution(
 ): Promise<OrchestrationResult> {
   const startTime = performance.now();
   const executionId = context.execution_id || randomUUID();
+
+  // Initialize Registry and Discovery
+  const registryManager = getRegistryManager();
+  await registryManager.discoverRemoteTools();
 
   // Initialize tracer
   const tracer = createTracer(executionId);
@@ -238,6 +246,7 @@ async function orchestrateExecution(
       tracer.addSystemEntry("generating_plan");
       const planResult: PlannerResult = await generatePlan(parseResult.intent, {
         execution_id: executionId,
+        available_tools: registryManager.listAllTools(),
       });
 
       // Add planning trace entry
@@ -264,32 +273,25 @@ async function orchestrateExecution(
       });
 
       const toolExecutor = createToolExecutorForExecution(executionId);
+      const orchestrator = new ExecutionOrchestrator(toolExecutor, {
+        traceCallback: (entry) => {
+          // Forward trace entries to our tracer
+          if (entry.step_id) {
+            tracer.addExecutionEntry(
+              entry.step_id,
+              entry.event as any,
+              entry.input,
+              entry.output,
+              entry.error as string,
+              entry.latency_ms
+            );
+          }
+        },
+      });
 
-      const executionResult: ExecutionResult = await executePlan(
+      const executionResult: ExecutionResult = await orchestrator.execute(
         plan,
-        toolExecutor,
-        {
-          executionId,
-          initialState: state,
-          traceCallback: (entry) => {
-            // Forward trace entries to our tracer
-            if (entry.step_id) {
-              tracer.addExecutionEntry(
-                entry.step_id,
-                entry.event as
-                  | "step_started"
-                  | "step_completed"
-                  | "step_failed"
-                  | "step_error",
-                entry.input,
-                entry.output,
-                entry.error as string,
-                entry.latency_ms
-              );
-            }
-          },
-          persistState: true,
-        }
+        executionId
       );
 
       // Add completion trace entry

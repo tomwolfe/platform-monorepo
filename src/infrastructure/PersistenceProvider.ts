@@ -4,6 +4,7 @@ import { MemoryClient, MEMORY_CONFIG } from "../lib/engine/memory";
 export interface IPersistenceProvider {
   saveCheckpoint(checkpoint: Checkpoint): Promise<void>;
   loadCheckpoint(intentId: string): Promise<Checkpoint | null>;
+  getHistory(intentId: string): Promise<Checkpoint[]>;
 }
 
 export class PersistenceProvider implements IPersistenceProvider {
@@ -21,7 +22,7 @@ export class PersistenceProvider implements IPersistenceProvider {
     CheckpointSchema.parse(updatedCheckpoint);
     
     await this.memory.store({
-      type: "execution_state", // Reusing this type for now, or could add 'checkpoint' to MemoryEntryType
+      type: "execution_state", 
       namespace: checkpoint.intentId,
       data: updatedCheckpoint,
       version: 1,
@@ -37,5 +38,15 @@ export class PersistenceProvider implements IPersistenceProvider {
     if (!entry) return null;
     
     return CheckpointSchema.parse(entry.data);
+  }
+
+  async getHistory(intentId: string): Promise<Checkpoint[]> {
+    const entries = await this.memory.query({
+      namespace: intentId,
+      type: "execution_state",
+      limit: 100
+    });
+    
+    return entries.map(entry => CheckpointSchema.parse(entry.data));
   }
 }

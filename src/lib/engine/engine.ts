@@ -6,7 +6,7 @@ import {
 } from "./types";
 import { IPersistenceProvider } from "../../infrastructure/PersistenceProvider";
 import { ObservationProvider } from "../../infrastructure/ObservationProvider";
-import { ToolExecutor } from "./executor";
+import { ToolExecutor } from "./orchestrator";
 
 export interface EngineOptions {
   persistence: IPersistenceProvider;

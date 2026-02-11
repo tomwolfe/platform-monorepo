@@ -1,13 +1,6 @@
 /**
- * IntentionEngine - Execution Engine
+ * IntentionEngine - Execution Orchestrator
  * Phase 6: Execute plans with dependency resolution and state management
- *
- * Constraints:
- * - No LLM calls outside llm.ts
- * - No direct Redis usage (use state-machine and memory layers)
- * - No dynamic execution
- * - Abort on first failure
- * - Topological execution order
  */
 
 import {
@@ -31,6 +24,8 @@ import {
   getPendingSteps,
 } from "./state-machine";
 import { saveExecutionState } from "./memory";
+import { MCPClient } from "../../infrastructure/mcp/MCPClient";
+import { getRegistryManager, RegistryManager } from "./registry";
 
 // ============================================================================
 // EXECUTION RESULT
@@ -48,6 +43,7 @@ export interface ExecutionResult {
     code: string;
     message: string;
     step_id?: string;
+    logs?: any;
   };
 }
 
@@ -87,12 +83,10 @@ interface StepExecutionContext {
 // ============================================================================
 
 function isStepReady(step: PlanStep, state: ExecutionState): boolean {
-  // No dependencies = ready to execute
   if (step.dependencies.length === 0) {
     return true;
   }
 
-  // Check all dependencies are completed
   for (const depId of step.dependencies) {
     const depState = getStepState(state, depId);
     if (!depState || depState.status !== "completed") {
@@ -120,14 +114,11 @@ function resolveStepParameters(
       value.startsWith("$") &&
       value.includes(".")
     ) {
-      // Parameter reference format: $stepId.outputField
-      const ref = value.substring(1); // Remove $
+      const ref = value.substring(1);
       const [stepId, ...fieldPath] = ref.split(".");
 
-      // Find the dependency step output
       const depState = getStepState(state, stepId);
       if (depState && depState.output) {
-        // Navigate the output object
         let fieldValue: unknown = depState.output;
         for (const field of fieldPath) {
           if (
@@ -143,7 +134,7 @@ function resolveStepParameters(
         }
         resolved[key] = fieldValue ?? value;
       } else {
-        resolved[key] = value; // Keep original if not found
+        resolved[key] = value;
       }
     } else {
       resolved[key] = value;
@@ -166,22 +157,18 @@ async function executeStep(
   const timestamp = new Date().toISOString();
 
   try {
-    // Mark step as in_progress
     let stepState = updateStepState(state, step.id, {
       status: "in_progress",
       started_at: timestamp,
       attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
     });
 
-    // Resolve parameters (substitute references)
     const resolvedParameters = resolveStepParameters(step, stepState);
 
-    // Update step with resolved input
     stepState = updateStepState(stepState, step.id, {
       input: resolvedParameters,
     });
 
-    // Execute the tool with timeout
     const toolResult = await toolExecutor.execute(
       step.tool_name,
       resolvedParameters,
@@ -191,7 +178,6 @@ async function executeStep(
     const stepEndTime = performance.now();
     const latencyMs = Math.round(stepEndTime - stepStartTime);
 
-    // Create trace entry
     if (traceCallback) {
       traceCallback({
         timestamp,
@@ -205,7 +191,6 @@ async function executeStep(
       });
     }
 
-    // Update step state based on result
     if (toolResult.success) {
       return {
         step_id: step.id,
@@ -235,7 +220,6 @@ async function executeStep(
     const errorMessage =
       error instanceof Error ? error.message : String(error);
 
-    // Create trace entry for error
     if (traceCallback) {
       traceCallback({
         timestamp,
@@ -300,15 +284,9 @@ export async function executePlan(
   const startTime = performance.now();
   const executionId = options.executionId || crypto.randomUUID();
 
-  // Initialize or use provided state
-  let state =
-    options.initialState ||
-    createInitialState(executionId);
-
-  // Associate plan with state
+  let state = options.initialState || createInitialState(executionId);
   state = applyStateUpdate(state, { plan });
 
-  // Transition to EXECUTING
   const transitionResult = transitionState(state, "EXECUTING");
   if (!transitionResult.success) {
     throw EngineErrorSchema.parse({
@@ -321,25 +299,21 @@ export async function executePlan(
 
   state = applyStateUpdate(state, { status: "EXECUTING" });
 
-  // Initialize step states
   for (const step of plan.steps) {
     state = updateStepState(state, step.id, {
       status: "pending",
     });
   }
 
-  // Persist initial state
   if (options.persistState !== false) {
     await saveExecutionState(state);
   }
 
   try {
-    // Execute steps in dependency order
     while (true) {
       const nextStep = findNextReadyStep(plan, state);
 
       if (!nextStep) {
-        // No more ready steps - check if we're done
         const completedCount = getCompletedSteps(state).length;
         const failedCount = state.step_states.filter(
           (s) => s.status === "failed"
@@ -347,14 +321,11 @@ export async function executePlan(
         const totalCount = plan.steps.length;
 
         if (completedCount + failedCount === totalCount) {
-          // All steps processed
           break;
         } else {
-          // Deadlock detected - steps pending but none ready
           throw EngineErrorSchema.parse({
             code: "PLAN_CIRCULAR_DEPENDENCY",
-            message:
-              "Execution deadlock detected: pending steps exist but none are ready to execute",
+            message: "Execution deadlock detected: pending steps exist but none are ready to execute",
             details: {
               completed: completedCount,
               failed: failedCount,
@@ -366,7 +337,6 @@ export async function executePlan(
         }
       }
 
-      // Execute the next ready step
       const stepResult = await executeStep({
         state,
         step: nextStep,
@@ -374,26 +344,20 @@ export async function executePlan(
         traceCallback: options.traceCallback,
       });
 
-      // Update state with step result
       state = updateStepState(state, nextStep.id, stepResult);
 
-      // Persist state after each step
       if (options.persistState !== false) {
         await saveExecutionState(state);
       }
 
-      // Check for failure - abort on first failure
       if (stepResult.status === "failed") {
         const endTime = performance.now();
-
-        // Transition to FAILED
         state = applyStateUpdate(state, {
           status: "FAILED",
           error: stepResult.error,
           completed_at: new Date().toISOString(),
         });
 
-        // Persist final state
         if (options.persistState !== false) {
           await saveExecutionState(state);
         }
@@ -416,16 +380,12 @@ export async function executePlan(
       }
     }
 
-    // All steps completed successfully
     const endTime = performance.now();
-
-    // Transition to COMPLETED
     state = applyStateUpdate(state, {
       status: "COMPLETED",
       completed_at: new Date().toISOString(),
     });
 
-    // Persist final state
     if (options.persistState !== false) {
       await saveExecutionState(state);
     }
@@ -440,12 +400,8 @@ export async function executePlan(
     };
   } catch (error) {
     const endTime = performance.now();
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
-    // Handle unexpected errors
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
-
-    // Transition to FAILED
     state = applyStateUpdate(state, {
       status: "FAILED",
       error: {
@@ -455,7 +411,6 @@ export async function executePlan(
       completed_at: new Date().toISOString(),
     });
 
-    // Persist final state
     if (options.persistState !== false) {
       await saveExecutionState(state);
     }
@@ -464,8 +419,7 @@ export async function executePlan(
       state,
       success: false,
       completed_steps: getCompletedSteps(state).length,
-      failed_steps: state.step_states.filter((s) => s.status === "failed")
-        .length,
+      failed_steps: state.step_states.filter((s) => s.status === "failed").length,
       total_steps: plan.steps.length,
       execution_time_ms: Math.round(endTime - startTime),
       error: {
@@ -498,7 +452,6 @@ export async function resumeExecution(
     });
   }
 
-  // Check if execution is already complete
   if (
     state.status === "COMPLETED" ||
     state.status === "FAILED" ||
@@ -508,14 +461,12 @@ export async function resumeExecution(
       state,
       success: state.status === "COMPLETED",
       completed_steps: getCompletedSteps(state).length,
-      failed_steps: state.step_states.filter((s) => s.status === "failed")
-        .length,
+      failed_steps: state.step_states.filter((s) => s.status === "failed").length,
       total_steps: state.plan.steps.length,
       execution_time_ms: state.latency_ms,
     };
   }
 
-  // Resume execution
   return executePlan(state.plan, toolExecutor, {
     executionId: state.execution_id,
     initialState: state,
@@ -525,13 +476,14 @@ export async function resumeExecution(
 }
 
 // ============================================================================
-// EXECUTION ENGINE CLASS
-// Object-oriented wrapper
+// EXECUTION ORCHESTRATOR CLASS
 // ============================================================================
 
-export class ExecutionEngine {
+export class ExecutionOrchestrator {
   private toolExecutor: ToolExecutor;
   private traceCallback?: (entry: TraceEntry) => void;
+  private vMcpClient?: MCPClient;
+  private registryManager: RegistryManager;
 
   constructor(
     toolExecutor: ToolExecutor,
@@ -539,13 +491,60 @@ export class ExecutionEngine {
   ) {
     this.toolExecutor = toolExecutor;
     this.traceCallback = options.traceCallback;
+    this.registryManager = getRegistryManager();
+    
+    if (process.env.VERCEL_MCP_URL) {
+      this.vMcpClient = new MCPClient(process.env.VERCEL_MCP_URL);
+    }
+  }
+
+  /**
+   * Initializes the orchestrator by discovering remote tools.
+   */
+  async initialize(): Promise<void> {
+    await this.registryManager.discoverRemoteTools();
   }
 
   async execute(plan: Plan, executionId?: string): Promise<ExecutionResult> {
-    return executePlan(plan, this.toolExecutor, {
-      executionId,
-      traceCallback: this.traceCallback,
-    });
+    try {
+      return await executePlan(plan, this.toolExecutor, {
+        executionId,
+        traceCallback: this.traceCallback,
+      });
+    } catch (error: any) {
+      if (error && error.code === "INFRASTRUCTURE_ERROR" && this.vMcpClient) {
+        try {
+          await this.vMcpClient.connect();
+          const logs = await Promise.race([
+            this.vMcpClient.callTool("get-logs", { 
+              deploymentId: process.env.VERCEL_DEPLOYMENT_ID || "current" 
+            }),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error("MCP log fetch timeout")), 10000)
+            )
+          ]);
+          
+          await this.vMcpClient.disconnect();
+          
+          return {
+            state: error.state || {} as any,
+            success: false,
+            completed_steps: 0,
+            failed_steps: 1,
+            total_steps: plan.steps.length,
+            execution_time_ms: 0,
+            error: {
+              code: "INFRASTRUCTURE_ERROR",
+              message: error.message,
+              logs
+            }
+          };
+        } catch (logError) {
+          console.error("Failed to fetch Vercel logs via MCP:", logError);
+        }
+      }
+      throw error;
+    }
   }
 
   async resume(state: ExecutionState): Promise<ExecutionResult> {
@@ -554,5 +553,3 @@ export class ExecutionEngine {
     });
   }
 }
-
-

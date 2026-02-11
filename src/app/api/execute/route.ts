@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuditLog, updateAuditLog } from "@/lib/audit";
 import { executeToolWithContext } from "@/app/actions";
-import { replan } from "@/lib/llm";
+import { replan } from "@/lib/planner";
 import { z } from "zod";
 
 export const runtime = "edge";
@@ -159,7 +159,7 @@ export async function POST(req: NextRequest) {
     } catch (error: any) {
       console.error("Execution error, triggering re-plan:", error);
       
-      const { replan } = await import("@/lib/llm");
+      const { replan } = await import("@/lib/planner");
       let newPlan = null;
       try {
         newPlan = await replan(log.intent, log, step_index, error.message);

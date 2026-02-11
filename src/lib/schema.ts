@@ -5,28 +5,41 @@ import { z } from "zod";
  * Keeping this under 5 types to maintain clarity and focus as per Phase 1.
  */
 export const IntentTypeSchema = z.enum([
-  "SCHEDULE", // Tasks related to time, calendar, or reminders
-  "SEARCH",   // Informational searches or finding physical locations/entities
-  "ACTION",   // Requests to perform a specific operation or state change
-  "QUERY",    // General knowledge questions or status checks
-  "PLANNING", // Multi-step goals requiring complex orchestration
-  "UNKNOWN",  // Fallback when the intent is ambiguous or unsupported
-  "clarification_needed", // NEW: Added for Phase 2 Confidence Thresholds
-  "ANALYSIS"  // NEW: Added for Phase 3 Multi-Provider Support
+  "SCHEDULE",
+  "SEARCH",
+  "ACTION",
+  "QUERY",
+  "PLANNING",
+  "ANALYSIS",
+  "UNKNOWN",
+  "CLARIFICATION_NEEDED",
+  "REFUSED"
 ]);
 
 export type IntentType = z.infer<typeof IntentTypeSchema>;
 
 /**
+ * Metadata for traceability and audit.
+ */
+export const IntentMetadataSchema = z.object({
+  version: z.string(),
+  timestamp: z.string(), // ISO-8601
+  source: z.string().default("user_input"),
+  model_id: z.string().optional(),
+});
+
+/**
  * The canonical Intent schema.
- * This represents the structured interpretation of a raw user input.
  */
 export const IntentSchema = z.object({
+  id: z.string().uuid(),
+  parent_intent_id: z.string().uuid().optional(), // Link to the intent this one supersedes
   type: IntentTypeSchema,
-  confidence: z.number().min(0).max(1), // 0 to 1 score of how certain the model is
-  parameters: z.record(z.string(), z.any()), // Key-value map of extracted parameters (e.g., date, location)
-  rawText: z.string(), // The original input that generated this intent
-  question: z.string().optional(), // NEW: Specific question if confidence is low
+  confidence: z.number().min(0).max(1),
+  parameters: z.record(z.string(), z.any()),
+  rawText: z.string(),
+  explanation: z.string().optional(), // Why this intent was chosen
+  metadata: IntentMetadataSchema,
 });
 
 export type Intent = z.infer<typeof IntentSchema>;

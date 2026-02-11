@@ -28,16 +28,18 @@ export async function POST(req: NextRequest) {
 
     try {
       const { avoidTools } = await getPlanWithAvoidance(text, userId);
-      const { intent, rawResponse } = await inferIntent(text, avoidTools);
+      const { hypotheses, rawResponse } = await inferIntent(text);
+      const intent = hypotheses.primary;
       
       let plan = null;
       let auditLogId = null;
 
-      if (intent.type === "PLANNING" || intent.confidence > 0.7) {
+      if (!hypotheses.isAmbiguous && (intent.type === "PLANNING" || intent.confidence > 0.7)) {
         plan = await generatePlan(text);
-        const auditLog = await createAuditLog(text, plan);
-        auditLogId = auditLog.id;
       }
+      
+      const auditLog = await createAuditLog(intent, plan || undefined);
+      auditLogId = auditLog.id;
       
       // Phase 3: Debuggability & Inspection
       console.log("[Intent Engine] Input:", text);

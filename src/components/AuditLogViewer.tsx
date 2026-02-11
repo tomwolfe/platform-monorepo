@@ -37,7 +37,12 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({ logs }) => {
               <div className="bg-slate-50 p-4 border-b flex justify-between items-center">
                 <div>
                   <span className="text-xs font-mono text-slate-400 block uppercase tracking-wider">Session ID: {log.id}</span>
-                  <h3 className="font-bold text-slate-800">"{log.intent}"</h3>
+                  <h3 className="font-bold text-slate-800">"{typeof log.intent === 'string' ? log.intent : log.intent.rawText}"</h3>
+                  {typeof log.intent !== 'string' && (
+                    <span className="text-[10px] font-bold text-blue-600 uppercase tracking-tighter">
+                      Intent: {log.intent.type} ({Math.round(log.intent.confidence * 100)}%)
+                    </span>
+                  )}
                 </div>
                 <div className="text-right flex flex-col items-end gap-1">
                   <span className="text-xs text-slate-500 block">{new Date(log.timestamp).toLocaleString()}</span>
@@ -72,6 +77,19 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({ logs }) => {
                       )}
                     </p>
                     <p className="text-sm text-blue-900">{log.plan.summary}</p>
+                  </div>
+                )}
+
+                {log.intent_history && log.intent_history.length > 0 && (
+                  <div className="bg-slate-50 p-3 rounded border border-slate-100">
+                    <p className="text-xs font-bold text-slate-500 uppercase mb-1">Intent History</p>
+                    <div className="space-y-1">
+                      {log.intent_history.map((prev, idx) => (
+                        <p key={idx} className="text-[10px] text-slate-400">
+                          {idx + 1}. {prev.type} - "{prev.rawText}"
+                        </p>
+                      ))}
+                    </div>
                   </div>
                 )}
 

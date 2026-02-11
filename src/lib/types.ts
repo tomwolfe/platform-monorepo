@@ -1,9 +1,10 @@
-import { Plan } from "./schema";
+import { Plan, Intent } from "./schema";
 
 export interface AuditLog {
   id: string;
   timestamp: string;
-  intent: string;
+  intent: Intent;
+  intent_history?: Intent[]; // History of superseded intents
   plan?: Plan;
   userLocation?: { lat: number; lng: number };
   rawModelResponse?: string;

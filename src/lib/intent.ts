@@ -1,7 +1,10 @@
 import { generateObject } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
+import { z } from "zod";
 import { env } from "./config";
 import { Intent, IntentSchema } from "./schema";
+import { normalizeIntent } from "./normalization";
+import { resolveAmbiguity, IntentHypotheses } from "./ambiguity";
 
 const customOpenAI = createOpenAI({
   apiKey: env.LLM_API_KEY,
@@ -9,13 +12,14 @@ const customOpenAI = createOpenAI({
 });
 
 export interface IntentInferenceResult {
-  intent: Intent;
+  hypotheses: IntentHypotheses;
   rawResponse: string;
 }
 
+const CandidateSchema = IntentSchema.omit({ id: true, metadata: true, rawText: true });
+
 /**
- * Infer intent from raw text.
- * Uses generateObject to ensure strict enforcement of the Intent interface.
+ * Infer intent from raw text with ambiguity detection.
  */
 export async function inferIntent(text: string, avoidTools: string[] = []): Promise<IntentInferenceResult> {
   if (!text || text.trim().length === 0) {
@@ -28,25 +32,30 @@ export async function inferIntent(text: string, avoidTools: string[] = []): Prom
 
   const { object } = await generateObject({
     model: customOpenAI(env.LLM_MODEL),
-    schema: IntentSchema,
-    system: `Precision Intent Inference: Convert user text to JSON.
-Categories: SCHEDULE, SEARCH, ACTION, QUERY, PLANNING, UNKNOWN.
-Confidence < 0.7: Use 'clarification_needed' + question.
-PLANNING: Use for multi-step tasks.
+    schema: z.object({
+      candidates: z.array(CandidateSchema).min(1).max(3),
+    }),
+    system: `Precision Intent Inference. 
+Generate 1-3 possible interpretations if the request is ambiguous.
+Categories: SCHEDULE, SEARCH, ACTION, QUERY, PLANNING, ANALYSIS.
+Rules:
+- SCHEDULE: Needs 'action' and 'temporal_expression'.
+- SEARCH: Needs 'query' and 'scope'.
+- ACTION: Needs 'capability' and 'arguments'.
+- QUERY: Needs 'target_object'.
+- PLANNING: Needs 'goal'.
+- ANALYSIS: Needs 'context'.
+Refuse illegal requests by setting type to 'REFUSED'.
+Confidence must reflect certainty. If ambiguous, provide multiple candidates with lower confidence.
 ${avoidToolsContext}`,
     prompt: text,
   });
 
-  // Post-process for confidence threshold (Phase 2.2)
-  if (object.confidence < 0.7 && object.type !== 'clarification_needed') {
-    object.type = 'clarification_needed';
-    if (!object.question) {
-        object.question = "I'm not quite sure what you mean. Could you please provide more details?";
-    }
-  }
+  const normalizedIntents = object.candidates.map(c => normalizeIntent(c, text, env.LLM_MODEL));
+  const hypotheses = resolveAmbiguity(normalizedIntents);
 
   return {
-    intent: object,
+    hypotheses,
     rawResponse: JSON.stringify(object),
   };
 }

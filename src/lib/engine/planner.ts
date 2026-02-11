@@ -101,9 +101,12 @@ export interface PlannerResult {
 
 const PLANNING_PROMPT_TEMPLATE = `You are a planning system that converts user intents into executable step-by-step plans.
 
+## Capability Statement
+You are equipped with a suite of real-world tools. If a tool is listed in 'Available Tools', you HAVE the authority to use it. Do not tell the user you cannot perform an action if a corresponding tool is provided.
+
 ## Task
 Given a user intent, create a detailed execution plan with ordered steps. Each step specifies:
-- tool_name: The tool to execute (use generic tool names like "search", "book", "send")
+- tool_name: The tool to execute. Use the exact tool names defined in the registry. Precision is mandatory for execution.
 - parameters: Required parameters for the tool
 - dependencies: Step numbers (0-indexed) that must complete before this step
 - description: Human-readable description of what this step does
@@ -164,15 +167,14 @@ Output Plan:
 function buildPlanningPrompt(context: PlannerContext): string {
   const constraints = { ...DEFAULT_PLAN_CONSTRAINTS, ...context.constraints };
   
-  const toolsDescription = context.available_tools?.length
-    ? context.available_tools.map(t => 
-        `- ${t.name}${t.version ? ` (v${t.version})` : ""}: ${t.description}`
-      ).join("\n")
-    : "- search: Search for information\n- book: Book appointments/reservations\n- send: Send messages/emails\n- check: Check status/availability\n- create: Create records/events";
+  // Dynamic tool injection: Use exact tool names from registry
+  const toolList = context.available_tools?.length
+    ? context.available_tools.map(t => `- ${t.name}: ${t.description}`).join('\n')
+    : "NO_TOOLS_AVAILABLE";
 
   return PLANNING_PROMPT_TEMPLATE
     .replace("{max_steps}", String(constraints.max_steps))
-    .replace("{available_tools}", toolsDescription);
+    .replace("{available_tools}", toolList);
 }
 
 // ============================================================================

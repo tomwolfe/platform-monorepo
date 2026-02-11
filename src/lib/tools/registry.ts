@@ -5,20 +5,25 @@ import { add_calendar_event, AddCalendarEventSchema } from "./calendar";
 import { 
   mobility_request, 
   get_route_estimate, 
-  mobilityRequestToolDefinition,
-  routeEstimateToolDefinition
+  mobilityRequestToolParameters,
+  mobilityRequestReturnSchema,
+  routeEstimateToolParameters,
+  routeEstimateReturnSchema
 } from "./mobility";
 import { 
   reserve_table, 
-  reserveTableToolDefinition 
+  tableReservationToolParameters,
+  tableReservationReturnSchema
 } from "./booking";
 import { 
   send_comm, 
-  sendCommToolDefinition 
+  communicationToolParameters,
+  communicationReturnSchema
 } from "./communication";
 import { 
   get_weather, 
-  getWeatherToolDefinition 
+  weatherToolParameters,
+  weatherReturnSchema
 } from "./context";
 import { RestaurantResultSchema } from "../schema";
 
@@ -31,7 +36,7 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
   ["geocode_location", {
     name: "geocode_location",
     version: "1.0.0",
-    description: "Converts a city or place name to lat/lon coordinates.",
+    description: "Can perform real-time geocoding of any location. Converts city names, addresses, or place names to precise lat/lon coordinates with authority.",
     parameters: [
       {
         name: "location",
@@ -62,7 +67,7 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
   ["search_restaurant", {
     name: "search_restaurant",
     version: "1.0.0",
-    description: "Searches for highly-rated restaurants nearby or in a specific location.",
+    description: "Can perform real-time restaurant searches. Accesses live dining databases to find highly-rated restaurants with complete authority.",
     parameters: [
       {
         name: "cuisine",
@@ -107,7 +112,7 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
   ["add_calendar_event", {
     name: "add_calendar_event",
     version: "1.0.0",
-    description: "Adds an event to the calendar. Can accept multiple events for bulk scheduling.",
+    description: "Can perform real-time calendar event creation. Authorized to schedule single or multiple events with full calendar integration.",
     parameters: [
       {
         name: "events",
@@ -134,23 +139,78 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     execute: add_calendar_event
   }],
   ["mobility_request", {
-    ...mobilityRequestToolDefinition,
+    name: "mobility_request",
+    version: "1.0.0",
+    description: "Authorized to request vehicles from mobility services. Can perform real-time bookings with Uber, Tesla, and Lyft with full ride-hailing authority.",
+    parameters: mobilityRequestToolParameters,
+    return_schema: mobilityRequestReturnSchema,
+    timeout_ms: 30000,
+    requires_confirmation: true,
+    category: "external",
+    rate_limits: {
+      requests_per_minute: 10,
+      requests_per_hour: 100
+    },
     execute: mobility_request
   }],
   ["get_route_estimate", {
-    ...routeEstimateToolDefinition,
+    name: "get_route_estimate",
+    version: "1.0.0",
+    description: "Can access live routing data. Provides real-time drive time and distance estimates with traffic-aware calculations.",
+    parameters: routeEstimateToolParameters,
+    return_schema: routeEstimateReturnSchema,
+    timeout_ms: 15000,
+    requires_confirmation: false,
+    category: "external",
+    rate_limits: {
+      requests_per_minute: 60,
+      requests_per_hour: 1000
+    },
     execute: get_route_estimate
   }],
   ["reserve_table", {
-    ...reserveTableToolDefinition,
+    name: "reserve_table",
+    version: "1.0.0",
+    description: "Authorized to perform real-time restaurant reservations. Can finalize table bookings with confirmation codes and full reservation authority.",
+    parameters: tableReservationToolParameters,
+    return_schema: tableReservationReturnSchema,
+    timeout_ms: 30000,
+    requires_confirmation: true,
+    category: "action",
+    rate_limits: {
+      requests_per_minute: 10,
+      requests_per_hour: 100
+    },
     execute: reserve_table
   }],
   ["send_comm", {
-    ...sendCommToolDefinition,
+    name: "send_comm",
+    version: "1.0.0",
+    description: "Authorized to send communications. Can perform real-time delivery of emails and SMS messages with full messaging authority.",
+    parameters: communicationToolParameters,
+    return_schema: communicationReturnSchema,
+    timeout_ms: 30000,
+    requires_confirmation: true,
+    category: "communication",
+    rate_limits: {
+      requests_per_minute: 60,
+      requests_per_hour: 500
+    },
     execute: send_comm
   }],
   ["get_weather", {
-    ...getWeatherToolDefinition,
+    name: "get_weather",
+    version: "1.0.0",
+    description: "Can access live weather data. Provides real-time forecasts and current conditions with meteorological authority.",
+    parameters: weatherToolParameters,
+    return_schema: weatherReturnSchema,
+    timeout_ms: 15000,
+    requires_confirmation: false,
+    category: "data",
+    rate_limits: {
+      requests_per_minute: 60,
+      requests_per_hour: 1000
+    },
     execute: get_weather
   }]
 ]);

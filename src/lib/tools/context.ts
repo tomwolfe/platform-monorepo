@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { ToolDefinitionMetadata, ToolParameter } from "./types";
+import { UnifiedLocationSchema, normalizeLocation } from "./mobility";
 
 export const WeatherSchema = z.object({
-  location: z.string().describe("The city or location to get weather for."),
+  location: UnifiedLocationSchema.describe("The city or location to get weather for. Can be a string address OR an object with lat/lon coordinates."),
   date: z.string().optional().describe("The date for the weather forecast in ISO 8601 format.")
 });
 
@@ -11,8 +12,8 @@ export type WeatherParams = z.infer<typeof WeatherSchema>;
 export const weatherToolParameters: ToolParameter[] = [
   {
     name: "location",
-    type: "string",
-    description: "The city or location to get weather for.",
+    type: "object",
+    description: "The city or location to get weather for. Can be a string address OR an object with lat/lon coordinates: {lat: number, lon: number, address?: string}",
     required: true
   },
   {
@@ -38,7 +39,8 @@ export async function get_weather(params: WeatherParams): Promise<{ success: boo
   }
   
   const { location, date } = validated.data;
-  console.log(`Getting weather for ${location}${date ? ' on ' + date : ''}...`);
+  const normalizedLocation = normalizeLocation(location);
+  console.log(`Getting weather for ${normalizedLocation}${date ? ' on ' + date : ''}...`);
   
   try {
     // Placeholder for actual weather API integration
@@ -48,7 +50,7 @@ export async function get_weather(params: WeatherParams): Promise<{ success: boo
     return {
       success: true,
       result: {
-        location: location,
+        location: normalizedLocation,
         temperature_c: 22,
         condition: "Partly Cloudy",
         humidity: 45,

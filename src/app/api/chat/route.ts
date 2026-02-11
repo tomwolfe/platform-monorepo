@@ -2,6 +2,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { streamText, tool, stepCountIs, convertToModelMessages, generateObject } from "ai";
 import { z } from "zod";
 import { search_restaurant, add_calendar_event, geocode_location, getToolCapabilitiesPrompt, listTools } from "@/lib/tools";
+import { UnifiedLocationSchema } from "@/lib/tools/mobility";
 import { env } from "@/lib/config";
 import { inferIntent } from "@/lib/intent";
 import { Redis } from "@upstash/redis";
@@ -254,16 +255,8 @@ export async function POST(req: Request) {
         description: "Authorized to perform real-time ride requests from mobility services. Can book rides with Uber, Tesla, and Lyft with full ride-hailing authority.",
         inputSchema: z.object({
           service: z.enum(["uber", "lyft", "tesla"]).describe("The mobility service to use (uber, lyft, or tesla)."),
-          pickup_location: z.object({
-            lat: z.number(),
-            lon: z.number(),
-            address: z.string().optional(),
-          }).describe("The pickup location coordinates and optional address."),
-          dropoff_location: z.object({
-            lat: z.number(),
-            lon: z.number(),
-            address: z.string().optional(),
-          }).describe("The dropoff location coordinates and optional address."),
+          pickup_location: UnifiedLocationSchema.describe("The pickup location. Can be a string address OR an object with lat/lon coordinates."),
+          dropoff_location: UnifiedLocationSchema.describe("The dropoff location. Can be a string address OR an object with lat/lon coordinates."),
           ride_type: z.enum(["economy", "premium", "xl"]).optional().describe("The type of ride (economy, premium, or xl)."),
         }),
         execute: async (params: any) => {
@@ -278,14 +271,8 @@ export async function POST(req: Request) {
       get_route_estimate: tool({
         description: "Authorized to access real-time routing data. Provides live drive time and distance estimates with traffic-aware calculations.",
         inputSchema: z.object({
-          origin: z.object({
-            lat: z.number(),
-            lon: z.number(),
-          }).describe("The starting location coordinates."),
-          destination: z.object({
-            lat: z.number(),
-            lon: z.number(),
-          }).describe("The destination location coordinates."),
+          origin: UnifiedLocationSchema.describe("The starting location. Can be a string address OR an object with lat/lon coordinates."),
+          destination: UnifiedLocationSchema.describe("The destination location. Can be a string address OR an object with lat/lon coordinates."),
           mode: z.enum(["driving", "walking", "transit"]).optional().describe("The mode of transportation."),
         }),
         execute: async (params: any) => {
@@ -338,11 +325,9 @@ export async function POST(req: Request) {
       get_weather: tool({
         description: "Authorized to access real-time weather data. Provides live forecasts and current conditions with full meteorological authority.",
         inputSchema: z.object({
-          location: z.object({
-            lat: z.number(),
-            lon: z.number(),
-          }).describe("The location coordinates for weather lookup."),
-          type: z.enum(["current", "forecast"]).optional().describe("Whether to get current conditions or forecast."),
+          location: UnifiedLocationSchema.describe("The location for weather lookup. Can be a string address OR an object with lat/lon coordinates."),
+          date: z.string().optional().describe("Optional date for the weather forecast in ISO 8601 format."),
+          type: z.enum(["current", "forecast"]).optional().describe("Whether to get current conditions or forecast (legacy parameter)."),
         }),
         execute: async (params: any) => {
           console.log("Executing get_weather", params);

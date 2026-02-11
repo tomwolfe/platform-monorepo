@@ -39,7 +39,8 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
             tool_name: "book_restaurant_table",
             parameters: { 
               restaurant_name: "{{step_0.result[0].name}}", 
-              reservation_time: reservationTime,
+              date: reservationTime.split('T')[0],
+              time: reservationTime.split('T')[1].substring(0, 5),
               party_size: 2
             },
             requires_confirmation: true,
@@ -76,7 +77,8 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
             tool_name: "book_restaurant_table",
             parameters: { 
               restaurant_name: "{{step_0.result[0].name}}", 
-              reservation_time: new Date(Date.now() + 86400000).toISOString().split('T')[0] + "T19:00:00Z",
+              date: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+              time: "19:00",
               party_size: 2
             },
             requires_confirmation: true,

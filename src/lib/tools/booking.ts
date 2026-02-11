@@ -3,9 +3,13 @@ import { ToolDefinitionMetadata, ToolParameter } from "./types";
 
 export const TableReservationSchema = z.object({
   restaurant_name: z.string().describe("The name of the restaurant."),
+  restaurant_address: z.string().optional().describe("The address of the restaurant."),
+  date: z.string().describe("The date of the reservation (ISO 8601 format, e.g., '2026-02-11')."),
+  time: z.string().describe("The time of the reservation (e.g., '19:00')."),
   party_size: z.number().int().positive().describe("Number of people in the party."),
-  reservation_time: z.string().describe("The date and time of the reservation in ISO 8601 format."),
-  contact_phone: z.string().optional().describe("Contact phone number for the reservation.")
+  contact_name: z.string().optional().describe("The name for the reservation."),
+  contact_phone: z.string().optional().describe("Contact phone number for the reservation."),
+  special_requests: z.string().optional().describe("Any special requests for the reservation.")
 });
 
 export type TableReservationParams = z.infer<typeof TableReservationSchema>;
@@ -15,6 +19,7 @@ export const tableReservationReturnSchema = {
   confirmation_code: "string",
   restaurant: "string",
   time: "string",
+  date: "string",
   party_size: "number"
 };
 
@@ -23,11 +28,11 @@ import { geocode_location } from "./location_search";
 export async function reserve_table(params: TableReservationParams): Promise<{ success: boolean; result?: any; error?: string }> {
   const validated = TableReservationSchema.safeParse(params);
   if (!validated.success) {
-    return { success: false, error: "Invalid parameters: " + validated.error.message };
+    return { success: false, error: "Invalid parameters: " + JSON.stringify(validated.error.format()) };
   }
   
-  const { restaurant_name, party_size, reservation_time, contact_phone } = validated.data;
-  console.log(`Reserving table for ${party_size} at ${restaurant_name} for ${reservation_time}...`);
+  const { restaurant_name, party_size, date, time, contact_phone } = validated.data;
+  console.log(`Reserving table for ${party_size} at ${restaurant_name} on ${date} at ${time}...`);
   
   try {
     // Attempt to geocode the restaurant to make it feel more "functional"
@@ -44,9 +49,10 @@ export async function reserve_table(params: TableReservationParams): Promise<{ s
         confirmation_code: confirmationCode,
         restaurant: restaurant_name,
         restaurant_location: (geo.success && geo.result) ? geo.result : null,
-        time: reservation_time,
+        date: date,
+        time: time,
         party_size: party_size,
-        message: `Table for ${party_size} confirmed at ${restaurant_name}${locationInfo}.`
+        message: `Table for ${party_size} confirmed at ${restaurant_name} on ${date} at ${time}${locationInfo}.`
       }
     };
   } catch (error: any) {
@@ -62,11 +68,15 @@ export const reserveTableToolDefinition: ToolDefinitionMetadata = {
     type: "object",
     properties: {
       restaurant_name: { type: "string", description: "The name of the restaurant." },
-      party_size: { type: "number", description: "Number of people in the party." },
-      reservation_time: { type: "string", description: "The date and time of the reservation in ISO 8601 format." },
-      contact_phone: { type: "string", description: "Contact phone number for the reservation." }
+      restaurant_address: { type: "string", description: "The address of the restaurant." },
+      date: { type: "string", description: "The date of the reservation (ISO 8601 format)." },
+      time: { type: "string", description: "The time of the reservation." },
+      party_size: { type: "number", description: "Number of guests." },
+      contact_name: { type: "string", description: "The name for the reservation." },
+      contact_phone: { type: "string", description: "The contact phone for the reservation." },
+      special_requests: { type: "string", description: "Any special requests." }
     },
-    required: ["restaurant_name", "party_size", "reservation_time"]
+    required: ["restaurant_name", "date", "time", "party_size"]
   },
   return_schema: tableReservationReturnSchema,
   timeout_ms: 30000,

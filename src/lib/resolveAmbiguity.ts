@@ -5,7 +5,7 @@ export const REQUIRED_FIELDS_MAP: Record<string, string[]> = {
   SEARCH: ["query", "scope"],
   ACTION: ["capability", "arguments"],
   QUERY: ["target_object"],
-  PLANNING: ["goal"],
+  PLANNING: [],
   ANALYSIS: ["context"],
 };
 

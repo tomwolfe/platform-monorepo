@@ -29,7 +29,7 @@ import { RestaurantResultSchema } from "../schema";
 
 /**
  * Tool registry with complete ToolDefinition metadata for all tools.
- * Each tool is registered with its full definition including parameters,
+ * Each tool is registered with its full definition including inputSchema,
  * return schema, category, and confirmation requirements.
  */
 export const TOOLS: Map<string, ToolDefinition> = new Map([
@@ -37,20 +37,20 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     name: "geocode_location",
     version: "1.0.0",
     description: "Authorized to perform real-time geocoding of any location. Converts city names, addresses, or place names to precise lat/lon coordinates with full authority.",
-    parameters: [
-      {
-        name: "location",
-        type: "string",
-        description: "The city, neighborhood, or specific place name to geocode. Use 'nearby' for the user's current area.",
-        required: true
+    inputSchema: {
+      type: "object",
+      properties: {
+        location: {
+          type: "string",
+          description: "The city, neighborhood, or specific place name to geocode. Use 'nearby' for the user's current area."
+        },
+        userLocation: {
+          type: "object",
+          description: "The user's current GPS coordinates for biasing search results."
+        }
       },
-      {
-        name: "userLocation",
-        type: "object",
-        description: "The user's current GPS coordinates for biasing search results.",
-        required: false
-      }
-    ],
+      required: ["location"]
+    },
     return_schema: {
       lat: "number",
       lon: "number"
@@ -68,38 +68,31 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     name: "search_restaurant",
     version: "1.0.0",
     description: "Authorized to perform real-time restaurant searches. Accesses live dining databases to find highly-rated restaurants with complete authority.",
-    parameters: [
-      {
-        name: "cuisine",
-        type: "string",
-        description: "The type of cuisine to search for (e.g., 'Italian', 'Sushi', 'Burgers').",
-        required: false
-      },
-      {
-        name: "lat",
-        type: "number",
-        description: "Latitude for the search center.",
-        required: false
-      },
-      {
-        name: "lon",
-        type: "number",
-        description: "Longitude for the search center.",
-        required: false
-      },
-      {
-        name: "location",
-        type: "string",
-        description: "A text-based location (e.g., 'Soho, London') to search near if coordinates are not provided.",
-        required: false
-      },
-      {
-        name: "userLocation",
-        type: "object",
-        description: "The user's current GPS coordinates for proximity biasing.",
-        required: false
+    inputSchema: {
+      type: "object",
+      properties: {
+        cuisine: {
+          type: "string",
+          description: "The type of cuisine to search for (e.g., 'Italian', 'Sushi', 'Burgers')."
+        },
+        lat: {
+          type: "number",
+          description: "Latitude for the search center."
+        },
+        lon: {
+          type: "number",
+          description: "Longitude for the search center."
+        },
+        location: {
+          type: "string",
+          description: "A text-based location (e.g., 'Soho, London') to search near if coordinates are not provided."
+        },
+        userLocation: {
+          type: "object",
+          description: "The user's current GPS coordinates for proximity biasing."
+        }
       }
-    ],
+    },
     return_schema: {
       results: "array"
     },
@@ -113,14 +106,16 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     name: "add_calendar_event",
     version: "1.0.0",
     description: "Authorized to perform real-time calendar event creation. Can schedule single or multiple events with full calendar integration authority.",
-    parameters: [
-      {
-        name: "events",
-        type: "array",
-        description: "An array of one or more calendar events to schedule.",
-        required: true
-      }
-    ],
+    inputSchema: {
+      type: "object",
+      properties: {
+        events: {
+          type: "array",
+          description: "An array of one or more calendar events to schedule."
+        }
+      },
+      required: ["events"]
+    },
     return_schema: {
       status: "string",
       count: "number",
@@ -142,7 +137,33 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     name: "mobility_request",
     version: "1.0.0",
     description: "Authorized to perform real-time ride requests from mobility services. Can book rides with Uber, Tesla, and Lyft with full ride-hailing authority.",
-    parameters: mobilityRequestToolParameters,
+    inputSchema: {
+      type: "object",
+      properties: {
+        service: {
+          type: "string",
+          enum: ["uber", "tesla", "lyft"],
+          description: "The mobility service to use."
+        },
+        pickup_location: {
+          type: "object",
+          description: "The starting point for the ride. Can be a string address OR an object with lat/lon coordinates."
+        },
+        destination_location: {
+          type: "object",
+          description: "The destination for the ride."
+        },
+        dropoff_location: {
+          type: "object",
+          description: "Alias for destination_location."
+        },
+        ride_type: {
+          type: "string",
+          description: "The type of ride (e.g., 'UberX', 'Model S')."
+        }
+      },
+      required: ["service", "pickup_location"]
+    },
     return_schema: mobilityRequestReturnSchema,
     timeout_ms: 30000,
     requires_confirmation: true,
@@ -157,7 +178,26 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     name: "get_route_estimate",
     version: "1.0.0",
     description: "Authorized to access real-time routing data. Provides live drive time and distance estimates with traffic-aware calculations.",
-    parameters: routeEstimateToolParameters,
+    inputSchema: {
+      type: "object",
+      properties: {
+        origin: {
+          type: "object",
+          description: "The starting location."
+        },
+        destination: {
+          type: "object",
+          description: "The destination location."
+        },
+        travel_mode: {
+          type: "string",
+          enum: ["driving", "walking", "bicycling", "transit"],
+          default: "driving",
+          description: "The mode of travel."
+        }
+      },
+      required: ["origin", "destination"]
+    },
     return_schema: routeEstimateReturnSchema,
     timeout_ms: 15000,
     requires_confirmation: false,
@@ -172,7 +212,16 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     name: "reserve_table",
     version: "1.0.0",
     description: "Authorized to perform real-time restaurant reservations. Can finalize live table bookings with confirmation codes and full reservation authority.",
-    parameters: tableReservationToolParameters,
+    inputSchema: {
+      type: "object",
+      properties: {
+        restaurant_id: { type: "string", description: "The ID of the restaurant." },
+        time: { type: "string", description: "The reservation time (ISO format)." },
+        party_size: { type: "number", description: "Number of guests." },
+        name: { type: "string", description: "The name for the reservation." }
+      },
+      required: ["restaurant_id", "time", "party_size", "name"]
+    },
     return_schema: tableReservationReturnSchema,
     timeout_ms: 30000,
     requires_confirmation: true,
@@ -187,7 +236,15 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     name: "send_comm",
     version: "1.0.0",
     description: "Authorized to perform real-time communications. Can send live emails and SMS messages with full messaging authority.",
-    parameters: communicationToolParameters,
+    inputSchema: {
+      type: "object",
+      properties: {
+        to: { type: "string", description: "Recipient identifier." },
+        channel: { type: "string", enum: ["email", "sms"], description: "The communication channel." },
+        message: { type: "string", description: "The message content." }
+      },
+      required: ["to", "channel", "message"]
+    },
     return_schema: communicationReturnSchema,
     timeout_ms: 30000,
     requires_confirmation: true,
@@ -202,7 +259,13 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     name: "get_weather",
     version: "1.0.0",
     description: "Authorized to access real-time weather data. Provides live forecasts and current conditions with full meteorological authority.",
-    parameters: weatherToolParameters,
+    inputSchema: {
+      type: "object",
+      properties: {
+        location: { type: "string", description: "The location to get weather for." }
+      },
+      required: ["location"]
+    },
     return_schema: weatherReturnSchema,
     timeout_ms: 15000,
     requires_confirmation: false,
@@ -221,7 +284,7 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
 export function getToolDefinitions(): string {
   let definitions = "";
   TOOLS.forEach((tool, name) => {
-    const params = tool.parameters.map(p => p.name).join(", ");
+    const params = Object.keys(tool.inputSchema.properties).join(", ");
     definitions += `- ${name}(${params}): ${tool.description}\n`;
   });
   return definitions;

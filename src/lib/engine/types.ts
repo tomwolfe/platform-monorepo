@@ -202,7 +202,11 @@ export const ToolDefinitionSchema = z.object({
   name: z.string(),
   version: z.string(),
   description: z.string(),
-  parameters: z.array(ToolParameterSchema),
+  inputSchema: z.object({
+    type: z.literal("object"),
+    properties: z.record(z.string(), z.any()),
+    required: z.array(z.string()).optional(),
+  }),
   return_schema: z.record(z.string(), z.unknown()),
   timeout_ms: z.number().int().positive().default(30000),
   requires_confirmation: z.boolean().default(false),
@@ -214,6 +218,43 @@ export const ToolDefinitionSchema = z.object({
 });
 
 export type ToolDefinition = z.infer<typeof ToolDefinitionSchema>;
+
+// ============================================================================
+// CHECKPOINT SCHEMA
+// Durable execution state for MCP-compliant state machine
+// ============================================================================
+
+export const CheckpointStatusSchema = z.enum([
+  "pending",
+  "running",
+  "paused",
+  "completed",
+  "failed",
+]);
+
+export type CheckpointStatus = z.infer<typeof CheckpointStatusSchema>;
+
+export const CheckpointHistoryItemSchema = z.object({
+  role: z.enum(["user", "assistant", "tool"]),
+  content: z.string().optional(),
+  tool_call: z.unknown().optional(),
+  tool_result: z.unknown().optional(),
+  thought: z.string().optional(),
+  timestamp: z.string().datetime(),
+});
+
+export type CheckpointHistoryItem = z.infer<typeof CheckpointHistoryItemSchema>;
+
+export const CheckpointSchema = z.object({
+  intentId: z.string().uuid(),
+  cursor: z.number().int().nonnegative(),
+  history: z.array(CheckpointHistoryItemSchema),
+  status: CheckpointStatusSchema,
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  updated_at: z.string().datetime(),
+});
+
+export type Checkpoint = z.infer<typeof CheckpointSchema>;
 
 // ============================================================================
 // EXECUTION STATE SCHEMA

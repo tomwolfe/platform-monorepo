@@ -205,14 +205,16 @@ async function testToolTimeout(): Promise<void> {
     name: "slow_tool",
     version: "1.0.0",
     description: "A tool that takes too long",
-    parameters: [
-      {
-        name: "delay_ms",
-        type: "number",
-        description: "Delay in milliseconds",
-        required: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        delay_ms: {
+          type: "number",
+          description: "Delay in milliseconds",
+        },
       },
-    ],
+      required: ["delay_ms"],
+    },
     return_schema: { type: "object" },
     timeout_ms: 100, // 100ms timeout
     category: "calculation",
@@ -478,7 +480,10 @@ async function testRedisUnavailable(): Promise<void> {
       name: "simple_tool",
       version: "1.0.0",
       description: "Simple test tool",
-      parameters: [],
+      inputSchema: {
+        type: "object",
+        properties: {},
+      },
       return_schema: { type: "object" },
       timeout_ms: 1000,
       category: "calculation",
@@ -593,14 +598,16 @@ async function testAdditionalFailureScenarios(): Promise<void> {
       name: "param_tool",
       version: "1.0.0",
       description: "Tool with parameters",
-      parameters: [
-        {
-          name: "required_param",
-          type: "string",
-          description: "Required parameter",
-          required: true,
+      inputSchema: {
+        type: "object",
+        properties: {
+          required_param: {
+            type: "string",
+            description: "Required parameter",
+          },
         },
-      ],
+        required: ["required_param"],
+      },
       return_schema: { type: "object" },
       timeout_ms: 1000,
       category: "calculation",

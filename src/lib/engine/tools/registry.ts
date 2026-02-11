@@ -296,53 +296,46 @@ export class ToolRegistry {
     definition: ToolDefinition,
     parameters: Record<string, unknown>
   ): { valid: boolean; error?: string } {
+    const schema = definition.inputSchema;
+    
     // Check required parameters
-    for (const param of definition.parameters) {
-      if (param.required && !(param.name in parameters)) {
-        return {
-          valid: false,
-          error: `Missing required parameter: ${param.name}`,
-        };
+    if (schema.required) {
+      for (const requiredParam of schema.required) {
+        if (!(requiredParam in parameters)) {
+          return {
+            valid: false,
+            error: `Missing required parameter: ${requiredParam}`,
+          };
+        }
       }
     }
 
     // Validate provided parameters
     for (const [key, value] of Object.entries(parameters)) {
-      const paramDef = definition.parameters.find((p) => p.name === key);
+      const propDef = schema.properties[key];
 
-      if (!paramDef) {
+      if (!propDef) {
         return {
           valid: false,
           error: `Unknown parameter: ${key}`,
         };
       }
 
-      // Type validation
-      const typeValid = this.validateType(value, paramDef.type);
+      // Type validation (simplified)
+      const typeValid = this.validateType(value, propDef.type);
       if (!typeValid) {
         return {
           valid: false,
-          error: `Invalid type for parameter ${key}: expected ${paramDef.type}, got ${typeof value}`,
+          error: `Invalid type for parameter ${key}: expected ${propDef.type}, got ${typeof value}`,
         };
       }
 
       // Enum validation
-      if (paramDef.enum_values && Array.isArray(paramDef.enum_values)) {
-        if (!paramDef.enum_values.includes(String(value))) {
+      if (propDef.enum && Array.isArray(propDef.enum)) {
+        if (!propDef.enum.includes(value)) {
           return {
             valid: false,
-            error: `Invalid value for parameter ${key}: must be one of [${paramDef.enum_values.join(", ")}]`,
-          };
-        }
-      }
-
-      // Regex validation
-      if (paramDef.validation_regex && typeof value === "string") {
-        const regex = new RegExp(paramDef.validation_regex);
-        if (!regex.test(value)) {
-          return {
-            valid: false,
-            error: `Invalid format for parameter ${key}: does not match pattern ${paramDef.validation_regex}`,
+            error: `Invalid value for parameter ${key}: must be one of [${propDef.enum.join(", ")}]`,
           };
         }
       }
@@ -356,7 +349,7 @@ export class ToolRegistry {
    */
   private validateType(
     value: unknown,
-    expectedType: ToolParameter["type"]
+    expectedType: string
   ): boolean {
     switch (expectedType) {
       case "string":
@@ -370,7 +363,7 @@ export class ToolRegistry {
       case "array":
         return Array.isArray(value);
       default:
-        return false;
+        return true; // Unknown type, allow it
     }
   }
 
@@ -381,14 +374,6 @@ export class ToolRegistry {
     schema: Record<string, unknown>,
     output: unknown
   ): { valid: boolean; error?: string } {
-    // Basic schema validation - can be enhanced with Zod
-    if (schema.type === "object" && typeof output !== "object") {
-      return {
-        valid: false,
-        error: `Expected object output, got ${typeof output}`,
-      };
-    }
-
     return { valid: true };
   }
 
@@ -511,14 +496,16 @@ export const BuiltInTools: ToolDefinition[] = [
     name: "wait",
     version: "1.0.0",
     description: "Wait for a specified duration",
-    parameters: [
-      {
-        name: "duration_ms",
-        type: "number",
-        description: "Duration to wait in milliseconds",
-        required: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        duration_ms: {
+          type: "number",
+          description: "Duration to wait in milliseconds",
+        },
       },
-    ],
+      required: ["duration_ms"],
+    },
     return_schema: { type: "object", properties: { waited_ms: { type: "number" } } },
     timeout_ms: 60000,
     category: "calculation",
@@ -528,22 +515,21 @@ export const BuiltInTools: ToolDefinition[] = [
     name: "log",
     version: "1.0.0",
     description: "Log a message for debugging",
-    parameters: [
-      {
-        name: "message",
-        type: "string",
-        description: "Message to log",
-        required: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        message: {
+          type: "string",
+          description: "Message to log",
+        },
+        level: {
+          type: "string",
+          enum: ["debug", "info", "warn", "error"],
+          description: "Log level",
+        },
       },
-      {
-        name: "level",
-        type: "string",
-        description: "Log level",
-        required: false,
-        default_value: "info",
-        enum_values: ["debug", "info", "warn", "error"],
-      },
-    ],
+      required: ["message"],
+    },
     return_schema: { type: "object", properties: { logged: { type: "boolean" } } },
     timeout_ms: 5000,
     category: "data",

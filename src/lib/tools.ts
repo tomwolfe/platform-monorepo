@@ -11,7 +11,7 @@ export function getToolDefinitions(): string {
   const tools = listTools();
   let definitions = "";
   tools.forEach((tool) => {
-    const params = tool.parameters.map(p => p.name).join(", ");
+    const params = Object.keys(tool.inputSchema?.properties || {}).join(", ");
     definitions += `- ${tool.name}(${params}): ${tool.description}\n`;
   });
   return definitions;

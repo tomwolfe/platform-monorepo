@@ -5,24 +5,19 @@ import { add_calendar_event, AddCalendarEventSchema } from "./calendar";
 import { 
   mobility_request, 
   get_route_estimate, 
-  mobilityRequestToolParameters,
   mobilityRequestReturnSchema,
-  routeEstimateToolParameters,
   routeEstimateReturnSchema
 } from "./mobility";
 import { 
   reserve_table, 
-  tableReservationToolParameters,
   tableReservationReturnSchema
 } from "./booking";
 import { 
   send_comm, 
-  communicationToolParameters,
   communicationReturnSchema
 } from "./communication";
 import { 
   get_weather, 
-  weatherToolParameters,
   weatherReturnSchema
 } from "./context";
 import { RestaurantResultSchema } from "../schema";

@@ -1,5 +1,6 @@
 import { TOOLS, ToolDefinition } from "./tools";
 import { z } from "zod";
+import { McpAdapter } from "../infrastructure/McpManager";
 
 /**
  * Registers a new tool into the engine's registry at runtime.
@@ -10,27 +11,22 @@ import { z } from "zod";
 export function registerDynamicTool(definition: {
   name: string;
   description: string;
-  parameters: any; // JSON Schema
+  parameters: any; // Legacy parameters array or JSON Schema
   execute?: (params: any) => Promise<{ success: boolean; result?: any; error?: string }>;
   endpoint?: string;
 }) {
   const { name, description, parameters, execute, endpoint } = definition;
 
-  // In a production environment, we would use a library like `zod-to-json-schema` 
-  // and its reverse to convert the JSON schema to a Zod object.
-  // For this implementation, we'll create a generic Zod object validator 
-  // that ensures the parameters follow the provided JSON schema structure.
+  // Convert legacy parameters array to MCP-compliant inputSchema if necessary
+  const inputSchema = Array.isArray(parameters) 
+    ? McpAdapter.parametersToInputSchema(parameters)
+    : parameters;
   
   const dynamicTool: ToolDefinition = {
     name,
     version: "1.0.0",
     description,
-    parameters: parameters.map((p: any) => ({
-      name: p.name,
-      type: p.type || "string",
-      description: p.description || "",
-      required: p.required ?? false
-    })),
+    inputSchema,
     return_schema: { result: "any" },
     timeout_ms: 30000,
     requires_confirmation: false,

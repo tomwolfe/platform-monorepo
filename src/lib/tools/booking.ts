@@ -10,33 +10,6 @@ export const TableReservationSchema = z.object({
 
 export type TableReservationParams = z.infer<typeof TableReservationSchema>;
 
-export const tableReservationToolParameters: ToolParameter[] = [
-  {
-    name: "restaurant_name",
-    type: "string",
-    description: "The name of the restaurant.",
-    required: true
-  },
-  {
-    name: "party_size",
-    type: "number",
-    description: "Number of people in the party.",
-    required: true
-  },
-  {
-    name: "reservation_time",
-    type: "string",
-    description: "The date and time of the reservation in ISO 8601 format.",
-    required: true
-  },
-  {
-    name: "contact_phone",
-    type: "string",
-    description: "Contact phone number for the reservation.",
-    required: false
-  }
-];
-
 export const tableReservationReturnSchema = {
   status: "string",
   confirmation_code: "string",
@@ -81,7 +54,16 @@ export const reserveTableToolDefinition: ToolDefinitionMetadata = {
   name: "reserve_table",
   version: "1.0.0",
   description: "Reserves a table at a restaurant for a specified party size and time.",
-  parameters: tableReservationToolParameters,
+  inputSchema: {
+    type: "object",
+    properties: {
+      restaurant_name: { type: "string", description: "The name of the restaurant." },
+      party_size: { type: "number", description: "Number of people in the party." },
+      reservation_time: { type: "string", description: "The date and time of the reservation in ISO 8601 format." },
+      contact_phone: { type: "string", description: "Contact phone number for the reservation." }
+    },
+    required: ["restaurant_name", "party_size", "reservation_time"]
+  },
   return_schema: tableReservationReturnSchema,
   timeout_ms: 30000,
   requires_confirmation: true,

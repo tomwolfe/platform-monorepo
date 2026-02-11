@@ -10,34 +10,6 @@ export const CommunicationSchema = z.object({
 
 export type CommunicationParams = z.infer<typeof CommunicationSchema>;
 
-export const communicationToolParameters: ToolParameter[] = [
-  {
-    name: "recipient",
-    type: "string",
-    description: "The email address or phone number of the recipient.",
-    required: true
-  },
-  {
-    name: "channel",
-    type: "string",
-    description: "The communication channel to use.",
-    required: true,
-    enum_values: ["email", "sms"]
-  },
-  {
-    name: "message",
-    type: "string",
-    description: "The content of the message.",
-    required: true
-  },
-  {
-    name: "subject",
-    type: "string",
-    description: "The subject of the email (ignored for SMS).",
-    required: false
-  }
-];
-
 export const communicationReturnSchema = {
   status: "string",
   channel: "string",
@@ -77,7 +49,16 @@ export const sendCommToolDefinition: ToolDefinitionMetadata = {
   name: "send_comm",
   version: "1.0.0",
   description: "Sends communication via email or SMS to a specified recipient.",
-  parameters: communicationToolParameters,
+  inputSchema: {
+    type: "object",
+    properties: {
+      recipient: { type: "string", description: "The email address or phone number of the recipient." },
+      channel: { type: "string", enum: ["email", "sms"], description: "The communication channel to use." },
+      message: { type: "string", description: "The content of the message." },
+      subject: { type: "string", description: "The subject of the email (ignored for SMS)." }
+    },
+    required: ["recipient", "channel", "message"]
+  },
   return_schema: communicationReturnSchema,
   timeout_ms: 30000,
   requires_confirmation: true,

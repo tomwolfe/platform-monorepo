@@ -53,41 +53,6 @@ export const RouteEstimateSchema = z.object({
 export type MobilityRequestParams = z.infer<typeof MobilityRequestSchema>;
 export type RouteEstimateParams = z.infer<typeof RouteEstimateSchema>;
 
-// Parameters for mobility_request tool
-export const mobilityRequestToolParameters: ToolParameter[] = [
-  {
-    name: "service",
-    type: "string",
-    description: "The mobility service to use.",
-    required: true,
-    enum_values: ["uber", "tesla", "lyft"]
-  },
-  {
-    name: "pickup_location",
-    type: "object",
-    description: "The starting point for the ride. Can be a string address OR an object with lat/lon coordinates: {lat: number, lon: number, address?: string}",
-    required: true
-  },
-  {
-    name: "destination_location",
-    type: "object",
-    description: "The destination for the ride. Can be a string address OR an object with lat/lon coordinates: {lat: number, lon: number, address?: string}. Exactly one of destination_location or dropoff_location must be provided.",
-    required: false
-  },
-  {
-    name: "dropoff_location",
-    type: "object",
-    description: "Alias for destination_location. Alternative parameter name accepted for flexibility. Exactly one of destination_location or dropoff_location must be provided.",
-    required: false
-  },
-  {
-    name: "ride_type",
-    type: "string",
-    description: "The type of ride (e.g., 'UberX', 'Model S').",
-    required: false
-  }
-];
-
 // Return schema for mobility_request tool
 export const mobilityRequestReturnSchema = {
   status: "string",
@@ -96,30 +61,6 @@ export const mobilityRequestReturnSchema = {
   destination: "string",
   estimated_arrival: "string"
 };
-
-// Parameters for get_route_estimate tool
-export const routeEstimateToolParameters: ToolParameter[] = [
-  {
-    name: "origin",
-    type: "object",
-    description: "The starting location. Can be a string address OR an object with lat/lon coordinates: {lat: number, lon: number, address?: string}",
-    required: true
-  },
-  {
-    name: "destination",
-    type: "object",
-    description: "The destination location. Can be a string address OR an object with lat/lon coordinates: {lat: number, lon: number, address?: string}",
-    required: true
-  },
-  {
-    name: "travel_mode",
-    type: "string",
-    description: "The mode of travel.",
-    required: false,
-    default_value: "driving",
-    enum_values: ["driving", "walking", "bicycling", "transit"]
-  }
-];
 
 // Return schema for get_route_estimate tool
 export const routeEstimateReturnSchema = {
@@ -206,7 +147,17 @@ export const mobilityRequestToolDefinition: ToolDefinitionMetadata = {
   name: "mobility_request",
   version: "1.0.0",
   description: "Requests a ride from a mobility service (Uber, Tesla, Lyft) from pickup to destination.",
-  parameters: mobilityRequestToolParameters,
+  inputSchema: {
+    type: "object",
+    properties: {
+      service: { type: "string", enum: ["uber", "tesla", "lyft"], description: "The mobility service to use." },
+      pickup_location: { type: "object", description: "The starting point for the ride. Can be a string address OR an object with lat/lon coordinates." },
+      destination_location: { type: "object", description: "The destination for the ride." },
+      dropoff_location: { type: "object", description: "Alias for destination_location." },
+      ride_type: { type: "string", description: "The type of ride (e.g., 'UberX', 'Model S')." }
+    },
+    required: ["service", "pickup_location"]
+  },
   return_schema: mobilityRequestReturnSchema,
   timeout_ms: 30000,
   requires_confirmation: true,
@@ -221,7 +172,15 @@ export const routeEstimateToolDefinition: ToolDefinitionMetadata = {
   name: "get_route_estimate",
   version: "1.0.0",
   description: "Gets drive time and distance estimates between two locations for various travel modes.",
-  parameters: routeEstimateToolParameters,
+  inputSchema: {
+    type: "object",
+    properties: {
+      origin: { type: "object", description: "The starting location. Can be a string address OR an object with lat/lon coordinates." },
+      destination: { type: "object", description: "The destination location. Can be a string address OR an object with lat/lon coordinates." },
+      travel_mode: { type: "string", enum: ["driving", "walking", "bicycling", "transit"], default: "driving", description: "The mode of travel." }
+    },
+    required: ["origin", "destination"]
+  },
   return_schema: routeEstimateReturnSchema,
   timeout_ms: 15000,
   requires_confirmation: false,

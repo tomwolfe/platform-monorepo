@@ -9,21 +9,6 @@ export const WeatherSchema = z.object({
 
 export type WeatherParams = z.infer<typeof WeatherSchema>;
 
-export const weatherToolParameters: ToolParameter[] = [
-  {
-    name: "location",
-    type: "object",
-    description: "The city or location to get weather for. Can be a string address OR an object with lat/lon coordinates: {lat: number, lon: number, address?: string}",
-    required: true
-  },
-  {
-    name: "date",
-    type: "string",
-    description: "The date for the weather forecast in ISO 8601 format.",
-    required: false
-  }
-];
-
 export const weatherReturnSchema = {
   location: "string",
   temperature_c: "number",
@@ -66,7 +51,17 @@ export const getWeatherToolDefinition: ToolDefinitionMetadata = {
   name: "get_weather",
   version: "1.0.0",
   description: "Gets weather forecast for a specific location and optional date for temporal planning context.",
-  parameters: weatherToolParameters,
+  inputSchema: {
+    type: "object",
+    properties: {
+      location: { 
+        type: "object", 
+        description: "The city or location to get weather for. Can be a string address OR an object with lat/lon coordinates: {lat: number, lon: number, address?: string}" 
+      },
+      date: { type: "string", description: "The date for the weather forecast in ISO 8601 format." }
+    },
+    required: ["location"]
+  },
   return_schema: weatherReturnSchema,
   timeout_ms: 15000,
   requires_confirmation: false,

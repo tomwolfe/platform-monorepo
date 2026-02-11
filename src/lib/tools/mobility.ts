@@ -1,16 +1,46 @@
 import { z } from "zod";
 import { ToolDefinitionMetadata, ToolParameter } from "./types";
 
+/**
+ * Unified Location Schema - Accepts both string addresses and coordinate objects
+ * This schema handles the flexibility needed for LLM-generated location data
+ */
+export const UnifiedLocationSchema = z.union([
+  z.string().describe("A string address or location name (e.g., '123 Main St', 'Airport', 'Downtown')"),
+  z.object({
+    lat: z.number().describe("Latitude coordinate"),
+    lon: z.number().describe("Longitude coordinate"),
+    address: z.string().optional().describe("Optional human-readable address")
+  }).describe("A coordinate object with lat/lon and optional address")
+]);
+
+export type UnifiedLocation = z.infer<typeof UnifiedLocationSchema>;
+
+/**
+ * Helper function to normalize unified location to string format
+ */
+export function normalizeLocation(location: UnifiedLocation): string {
+  if (typeof location === "string") {
+    return location;
+  }
+  // Convert coordinate object to string format
+  if (location.address) {
+    return `${location.address} (${location.lat}, ${location.lon})`;
+  }
+  return `${location.lat}, ${location.lon}`;
+}
+
 export const MobilityRequestSchema = z.object({
   service: z.enum(["uber", "tesla", "lyft"]).describe("The mobility service to use."),
-  pickup_location: z.string().describe("The starting point for the ride."),
-  destination_location: z.string().describe("The destination for the ride."),
+  pickup_location: UnifiedLocationSchema.describe("The starting point for the ride (string address or coordinate object with lat/lon)."),
+  destination_location: UnifiedLocationSchema.describe("The destination for the ride (string address or coordinate object with lat/lon)."),
+  dropoff_location: UnifiedLocationSchema.optional().describe("Alias for destination_location. Use this if the LLM provides dropoff_location instead of destination_location."),
   ride_type: z.string().optional().describe("The type of ride (e.g., 'UberX', 'Model S').")
 });
 
 export const RouteEstimateSchema = z.object({
-  origin: z.string().describe("The starting location."),
-  destination: z.string().describe("The destination location."),
+  origin: UnifiedLocationSchema.describe("The starting location (string address or coordinate object with lat/lon)."),
+  destination: UnifiedLocationSchema.describe("The destination location (string address or coordinate object with lat/lon)."),
   travel_mode: z.enum(["driving", "walking", "bicycling", "transit"]).default("driving").describe("The mode of travel.")
 });
 
@@ -28,15 +58,21 @@ export const mobilityRequestToolParameters: ToolParameter[] = [
   },
   {
     name: "pickup_location",
-    type: "string",
-    description: "The starting point for the ride.",
+    type: "object",
+    description: "The starting point for the ride. Can be a string address OR an object with lat/lon coordinates: {lat: number, lon: number, address?: string}",
     required: true
   },
   {
     name: "destination_location",
-    type: "string",
-    description: "The destination for the ride.",
+    type: "object",
+    description: "The destination for the ride. Can be a string address OR an object with lat/lon coordinates: {lat: number, lon: number, address?: string}",
     required: true
+  },
+  {
+    name: "dropoff_location",
+    type: "object",
+    description: "Alias for destination_location. Alternative parameter name accepted for flexibility.",
+    required: false
   },
   {
     name: "ride_type",
@@ -59,14 +95,14 @@ export const mobilityRequestReturnSchema = {
 export const routeEstimateToolParameters: ToolParameter[] = [
   {
     name: "origin",
-    type: "string",
-    description: "The starting location.",
+    type: "object",
+    description: "The starting location. Can be a string address OR an object with lat/lon coordinates: {lat: number, lon: number, address?: string}",
     required: true
   },
   {
     name: "destination",
-    type: "string",
-    description: "The destination location.",
+    type: "object",
+    description: "The destination location. Can be a string address OR an object with lat/lon coordinates: {lat: number, lon: number, address?: string}",
     required: true
   },
   {
@@ -93,22 +129,33 @@ export async function mobility_request(params: MobilityRequestParams): Promise<{
   if (!validated.success) {
     return { success: false, error: "Invalid parameters: " + validated.error.message };
   }
-  
-  const { service, pickup_location, destination_location, ride_type } = validated.data;
-  console.log(`Requesting ${service} from ${pickup_location} to ${destination_location}...`);
-  
+
+  const { service, pickup_location, destination_location, dropoff_location, ride_type } = validated.data;
+
+  // Use dropoff_location as fallback if destination_location is not provided
+  const finalDestination = destination_location || dropoff_location;
+  if (!finalDestination) {
+    return { success: false, error: "Either destination_location or dropoff_location must be provided" };
+  }
+
+  // Normalize locations to string format for API compatibility
+  const normalizedPickup = normalizeLocation(pickup_location);
+  const normalizedDestination = normalizeLocation(finalDestination);
+
+  console.log(`Requesting ${service} from ${normalizedPickup} to ${normalizedDestination}...`);
+
   try {
     // Placeholder for actual mobility API integration
     // In production, this would integrate with Uber API, Tesla API, etc.
     // const apiKey = process.env.MOBILITY_API_KEY; // Placeholder for API key
-    
+
     return {
       success: true,
       result: {
         status: "requested",
         service: service,
-        pickup: pickup_location,
-        destination: destination_location,
+        pickup: normalizedPickup,
+        destination: normalizedDestination,
         estimated_arrival: new Date(Date.now() + 10 * 60 * 1000).toISOString()
       }
     };
@@ -122,24 +169,29 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
   if (!validated.success) {
     return { success: false, error: "Invalid parameters: " + validated.error.message };
   }
-  
+
   const { origin, destination, travel_mode } = validated.data;
-  console.log(`Getting route estimate from ${origin} to ${destination} via ${travel_mode}...`);
-  
+
+  // Normalize locations to string format for API compatibility
+  const normalizedOrigin = normalizeLocation(origin);
+  const normalizedDestination = normalizeLocation(destination);
+
+  console.log(`Getting route estimate from ${normalizedOrigin} to ${normalizedDestination} via ${travel_mode}...`);
+
   try {
     // Placeholder for actual routing API integration
     // In production, this would integrate with Google Maps API, Mapbox, etc.
     // const apiKey = process.env.ROUTING_API_KEY; // Placeholder for API key
-    
+
     // Simulated response based on travel mode
     const distanceMultiplier = travel_mode === "walking" ? 1 : travel_mode === "bicycling" ? 1 : 1;
     const durationMultiplier = travel_mode === "walking" ? 12 : travel_mode === "bicycling" ? 4 : travel_mode === "transit" ? 2 : 1.5;
-    
+
     return {
       success: true,
       result: {
-        origin: origin,
-        destination: destination,
+        origin: normalizedOrigin,
+        destination: normalizedDestination,
         distance_km: parseFloat((12.5 * distanceMultiplier).toFixed(1)),
         duration_minutes: Math.round(25 * durationMultiplier),
         traffic_status: travel_mode === "driving" ? "moderate" : "n/a"

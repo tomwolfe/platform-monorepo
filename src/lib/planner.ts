@@ -85,6 +85,13 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
           3. Example: If Step 0 is \`geocode_location\`, Step 1 should use \`{{step_0.result.lat}}\` and \`{{step_0.result.lon}}\` for its coordinates.
           4. Example: If Step 1 is \`search_restaurant\`, Step 2 (\`add_calendar_event\`) should use \`{{step_1.result[0].name}}\` for \`restaurant_name\` if a specific restaurant selection is implied.
 
+          Location Parameter Guidelines:
+          1. Locations can be provided as either a string address (e.g., "123 Main St", "Airport", "Downtown") OR as a coordinate object with lat/lon: {lat: number, lon: number, address?: string}.
+          2. For mobility_request: pickup_location and destination_location accept both formats.
+          3. For get_route_estimate: origin and destination accept both formats.
+          4. Use coordinate objects when you have precise coordinates from previous steps (e.g., from geocode_location).
+          5. Use string addresses when the user provides a location name or address.
+
           Dinner Planning Rules:
           1. Restaurant search and user confirmation MUST precede calendar event creation.
           2. Always assume a 2-hour duration for dinner events.

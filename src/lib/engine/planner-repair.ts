@@ -32,7 +32,7 @@ ${error.message}
 ${error.details ? `Details: ${JSON.stringify(error.details)}` : ""}
 
 Please correct the plan and ensure it strictly follows the schema and constraints.
-Original Intent: ${intent.raw_input}
+Original Intent: ${intent.rawText}
 Parameters: ${JSON.stringify(intent.parameters)}`;
 
     // We call generatePlan again but we need a way to pass the repair prompt.

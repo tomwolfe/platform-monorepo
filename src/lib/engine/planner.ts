@@ -410,7 +410,7 @@ export async function generatePlan(
     const memory = getMemoryClient();
     const recentIntents = await memory.getRecentSuccessfulIntents(3);
     const contextHistory = recentIntents.map(s => ({
-      input: s.intent?.raw_input,
+      input: s.intent?.rawText,
       summary: s.plan?.summary,
       status: s.status
     }));
@@ -419,7 +419,7 @@ export async function generatePlan(
     const basePrompt = JSON.stringify({
       intent_type: intent.type,
       parameters: intent.parameters,
-      raw_input: intent.raw_input,
+      rawText: intent.rawText,
       explanation: intent.explanation,
       recent_successful_history: contextHistory,
     });

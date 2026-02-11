@@ -3,6 +3,7 @@ import { inferIntent } from "@/lib/intent";
 import { generatePlan } from "@/lib/planner";
 import { createAuditLog } from "@/lib/audit";
 import { getPlanWithAvoidance } from "@/app/actions";
+import { getMemoryClient } from "@/lib/engine/memory";
 import { z } from "zod";
 
 export const runtime = "edge";
@@ -28,7 +29,15 @@ export async function POST(req: NextRequest) {
 
     try {
       const { avoidTools } = await getPlanWithAvoidance(text, userId);
-      const { hypotheses, rawResponse } = await inferIntent(text);
+      
+      // Fetch history for contextual resolution
+      const memory = getMemoryClient();
+      const recentStates = await memory.getRecentSuccessfulIntents(3);
+      const history = recentStates
+        .map(s => s.intent)
+        .filter((i): i is any => i !== undefined);
+
+      const { hypotheses, rawResponse } = await inferIntent(text, avoidTools, history);
       const intent = hypotheses.primary;
       
       let plan = null;
@@ -58,6 +67,7 @@ export async function POST(req: NextRequest) {
           timestamp: new Date().toISOString(),
           model: "glm-4.7-flash",
           rawResponse,
+          historyCount: history.length
         }
       });
     } catch (error: any) {

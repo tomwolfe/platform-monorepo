@@ -135,7 +135,7 @@ export class ExecutionTracer {
     return this.addEntry({
       phase: "intent",
       event: "intent_parsed",
-      input: { raw_input: input },
+      input: { rawText: input },
       output,
       latency_ms: latencyMs,
       model_id: modelId,

@@ -23,13 +23,23 @@ const CandidateSchema = IntentSchema.omit({ id: true, metadata: true, rawText: t
 /**
  * Infer intent from raw text with ambiguity detection.
  */
-export async function inferIntent(text: string, avoidTools: string[] = []): Promise<IntentInferenceResult> {
+export async function inferIntent(
+  text: string, 
+  avoidTools: string[] = [],
+  history: Intent[] = []
+): Promise<IntentInferenceResult> {
   if (!text || text.trim().length === 0) {
     throw new Error("Input text is empty");
   }
 
   const avoidToolsContext = avoidTools.length > 0 
     ? `\nPREVIOUSLY FAILED TOOLS (AVOID IF POSSIBLE): ${avoidTools.join(", ")}`
+    : "";
+
+  const historyContext = history.length > 0
+    ? `\n\n### RECENT HISTORY (Last ${history.length} successful intents):
+${history.map((h, i) => `${i+1}. TYPE: ${h.type} | PARAMS: ${JSON.stringify(h.parameters)} | TEXT: "${h.rawText}"`).join("\n")}
+Use this history to resolve pronouns ("it", "then", "there") or to understand the context of a follow-up request.`
     : "";
 
   const { object } = await generateObject({
@@ -49,13 +59,18 @@ Objective: Eliminate LLM Jitter. Map user input to exactly ONE of the 6 core Int
 6. ANALYSIS: Synthesis, reasoning, or summarization over context.
 
 ### NORMALIZATION PROTOCOL
-- VERB COLLAPSING: Map all synonyms to their ontological root. Treat "Book", "Schedule", "Set up", "Arrange", and "Organize" as identical if they refer to a temporal event -> Map to SCHEDULE.
-- DETERMINISTIC PARAMETERS: Use standard keys (e.g., 'time', 'topic', 'target', 'query'). Do not invent parameter names.
+- VERB COLLAPSING: Map all synonyms to their ontological root.
+- DETERMINISTIC PARAMETERS: Use standard keys (e.g., 'time', 'topic', 'target', 'query'). ISO 8601 for dates.
 - CoT VERIFICATION: You MUST use the 'explanation' field for a Chain-of-Thought analysis:
-  1. IDENTIFY: Literal action (e.g., "Book a call").
-  2. MAP: Semantic root to Ontology (e.g., Temporal Commitment -> SCHEDULE).
+  1. IDENTIFY: Literal action.
+  2. MAP: Semantic root to Ontology.
   3. EXTRACT: Entities into standard keys.
   4. VALIDATE: Ensure required parameters are present.
+
+### CONTEXTUAL RESOLUTION (MEMORY)
+- Resolve pronouns ("it", "them", "that") using the RECENT HISTORY provided.
+- If the user says "do it", refer to the most recent ACTION or SCHEDULE.
+- If the user says "where is it", refer to the target of the most recent SEARCH or QUERY.${historyContext}
 
 ### "BOOK IT" DEFENSE
 - Assign confidence based on semantic clarity and parameter completeness.

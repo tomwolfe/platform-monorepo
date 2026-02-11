@@ -57,11 +57,13 @@ export type IntentMetadata = z.infer<typeof IntentMetadataSchema>;
 
 export const IntentSchema = z.object({
   id: z.string().uuid(),
+  parent_intent_id: z.string().uuid().optional(), // Link to the intent this one supersedes
   type: IntentTypeSchema,
   confidence: z.number().min(0).max(1),
   parameters: z.record(z.string(), z.unknown()),
-  raw_input: z.string(),
-  explanation: z.string().optional(),
+  rawText: z.string(),
+  explanation: z.string().optional(), // Why this intent was chosen
+  hash: z.string().optional(), // SHA-256 hash for immutable linking
   metadata: IntentMetadataSchema,
   requires_clarification: z.boolean().default(false),
   clarification_prompt: z.string().optional(),

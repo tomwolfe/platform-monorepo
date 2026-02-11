@@ -83,6 +83,18 @@ export function normalizeIntent(
        }
        intent.parameters.action = action;
      }
+
+     // Deep Semantic Validation: Check if the date is in the past
+     if (intent.parameters.temporal_expression) {
+       const date = new Date(intent.parameters.temporal_expression);
+       if (!isNaN(date.getTime())) {
+         const now = new Date();
+         if (date < now) {
+           intent.confidence *= 0.5;
+           intent.explanation = (intent.explanation || "") + " [Semantic Alert: Requested time is in the past]";
+         }
+       }
+     }
   }
 
   // 6. Transactional Argument Check: Penalize confidence if booking/payment lacks target or amount

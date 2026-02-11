@@ -36,7 +36,7 @@ async function runFanOutTest() {
     id: "test-intent-id",
     type: "QUERY",
     parameters: { location: ["Tokyo", "London", "NY"] },
-    raw_input: "What is the weather in Tokyo, London, and NY?",
+    rawText: "What is the weather in Tokyo, London, and NY?",
     metadata: { version: "1.0.0", timestamp: new Date().toISOString() }
   };
 

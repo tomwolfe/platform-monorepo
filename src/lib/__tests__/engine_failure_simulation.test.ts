@@ -180,7 +180,7 @@ async function testSchemaFailure(): Promise<void> {
       const invalidIntent = {
         // Missing id, type, confidence
         parameters: {},
-        raw_input: "test",
+        rawText: "test",
         metadata: {},
       };
       // Would fail IntentSchema.parse()

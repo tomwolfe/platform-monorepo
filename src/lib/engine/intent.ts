@@ -189,7 +189,7 @@ export async function parseIntent(
       type: parsedIntent.type,
       confidence: parsedIntent.confidence,
       parameters: parsedIntent.parameters,
-      raw_input: input.trim(),
+      rawText: input.trim(),
       explanation: parsedIntent.explanation,
       metadata: IntentMetadataSchema.parse({
         version: "1.0.0",
@@ -210,7 +210,7 @@ export async function parseIntent(
       timestamp,
       phase: "intent",
       event: "intent_parsed",
-      input: { raw_input: input.trim(), context },
+      input: { rawText: input.trim(), context },
       output: intent,
       latency_ms: latencyMs,
       model_id: llmResponse.model_id,

@@ -10,7 +10,7 @@ async function testPlannerFanOut() {
     type: "QUERY",
     confidence: 0.98,
     parameters: { location: ["Tokyo", "London", "NY"] },
-    raw_input: "What is the weather in Tokyo, London, and NY?",
+    rawText: "What is the weather in Tokyo, London, and NY?",
     explanation: "User is asking for weather information for multiple locations",
     metadata: {
       version: "1.0.0",

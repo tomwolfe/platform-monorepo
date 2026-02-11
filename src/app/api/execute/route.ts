@@ -340,7 +340,7 @@ async function orchestrateExecution(
       // Phase 3: Session Summary Generation
       try {
         const sessionSummaryPrompt = `Generate a 1-sentence summary of the user's progress based on this execution:
-  Intent: ${parseResult.intent.raw_input}
+  Intent: ${parseResult.intent.rawText}
   Result: ${executionResult.summary || "In progress"}
   Status: ${executionResult.state.status}`;
 

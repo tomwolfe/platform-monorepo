@@ -214,12 +214,17 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
         restaurant_address: { type: "string", description: "The address of the restaurant." },
         date: { type: "string", description: "The date of the reservation (ISO 8601 format)." },
         time: { type: "string", description: "The time of the reservation." },
+        reservation_time: { type: "string", description: "Alternative field for reservation time." },
         party_size: { type: "number", description: "Number of guests." },
         contact_name: { type: "string", description: "The name for the reservation." },
         contact_phone: { type: "string", description: "The contact phone for the reservation." },
         special_requests: { type: "string", description: "Any special requests." }
       },
-      required: ["restaurant_name", "date", "time", "party_size"]
+      required: ["restaurant_name", "date", "party_size"],
+      anyOf: [
+        { required: ["time"] },
+        { required: ["reservation_time"] }
+      ]
     },
     return_schema: tableReservationReturnSchema,
     timeout_ms: 30000,

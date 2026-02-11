@@ -5,12 +5,14 @@ export const TableReservationSchema = z.object({
   restaurant_name: z.string().describe("The name of the restaurant."),
   restaurant_address: z.string().optional().describe("The address of the restaurant."),
   date: z.string().describe("The date of the reservation (ISO 8601 format, e.g., '2026-02-11')."),
-  time: z.string().describe("The time of the reservation (e.g., '19:00')."),
   party_size: z.number().int().positive().describe("Number of people in the party."),
   contact_name: z.string().optional().describe("The name for the reservation."),
   contact_phone: z.string().optional().describe("Contact phone number for the reservation."),
   special_requests: z.string().optional().describe("Any special requests for the reservation.")
-});
+}).and(z.union([
+  z.object({ time: z.string().describe("The time of the reservation (e.g., '19:00').") }),
+  z.object({ reservation_time: z.string().describe("The time of the reservation (e.g., '19:00').") })
+]));
 
 export type TableReservationParams = z.infer<typeof TableReservationSchema>;
 
@@ -31,7 +33,8 @@ export async function reserve_table(params: TableReservationParams): Promise<{ s
     return { success: false, error: "Invalid parameters: " + JSON.stringify(validated.error.format()) };
   }
   
-  const { restaurant_name, party_size, date, time, contact_phone } = validated.data;
+  const { restaurant_name, party_size, date, contact_phone } = validated.data;
+  const time = 'time' in validated.data ? validated.data.time : (validated.data as any).reservation_time;
   console.log(`Reserving table for ${party_size} at ${restaurant_name} on ${date} at ${time}...`);
   
   try {
@@ -71,12 +74,17 @@ export const reserveTableToolDefinition: ToolDefinitionMetadata = {
       restaurant_address: { type: "string", description: "The address of the restaurant." },
       date: { type: "string", description: "The date of the reservation (ISO 8601 format)." },
       time: { type: "string", description: "The time of the reservation." },
+      reservation_time: { type: "string", description: "Alternative field for reservation time." },
       party_size: { type: "number", description: "Number of guests." },
       contact_name: { type: "string", description: "The name for the reservation." },
       contact_phone: { type: "string", description: "The contact phone for the reservation." },
       special_requests: { type: "string", description: "Any special requests." }
     },
-    required: ["restaurant_name", "date", "time", "party_size"]
+    required: ["restaurant_name", "date", "party_size"],
+    anyOf: [
+      { required: ["time"] },
+      { required: ["reservation_time"] }
+    ]
   },
   return_schema: tableReservationReturnSchema,
   timeout_ms: 30000,

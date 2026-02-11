@@ -127,14 +127,11 @@ export async function search_restaurant(params: z.infer<typeof SearchRestaurantS
   console.log(`Searching for ${cuisine || 'restaurants'} near ${lat}, ${lon}...`);
 
   try {
-    // 2. Overpass Query
+    // 2. Overpass Query - STRICT cuisine filtering if provided
     const query = cuisine 
       ? `
         [out:json][timeout:10];
-        (
-          nwr["amenity"="restaurant"]["cuisine"~"${cuisine}",i](around:10000,${lat},${lon});
-          nwr["amenity"="restaurant"](around:5000,${lat},${lon});
-        );
+        nwr["amenity"="restaurant"]["cuisine"~"${cuisine}",i](around:10000,${lat},${lon});
         out center 10;
       `
       : `
@@ -158,17 +155,13 @@ export async function search_restaurant(params: z.infer<typeof SearchRestaurantS
     const overpassData = await overpassRes.json();
     let elements = overpassData.elements || [];
 
-    // Prioritize results that match the cuisine if provided
+    // Mandatory strict-match filter for the cuisine parameter
     if (cuisine) {
       const regex = new RegExp(cuisine, 'i');
-      elements.sort((a: any, b: any) => {
-        const aCuisine = a.tags?.cuisine || '';
-        const bCuisine = b.tags?.cuisine || '';
-        const aMatches = regex.test(aCuisine);
-        const bMatches = regex.test(bCuisine);
-        if (aMatches && !bMatches) return -1;
-        if (!aMatches && bMatches) return 1;
-        return 0;
+      elements = elements.filter((el: any) => {
+        const elCuisine = el.tags?.cuisine || '';
+        // Check if any of the cuisines match (cuisine tag can be a semi-colon separated list)
+        return elCuisine.split(';').some((c: string) => regex.test(c.trim()));
       });
     }
 

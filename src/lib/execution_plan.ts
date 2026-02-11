@@ -23,9 +23,21 @@ export function createExecutionPlan(intent: Intent, dryRun: boolean = true): Exe
   // Mapping logic based on Intent Type
   if (intent.type === "ACTION") {
     const toolName = intent.parameters.capability || intent.parameters.tool_name;
+    const parameters = { ...(intent.parameters.arguments as any || intent.parameters) };
+
+    // Standardize time fields for booking
+    if (toolName === "book_restaurant_table") {
+      if (parameters.start_time && !parameters.time) {
+        parameters.time = parameters.start_time;
+      }
+      if (parameters.reservation_time && !parameters.time) {
+        parameters.time = parameters.reservation_time;
+      }
+    }
+
     steps.push({
       tool_name: toolName,
-      parameters: intent.parameters.arguments || intent.parameters,
+      parameters: parameters,
       requires_confirmation: guardrail.requiresConfirmation,
       description: guardrail.reason || `Execute ${toolName}`
     });

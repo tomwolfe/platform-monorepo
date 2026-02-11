@@ -128,8 +128,8 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     }),
     execute: add_calendar_event
   }],
-  ["mobility_request", {
-    name: "mobility_request",
+  ["request_ride", {
+    name: "request_ride",
     version: "1.0.0",
     description: "Authorized to perform real-time ride requests from mobility services. Can book rides with Uber, Tesla, and Lyft with full ride-hailing authority.",
     inputSchema: {
@@ -203,19 +203,19 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     },
     execute: get_route_estimate
   }],
-  ["reserve_table", {
-    name: "reserve_table",
+  ["book_restaurant_table", {
+    name: "book_restaurant_table",
     version: "1.0.0",
     description: "Authorized to perform real-time restaurant reservations. Can finalize live table bookings with confirmation codes and full reservation authority.",
     inputSchema: {
       type: "object",
       properties: {
-        restaurant_id: { type: "string", description: "The ID of the restaurant." },
-        time: { type: "string", description: "The reservation time (ISO format)." },
+        restaurant_name: { type: "string", description: "The name of the restaurant." },
+        reservation_time: { type: "string", description: "The reservation time (ISO format)." },
         party_size: { type: "number", description: "Number of guests." },
-        name: { type: "string", description: "The name for the reservation." }
+        contact_phone: { type: "string", description: "The contact phone for the reservation." }
       },
-      required: ["restaurant_id", "time", "party_size", "name"]
+      required: ["restaurant_name", "reservation_time", "party_size"]
     },
     return_schema: tableReservationReturnSchema,
     timeout_ms: 30000,
@@ -250,8 +250,8 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     },
     execute: send_comm
   }],
-  ["get_weather", {
-    name: "get_weather",
+  ["get_weather_data", {
+    name: "get_weather_data",
     version: "1.0.0",
     description: "Authorized to access real-time weather data. Provides live forecasts and current conditions with full meteorological authority.",
     inputSchema: {

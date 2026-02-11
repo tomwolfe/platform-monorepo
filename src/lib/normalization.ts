@@ -14,10 +14,31 @@ export function normalizeIntent(
   rawText: string,
   modelId: string
 ): Intent {
+  // Pre-validation normalization to handle common LLM jitter
+  const normalizedCandidate = { ...candidate };
+  
+  // 1. Case-insensitive Intent Type
+  if (typeof normalizedCandidate.type === 'string') {
+    normalizedCandidate.type = normalizedCandidate.type.toUpperCase();
+  }
+  
+  // 2. Coerce confidence to number
+  if (typeof normalizedCandidate.confidence === 'string') {
+    const parsed = parseFloat(normalizedCandidate.confidence);
+    if (!isNaN(parsed)) {
+      normalizedCandidate.confidence = parsed;
+    }
+  }
+  
+  // 3. Ensure parameters is an object
+  if (!normalizedCandidate.parameters || typeof normalizedCandidate.parameters !== 'object') {
+    normalizedCandidate.parameters = {};
+  }
+
   // 1. Basic validation
   const parsed = IntentSchema.safeParse({
-    ...candidate,
-    id: candidate.id || crypto.randomUUID(),
+    ...normalizedCandidate,
+    id: normalizedCandidate.id || crypto.randomUUID(),
     rawText: rawText,
     metadata: {
       version: "1.1.0",
@@ -28,20 +49,16 @@ export function normalizeIntent(
   });
 
   if (!parsed.success) {
-    return createFallbackIntent(rawText, "UNKNOWN", "Schema validation failed", modelId);
+    console.warn("[Normalization] Schema validation failed, returning CLARIFICATION_REQUIRED fallback.");
+    return createFallbackIntent(
+      rawText, 
+      "CLARIFICATION_REQUIRED", 
+      "I encountered an internal error parsing your intent. Could you please rephrase your request?", 
+      modelId
+    );
   }
 
   const intent = parsed.data;
-
-  // 2. Parameter Hardening: Strip unmapped parameters to enforce Schema Invariance
-  const allowedFields = REQUIRED_FIELDS_MAP[intent.type] || [];
-  const hardenedParams: Record<string, any> = {};
-  for (const field of allowedFields) {
-    if (intent.parameters[field] !== undefined) {
-      hardenedParams[field] = intent.parameters[field];
-    }
-  }
-  intent.parameters = hardenedParams;
 
   // 3. Ontology parameter check
   const { isValid, missingFields } = validateIntentParams(intent.type, intent.parameters);
@@ -126,7 +143,7 @@ function createFallbackIntent(
   return {
     id: crypto.randomUUID(),
     type,
-    confidence: 0,
+    confidence: type === "CLARIFICATION_REQUIRED" ? 0.5 : 0,
     parameters: {},
     rawText,
     explanation,

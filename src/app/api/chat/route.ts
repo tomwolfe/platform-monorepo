@@ -251,7 +251,7 @@ export async function POST(req: Request) {
           return result;
         },
       }),
-      mobility_request: tool({
+      request_ride: tool({
         description: "Authorized to perform real-time ride requests from mobility services. Can book rides with Uber, Tesla, and Lyft with full ride-hailing authority.",
         inputSchema: z.object({
           service: z.enum(["uber", "lyft", "tesla"]).describe("The mobility service to use (uber, lyft, or tesla)."),
@@ -260,8 +260,8 @@ export async function POST(req: Request) {
           ride_type: z.enum(["economy", "premium", "xl"]).optional().describe("The type of ride (economy, premium, or xl)."),
         }),
         execute: async (params: any) => {
-          console.log("Executing mobility_request", params);
-          const result = await executeToolWithContext("mobility_request", params, {
+          console.log("Executing request_ride", params);
+          const result = await executeToolWithContext("request_ride", params, {
             audit_log_id: auditLog.id,
             step_index: auditLog.steps.length
           });
@@ -284,7 +284,7 @@ export async function POST(req: Request) {
           return result;
         },
       }),
-      reserve_table: tool({
+      book_restaurant_table: tool({
         description: "Authorized to perform real-time restaurant reservations. Can finalize live table bookings with confirmation codes and full reservation authority.",
         inputSchema: z.object({
           restaurant_name: z.string().describe("The name of the restaurant."),
@@ -297,8 +297,8 @@ export async function POST(req: Request) {
           special_requests: z.string().optional().describe("Any special requests for the reservation."),
         }),
         execute: async (params: any) => {
-          console.log("Executing reserve_table", params);
-          const result = await executeToolWithContext("reserve_table", params, {
+          console.log("Executing book_restaurant_table", params);
+          const result = await executeToolWithContext("book_restaurant_table", params, {
             audit_log_id: auditLog.id,
             step_index: auditLog.steps.length
           });
@@ -322,7 +322,7 @@ export async function POST(req: Request) {
           return result;
         },
       }),
-      get_weather: tool({
+      get_weather_data: tool({
         description: "Authorized to access real-time weather data. Provides live forecasts and current conditions with full meteorological authority.",
         inputSchema: z.object({
           location: UnifiedLocationSchema.describe("The location for weather lookup. Can be a string address OR an object with lat/lon coordinates."),
@@ -330,8 +330,8 @@ export async function POST(req: Request) {
           type: z.enum(["current", "forecast"]).optional().describe("Whether to get current conditions or forecast (legacy parameter)."),
         }),
         execute: async (params: any) => {
-          console.log("Executing get_weather", params);
-          const result = await executeToolWithContext("get_weather", params, {
+          console.log("Executing get_weather_data", params);
+          const result = await executeToolWithContext("get_weather_data", params, {
             audit_log_id: auditLog.id,
             step_index: auditLog.steps.length
           });
@@ -357,18 +357,18 @@ export async function POST(req: Request) {
 
     // Mobility and route tools for transportation intents
     if (intentType === "MOBILITY" || intentType === "TRANSPORT" || intentType === "RIDE" || intentType === "UNKNOWN" || intentType === "PLANNING") {
-      enabledTools.mobility_request = allTools.mobility_request;
+      enabledTools.request_ride = allTools.request_ride;
       enabledTools.get_route_estimate = allTools.get_route_estimate;
     }
 
     // Weather tool for weather intents
     if (intentType === "WEATHER" || intentType === "UNKNOWN" || intentType === "PLANNING") {
-      enabledTools.get_weather = allTools.get_weather;
+      enabledTools.get_weather_data = allTools.get_weather_data;
     }
 
     // Reservation tool for booking intents
     if (intentType === "RESERVATION" || intentType === "BOOKING" || intentType === "UNKNOWN" || intentType === "PLANNING") {
-      enabledTools.reserve_table = allTools.reserve_table;
+      enabledTools.book_restaurant_table = allTools.book_restaurant_table;
     }
 
     // Communication tool for messaging intents

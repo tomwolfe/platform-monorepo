@@ -171,14 +171,65 @@ export async function parseIntent(
     }
 
     // Use LLM to classify intent
-    const generationResult: GenerateStructuredResult<ParsedIntent> = await generateStructured({
-      modelType: "classification",
-      prompt: input,
-      systemPrompt: INTENT_CLASSIFICATION_PROMPT,
-      schema: ParsedIntentSchema,
-      temperature: 0.1, // Low temperature for deterministic classification
-      timeoutMs: 15000, // 15 second timeout for parsing
-    });
+    let generationResult: GenerateStructuredResult<ParsedIntent>;
+    try {
+      generationResult = await generateStructured({
+        modelType: "classification",
+        prompt: input,
+        systemPrompt: INTENT_CLASSIFICATION_PROMPT,
+        schema: ParsedIntentSchema,
+        temperature: 0.1, // Low temperature for deterministic classification
+        timeoutMs: 15000, // 15 second timeout for parsing
+      });
+    } catch (error) {
+      console.warn("[Intent Engine] Structured generation failed, falling back to CLARIFICATION_REQUIRED", error);
+      
+      // Build a fallback clarification intent
+      const fallbackParsedIntent: ParsedIntent = {
+        type: "CLARIFICATION_REQUIRED",
+        confidence: 0.5,
+        parameters: {},
+        explanation: "The system encountered an error while parsing your intent. Please try rephrasing your request.",
+        requires_clarification: true,
+        clarification_prompt: "I'm sorry, I couldn't quite understand that. Could you please rephrase or provide more details?"
+      };
+
+      const intent: Intent = IntentSchema.parse({
+        id: randomUUID(),
+        type: fallbackParsedIntent.type,
+        confidence: fallbackParsedIntent.confidence,
+        parameters: fallbackParsedIntent.parameters,
+        rawText: input.trim(),
+        explanation: fallbackParsedIntent.explanation,
+        metadata: IntentMetadataSchema.parse({
+          version: "1.0.0",
+          timestamp,
+          source: "system_fallback",
+        }),
+        requires_clarification: fallbackParsedIntent.requires_clarification,
+        clarification_prompt: fallbackParsedIntent.clarification_prompt,
+      });
+
+      const endTime = performance.now();
+      const latencyMs = Math.round(endTime - startTime);
+
+      const traceEntry: TraceEntry = TraceEntrySchema.parse({
+        timestamp,
+        phase: "intent",
+        event: "intent_parse_fallback",
+        input: { rawText: input.trim(), context },
+        output: intent,
+        latency_ms: latencyMs,
+        token_usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      });
+
+      return {
+        intent,
+        trace_entry: traceEntry,
+        latency_ms: latencyMs,
+        token_usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      };
+    }
 
     const parsedIntent = generationResult.data;
     const llmResponse = generationResult.response;

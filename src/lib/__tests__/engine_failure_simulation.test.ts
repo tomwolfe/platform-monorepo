@@ -676,7 +676,7 @@ async function testUnifiedLocationValidation(): Promise<void> {
   console.log("\n--- TEST: Unified Location Validation ---");
 
   // Import the mobility tool schemas
-  const { MobilityRequestSchema, RouteEstimateSchema, mobility_request, get_route_estimate } = await import("../tools/mobility");
+  const { MobilityRequestSchema, RouteEstimateSchema, mobility_request: request_ride, get_route_estimate } = await import("../tools/mobility");
 
   // Test 8.1: MobilityRequest with string locations (traditional format)
   const stringLocationParams = {
@@ -774,17 +774,17 @@ async function testUnifiedLocationValidation(): Promise<void> {
     routeCoordValidation.success ? undefined : routeCoordValidation.error?.message
   );
 
-  // Test 8.6: Test actual mobility_request execution with coordinate objects
-  const mobilityResult = await mobility_request(coordinateParams);
+  // Test 8.6: Test actual request_ride execution with coordinate objects
+  const mobilityResult = await request_ride(coordinateParams);
   assert(
-    "mobility_request should execute successfully with coordinate objects",
+    "request_ride should execute successfully with coordinate objects",
     mobilityResult.success,
     mobilityResult.error
   );
 
   if (mobilityResult.success) {
     assert(
-      "mobility_request should return normalized string locations",
+      "request_ride should return normalized string locations",
       typeof mobilityResult.result.pickup === "string" && typeof mobilityResult.result.destination === "string",
       "Locations should be normalized to strings"
     );

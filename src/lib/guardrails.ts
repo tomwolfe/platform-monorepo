@@ -28,14 +28,14 @@ const CAPABILITY_GUARDRAILS: Record<string, CapabilityGuardrail> = {
     requiresConfirmation: true,
     description: "Sending an email."
   },
-  "mobility_request": {
-    capability: "mobility_request",
+  "request_ride": {
+    capability: "request_ride",
     riskLevel: "HIGH",
     requiresConfirmation: true,
     description: "Requesting a ride via Uber or Tesla."
   },
-  "reserve_table": {
-    capability: "reserve_table",
+  "book_restaurant_table": {
+    capability: "book_restaurant_table",
     riskLevel: "HIGH",
     requiresConfirmation: true,
     description: "Finalizing a restaurant reservation."
@@ -46,8 +46,8 @@ const CAPABILITY_GUARDRAILS: Record<string, CapabilityGuardrail> = {
     requiresConfirmation: true,
     description: "Sending a communication (Email/SMS)."
   },
-  "get_weather": {
-    capability: "get_weather",
+  "get_weather_data": {
+    capability: "get_weather_data",
     riskLevel: "LOW",
     requiresConfirmation: false,
     description: "Fetching weather information."

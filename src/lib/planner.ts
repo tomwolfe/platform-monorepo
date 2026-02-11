@@ -14,10 +14,12 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
 
   if (!apiKey) {
     // For demonstration purposes if no API key is provided, we return a mock plan
-    // for the specific example "plan a dinner and add to calendar"
-    if (intentText.toLowerCase().includes("dinner") && intentText.toLowerCase().includes("calendar")) {
+    // for specific examples
+    const text = intentText.toLowerCase();
+    
+    if (text.includes("dinner") && (text.includes("calendar") || text.includes("book"))) {
       return {
-        intent_type: "plan_dinner_and_calendar",
+        intent_type: "PLANNING",
         constraints: ["dinner time at 7 PM", "cuisine: Italian"],
         ordered_steps: [
           {
@@ -30,19 +32,66 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
             description: "Search for a highly-rated Italian restaurant in London.",
           },
           {
-            tool_name: "add_calendar_event",
+            tool_name: "book_restaurant_table",
             parameters: { 
-              title: "Dinner at [Restaurant]", 
-              start_time: "2026-02-04T19:00:00", 
-              end_time: "2026-02-04T21:00:00" 
+              restaurant_name: "{{step_0.result[0].name}}", 
+              reservation_time: "2026-02-12T19:00:00Z",
+              party_size: 2
             },
             requires_confirmation: true,
-            description: "Add the dinner reservation to your calendar after you select a restaurant.",
+            description: "Book a table for 2 at the selected restaurant.",
+          },
+          {
+            tool_name: "send_comm",
+            parameters: {
+              to: "me",
+              channel: "sms",
+              message: "Reminder: Dinner at {{step_0.result[0].name}} tonight at 7 PM."
+            },
+            requires_confirmation: true,
+            description: "Send a reminder SMS about the reservation."
           }
         ],
-        summary: "I will find an Italian restaurant and then we can add a 7 PM reservation to your calendar."
+        summary: "I will find an Italian restaurant, book a table for 7 PM, and send you a reminder SMS."
       };
     }
+    
+    if (text.includes("restaurant") && text.includes("book") && text.includes("sms")) {
+       return {
+        intent_type: "PLANNING",
+        constraints: [],
+        ordered_steps: [
+          {
+            tool_name: "search_restaurant",
+            parameters: { location: "nearby" },
+            requires_confirmation: false,
+            description: "Finding restaurants nearby.",
+          },
+          {
+            tool_name: "book_restaurant_table",
+            parameters: { 
+              restaurant_name: "{{step_0.result[0].name}}", 
+              reservation_time: "2026-02-12T19:00:00Z",
+              party_size: 2
+            },
+            requires_confirmation: true,
+            description: "Booking the table.",
+          },
+          {
+            tool_name: "send_comm",
+            parameters: {
+              to: "me",
+              channel: "sms",
+              message: "Booked!"
+            },
+            requires_confirmation: false,
+            description: "Sending SMS reminder."
+          }
+        ],
+        summary: "Finding a restaurant, booking it, and sending you an SMS."
+      };
+    }
+
     throw new Error("LLM_API_KEY is not set and no mock available for this intent.");
   }
 

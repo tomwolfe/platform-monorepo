@@ -65,7 +65,7 @@ export function createExecutionPlan(intent: Intent, dryRun: boolean = true): Exe
 
   // Transactional intents (high risk) trigger total confirmation
   const isTransactional = steps.some(s => 
-    ["mobility_request", "reserve_table"].includes(s.tool_name)
+    ["request_ride", "book_restaurant_table"].includes(s.tool_name)
   );
 
   return {

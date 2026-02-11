@@ -145,7 +145,7 @@ Output Plan:
   "steps": [
     {
       "step_number": 0,
-      "tool_name": "get_weather",
+      "tool_name": "get_weather_data",
       "parameters": { "location": "Tokyo" },
       "dependencies": [],
       "description": "Get weather for Tokyo",
@@ -154,7 +154,7 @@ Output Plan:
     },
     {
       "step_number": 1,
-      "tool_name": "get_weather",
+      "tool_name": "get_weather_data",
       "parameters": { "location": "London" },
       "dependencies": [],
       "description": "Get weather for London",

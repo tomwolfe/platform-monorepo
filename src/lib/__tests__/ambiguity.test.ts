@@ -33,7 +33,7 @@ async function runAmbiguityTest() {
   console.log(`Is Ambiguous: ${result1.isAmbiguous}`);
   console.log(`Question: ${result1.clarificationQuestion}`);
 
-  if (!result1.isAmbiguous || result1.primary.type !== "CLARIFICATION_NEEDED") {
+  if (!result1.isAmbiguous || result1.primary.type !== "CLARIFICATION_REQUIRED") {
     console.error("FAIL: Should have detected ambiguity for 'book it'");
     process.exit(1);
   }
@@ -48,7 +48,7 @@ async function runAmbiguityTest() {
   console.log(`Primary Type: ${result2.primary.type}`);
   console.log(`Is Ambiguous: ${result2.isAmbiguous}`);
 
-  if (!result2.isAmbiguous || result2.primary.type !== "CLARIFICATION_NEEDED") {
+  if (!result2.isAmbiguous || result2.primary.type !== "CLARIFICATION_REQUIRED") {
     console.error("FAIL: Should have detected low confidence for gibberish");
     process.exit(1);
   }

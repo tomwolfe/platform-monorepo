@@ -6,7 +6,7 @@
 
 ## 2. Semantic Ambiguity (The "Book It" Problem)
 **Scenario:** User provides extremely vague input that could map to multiple valid intents.
-**Mitigation:** `resolveAmbiguity.ts` identifies narrow gaps in confidence and forces a `CLARIFICATION_NEEDED` state rather than guessing.
+**Mitigation:** `resolveAmbiguity.ts` identifies narrow gaps in confidence and forces a `CLARIFICATION_REQUIRED` state rather than guessing.
 
 ## 3. Parameter Hallucination
 **Scenario:** LLM generates required parameters that were not in the source text.

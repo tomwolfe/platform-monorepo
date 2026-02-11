@@ -1,4 +1,4 @@
-import { IntentType } from "./schema";
+import type { IntentType } from "./schema";
 
 export const REQUIRED_FIELDS_MAP: Record<string, string[]> = {
   SCHEDULE: ["action", "temporal_expression"],

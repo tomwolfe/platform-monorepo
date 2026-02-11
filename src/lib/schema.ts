@@ -12,7 +12,6 @@ export const IntentTypeSchema = z.enum([
   "PLANNING",
   "ANALYSIS",
   "UNKNOWN",
-  "CLARIFICATION_NEEDED",
   "CLARIFICATION_REQUIRED",
   "REFUSED"
 ]);
@@ -40,6 +39,7 @@ export const IntentSchema = z.object({
   parameters: z.record(z.string(), z.any()),
   rawText: z.string(),
   explanation: z.string().optional(), // Why this intent was chosen
+  hash: z.string().optional(), // SHA-256 hash for immutable linking
   metadata: IntentMetadataSchema,
 });
 

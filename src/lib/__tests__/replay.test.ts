@@ -1,5 +1,5 @@
 import { normalizeIntent } from "../normalization";
-import { Intent } from "../schema";
+import type { Intent } from "../schema";
 
 /**
  * Simulates a jittery LLM that returns slightly different structures

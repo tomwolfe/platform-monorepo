@@ -176,7 +176,7 @@ export async function POST(req: Request) {
 
     ${failureWarnings}
 
-    ${intent.type === 'CLARIFICATION_NEEDED' ? `IMPORTANT: Your confidence in the user's intent is LOW. You MUST ask a clarification question. Explanation: "${intent.explanation}"` : ""}
+    ${intent.type === 'CLARIFICATION_REQUIRED' ? `IMPORTANT: Your confidence in the user's intent is LOW. You MUST ask a clarification question. Explanation: "${intent.explanation}"` : ""}
     ${intent.type === 'CLARIFICATION_REQUIRED' ? `IMPORTANT: Required information is missing: ${intent.parameters.missingFields.join(", ")}. You MUST ask the user specifically for these missing details.` : ""}
 
     If a tool returns success: false, you MUST acknowledge the error and attempt to REPLAN. 

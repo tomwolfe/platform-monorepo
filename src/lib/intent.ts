@@ -2,9 +2,11 @@ import { generateObject } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import { env } from "./config";
-import { Intent, IntentSchema } from "./schema";
+import { IntentSchema } from "./schema";
+import type { Intent } from "./schema";
 import { normalizeIntent } from "./normalization";
-import { resolveAmbiguity, IntentHypotheses } from "./ambiguity";
+import { resolveAmbiguity } from "./ambiguity";
+import type { IntentHypotheses } from "./ambiguity";
 
 const customOpenAI = createOpenAI({
   apiKey: env.LLM_API_KEY,
@@ -35,19 +37,31 @@ export async function inferIntent(text: string, avoidTools: string[] = []): Prom
     schema: z.object({
       candidates: z.array(CandidateSchema).min(1).max(3),
     }),
-    system: `Precision Intent Inference. 
-Generate 1-3 possible interpretations if the request is ambiguous.
-Categories: SCHEDULE, SEARCH, ACTION, QUERY, PLANNING, ANALYSIS.
-Rules:
-- SCHEDULE: Needs 'action' and 'temporal_expression'.
-- SEARCH: Needs 'query' and 'scope'.
-- ACTION: Needs 'capability' and 'arguments'.
-- QUERY: Needs 'target_object'.
-- PLANNING: Needs 'goal'.
-- ANALYSIS: Needs 'context'.
-Refuse illegal requests by setting type to 'REFUSED'.
-Confidence must reflect certainty. If ambiguous, provide multiple candidates with lower confidence.
-${avoidToolsContext}`,
+    system: `### ROLE: Semantic Normalization Architect
+Objective: Eliminate LLM Jitter. Map user input to exactly ONE of the 6 core Intent Types with 100% repeatability.
+
+### CORE ONTOLOGY
+1. SCHEDULE: Temporal events (meetings, reminders, bookings, syncs).
+2. SEARCH: Information retrieval from external sources.
+3. ACTION: Direct side-effects, mutations, or tool executions.
+4. QUERY: Internal state lookups or data checks.
+5. PLANNING: Multi-step strategy or complex goal decomposition.
+6. ANALYSIS: Synthesis, reasoning, or summarization over context.
+
+### NORMALIZATION PROTOCOL
+- VERB COLLAPSING: Map all synonyms to their ontological root. Treat "Book", "Schedule", "Set up", "Arrange", and "Organize" as identical if they refer to a temporal event -> Map to SCHEDULE.
+- DETERMINISTIC PARAMETERS: Use standard keys (e.g., 'time', 'topic', 'target', 'query'). Do not invent parameter names.
+- CoT VERIFICATION: You MUST use the 'explanation' field for a Chain-of-Thought analysis:
+  1. IDENTIFY: Literal action (e.g., "Book a call").
+  2. MAP: Semantic root to Ontology (e.g., Temporal Commitment -> SCHEDULE).
+  3. EXTRACT: Entities into standard keys.
+  4. VALIDATE: Ensure required parameters are present.
+
+### "BOOK IT" DEFENSE
+- Assign confidence based on semantic clarity and parameter completeness.
+- CONFIDENCE < 0.85: If the intent is ambiguous or critical parameters are missing, you MUST lower confidence below 0.85 to trigger a RESOLVE_AMBIGUITY event.
+
+SCHEMA_INVARIANCE: Only use the defined IntentType enum.${avoidToolsContext}`,
     prompt: text,
   });
 

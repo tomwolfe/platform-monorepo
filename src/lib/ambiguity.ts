@@ -1,4 +1,4 @@
-import { Intent } from "./schema";
+import type { Intent } from "./schema";
 
 export interface IntentHypotheses {
   primary: Intent;
@@ -7,7 +7,7 @@ export interface IntentHypotheses {
   clarificationQuestion?: string;
 }
 
-const CONFIDENCE_THRESHOLD = 0.7;
+const CONFIDENCE_THRESHOLD = 0.85;
 const AMBIGUITY_GAP = 0.15;
 
 /**
@@ -46,7 +46,7 @@ export function resolveAmbiguity(intents: Intent[]): IntentHypotheses {
   }
 
   if (isAmbiguous) {
-    primary.type = "CLARIFICATION_NEEDED";
+    primary.type = "CLARIFICATION_REQUIRED";
   }
 
   return {

@@ -37,7 +37,7 @@ async function runAdversarialTest() {
   console.log(`Is Ambiguous: ${result2.isAmbiguous}`);
   console.log(`Primary Type: ${result2.primary.type}`);
 
-  if (!result2.isAmbiguous || result2.primary.type !== "CLARIFICATION_NEEDED") {
+  if (!result2.isAmbiguous || result2.primary.type !== "CLARIFICATION_REQUIRED") {
     console.error("FAIL: Conflicting intents should trigger clarification");
     process.exit(1);
   }

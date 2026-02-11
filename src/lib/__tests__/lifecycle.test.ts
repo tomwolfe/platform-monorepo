@@ -6,7 +6,7 @@ async function runLifecycleTest() {
 
   const modelId = "sim-v1";
   const raw1 = "book it";
-  const candidate1 = { type: "CLARIFICATION_NEEDED", confidence: 0.5, parameters: {}, explanation: "Ambiguous" };
+  const candidate1 = { type: "CLARIFICATION_REQUIRED", confidence: 0.5, parameters: {}, explanation: "Ambiguous" };
   const intent1 = normalizeIntent(candidate1, raw1, modelId);
 
   console.log(`Parent Intent ID: ${intent1.id}`);

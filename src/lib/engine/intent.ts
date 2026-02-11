@@ -390,3 +390,54 @@ export async function parseIntentBatch(
 
   return results;
 }
+
+/**
+ * Validates tool output against user's qualitative constraints.
+ * Returns a match score (0-1) and whether it's considered valid.
+ */
+export async function validateOutputAgainstConstraints(
+  output: any,
+  constraints: string[]
+): Promise<{ score: number; valid: boolean; reason?: string }> {
+  if (!constraints || constraints.length === 0) return { score: 1, valid: true };
+  
+  const outputString = JSON.stringify(output).toLowerCase();
+  let matches = 0;
+  
+  for (const constraint of constraints) {
+    if (outputString.includes(constraint.toLowerCase())) {
+      matches++;
+    }
+  }
+  
+  const heuristicScore = matches / constraints.length;
+  
+  // If heuristic is low or ambiguous, use LLM for semantic validation
+  if (heuristicScore < 0.8) {
+    try {
+      const prompt = `Analyze if the tool output satisfies the user's qualitative constraints.
+Output Data: ${JSON.stringify(output)}
+Constraints: ${constraints.join(", ")}
+
+Respond with a JSON object: {"score": number (0-1), "explanation": string}`;
+
+      const validationResult = await generateStructured({
+        modelType: "classification",
+        prompt,
+        systemPrompt: "You are a high-precision semantic validation system. Verify if the provided entity data matches the user's qualitative adjectives (e.g. 'romantic', 'cheap', 'nearby').",
+        schema: z.object({ score: z.number(), explanation: z.string() }),
+      });
+      
+      return {
+        score: validationResult.data.score,
+        valid: validationResult.data.score >= 0.7,
+        reason: validationResult.data.explanation
+      };
+    } catch (e) {
+      console.warn("Semantic validation failed, falling back to heuristic", e);
+      return { score: heuristicScore, valid: heuristicScore >= 0.5, reason: "Heuristic validation applied" };
+    }
+  }
+  
+  return { score: heuristicScore, valid: true };
+}

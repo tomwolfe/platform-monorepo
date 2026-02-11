@@ -22,6 +22,7 @@ import {
   EngineErrorCode,
 } from "../types";
 import { mapJsonSchemaToZod } from "../schema-utils";
+import { getUserProfileProvider } from "../../context/user-profile";
 
 // ============================================================================
 // TOOL FUNCTION TYPE
@@ -167,15 +168,22 @@ export class ToolRegistry {
         });
       }
 
+      // Task 3: User Profile Hydration - Fill missing required fields from profile
+      let finalParameters = { ...parameters };
+      const requiredFields = tool.definition.inputSchema.required || [];
+      if (requiredFields.length > 0) {
+        finalParameters = await getUserProfileProvider().hydrateParameters(finalParameters, requiredFields);
+      }
+
       // Validate input parameters
-      const validationResult = this.validateInput(tool.definition, parameters);
+      const validationResult = this.validateInput(tool.definition, finalParameters);
       if (!validationResult.valid) {
         throw EngineErrorSchema.parse({
           code: "TOOL_VALIDATION_FAILED",
           message: `Input validation failed: ${validationResult.error}`,
           details: {
             tool: name,
-            parameters,
+            parameters: finalParameters,
             errors: validationResult.error,
           },
           recoverable: false,
@@ -186,7 +194,7 @@ export class ToolRegistry {
       // Execute with timeout
       const result = await this.executeWithTimeout(
         tool.implementation,
-        parameters,
+        finalParameters,
         context,
         tool.definition.timeout_ms
       );

@@ -216,6 +216,7 @@ export const ToolDefinitionSchema = z.object({
     allOf: z.array(z.any()).optional(),
   }),
   return_schema: z.record(z.string(), z.unknown()),
+  parameter_aliases: z.record(z.string(), z.string()).optional(),
   timeout_ms: z.number().int().positive().default(30000),
   requires_confirmation: z.boolean().default(false),
   category: z.enum(["data", "action", "communication", "calculation", "external"]),

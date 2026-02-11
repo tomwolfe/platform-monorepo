@@ -100,6 +100,19 @@ export class MCPClient {
       tool.name.toLowerCase().startsWith("delete_") ||
       tool.name.toLowerCase().startsWith("remove_");
 
+    // Semantic Parameter Aliases: Bridge common LLM naming to specific tool requirements
+    const parameter_aliases: Record<string, string> = {
+      "reservation_time": "time",
+      "booking_time": "time",
+      "party_size": "guests",
+      "number_of_people": "guests",
+      "location_name": "query",
+      "search_query": "query",
+      "contact_name": "name",
+      "phone_number": "phone",
+      "email_address": "email"
+    };
+
     return {
       name: tool.name,
       version: "1.0.0",
@@ -110,6 +123,7 @@ export class MCPClient {
         required: (tool.inputSchema as any).required || [],
       },
       return_schema: return_schema as Record<string, unknown>,
+      parameter_aliases,
       timeout_ms: 30000,
       requires_confirmation: requires_confirmation || true, // Category is hardcoded to external below
       category: "external",

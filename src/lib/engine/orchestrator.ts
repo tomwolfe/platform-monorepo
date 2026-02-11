@@ -25,6 +25,7 @@ import {
 } from "./state-machine";
 import { saveExecutionState, getMemoryClient } from "./memory";
 import { MCPClient } from "../../infrastructure/mcp/MCPClient";
+import { validateOutputAgainstConstraints } from "./intent";
 
 // ============================================================================
 // SCORE OUTCOME
@@ -223,15 +224,50 @@ async function executeStep(
 
       const resolvedParameters = resolveStepParameters(step, stepState);
 
-      // Task 2: Fix Input Mapping - ensure reservation_time maps to time if tool expects it
-      if (resolvedParameters.reservation_time && !resolvedParameters.time) {
-        resolvedParameters.time = resolvedParameters.reservation_time;
+      // Task 2: Fix Input Mapping - Dynamic Parameter Bridge
+      if (toolDef?.parameter_aliases) {
+        for (const [alias, primary] of Object.entries(toolDef.parameter_aliases)) {
+          if (resolvedParameters[alias] !== undefined && resolvedParameters[primary] === undefined) {
+            resolvedParameters[primary] = resolvedParameters[alias];
+          }
+        }
       }
 
       // Task 4: Dynamic Personalization - Use user_preferences for contact_name
       const userPrefs = (state.context?.user_preferences as Record<string, any>) || {};
       if (!resolvedParameters.contact_name || resolvedParameters.contact_name === "User") {
         resolvedParameters.contact_name = userPrefs.display_name || userPrefs.contact_info?.name || "User";
+      }
+
+      // Task 3: Semantic Guardrail Layer - Verify parameters match qualitative constraints
+      const isActionStep = step.tool_name.toLowerCase().includes("book") || 
+                           step.tool_name.toLowerCase().includes("reserve") || 
+                           step.tool_name.toLowerCase().includes("schedule");
+      
+      if (isActionStep && state.intent?.parameters) {
+        // Extract qualitative constraints from intent (e.g., "romantic", "cheap")
+        const qualitativeConstraints: string[] = [];
+        const params = state.intent.parameters;
+        if (params.atmosphere) qualitativeConstraints.push(String(params.atmosphere));
+        if (params.cuisine) qualitativeConstraints.push(String(params.cuisine));
+        if (params.price_range) qualitativeConstraints.push(String(params.price_range));
+        if (Array.isArray(params.constraints)) qualitativeConstraints.push(...params.constraints.map(String));
+
+        if (qualitativeConstraints.length > 0) {
+          const validation = await validateOutputAgainstConstraints(resolvedParameters, qualitativeConstraints);
+          if (!validation.valid) {
+            return {
+              step_id: step.id,
+              status: "awaiting_confirmation",
+              input: resolvedParameters,
+              error: {
+                code: "GUARDRAIL_VIOLATION",
+                message: `Constraint mismatch: ${validation.reason || "The selected option may not match your preferences."}`,
+              },
+              attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+            };
+          }
+        }
       }
 
       stepState = updateStepState(stepState, step.id, {
@@ -288,7 +324,7 @@ async function executeStep(
           step_id: step.id,
           status: "failed",
           error: {
-            code: isValidationError ? "PARAMETER_VALIDATION_FAILED" : "TOOL_EXECUTION_FAILED",
+            code: isValidationError ? "TOOL_VALIDATION_FAILED" : "TOOL_EXECUTION_FAILED",
             message: toolResult.error || "Unknown tool execution error",
           },
           completed_at: new Date().toISOString(),
@@ -470,6 +506,43 @@ export async function executePlan(
           const result = settledResult.value;
           state = updateStepState(state, step.id, result);
           if (result.status === "failed") {
+            // Task 4: Automatic Plan Repair - Mini-Plan-Refinement for validation errors
+            if (result.error?.code === "TOOL_VALIDATION_FAILED" && (result.attempts || 0) < 3) {
+              console.log(`[Plan Repair] Attempting mini-refinement for step ${step.tool_name} (attempt ${result.attempts})`);
+              
+              const repairPrompt = `The execution of step "${step.description}" failed due to a parameter validation error:
+Error: ${result.error.message}
+Current Parameters: ${JSON.stringify(result.input)}
+
+Please regenerate the parameters for this step to fix the validation error. 
+Respond with ONLY a JSON object containing the corrected parameters.`;
+
+              try {
+                const repairResponse = await generateText({
+                  modelType: "planning",
+                  prompt: repairPrompt,
+                  systemPrompt: "You are a plan repair assistant. Fix parameter validation errors by following the schema requirements."
+                });
+
+                const correctedParams = JSON.parse(repairResponse.content.trim());
+                console.log(`[Plan Repair] Regenerated parameters for ${step.tool_name}:`, correctedParams);
+
+                // Update the plan step with corrected parameters for the next attempt
+                const stepIndex = plan.steps.findIndex(s => s.id === step.id);
+                if (stepIndex !== -1) {
+                  plan.steps[stepIndex].parameters = correctedParams;
+                  // Reset step state so it can be retried in the next loop iteration
+                  state = updateStepState(state, step.id, {
+                    status: "pending",
+                    attempts: result.attempts,
+                  });
+                  continue; // Skip the standard failure handling for this step
+                }
+              } catch (repairError) {
+                console.error("[Plan Repair] Mini-refinement failed:", repairError);
+              }
+            }
+            
             anyFailed = true;
             failedStepResult = result;
             failedStep = step;

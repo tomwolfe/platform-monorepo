@@ -106,9 +106,11 @@ export function normalizeIntent(
        const date = new Date(intent.parameters.temporal_expression);
        if (!isNaN(date.getTime())) {
          const now = new Date();
-         if (date < now) {
-           intent.confidence *= 0.5;
-           intent.explanation = (intent.explanation || "") + " [Semantic Alert: Requested time is in the past]";
+         // Only penalize if it's significantly in the past (more than 1 hour ago)
+         // This allows for current-day requests and slight clock drift.
+         if (date.getTime() < now.getTime() - 3600000) {
+           intent.confidence *= 0.8; // Reduced penalty from 0.5 to 0.8
+           intent.explanation = (intent.explanation || "") + " [Semantic Note: Requested time appears to be in the past]";
          }
        }
      }
@@ -125,8 +127,8 @@ export function normalizeIntent(
     
     if (isBookingOrPayment) {
       if (!args.target_object && !args.amount && !args.restaurant_name && !args.service) {
-        intent.confidence = 0.1;
-        intent.explanation = (intent.explanation || "") + " [Confidence Penalty: Missing target_object, amount, or specific service for transactional action]";
+        intent.confidence = Math.max(intent.confidence, 0.4); // Ensure it doesn't drop to 0.1, keep it at least 0.4
+        intent.explanation = (intent.explanation || "") + " [Confidence Note: Missing some specific target/amount details for transactional action]";
       }
     }
   }

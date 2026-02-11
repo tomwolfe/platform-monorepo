@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
         plan = await generatePlan(text);
       }
       
-      const auditLog = await createAuditLog(intent, plan || undefined);
+      const auditLog = await createAuditLog(intent, plan || undefined, undefined, userId);
       auditLogId = auditLog.id;
       
       // Phase 3: Debuggability & Inspection

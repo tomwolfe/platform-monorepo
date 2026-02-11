@@ -69,6 +69,26 @@ async function testParameterValidation() {
     "Explanation does not mention 'past'"
   );
 
+  // Test 1.5: Relative time expressions in SCHEDULE
+  const candidateRelative = {
+    type: "SCHEDULE",
+    confidence: 0.95,
+    parameters: {
+      action: "SCHEDULE",
+      temporal_expression: "tomorrow at 5pm",
+      topic: "Relative meeting"
+    },
+    explanation: "Scheduling a meeting using a relative time expression."
+  };
+
+  const normalizedRelative = normalizeIntent(candidateRelative, "Schedule a meeting for tomorrow at 5pm", modelId);
+  
+  assert(
+    "Should accept relative time expressions in SCHEDULE intents with high confidence",
+    normalizedRelative.confidence === 0.95,
+    `Confidence ${normalizedRelative.confidence} was penalized for a relative time expression`
+  );
+
   // Test 2: Future dates in SCHEDULE
   const futureDate = new Date();
   futureDate.setFullYear(futureDate.getFullYear() + 1);

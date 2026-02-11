@@ -18,24 +18,28 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
     const text = intentText.toLowerCase();
     
     if (text.includes("dinner") && (text.includes("calendar") || text.includes("book"))) {
+      const temporalExpr = typeof intent === "object" ? intent.parameters.temporal_expression : null;
+      const reservationTime = temporalExpr ? new Date(temporalExpr as string).toISOString() : new Date(Date.now() + 86400000).toISOString().split('T')[0] + "T19:00:00Z";
+      const location = typeof intent === "object" ? intent.parameters.location || "London" : "London";
+
       return {
         intent_type: "PLANNING",
-        constraints: ["dinner time at 7 PM", "cuisine: Italian"],
+        constraints: [`dinner time at 7 PM`, `location: ${location}`],
         ordered_steps: [
           {
             tool_name: "search_restaurant",
             parameters: { 
               cuisine: "Italian", 
-              location: "London"
+              location: location
             },
             requires_confirmation: false,
-            description: "Search for a highly-rated Italian restaurant in London.",
+            description: `Search for a highly-rated Italian restaurant in ${location}.`,
           },
           {
             tool_name: "book_restaurant_table",
             parameters: { 
               restaurant_name: "{{step_0.result[0].name}}", 
-              reservation_time: "2026-02-12T19:00:00Z",
+              reservation_time: reservationTime,
               party_size: 2
             },
             requires_confirmation: true,
@@ -57,21 +61,22 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
     }
     
     if (text.includes("restaurant") && text.includes("book") && text.includes("sms")) {
+       const userLocStr = userLocation ? `${userLocation.lat.toFixed(3)}, ${userLocation.lng.toFixed(3)}` : "nearby";
        return {
         intent_type: "PLANNING",
         constraints: [],
         ordered_steps: [
           {
             tool_name: "search_restaurant",
-            parameters: { location: "nearby" },
+            parameters: { location: userLocStr },
             requires_confirmation: false,
-            description: "Finding restaurants nearby.",
+            description: `Finding restaurants near ${userLocStr}.`,
           },
           {
             tool_name: "book_restaurant_table",
             parameters: { 
               restaurant_name: "{{step_0.result[0].name}}", 
-              reservation_time: "2026-02-12T19:00:00Z",
+              reservation_time: new Date(Date.now() + 86400000).toISOString().split('T')[0] + "T19:00:00Z",
               party_size: 2
             },
             requires_confirmation: true,

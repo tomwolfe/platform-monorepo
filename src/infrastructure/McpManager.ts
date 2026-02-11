@@ -16,27 +16,58 @@ import {
 export class McpAdapter {
   /**
    * Converts a legacy ToolParameter array to an MCP-compliant JSON Schema inputSchema.
+   * Supports nested objects and recursion for complex schemas.
    */
   static parametersToInputSchema(parameters: ToolParameter[]): any {
     const properties: Record<string, any> = {};
     const required: string[] = [];
 
-    for (const param of parameters) {
-      properties[param.name] = {
-        type: param.type === "object" ? "object" : 
-              param.type === "array" ? "array" : 
-              param.type,
+    const mapType = (type: string) => {
+      switch (type) {
+        case "string": return "string";
+        case "number": return "number";
+        case "boolean": return "boolean";
+        case "object": return "object";
+        case "array": return "array";
+        default: return "string";
+      }
+    };
+
+    const processParam = (param: any): any => {
+      const schema: any = {
+        type: mapType(param.type),
         description: param.description,
       };
 
+      if (param.type === "object" && param.properties) {
+        schema.properties = {};
+        schema.required = [];
+        for (const [propName, propValue] of Object.entries(param.properties)) {
+          schema.properties[propName] = processParam(propValue);
+          if ((propValue as any).required) {
+            schema.required.push(propName);
+          }
+        }
+        if (schema.required.length === 0) delete schema.required;
+      }
+
+      if (param.type === "array" && param.items) {
+        schema.items = processParam(param.items);
+      }
+
       if (param.enum_values) {
-        properties[param.name].enum = param.enum_values;
+        schema.enum = param.enum_values;
       }
 
       if (param.default_value !== undefined) {
-        properties[param.name].default = param.default_value;
+        schema.default = param.default_value;
       }
 
+      return schema;
+    };
+
+    for (const param of parameters) {
+      properties[param.name] = processParam(param);
       if (param.required) {
         required.push(param.name);
       }

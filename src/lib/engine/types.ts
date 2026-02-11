@@ -41,6 +41,7 @@ export const IntentTypeSchema = z.enum([
   "ANALYSIS",
   "UNKNOWN",
   "CLARIFICATION_REQUIRED",
+  "SERVICE_DEGRADED",
 ]);
 
 export type IntentType = z.infer<typeof IntentTypeSchema>;

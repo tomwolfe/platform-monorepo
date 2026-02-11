@@ -158,9 +158,12 @@ export async function executeToolWithContext(
   return result;
 }
 
-export async function getPlanWithAvoidance(intent: string, userId: string = "anonymous") {
+export async function getPlanWithAvoidance(intent: string, userId: string) {
+    if (!userId || userId === "anonymous") {
+        console.warn(`[Guardrails] getPlanWithAvoidance called with ${userId ? 'anonymous' : 'missing'} user context for intent: "${intent.slice(0, 50)}..."`);
+    }
     // Phase 2: Memory & Guardrails - Fetch last 5 logs and extract failed tools
-    const recentLogs = await getUserAuditLogs(userId, 5);
+    const recentLogs = await getUserAuditLogs(userId || "anonymous", 5);
     const avoidTools: string[] = [];
     
     for (const log of recentLogs) {

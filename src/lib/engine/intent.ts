@@ -182,16 +182,19 @@ export async function parseIntent(
         timeoutMs: 15000, // 15 second timeout for parsing
       });
     } catch (error) {
-      console.warn("[Intent Engine] Structured generation failed, falling back to CLARIFICATION_REQUIRED", error);
+      const isTimeout = error instanceof Error && (error.message.includes("timeout") || error.message.includes("deadline"));
+      console.warn(`[Intent Engine] Structured generation failed (${isTimeout ? 'TIMEOUT' : 'ERROR'}), falling back to SERVICE_DEGRADED`, error);
       
-      // Build a fallback clarification intent
+      // Build a fallback service degraded intent
       const fallbackParsedIntent: ParsedIntent = {
-        type: "CLARIFICATION_REQUIRED",
-        confidence: 0.5,
+        type: "SERVICE_DEGRADED",
+        confidence: 0.3,
         parameters: {},
-        explanation: "The system encountered an error while parsing your intent. Please try rephrasing your request.",
+        explanation: isTimeout 
+          ? "The intent parsing service timed out. Switching to degraded mode." 
+          : "The intent parsing service encountered an error. Switching to degraded mode.",
         requires_clarification: true,
-        clarification_prompt: "I'm sorry, I couldn't quite understand that. Could you please rephrase or provide more details?"
+        clarification_prompt: "I'm having some trouble processing your request right now. Could you please try again in a moment, or simplify your request?"
       };
 
       const intent: Intent = IntentSchema.parse({

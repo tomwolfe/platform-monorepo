@@ -151,9 +151,10 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
           Dinner Planning Rules:
           1. Restaurant search and user confirmation MUST precede calendar event creation.
           2. Always assume a 2-hour duration for dinner events.
-          3. For romantic dinner requests:
-             - Prioritize 'romantic' atmosphere in search or description.
-             - NEVER suggest pizza or Mexican cuisine.
+          3. For romantic or high-end dinner requests:
+             - Prioritize 'romantic' or 'fine dining' atmosphere in search or description.
+             - EXPLICITLY REJECT fast-food chains or low-end casual spots (e.g., McDonald's, Pizza Hut) even if they match the cuisine.
+             - NEVER suggest pizza or Mexican cuisine for 'romantic' requests.
           4. When adding a calendar event for a restaurant, include the 'restaurant_name' and 'restaurant_address' in the parameters.
           5. Always use coordinates from \`geocode_location\` if you use that tool, instead of passing the raw location string to \`search_restaurant\`.
           6. For 'add_calendar_event', always provide an array of events under the 'events' key.

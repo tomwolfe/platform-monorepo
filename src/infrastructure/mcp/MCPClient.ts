@@ -93,6 +93,12 @@ export class MCPClient {
   private mapMcpToolToEngineTool(tool: McpTool): ToolDefinition {
     // Attempt to derive return_schema from non-standard MCP metadata if available
     const return_schema = (tool as any).outputSchema || (tool as any).returnSchema || {};
+    
+    const confirmationKeywords = ["book", "pay", "reserve", "buy", "send", "schedule", "delete", "remove"];
+    const requires_confirmation = 
+      confirmationKeywords.some(keyword => tool.name.toLowerCase().includes(keyword)) ||
+      tool.name.toLowerCase().startsWith("delete_") ||
+      tool.name.toLowerCase().startsWith("remove_");
 
     return {
       name: tool.name,
@@ -105,7 +111,7 @@ export class MCPClient {
       },
       return_schema: return_schema as Record<string, unknown>,
       timeout_ms: 30000,
-      requires_confirmation: false,
+      requires_confirmation: requires_confirmation || true, // Category is hardcoded to external below
       category: "external",
       origin: this.serverUrl,
     };

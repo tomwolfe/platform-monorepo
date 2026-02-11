@@ -223,9 +223,33 @@ async function executeStep(
 
       const resolvedParameters = resolveStepParameters(step, stepState);
 
+      // Task 2: Fix Input Mapping - ensure reservation_time maps to time if tool expects it
+      if (resolvedParameters.reservation_time && !resolvedParameters.time) {
+        resolvedParameters.time = resolvedParameters.reservation_time;
+      }
+
+      // Task 4: Dynamic Personalization - Use user_preferences for contact_name
+      const userPrefs = (state.context?.user_preferences as Record<string, any>) || {};
+      if (!resolvedParameters.contact_name || resolvedParameters.contact_name === "User") {
+        resolvedParameters.contact_name = userPrefs.display_name || userPrefs.contact_info?.name || "User";
+      }
+
       stepState = updateStepState(stepState, step.id, {
         input: resolvedParameters,
       });
+
+      // Task 1: Enforce Confirmation Guardrails
+      if (step.requires_confirmation || toolDef?.requires_confirmation) {
+        // If we're here, we need to pause and wait for confirmation
+        // In a real system, this would involve updating the state to AWAITING_CONFIRMATION
+        // and returning so the caller can handle the UI interaction.
+        return {
+          step_id: step.id,
+          status: "awaiting_confirmation",
+          input: resolvedParameters,
+          attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+        };
+      }
 
       const toolResult = await toolExecutor.execute(
         step.tool_name,
@@ -434,6 +458,7 @@ export async function executePlan(
       );
 
       let anyFailed = false;
+      let anyAwaitingConfirmation = false;
       let failedStepResult: StepExecutionState | undefined;
       let failedStep: PlanStep | undefined;
 
@@ -448,6 +473,8 @@ export async function executePlan(
             anyFailed = true;
             failedStepResult = result;
             failedStep = step;
+          } else if (result.status === "awaiting_confirmation") {
+            anyAwaitingConfirmation = true;
           }
         } else {
           anyFailed = true;
@@ -469,6 +496,22 @@ export async function executePlan(
 
       if (options.persistState !== false) {
         await saveExecutionState(state);
+      }
+
+      if (anyAwaitingConfirmation && !anyFailed) {
+        state = applyStateUpdate(state, { status: "AWAITING_CONFIRMATION" });
+        if (options.persistState !== false) {
+          await saveExecutionState(state);
+        }
+        const endTime = performance.now();
+        return {
+          state,
+          success: false,
+          completed_steps: getCompletedSteps(state).length,
+          failed_steps: 0,
+          total_steps: plan.steps.length,
+          execution_time_ms: Math.round(endTime - startTime),
+        };
       }
 
       if (anyFailed && failedStepResult && failedStep) {

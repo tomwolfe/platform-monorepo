@@ -5,6 +5,7 @@ import { search_restaurant, add_calendar_event, geocode_location } from "@/lib/t
 import { env } from "@/lib/config";
 import { inferIntent } from "@/lib/intent";
 import { Redis } from "@upstash/redis";
+import { getUserPreferences, updateUserPreferences } from "@/lib/preferences";
 
 export const runtime = "edge";
 export const maxDuration = 30;
@@ -61,7 +62,7 @@ export async function POST(req: Request) {
     if (redis) {
       try {
         [userPreferences, recentLogs] = await Promise.all([
-          redis.get(userPrefsKey),
+          getUserPreferences(userIp),
           getUserAuditLogs(userIp, 10)
         ]);
       } catch (err) {
@@ -146,7 +147,8 @@ export async function POST(req: Request) {
     const auditLog = await createAuditLog(intent, undefined, userLocation || undefined, userIp);
     await updateAuditLog(auditLog.id, { 
       rawModelResponse,
-      inferenceLatencies: { intentInference: intentInferenceLatency }
+      inferenceLatencies: { intentInference: intentInferenceLatency },
+      metadata: { learnedPreferences: userPreferences }
     });
 
     const locationContext = userLocation 
@@ -162,19 +164,20 @@ export async function POST(req: Request) {
     // 1. Dynamic System Prompt
     // 2. Filtered Toolset
     let systemPrompt = `You are an Intention Engine.
+    ${userPreferences ? `### Known User Facts:\n${JSON.stringify(userPreferences)}` : ""}
+
     Today's date is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.
     The user's inferred intent is: ${intent.type} (Confidence: ${intent.confidence})
     Extracted Parameters: ${JSON.stringify(intent.parameters)}
     
     ${locationContext}
 
-    ${userPreferences ? `User Preferences: ${JSON.stringify(userPreferences)}` : ""}
-
     ${memoryContext}
 
     ${failureWarnings}
 
     ${intent.type === 'CLARIFICATION_NEEDED' ? `IMPORTANT: Your confidence in the user's intent is LOW. You MUST ask a clarification question. Explanation: "${intent.explanation}"` : ""}
+    ${intent.type === 'CLARIFICATION_REQUIRED' ? `IMPORTANT: Required information is missing: ${intent.parameters.missingFields.join(", ")}. You MUST ask the user specifically for these missing details.` : ""}
 
     If a tool returns success: false, you MUST acknowledge the error and attempt to REPLAN. 
     Explain what went wrong and provide a modified plan or alternative action to the user.
@@ -216,21 +219,6 @@ export async function POST(req: Request) {
             audit_log_id: auditLog.id,
             step_index: auditLog.steps.length
           });
-
-          // Persistence: Save cuisine preference if successful
-          if (result.success && params.cuisine && redis) {
-            try {
-              const currentPrefs: any = await redis.get(userPrefsKey) || {};
-              const preferredCuisines = new Set(currentPrefs.preferredCuisines || []);
-              preferredCuisines.add(params.cuisine.toLowerCase());
-              await redis.set(userPrefsKey, {
-                ...currentPrefs,
-                preferredCuisines: Array.from(preferredCuisines),
-              }, { ex: 86400 * 30 });
-            } catch (err) {
-              console.warn("Failed to save preference:", err);
-            }
-          }
           
           return result;
         },
@@ -294,6 +282,18 @@ export async function POST(req: Request) {
         try {
           // Retrieve current log to preserve steps already logged in execute
           const currentLog = await (await import("@/lib/audit")).getAuditLog(auditLog.id);
+          
+          // Phase 2: Post-execution preference extraction
+          const anySuccess = currentLog?.steps.some(s => s.status === "executed");
+          if (intent.type === "ACTION" && anySuccess) {
+            await updateUserPreferences(userIp, intent.parameters);
+            // Refresh preferences for logging
+            const updatedPrefs = await getUserPreferences(userIp);
+            await (await import("@/lib/audit")).updateAuditLog(auditLog.id, {
+              metadata: { ...currentLog?.metadata, learnedPreferences: updatedPrefs }
+            });
+          }
+
           await (await import("@/lib/audit")).updateAuditLog(auditLog.id, {
             final_outcome: event.text,
             inferenceLatencies: {

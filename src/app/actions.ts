@@ -2,7 +2,7 @@
 
 import { TOOLS, ToolDefinition, ExecuteToolResult } from "@/lib/tools";
 import { getAuditLog, updateAuditLog, getUserAuditLogs } from "@/lib/audit";
-import { replan } from "@/lib/llm";
+import { replan } from "@/lib/planner";
 import { AuditLog } from "@/lib/types";
 
 export async function executeToolWithContext(

@@ -20,6 +20,7 @@ export interface AuditLog {
   validation_error?: string;
   efficiency_flag?: "LOW";
   replanned_count?: number;
+  metadata?: Record<string, any>;
   steps: Array<{
     step_index: number;
     tool_name: string;

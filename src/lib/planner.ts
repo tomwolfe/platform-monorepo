@@ -1,5 +1,6 @@
 import { Plan, PlanSchema, Intent } from "./schema";
 import { env } from "./config";
+import { getToolDefinitions } from "./tools";
 
 export async function generatePlan(intent: string | Intent, userLocation?: { lat: number; lng: number } | null): Promise<Plan> {
   const intentText = typeof intent === "string" ? intent : intent.rawText;
@@ -76,9 +77,7 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
           ${locationContext}
 
           Available tools:
-          - geocode_location(location, userLocation: {lat, lng}): Converts a city or place name to lat/lon coordinates. Returns { lat, lon }.
-          - search_restaurant(cuisine, lat, lon, location, userLocation: {lat, lng}): Searches for restaurants. If lat/lon are not known, provide 'location' (e.g., city name). Returns a list of restaurants.
-          - add_calendar_event(events: [{title, start_time, end_time, location, restaurant_name, restaurant_address}]): Adds events to the calendar.
+          ${getToolDefinitions()}
 
           Tool Chaining & Context Injection:
           1. Explicitly map outputs from previous steps to inputs of subsequent steps.
@@ -194,9 +193,7 @@ export async function replan(
           }
 
           Available tools:
-          - geocode_location(location, userLocation: {lat, lng})
-          - search_restaurant(cuisine, lat, lon, location, userLocation: {lat, lng})
-          - add_calendar_event(events: [{title, start_time, end_time, location, restaurant_name, restaurant_address}])
+          ${getToolDefinitions()}
 
           Return ONLY pure JSON.`
         }

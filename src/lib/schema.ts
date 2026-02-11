@@ -13,6 +13,7 @@ export const IntentTypeSchema = z.enum([
   "ANALYSIS",
   "UNKNOWN",
   "CLARIFICATION_NEEDED",
+  "CLARIFICATION_REQUIRED",
   "REFUSED"
 ]);
 

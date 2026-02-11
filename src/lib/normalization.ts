@@ -1,20 +1,5 @@
 import { Intent, IntentSchema, IntentType } from "./schema";
-
-/**
- * Normalization Rules based on Intent Ontology.
- * Each type has specific requirements.
- */
-const ONTOLOGY_REQUIREMENTS: Record<IntentType, string[]> = {
-  SCHEDULE: ["action", "temporal_expression"],
-  SEARCH: ["query", "scope"],
-  ACTION: ["capability", "arguments"],
-  QUERY: ["target_object"],
-  PLANNING: ["goal"],
-  ANALYSIS: ["context"],
-  UNKNOWN: [],
-  CLARIFICATION_NEEDED: [],
-  REFUSED: []
-};
+import { validateIntentParams } from "./resolveAmbiguity";
 
 /**
  * Normalizes a candidate intent from an LLM.
@@ -48,18 +33,20 @@ export function normalizeIntent(
   const intent = parsed.data;
 
   // 2. Ontology parameter check
-  const requirements = ONTOLOGY_REQUIREMENTS[intent.type];
-  const missing = requirements.filter(req => !intent.parameters[req]);
+  const { isValid, missingFields } = validateIntentParams(intent.type, intent.parameters);
 
-  if (missing.length > 0) {
-    // Penalty for missing required parameters
-    intent.confidence = Math.max(0, intent.confidence - (0.2 * missing.length));
-    intent.explanation = `Missing required parameters: ${missing.join(", ")}. ${intent.explanation || ""}`;
-    
-    // If confidence drops too low, force clarification
-    if (intent.confidence < 0.6) {
-      intent.type = "CLARIFICATION_NEEDED";
-    }
+  if (!isValid) {
+    // Return CLARIFICATION_REQUIRED if parameters are missing
+    return {
+      ...intent,
+      type: "CLARIFICATION_REQUIRED",
+      confidence: 0.5,
+      parameters: {
+        ...intent.parameters,
+        missingFields
+      },
+      explanation: `Missing required fields: ${missingFields.join(", ")}`
+    };
   }
 
   // 3. Category specific normalization

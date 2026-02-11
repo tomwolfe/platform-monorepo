@@ -42,6 +42,22 @@ async function runAdversarialTest() {
     process.exit(1);
   }
 
+  // Case 3: Partial Intent (Structured Clarification)
+  const raw3 = "Book a table";
+  // SEARCH requires both 'query' and 'scope'
+  const cand3 = { type: "SEARCH", confidence: 0.8, parameters: { query: "restaurant" }, explanation: "Searching for restaurant" };
+  
+  const intent3 = normalizeIntent(cand3, raw3, modelId);
+  
+  console.log(`Input: "${raw3}"`);
+  console.log(`Type: ${intent3.type}`);
+  console.log(`Missing Fields: ${JSON.stringify(intent3.parameters.missingFields)}`);
+
+  if (intent3.type !== "CLARIFICATION_REQUIRED" || !intent3.parameters.missingFields?.includes("scope")) {
+    console.error("FAIL: Partial intent should trigger CLARIFICATION_REQUIRED for missing scope");
+    process.exit(1);
+  }
+
   console.log("PASS: Adversarial inputs handled safely.");
 }
 

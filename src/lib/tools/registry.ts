@@ -14,6 +14,18 @@ import {
   tableReservationReturnSchema,
   reserveRestaurantToolDefinition
 } from "./booking";
+import {
+  discover_restaurant,
+  discoverRestaurantToolDefinition
+} from "./tablestack_discovery";
+import {
+  check_availability,
+  checkAvailabilityToolDefinition
+} from "./tablestack_availability";
+import {
+  book_tablestack_reservation,
+  bookTableStackToolDefinition
+} from "./tablestack_booking";
 import { 
   send_comm, 
   communicationReturnSchema
@@ -98,6 +110,18 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     category: "data",
     responseSchema: z.array(RestaurantResultSchema),
     execute: search_restaurant
+  }],
+  ["discover_restaurant", {
+    ...discoverRestaurantToolDefinition,
+    execute: discover_restaurant
+  }],
+  ["check_availability", {
+    ...checkAvailabilityToolDefinition,
+    execute: check_availability
+  }],
+  ["book_tablestack_reservation", {
+    ...bookTableStackToolDefinition,
+    execute: book_tablestack_reservation
   }],
   ["add_calendar_event", {
     name: "add_calendar_event",

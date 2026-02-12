@@ -149,15 +149,19 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
           5. Use string addresses when the user provides a location name or address.
 
           Dinner Planning Rules:
-          1. Restaurant search and user confirmation MUST precede calendar event creation.
-          2. Always assume a 2-hour duration for dinner events.
-          3. For romantic or high-end dinner requests:
+          1. For restaurant requests, always follow the "Find -> Check -> Book" sequence:
+             a. Use 'discover_restaurant' with the restaurant name/slug to get the 'restaurantId'.
+             b. Use 'check_availability' with the 'restaurantId', date, and partySize to find available tables.
+             c. Use 'book_tablestack_reservation' with the 'restaurantId' and a specific 'tableId' from the availability results.
+          2. Restaurant search and user confirmation MUST precede calendar event creation.
+          3. Always assume a 2-hour duration for dinner events.
+          4. For romantic or high-end dinner requests:
              - Prioritize 'romantic' or 'fine dining' atmosphere in search or description.
              - EXPLICITLY REJECT fast-food chains or low-end casual spots (e.g., McDonald's, Pizza Hut) even if they match the cuisine.
              - NEVER suggest pizza or Mexican cuisine for 'romantic' requests.
-          4. When adding a calendar event for a restaurant, include the 'restaurant_name' and 'restaurant_address' in the parameters.
-          5. Always use coordinates from \`geocode_location\` if you use that tool, instead of passing the raw location string to \`search_restaurant\`.
-          6. For 'add_calendar_event', always provide an array of events under the 'events' key.
+          5. When adding a calendar event for a restaurant, include the 'restaurant_name' and 'restaurant_address' in the parameters.
+          6. Always use coordinates from \`geocode_location\` if you use that tool, instead of passing the raw location string to \`search_restaurant\`.
+          7. For 'add_calendar_event', always provide an array of events under the 'events' key.
 
           Return ONLY pure JSON. No free text.`
         },

@@ -9,8 +9,13 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
   const params = await props.params;
   const restaurantId = params.restaurantId;
 
+  // UUID regex check
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(restaurantId);
+
   const restaurant = await db.query.restaurants.findFirst({
-    where: eq(restaurants.id, restaurantId),
+    where: isUuid 
+      ? eq(restaurants.id, restaurantId) 
+      : eq(restaurants.slug, restaurantId),
     with: {
       tables: true,
     },

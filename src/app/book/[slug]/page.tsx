@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { format, addMinutes, startOfToday } from "date-fns";
+import { fromZonedTime, toZonedTime } from "date-fns-tz";
 import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
 import { Users, Clock, CheckCircle, ChevronRight, AlertCircle } from "lucide-react";
@@ -29,6 +30,7 @@ interface Restaurant {
   openingTime: string | null;
   closingTime: string | null;
   defaultDurationMinutes: number | null;
+  timezone: string | null;
 }
 
 export default function BookingPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -88,9 +90,11 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
     setError(null);
     
     const targetDate = requestedDate || date;
-    const [h, m] = selectedHour.split(':').map(Number);
-    const checkTime = new Date(targetDate);
-    checkTime.setHours(h, m, 0, 0);
+    const timezone = restaurant.timezone || 'UTC';
+    
+    // Create a date object representing the selected time in the restaurant's timezone
+    const datePart = format(targetDate, 'yyyy-MM-dd');
+    const checkTime = fromZonedTime(`${datePart} ${selectedHour}`, timezone);
 
     try {
       const res = await fetch(
@@ -106,8 +110,8 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
         setSelectedTime(checkTime.toISOString());
       }
       setStep(2);
-    } catch (err: any) {
-      setError(err.message || "Failed to fetch availability");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch availability");
     } finally {
       setIsLoading(false);
     }
@@ -252,7 +256,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
                           selectedTime === slot.time ? "bg-blue-600 border-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
                         }`}
                       >
-                        {format(new Date(slot.time), "h:mm aa")}
+                        {format(toZonedTime(new Date(slot.time), restaurant.timezone || 'UTC'), "h:mm aa")}
                       </button>
                     ))}
                   </div>
@@ -261,7 +265,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
                 <div className="flex flex-col items-center gap-4 py-4">
                    <div className="bg-green-50 text-green-700 px-6 py-4 rounded-2xl border border-green-100 text-center w-full">
                       <p className="text-sm font-medium mb-1">Available at</p>
-                      <p className="text-3xl font-bold">{selectedTime ? format(new Date(selectedTime), "h:mm aa") : selectedHour}</p>
+                      <p className="text-3xl font-bold">{selectedTime ? format(toZonedTime(new Date(selectedTime), restaurant.timezone || 'UTC'), "h:mm aa") : selectedHour}</p>
                     </div>
                 </div>
               )}
@@ -308,7 +312,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-500">Time</span>
-                  <span className="font-medium">{selectedTime ? format(new Date(selectedTime), "h:mm aa") : ""}</span>
+                  <span className="font-medium">{selectedTime ? format(toZonedTime(new Date(selectedTime), restaurant.timezone || 'UTC'), "h:mm aa") : ""}</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-500">Party Size</span>

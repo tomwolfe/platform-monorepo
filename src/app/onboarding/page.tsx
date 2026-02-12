@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { createRestaurant } from "./actions";
@@ -71,7 +71,7 @@ export default function OnboardingPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
-  const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<OnboardingData>({
+  const { register, handleSubmit, control, setValue, formState: { errors } } = useForm<OnboardingData>({
     resolver: zodResolver(onboardingSchema),
     defaultValues: {
       name: "",
@@ -85,9 +85,9 @@ export default function OnboardingPage() {
     }
   });
 
-  const name = watch("name");
-  const tables = watch("tables");
-  const daysOpen = watch("daysOpen");
+  const name = useWatch({ control, name: "name" });
+  const tables = useWatch({ control, name: "tables" }) || [];
+  const daysOpen = useWatch({ control, name: "daysOpen" }) || [];
 
   const toggleDay = (day: string) => {
     if (daysOpen.includes(day)) {

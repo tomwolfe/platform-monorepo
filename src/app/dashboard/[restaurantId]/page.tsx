@@ -3,7 +3,7 @@ import { restaurants, reservations } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { notFound, redirect } from 'next/navigation';
 import FloorPlan from '@/components/dashboard/FloorPlan';
-import { updateTablePositions, updateTableStatus } from './actions';
+import { updateTablePositions, updateTableStatus, updateRestaurantSettings } from './actions';
 import { currentUser } from '@clerk/nextjs/server';
 
 export default async function DashboardPage(props: { params: Promise<{ restaurantId: string }> }) {
@@ -74,6 +74,71 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
           onStatusChange={handleStatusChange}
           restaurantId={restaurant.id}
         />
+      </section>
+
+      <section className="mt-8 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <h2 className="text-xl font-semibold mb-6">Restaurant Settings</h2>
+        <form action={async (formData) => {
+          'use server';
+          await updateRestaurantSettings(restaurant.id, formData);
+        }} className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Opening Time (HH:mm)</label>
+            <input 
+              type="text" 
+              name="openingTime" 
+              defaultValue={restaurant.openingTime || '09:00'} 
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+              placeholder="09:00"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Closing Time (HH:mm)</label>
+            <input 
+              type="text" 
+              name="closingTime" 
+              defaultValue={restaurant.closingTime || '22:00'} 
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+              placeholder="22:00"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Timezone</label>
+            <input 
+              type="text" 
+              name="timezone" 
+              defaultValue={restaurant.timezone || 'UTC'} 
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+              placeholder="America/New_York"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Default Duration (minutes)</label>
+            <input 
+              type="number" 
+              name="defaultDurationMinutes" 
+              defaultValue={restaurant.defaultDurationMinutes || 90} 
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+          </div>
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Days Open (comma separated)</label>
+            <input 
+              type="text" 
+              name="daysOpen" 
+              defaultValue={restaurant.daysOpen || 'monday,tuesday,wednesday,thursday,friday,saturday,sunday'} 
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+          </div>
+          <div className="md:col-span-2">
+            <button 
+              type="submit" 
+              className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 transition-colors"
+            >
+              Save Settings
+            </button>
+          </div>
+        </form>
       </section>
 
       <section className="mt-8 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">

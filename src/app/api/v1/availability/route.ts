@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { restaurantTables, reservations, restaurants } from '@/db/schema';
 import { and, eq, gte, lte, or, sql } from 'drizzle-orm';
-import { addMinutes, parseISO, format } from 'date-fns';
+import { addMinutes, parseISO } from 'date-fns';
+import { toZonedTime, format } from 'date-fns-tz';
 
 export const runtime = 'edge';
 
@@ -22,7 +23,7 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
             gte(reservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
           )
         ),
-        sql`(${reservations.startTime}, ${reservations.endTime}) OVERLAPS (${startTime.toISOString()}, ${endTime.toISOString()})`
+        sql`(${reservations.startTime}, ${reservations.endTime}) OVERLAPS (${startTime.toISOString()}::timestamptz, ${endTime.toISOString()}::timestamptz)`
       )
     );
 
@@ -63,14 +64,17 @@ export async function GET(req: NextRequest) {
     }
 
     const requestedDate = parseISO(date);
-    const dayOfWeek = format(requestedDate, 'eeee').toLowerCase();
-    const openDays = restaurant.daysOpen?.split(',') || [];
+    const timezone = restaurant.timezone || 'UTC';
+    const restaurantTime = toZonedTime(requestedDate, timezone);
+    
+    const dayOfWeek = format(restaurantTime, 'eeee', { timeZone: timezone }).toLowerCase();
+    const openDays = restaurant.daysOpen?.split(',').map(d => d.trim().toLowerCase()) || [];
     
     if (!openDays.includes(dayOfWeek)) {
       return NextResponse.json({ message: 'Restaurant is closed on this day', availableTables: [] });
     }
 
-    const timeStr = format(requestedDate, 'HH:mm');
+    const timeStr = format(restaurantTime, 'HH:mm', { timeZone: timezone });
     if (timeStr < (restaurant.openingTime || '00:00') || timeStr > (restaurant.closingTime || '23:59')) {
       return NextResponse.json({ message: 'Restaurant is closed at this time', availableTables: [] });
     }
@@ -84,7 +88,8 @@ export async function GET(req: NextRequest) {
       const offsets = [-30, 30, -60, 60];
       for (const offset of offsets) {
         const suggestedTime = addMinutes(requestedDate, offset);
-        const suggestedTimeStr = format(suggestedTime, 'HH:mm');
+        const suggestedZonedTime = toZonedTime(suggestedTime, timezone);
+        const suggestedTimeStr = format(suggestedZonedTime, 'HH:mm', { timeZone: timezone });
         
         if (suggestedTimeStr < (restaurant.openingTime || '00:00') || suggestedTimeStr > (restaurant.closingTime || '23:59')) {
           continue;

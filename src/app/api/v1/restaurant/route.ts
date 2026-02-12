@@ -9,6 +9,8 @@ export const runtime = 'edge';
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const slug = searchParams.get('slug');
+  const apiKeyHeader = req.headers.get('x-api-key');
+  const isInternal = apiKeyHeader === process.env.INTERNAL_API_KEY;
 
   // Allow public access if slug is provided
   if (slug) {
@@ -19,6 +21,11 @@ export async function GET(req: NextRequest) {
 
       if (!restaurant) {
         return NextResponse.json({ message: 'Restaurant not found' }, { status: 404 });
+      }
+
+      // If internal key is provided, return sensitive data for tool integration
+      if (isInternal) {
+        return NextResponse.json(restaurant);
       }
 
       // Sanitize response

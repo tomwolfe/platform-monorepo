@@ -99,3 +99,72 @@ export async function updateTableStatus(
     throw new Error('Failed to update status');
   }
 }
+
+export async function addTable(restaurantId: string) {
+  await verifyOwnership(restaurantId);
+  try {
+    // Find highest table number to suggest next
+    const existingTables = await db.query.restaurantTables.findMany({
+      where: eq(restaurantTables.restaurantId, restaurantId),
+    });
+    
+    const nextNumber = existingTables.length > 0 
+      ? (Math.max(...existingTables.map(t => parseInt(t.tableNumber) || 0)) + 1).toString()
+      : "1";
+
+    await db.insert(restaurantTables).values({
+      restaurantId,
+      tableNumber: nextNumber,
+      minCapacity: 2,
+      maxCapacity: 4,
+      xPos: 50,
+      yPos: 50,
+      status: 'vacant',
+    });
+    
+    revalidatePath(`/dashboard/${restaurantId}`);
+  } catch (error) {
+    console.error('Failed to add table:', error);
+    throw new Error('Failed to add table');
+  }
+}
+
+export async function deleteTable(tableId: string, restaurantId: string) {
+  await verifyOwnership(restaurantId);
+  try {
+    await db.delete(restaurantTables)
+      .where(and(
+        eq(restaurantTables.id, tableId),
+        eq(restaurantTables.restaurantId, restaurantId)
+      ));
+    revalidatePath(`/dashboard/${restaurantId}`);
+  } catch (error) {
+    console.error('Failed to delete table:', error);
+    throw new Error('Failed to delete table');
+  }
+}
+
+export async function updateTableDetails(
+  tableId: string,
+  restaurantId: string,
+  details: { tableNumber: string, minCapacity: number, maxCapacity: number }
+) {
+  await verifyOwnership(restaurantId);
+  try {
+    await db.update(restaurantTables)
+      .set({
+        tableNumber: details.tableNumber,
+        minCapacity: details.minCapacity,
+        maxCapacity: details.maxCapacity,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(restaurantTables.id, tableId),
+        eq(restaurantTables.restaurantId, restaurantId)
+      ));
+    revalidatePath(`/dashboard/${restaurantId}`);
+  } catch (error) {
+    console.error('Failed to update table details:', error);
+    throw new Error('Failed to update table details');
+  }
+}

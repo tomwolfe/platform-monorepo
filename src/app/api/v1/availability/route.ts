@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { restaurantTables, reservations, restaurants } from '@/db/schema';
-import { and, eq, gte, lte, or, sql } from 'drizzle-orm';
+import { and, eq, gte, or, sql } from 'drizzle-orm';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
 
@@ -36,7 +36,6 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
         eq(restaurantTables.isActive, true),
         eq(restaurantTables.status, 'vacant'),
         gte(restaurantTables.maxCapacity, partySize),
-        lte(restaurantTables.minCapacity, partySize),
         sql`${restaurantTables.id} NOT IN (${occupiedTableIds})`
       )
     );

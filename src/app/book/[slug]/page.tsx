@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { format, addMinutes, startOfToday } from "date-fns";
+import { format, addMinutes } from "date-fns";
 import { fromZonedTime, toZonedTime } from "date-fns-tz";
 import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
@@ -35,7 +35,7 @@ interface Restaurant {
 
 export default function BookingPage({ params }: { params: Promise<{ slug: string }> }) {
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
-  const [date, setDate] = useState<Date | undefined>(startOfToday());
+  const [date, setDate] = useState<Date | undefined>(undefined);
   const [partySize, setPartySize] = useState(2);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
   const [selectedHour, setSelectedHour] = useState("19:00");
@@ -56,12 +56,26 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
       .then(data => {
         setRestaurant(data);
         if (data.openingTime) setSelectedHour(data.openingTime);
+        
+        // Set initial date to restaurant's "today"
+        const now = new Date();
+        const restaurantToday = toZonedTime(now, data.timezone || 'UTC');
+        restaurantToday.setHours(0, 0, 0, 0);
+        setDate(restaurantToday);
       })
       .catch(err => {
         setError(err.message);
         setRestaurant(null);
       });
   }, [slug]);
+
+  const getRestaurantToday = () => {
+    const now = new Date();
+    const tz = restaurant?.timezone || 'UTC';
+    const restaurantToday = toZonedTime(now, tz);
+    restaurantToday.setHours(0, 0, 0, 0);
+    return restaurantToday;
+  };
 
   const generateTimeSlots = () => {
     if (!restaurant || !restaurant.id) return [];
@@ -177,7 +191,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
                   mode="single"
                   selected={date}
                   onSelect={setDate}
-                  disabled={{ before: new Date() }}
+                  disabled={{ before: getRestaurantToday() }}
                   className="border rounded-lg p-3 bg-white shadow-sm"
                 />
               </div>

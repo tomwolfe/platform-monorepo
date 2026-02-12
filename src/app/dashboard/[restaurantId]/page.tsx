@@ -3,7 +3,7 @@ import { restaurants, reservations } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { notFound, redirect } from 'next/navigation';
 import FloorPlan from '@/components/dashboard/FloorPlan';
-import { updateTablePositions, updateTableStatus, updateRestaurantSettings } from './actions';
+import { updateTablePositions, updateTableStatus, updateRestaurantSettings, addTable, deleteTable, updateTableDetails } from './actions';
 import { currentUser } from '@clerk/nextjs/server';
 
 export default async function DashboardPage(props: { params: Promise<{ restaurantId: string }> }) {
@@ -43,13 +43,28 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
     'use server';
     await updateTablePositions(
       tables.map(t => ({ id: t.id, xPos: t.xPos, yPos: t.yPos })),
-      restaurantId
+      restaurant.id
     );
   }
 
   async function handleStatusChange(tableId: string, status: 'vacant' | 'occupied' | 'dirty') {
     'use server';
-    await updateTableStatus(tableId, status, restaurantId);
+    await updateTableStatus(tableId, status, restaurant.id);
+  }
+
+  async function handleAddTable() {
+    'use server';
+    await addTable(restaurant.id);
+  }
+
+  async function handleDeleteTable(tableId: string) {
+    'use server';
+    await deleteTable(tableId, restaurant.id);
+  }
+
+  async function handleUpdateDetails(tableId: string, details: { tableNumber: string, minCapacity: number, maxCapacity: number }) {
+    'use server';
+    await updateTableDetails(tableId, restaurant.id, details);
   }
 
   return (
@@ -72,6 +87,9 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
           reservations={restaurant.reservations}
           onSave={handleSave} 
           onStatusChange={handleStatusChange}
+          onAdd={handleAddTable}
+          onDelete={handleDeleteTable}
+          onUpdateDetails={handleUpdateDetails}
           restaurantId={restaurant.id}
         />
       </section>

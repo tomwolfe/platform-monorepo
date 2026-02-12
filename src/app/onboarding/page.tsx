@@ -22,6 +22,10 @@ const onboardingSchema = z.object({
   name: z.string().min(2, "Name is too short"),
   slug: z.string().min(2, "Slug is too short").regex(/^[a-z0-9-]+$/, "Slug can only contain lowercase letters, numbers, and hyphens"),
   timezone: z.string().min(1, "Please select a timezone"),
+  openingTime: z.string().min(1, "Please select an opening time"),
+  closingTime: z.string().min(1, "Please select a closing time"),
+  daysOpen: z.array(z.string()).min(1, "Please select at least one day"),
+  defaultDurationMinutes: z.number().min(1),
   tables: z.array(z.object({
     id: z.string(), // Temporary ID for DnD
     tableNumber: z.string(),
@@ -74,12 +78,25 @@ export default function OnboardingPage() {
       name: "",
       slug: "",
       timezone: "UTC",
+      openingTime: "17:00",
+      closingTime: "22:00",
+      daysOpen: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
+      defaultDurationMinutes: 90,
       tables: [],
     }
   });
 
   const name = watch("name");
   const tables = watch("tables");
+  const daysOpen = watch("daysOpen");
+
+  const toggleDay = (day: string) => {
+    if (daysOpen.includes(day)) {
+      setValue("daysOpen", daysOpen.filter(d => d !== day));
+    } else {
+      setValue("daysOpen", [...daysOpen, day]);
+    }
+  };
 
   useEffect(() => {
     if (name && step === 1) {
@@ -251,29 +268,80 @@ export default function OnboardingPage() {
                 <p className="text-gray-500">Just a few more details to get you live.</p>
               </div>
 
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Timezone</label>
-                  <select
-                    {...register("timezone")}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  >
-                    <option value="UTC">UTC</option>
-                    <option value="America/New_York">Eastern Time (ET)</option>
-                    <option value="America/Chicago">Central Time (CT)</option>
-                    <option value="America/Denver">Mountain Time (MT)</option>
-                    <option value="America/Los_Angeles">Pacific Time (PT)</option>
-                    <option value="Europe/London">London (GMT/BST)</option>
-                  </select>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Timezone</label>
+                    <select
+                      {...register("timezone")}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                      <option value="UTC">UTC</option>
+                      <option value="America/New_York">Eastern Time (ET)</option>
+                      <option value="America/Chicago">Central Time (CT)</option>
+                      <option value="America/Denver">Mountain Time (MT)</option>
+                      <option value="America/Los_Angeles">Pacific Time (PT)</option>
+                      <option value="Europe/London">London (GMT/BST)</option>
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Opening Time</label>
+                      <input
+                        type="time"
+                        {...register("openingTime")}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Closing Time</label>
+                      <input
+                        type="time"
+                        {...register("closingTime")}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Default Duration (minutes)</label>
+                    <input
+                      type="number"
+                      {...register("defaultDurationMinutes", { valueAsNumber: true })}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                  </div>
                 </div>
 
-                <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 flex gap-4">
-                  <div className="bg-blue-600 p-2 rounded-lg h-fit">
-                    <Settings className="text-white w-5 h-5" />
+                <div className="space-y-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Days Open</label>
+                  <div className="flex flex-wrap gap-2">
+                    {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map(day => (
+                      <button
+                        key={day}
+                        type="button"
+                        onClick={() => toggleDay(day)}
+                        className={`px-3 py-1 rounded-full text-xs font-bold transition ${
+                          daysOpen.includes(day) 
+                            ? "bg-blue-600 text-white" 
+                            : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                        }`}
+                      >
+                        {day.charAt(0).toUpperCase() + day.slice(1, 3)}
+                      </button>
+                    ))}
                   </div>
-                  <div>
-                    <h3 className="font-bold text-blue-900">Intelligent Engine Active</h3>
-                    <p className="text-blue-700 text-sm">TableStack will automatically optimize your seating to maximize capacity and reduce wait times.</p>
+                  {errors.daysOpen && <p className="text-red-500 text-xs mt-1">{errors.daysOpen.message}</p>}
+
+                  <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 flex gap-4">
+                    <div className="bg-blue-600 p-2 rounded-lg h-fit">
+                      <Settings className="text-white w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-blue-900">Intelligent Engine Active</h3>
+                      <p className="text-blue-700 text-sm text-balance">TableStack will automatically optimize your seating to maximize capacity.</p>
+                    </div>
                   </div>
                 </div>
               </div>

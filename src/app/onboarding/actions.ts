@@ -12,6 +12,10 @@ const onboardingSchema = z.object({
   name: z.string().min(2),
   slug: z.string().min(2),
   timezone: z.string().min(1),
+  openingTime: z.string().min(1),
+  closingTime: z.string().min(1),
+  daysOpen: z.array(z.string()).min(1),
+  defaultDurationMinutes: z.number().min(1),
   tables: z.array(z.object({
     id: z.string().optional(),
     tableNumber: z.string(),
@@ -37,6 +41,10 @@ export async function createRestaurant(data: z.infer<typeof onboardingSchema>) {
     ownerEmail: user.emailAddresses[0].emailAddress,
     ownerId: user.id,
     timezone: validated.timezone,
+    openingTime: validated.openingTime,
+    closingTime: validated.closingTime,
+    daysOpen: validated.daysOpen.join(','),
+    defaultDurationMinutes: validated.defaultDurationMinutes,
     apiKey,
   }).returning();
 

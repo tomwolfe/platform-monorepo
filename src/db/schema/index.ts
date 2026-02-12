@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, timestamp, boolean, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, integer, timestamp, boolean, uniqueIndex, index } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 export const restaurants = pgTable('restaurants', {
@@ -9,11 +9,15 @@ export const restaurants = pgTable('restaurants', {
   ownerId: text('owner_id').notNull(),
   timezone: text('timezone').default('UTC'),
   apiKey: text('api_key').unique().notNull(),
+  openingTime: text('opening_time').default('17:00'),
+  closingTime: text('closing_time').default('22:00'),
+  daysOpen: text('days_open').default('monday,tuesday,wednesday,thursday,friday,saturday,sunday'),
+  defaultDurationMinutes: integer('default_duration_minutes').default(90),
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => {
   return {
     slugIdx: uniqueIndex('slug_idx').on(table.slug),
-    ownerIdIdx: uniqueIndex('owner_id_idx').on(table.ownerId),
+    ownerIdIdx: index('owner_id_idx').on(table.ownerId),
   };
 });
 

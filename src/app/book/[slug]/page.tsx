@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { format, addHours, startOfToday, parseISO } from "date-fns";
+import { format, addHours, addMinutes, startOfToday, parseISO } from "date-fns";
 import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
 import { Calendar as CalendarIcon, Users, Clock, CheckCircle, ChevronRight, AlertCircle } from "lucide-react";
@@ -28,9 +28,10 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
   const [date, setDate] = useState<Date | undefined>(startOfToday());
   const [partySize, setPartySize] = useState(2);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
+  const [selectedHour, setSelectedHour] = useState("19:00");
   const [availability, setAvailability] = useState<AvailabilityResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [step, setStep] = useState(1); // 1: Date/Size, 2: Time, 3: Details, 4: Success
+  const [step, setStep] = useState(1); // 1: Date/Size/Time, 2: Selection, 3: Details, 4: Success
   const [guestInfo, setGuestInfo] = useState({ name: "", email: "" });
   const [error, setError] = useState<string | null>(null);
 
@@ -39,8 +40,32 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
   useEffect(() => {
     fetch(`/api/v1/restaurant?slug=${slug}`)
       .then(res => res.json())
-      .then(data => setRestaurant(data));
+      .then(data => {
+        setRestaurant(data);
+        if (data.openingTime) setSelectedHour(data.openingTime);
+      });
   }, [slug]);
+
+  const generateTimeSlots = () => {
+    if (!restaurant) return [];
+    const slots = [];
+    let current = restaurant.openingTime || "17:00";
+    const end = restaurant.closingTime || "22:00";
+    
+    while (current <= end) {
+      slots.push(current);
+      const [h, m] = current.split(':').map(Number);
+      let nextM = m + 30;
+      let nextH = h;
+      if (nextM >= 60) {
+        nextH++;
+        nextM -= 60;
+      }
+      current = `${nextH.toString().padStart(2, '0')}:${nextM.toString().padStart(2, '0')}`;
+      if (current > end) break;
+    }
+    return slots;
+  };
 
   const checkAvailability = async (requestedDate?: Date) => {
     if (!restaurant || !date) return;
@@ -48,9 +73,9 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
     setError(null);
     
     const targetDate = requestedDate || date;
-    // Set time to something sensible for the initial check if not selected
+    const [h, m] = selectedHour.split(':').map(Number);
     const checkTime = new Date(targetDate);
-    if (!requestedDate) checkTime.setHours(19, 0, 0, 0); // Default to 7 PM
+    checkTime.setHours(h, m, 0, 0);
 
     try {
       const res = await fetch(
@@ -73,6 +98,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
     if (!selectedTime || !availability?.availableTables[0]) return;
     setIsLoading(true);
     try {
+      const duration = restaurant.defaultDurationMinutes || 90;
       await createReservation({
         restaurantId: restaurant.id,
         tableId: availability.availableTables[0].id,
@@ -80,7 +106,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
         guestEmail: guestInfo.email,
         partySize,
         startTime: selectedTime,
-        endTime: addHours(new Date(selectedTime), 1.5).toISOString(),
+        endTime: addMinutes(new Date(selectedTime), duration).toISOString(),
       });
       setStep(4);
     } catch (err) {
@@ -132,6 +158,25 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
                 </div>
               </div>
 
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
+                  <Clock className="w-4 h-4" /> Preferred Time
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {generateTimeSlots().map(time => (
+                    <button
+                      key={time}
+                      onClick={() => setSelectedHour(time)}
+                      className={`py-2 rounded-lg border text-sm font-medium transition ${
+                        selectedHour === time ? "bg-blue-600 border-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
+                      }`}
+                    >
+                      {time}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <button
                 onClick={() => checkAvailability()}
                 disabled={!date || isLoading}
@@ -174,12 +219,11 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-3">
-                   <button
-                      className="p-3 rounded-xl border-2 border-blue-600 bg-blue-50 font-bold text-center text-blue-700"
-                    >
-                      {selectedTime ? format(new Date(selectedTime), "h:mm aa") : "7:00 PM"}
-                    </button>
+                <div className="flex flex-col items-center gap-4 py-4">
+                   <div className="bg-green-50 text-green-700 px-6 py-4 rounded-2xl border border-green-100 text-center w-full">
+                      <p className="text-sm font-medium mb-1">Available at</p>
+                      <p className="text-3xl font-bold">{selectedTime ? format(new Date(selectedTime), "h:mm aa") : selectedHour}</p>
+                    </div>
                 </div>
               )}
 

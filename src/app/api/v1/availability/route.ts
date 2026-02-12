@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { restaurantTables, reservations } from '@/db/schema';
+import { restaurantTables, reservations, restaurants } from '@/db/schema';
 import { and, eq, gte, lte, or, sql } from 'drizzle-orm';
-import { addMinutes, parseISO } from 'date-fns';
+import { addMinutes, parseISO, format } from 'date-fns';
 
 export const runtime = 'edge';
 
-async function getAvailableTables(restaurantId: string, startTime: Date, partySize: number) {
-  const endTime = addMinutes(startTime, 90);
+async function getAvailableTables(restaurantId: string, startTime: Date, partySize: number, duration: number) {
+  const endTime = addMinutes(startTime, duration);
 
   const occupiedTableIds = db
     .select({ tableId: reservations.tableId })
@@ -52,16 +52,43 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    const restaurant = await db.query.restaurants.findFirst({
+      where: eq(restaurants.id, restaurantId),
+    });
+
+    if (!restaurant) {
+      return NextResponse.json({ message: 'Restaurant not found' }, { status: 404 });
+    }
+
     const requestedDate = parseISO(date);
-    const availableTables = await getAvailableTables(restaurantId, requestedDate, partySize);
+    const dayOfWeek = format(requestedDate, 'eeee').toLowerCase();
+    const openDays = restaurant.daysOpen?.split(',') || [];
+    
+    if (!openDays.includes(dayOfWeek)) {
+      return NextResponse.json({ message: 'Restaurant is closed on this day', availableTables: [] });
+    }
+
+    const timeStr = format(requestedDate, 'HH:mm');
+    if (timeStr < (restaurant.openingTime || '00:00') || timeStr > (restaurant.closingTime || '23:59')) {
+      return NextResponse.json({ message: 'Restaurant is closed at this time', availableTables: [] });
+    }
+
+    const duration = restaurant.defaultDurationMinutes || 90;
+    const availableTables = await getAvailableTables(restaurantId, requestedDate, partySize, duration);
 
     const suggestedSlots: { time: string, availableTables: typeof availableTables }[] = [];
 
     if (availableTables.length === 0) {
-      const offsets = [-30, 30];
+      const offsets = [-30, 30, -60, 60];
       for (const offset of offsets) {
         const suggestedTime = addMinutes(requestedDate, offset);
-        const tables = await getAvailableTables(restaurantId, suggestedTime, partySize);
+        const suggestedTimeStr = format(suggestedTime, 'HH:mm');
+        
+        if (suggestedTimeStr < (restaurant.openingTime || '00:00') || suggestedTimeStr > (restaurant.closingTime || '23:59')) {
+          continue;
+        }
+
+        const tables = await getAvailableTables(restaurantId, suggestedTime, partySize, duration);
         if (tables.length > 0) {
           suggestedSlots.push({
             time: suggestedTime.toISOString(),

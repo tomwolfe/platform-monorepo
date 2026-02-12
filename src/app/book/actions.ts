@@ -71,6 +71,15 @@ export async function cancelReservation(reservationId: string) {
     .returning();
 
   if (reservation) {
+    // Real-time update via Ably
+    if (process.env.ABLY_API_KEY) {
+      const ably = new Ably.Rest(process.env.ABLY_API_KEY);
+      const channel = ably.channels.get(`restaurant:${reservation.restaurantId}`);
+      await channel.publish('RESERVATION_CANCELLED', {
+        id: reservation.id,
+      });
+    }
+
     revalidatePath(`/dashboard/${reservation.restaurantId}`);
     revalidatePath(`/book/manage/${reservationId}`);
   }

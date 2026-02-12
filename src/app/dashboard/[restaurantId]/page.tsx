@@ -87,7 +87,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
         <h2 className="text-xl font-semibold mb-6">Floor Plan Editor</h2>
         <FloorPlan 
           initialTables={restaurant.tables} 
-          reservations={restaurant.reservations}
+          reservations={restaurant.reservations.filter(r => r.status === 'confirmed')}
           onSave={handleSave} 
           onStatusChange={handleStatusChange}
           onAdd={handleAddTable}
@@ -163,7 +163,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
       </section>
 
       <section className="mt-8 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-        <h2 className="text-xl font-semibold mb-6">Confirmed Reservations</h2>
+        <h2 className="text-xl font-semibold mb-6">Recent Reservations</h2>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead>
@@ -181,7 +181,11 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{res.guestName}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{res.partySize}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(res.startTime).toLocaleString()}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-semibold">Confirmed</td>
+                  <td className={`px-6 py-4 whitespace-nowrap text-sm font-semibold capitalize ${
+                    res.status === 'confirmed' ? 'text-green-600' : 'text-red-600'
+                  }`}>
+                    {res.status}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <form action={async () => {
                       'use server';
@@ -196,7 +200,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
               ))}
               {restaurant.reservations.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">No confirmed reservations found.</td>
+                  <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">No reservations found.</td>
                 </tr>
               )}
             </tbody>

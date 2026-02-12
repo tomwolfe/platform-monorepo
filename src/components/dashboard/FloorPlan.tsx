@@ -182,6 +182,11 @@ export default function FloorPlan({
       router.refresh();
     });
 
+    channel.subscribe('RESERVATION_CANCELLED', (message) => {
+      console.log('Reservation cancelled received:', message.data);
+      router.refresh();
+    });
+
     return () => {
       channel.unsubscribe();
       ably.close();

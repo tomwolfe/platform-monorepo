@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { ToolDefinitionMetadata, ToolParameter } from "./types";
+import { geocode_location, search_web } from "./location_search";
+import { env } from "../config";
 
 export const TableReservationSchema = z.object({
   restaurant_name: z.string().describe("The name of the restaurant."),
@@ -28,9 +30,6 @@ export const tableReservationReturnSchema = {
   party_size: "number",
   message: "string"
 };
-
-import { env } from "../config";
-import { search_web } from "./location_search";
 
 export async function reserve_restaurant(params: TableReservationParams): Promise<{ success: boolean; result?: any; error?: string }> {
   const validated = TableReservationSchema.safeParse(params);

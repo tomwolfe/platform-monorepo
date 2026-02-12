@@ -20,8 +20,7 @@ function assert(name: string, condition: boolean, errorMessage?: string): void {
 }
 
 function printSummary(): void {
-  console.log("
-" + "=".repeat(60));
+  console.log("\n" + "=".repeat(60));
   console.log("TEST SUMMARY: Booking Logic");
   console.log("=".repeat(60));
   
@@ -38,8 +37,7 @@ function printSummary(): void {
 }
 
 async function testBookingLogic() {
-  console.log("
---- TEST: Restaurant Booking Logic ---");
+  console.log("\n--- TEST: Restaurant Booking Logic ---");
 
   const validParams = {
     restaurant_name: "Test Italian",

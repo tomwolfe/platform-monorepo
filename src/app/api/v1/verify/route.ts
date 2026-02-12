@@ -10,8 +10,10 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const token = searchParams.get('token');
 
-  if (!token) {
-    return NextResponse.json({ message: 'Missing token' }, { status: 400 });
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  if (!token || !uuidRegex.test(token)) {
+    return NextResponse.json({ message: 'Missing or invalid token' }, { status: 400 });
   }
 
   try {

@@ -47,15 +47,22 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
 
   useEffect(() => {
     fetch(`/api/v1/restaurant?slug=${slug}`)
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error("Restaurant not found");
+        return res.json();
+      })
       .then(data => {
         setRestaurant(data);
         if (data.openingTime) setSelectedHour(data.openingTime);
+      })
+      .catch(err => {
+        setError(err.message);
+        setRestaurant(null);
       });
   }, [slug]);
 
   const generateTimeSlots = () => {
-    if (!restaurant) return [];
+    if (!restaurant || !restaurant.id) return [];
     const slots = [];
     let current = restaurant.openingTime || "17:00";
     const end = restaurant.closingTime || "22:00";
@@ -76,7 +83,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
   };
 
   const checkAvailability = async (requestedDate?: Date) => {
-    if (!restaurant || !date) return;
+    if (!restaurant || !restaurant.id || !date) return;
     setIsLoading(true);
     setError(null);
     
@@ -89,21 +96,25 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
       const res = await fetch(
         `/api/v1/availability?restaurantId=${restaurant.id}&date=${checkTime.toISOString()}&partySize=${partySize}`
       );
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.message || "Failed to fetch availability");
+      }
       const data = await res.json();
       setAvailability(data);
       if (data.availableTables.length > 0) {
         setSelectedTime(checkTime.toISOString());
       }
       setStep(2);
-    } catch {
-      setError("Failed to fetch availability");
+    } catch (err: any) {
+      setError(err.message || "Failed to fetch availability");
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleBooking = async () => {
-    if (!restaurant || !selectedTime || !availability?.availableTables[0]) return;
+    if (!restaurant || !restaurant.id || !selectedTime || !availability?.availableTables[0]) return;
     setIsLoading(true);
     try {
       const duration = restaurant.defaultDurationMinutes || 90;

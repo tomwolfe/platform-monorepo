@@ -16,6 +16,12 @@ export async function createReservation(data: {
   startTime: string;
   endTime: string;
 }) {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  
+  if (!uuidRegex.test(data.restaurantId) || !uuidRegex.test(data.tableId)) {
+    throw new Error("Invalid restaurant or table ID");
+  }
+
   const [reservation] = await db.insert(reservations).values({
     restaurantId: data.restaurantId,
     tableId: data.tableId,

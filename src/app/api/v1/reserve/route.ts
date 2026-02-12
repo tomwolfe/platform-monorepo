@@ -17,8 +17,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { restaurantId, tableId, guestName, guestEmail, partySize, startTime } = body;
 
-    if (!restaurantId || !guestName || !guestEmail || !partySize || !startTime) {
-      return NextResponse.json({ message: 'Missing required fields' }, { status: 400 });
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    if (!restaurantId || !uuidRegex.test(restaurantId) || !tableId || !uuidRegex.test(tableId) || !guestName || !guestEmail || !partySize || !startTime) {
+      return NextResponse.json({ message: 'Missing or invalid required fields' }, { status: 400 });
     }
 
     // Verify API Key matches restaurant

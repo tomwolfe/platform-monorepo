@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import { restaurants, restaurantTables } from './src/db/schema';
+import { eq } from 'drizzle-orm';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL is not set');
@@ -18,9 +19,20 @@ async function seed() {
     ownerEmail: 'owner@pestoplace.com',
     ownerId: 'user_2abc123', // Demo Clerk ID
     apiKey: 'pk_test_123456789',
+  }).onConflictDoUpdate({
+    target: restaurants.slug,
+    set: {
+      name: 'The Pesto Place',
+      ownerEmail: 'owner@pestoplace.com',
+      ownerId: 'user_2abc123',
+      apiKey: 'pk_test_123456789',
+    }
   }).returning();
 
-  console.log(`✅ Created restaurant: ${restaurant.name} (ID: ${restaurant.id})`);
+  console.log(`✅ Created/Updated restaurant: ${restaurant.name} (ID: ${restaurant.id})`);
+
+  // Clear existing tables for this restaurant to avoid duplicates
+  await db.delete(restaurantTables).where(eq(restaurantTables.restaurantId, restaurant.id));
 
   const tables = [
     { tableNumber: '1', minCapacity: 2, maxCapacity: 2, xPos: 100, yPos: 100, tableType: 'square' },

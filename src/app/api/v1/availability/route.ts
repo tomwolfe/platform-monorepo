@@ -47,8 +47,10 @@ export async function GET(req: NextRequest) {
   const date = searchParams.get('date');
   const partySize = parseInt(searchParams.get('partySize') || '0');
 
-  if (!restaurantId || !date || isNaN(partySize)) {
-    return NextResponse.json({ message: 'Missing parameters' }, { status: 400 });
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  if (!restaurantId || restaurantId === 'undefined' || !uuidRegex.test(restaurantId) || !date || isNaN(partySize)) {
+    return NextResponse.json({ message: 'Missing or invalid parameters' }, { status: 400 });
   }
 
   try {

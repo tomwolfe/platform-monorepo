@@ -35,6 +35,8 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
     notFound();
   }
 
+  const restaurantInternalId = restaurant.id;
+
   if (restaurant.ownerId !== user.id) {
     redirect('/onboarding');
   }
@@ -43,28 +45,28 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
     'use server';
     await updateTablePositions(
       tables.map(t => ({ id: t.id, xPos: t.xPos, yPos: t.yPos })),
-      restaurant.id
+      restaurantInternalId
     );
   }
 
   async function handleStatusChange(tableId: string, status: 'vacant' | 'occupied' | 'dirty') {
     'use server';
-    await updateTableStatus(tableId, status, restaurant.id);
+    await updateTableStatus(tableId, status, restaurantInternalId);
   }
 
   async function handleAddTable() {
     'use server';
-    await addTable(restaurant.id);
+    await addTable(restaurantInternalId);
   }
 
   async function handleDeleteTable(tableId: string) {
     'use server';
-    await deleteTable(tableId, restaurant.id);
+    await deleteTable(tableId, restaurantInternalId);
   }
 
   async function handleUpdateDetails(tableId: string, details: { tableNumber: string, minCapacity: number, maxCapacity: number }) {
     'use server';
-    await updateTableDetails(tableId, restaurant.id, details);
+    await updateTableDetails(tableId, restaurantInternalId, details);
   }
 
   return (
@@ -90,7 +92,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
           onAdd={handleAddTable}
           onDelete={handleDeleteTable}
           onUpdateDetails={handleUpdateDetails}
-          restaurantId={restaurant.id}
+          restaurantId={restaurantInternalId}
         />
       </section>
 
@@ -98,7 +100,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
         <h2 className="text-xl font-semibold mb-6">Restaurant Settings</h2>
         <form action={async (formData) => {
           'use server';
-          await updateRestaurantSettings(restaurant.id, formData);
+          await updateRestaurantSettings(restaurantInternalId, formData);
         }} className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Opening Time (HH:mm)</label>

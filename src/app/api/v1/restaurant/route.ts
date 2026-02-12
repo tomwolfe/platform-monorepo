@@ -34,7 +34,12 @@ export async function GET(req: NextRequest) {
   if (error) return NextResponse.json({ message: error }, { status });
 
   try {
-    const restaurantId = context!.restaurantId;
+    const restaurantId = context?.restaurantId;
+
+    if (!restaurantId) {
+      return NextResponse.json({ message: 'Restaurant ID not found in context' }, { status: 403 });
+    }
+
     const restaurant = await db.query.restaurants.findFirst({
       where: eq(restaurants.id, restaurantId),
     });

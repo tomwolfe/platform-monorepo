@@ -41,6 +41,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
   const [isLoading, setIsLoading] = useState(false);
   const [step, setStep] = useState(1); // 1: Date/Size/Time, 2: Selection, 3: Details, 4: Success
   const [guestInfo, setGuestInfo] = useState({ name: "", email: "" });
+  const [error, setError] = useState<string | null>(null);
 
   const { slug } = React.use(params);
 
@@ -102,7 +103,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
   };
 
   const handleBooking = async () => {
-    if (!selectedTime || !availability?.availableTables[0]) return;
+    if (!restaurant || !selectedTime || !availability?.availableTables[0]) return;
     setIsLoading(true);
     try {
       const duration = restaurant.defaultDurationMinutes || 90;
@@ -134,6 +135,12 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
         </div>
 
         <div className="p-6">
+          {error && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-xl flex gap-3 text-red-800 text-sm">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <p>{error}</p>
+            </div>
+          )}
           {step === 1 && (
             <div className="space-y-6">
               <div className="flex flex-col items-center">

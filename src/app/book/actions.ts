@@ -1,8 +1,8 @@
 "use server";
 
 import { db } from "@/db";
-import { restaurants, reservations, restaurantTables } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { restaurants, reservations } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { NotifyService } from "@/lib/notify";
 import Ably from "ably";

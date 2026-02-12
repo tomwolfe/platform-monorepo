@@ -5,15 +5,13 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { createRestaurant } from "./actions";
-import { Table as TableIcon, Plus, ChevronRight, ChevronLeft, MapPin, Clock, Settings, Save } from "lucide-react";
+import { Table as TableIcon, Plus, ChevronRight, ChevronLeft, Settings, Save } from "lucide-react";
 import {
   DndContext,
-  DragOverlay,
   useSensor,
   useSensors,
   PointerSensor,
   DragEndEvent,
-  DragStartEvent,
   useDraggable,
 } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
@@ -165,7 +163,7 @@ export default function OnboardingPage() {
             <div className="space-y-6">
               <div>
                 <h1 className="text-3xl font-bold text-gray-900 mb-2">Welcome to TableStack</h1>
-                <p className="text-gray-500">Let's start with your restaurant's basic information.</p>
+                <p className="text-gray-500">Let&apos;s start with your restaurant&apos;s basic information.</p>
               </div>
 
               <div className="space-y-4">
@@ -183,7 +181,7 @@ export default function OnboardingPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Public Slug</label>
                   <div className="flex items-center">
                     <span className="bg-gray-100 px-3 py-2 border border-r-0 border-gray-300 rounded-l-lg text-gray-500 text-sm">
-                      tablestack.com/book/
+                      https://table-stack.vercel.app/book/
                     </span>
                     <input
                       {...register("slug")}
@@ -237,7 +235,7 @@ export default function OnboardingPage() {
                 
                 {tables.length === 0 && (
                   <div className="absolute inset-0 flex items-center justify-center text-gray-400">
-                    Click "Add Table" to start building your layout
+                    Click &quot;Add Table&quot; to start building your layout
                   </div>
                 )}
               </div>

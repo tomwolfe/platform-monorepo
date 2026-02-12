@@ -1,7 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import Ably from 'ably';
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   if (!process.env.ABLY_API_KEY) {
     return NextResponse.json({ error: 'Ably API key not configured' }, { status: 500 });
   }

@@ -1,10 +1,10 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { format, addHours, addMinutes, startOfToday, parseISO } from "date-fns";
+import { format, addMinutes, startOfToday } from "date-fns";
 import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
-import { Calendar as CalendarIcon, Users, Clock, CheckCircle, ChevronRight, AlertCircle } from "lucide-react";
+import { Users, Clock, CheckCircle, ChevronRight, AlertCircle } from "lucide-react";
 import { createReservation } from "../actions";
 
 interface Table {
@@ -23,8 +23,16 @@ interface AvailabilityResponse {
   suggestedSlots?: SuggestedSlot[];
 }
 
+interface Restaurant {
+  id: string;
+  name: string;
+  openingTime: string | null;
+  closingTime: string | null;
+  defaultDurationMinutes: number | null;
+}
+
 export default function BookingPage({ params }: { params: Promise<{ slug: string }> }) {
-  const [restaurant, setRestaurant] = useState<any>(null);
+  const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [date, setDate] = useState<Date | undefined>(startOfToday());
   const [partySize, setPartySize] = useState(2);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
@@ -33,7 +41,6 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
   const [isLoading, setIsLoading] = useState(false);
   const [step, setStep] = useState(1); // 1: Date/Size/Time, 2: Selection, 3: Details, 4: Success
   const [guestInfo, setGuestInfo] = useState({ name: "", email: "" });
-  const [error, setError] = useState<string | null>(null);
 
   const { slug } = React.use(params);
 
@@ -87,7 +94,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
         setSelectedTime(checkTime.toISOString());
       }
       setStep(2);
-    } catch (err) {
+    } catch {
       setError("Failed to fetch availability");
     } finally {
       setIsLoading(false);
@@ -109,7 +116,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
         endTime: addMinutes(new Date(selectedTime), duration).toISOString(),
       });
       setStep(4);
-    } catch (err) {
+    } catch {
       setError("Failed to create reservation");
     } finally {
       setIsLoading(false);
@@ -293,7 +300,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
                 <CheckCircle className="text-green-600 w-10 h-10" />
               </div>
               <h2 className="text-2xl font-bold">See you soon!</h2>
-              <p className="text-gray-500">Your reservation has been confirmed. We've sent an email to {guestInfo.email}.</p>
+              <p className="text-gray-500">Your reservation has been confirmed. We&apos;ve sent an email to {guestInfo.email}.</p>
               <button
                 onClick={() => setStep(1)}
                 className="text-blue-600 font-semibold"

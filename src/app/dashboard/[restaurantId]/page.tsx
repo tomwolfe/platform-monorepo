@@ -1,13 +1,19 @@
 import { db } from '@/db';
 import { restaurants, reservations } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import FloorPlan from '@/components/dashboard/FloorPlan';
 import { updateTablePositions, updateTableStatus } from './actions';
+import { currentUser } from '@clerk/nextjs/server';
 
 export default async function DashboardPage(props: { params: Promise<{ restaurantId: string }> }) {
   const params = await props.params;
   const restaurantId = params.restaurantId;
+  const user = await currentUser();
+
+  if (!user) {
+    redirect('/sign-in');
+  }
 
   // UUID regex check
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(restaurantId);
@@ -27,6 +33,10 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
 
   if (!restaurant) {
     notFound();
+  }
+
+  if (restaurant.ownerId !== user.id) {
+    redirect('/onboarding');
   }
 
   async function handleSave(tables: { id: string, xPos: number | null, yPos: number | null }[]) {
@@ -62,6 +72,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
           reservations={restaurant.reservations}
           onSave={handleSave} 
           onStatusChange={handleStatusChange}
+          restaurantId={restaurant.id}
         />
       </section>
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -101,14 +101,39 @@ function StatusZone({ id, label, icon: Icon, colorClass }: { id: string, label: 
   );
 }
 
-export default function FloorPlan({ initialTables, reservations = [], onSave, onStatusChange }: { 
+import Ably from 'ably';
+import { useRouter } from 'next/navigation';
+
+export default function FloorPlan({ initialTables, reservations = [], onSave, onStatusChange, restaurantId }: { 
   initialTables: RestaurantTable[], 
   reservations?: Reservation[],
   onSave: (tables: RestaurantTable[]) => Promise<void>,
-  onStatusChange: (tableId: string, status: 'vacant' | 'occupied' | 'dirty') => Promise<void>
+  onStatusChange: (tableId: string, status: 'vacant' | 'occupied' | 'dirty') => Promise<void>,
+  restaurantId?: string
 }) {
   const [tables, setTables] = useState(initialTables);
   const [activeTable, setActiveTable] = useState<RestaurantTable | null>(null);
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!restaurantId) return;
+
+    // Use a public key or token in production. For this demo, we check if ABLY_API_KEY is available
+    // but Ably.Realtime usually requires a key or token.
+    // We'll skip if no key is provided to avoid crashes.
+    const ably = new Ably.Realtime({ authUrl: '/api/ably/auth' }); // Better approach
+    const channel = ably.channels.get(`restaurant:${restaurantId}`);
+    
+    channel.subscribe('NEW_RESERVATION', (message) => {
+      console.log('New reservation received:', message.data);
+      router.refresh(); // Refresh server component data
+    });
+
+    return () => {
+      channel.unsubscribe();
+      ably.close();
+    };
+  }, [restaurantId, router]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {

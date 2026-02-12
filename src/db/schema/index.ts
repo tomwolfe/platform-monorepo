@@ -6,9 +6,15 @@ export const restaurants = pgTable('restaurants', {
   name: text('name').notNull(),
   slug: text('slug').unique().notNull(),
   ownerEmail: text('owner_email').notNull(),
+  ownerId: text('owner_id').notNull(),
   timezone: text('timezone').default('UTC'),
   apiKey: text('api_key').unique().notNull(),
   createdAt: timestamp('created_at').defaultNow(),
+}, (table) => {
+  return {
+    slugIdx: uniqueIndex('slug_idx').on(table.slug),
+    ownerIdIdx: uniqueIndex('owner_id_idx').on(table.ownerId),
+  };
 });
 
 export const restaurantTables = pgTable('restaurant_tables', {

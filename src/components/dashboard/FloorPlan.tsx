@@ -38,11 +38,13 @@ interface Reservation {
 interface DraggableTableProps {
   table: RestaurantTable;
   reservation?: Reservation;
+  isSelected?: boolean;
+  onSelect?: (id: string) => void;
   onDelete?: (id: string) => void;
   onEdit?: (table: RestaurantTable) => void;
 }
 
-function DraggableTable({ table, reservation, onDelete, onEdit }: DraggableTableProps) {
+function DraggableTable({ table, reservation, isSelected, onSelect, onDelete, onEdit }: DraggableTableProps) {
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: table.id,
     data: table,
@@ -68,9 +70,10 @@ function DraggableTable({ table, reservation, onDelete, onEdit }: DraggableTable
     <div
       ref={setNodeRef}
       style={style}
-      className={`group p-4 border-2 rounded-lg shadow-md flex flex-col items-center justify-center w-24 h-24 ${getStatusColor()} ${
+      onClick={(e) => { e.stopPropagation(); onSelect?.(table.id); }}
+      className={`group p-4 border-2 rounded-lg shadow-md flex flex-col items-center justify-center w-24 h-24 cursor-pointer transition-all ${getStatusColor()} ${
         table.tableType === 'round' ? 'rounded-full' : ''
-      }`}
+      } ${isSelected ? 'ring-4 ring-blue-500 border-blue-500' : ''}`}
     >
       <div {...listeners} {...attributes} className="cursor-move flex flex-col items-center justify-center">
         <Table className="w-6 h-6 mb-1" />
@@ -86,13 +89,13 @@ function DraggableTable({ table, reservation, onDelete, onEdit }: DraggableTable
 
       <div className="absolute -top-2 -right-2 hidden group-hover:flex gap-1">
         <button 
-          onClick={() => onEdit?.(table)}
+          onClick={(e) => { e.stopPropagation(); onEdit?.(table); }}
           className="p-1 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700"
         >
           <Settings2 className="w-3 h-3" />
         </button>
         <button 
-          onClick={() => onDelete?.(table.id)}
+          onClick={(e) => { e.stopPropagation(); onDelete?.(table.id); }}
           className="p-1 bg-red-600 text-white rounded-full shadow-lg hover:bg-red-700"
         >
           <Trash2 className="w-3 h-3" />
@@ -102,19 +105,37 @@ function DraggableTable({ table, reservation, onDelete, onEdit }: DraggableTable
   );
 }
 
-function StatusZone({ id, label, icon: Icon, colorClass }: { id: string, label: string, icon: LucideIcon, colorClass: string }) {
+function StatusZone({ 
+  id, 
+  label, 
+  icon: Icon, 
+  colorClass, 
+  onClick, 
+  disabled 
+}: { 
+  id: string, 
+  label: string, 
+  icon: LucideIcon, 
+  colorClass: string,
+  onClick?: () => void,
+  disabled?: boolean
+}) {
   const { setNodeRef, isOver } = useDroppable({ id });
   
   return (
-    <div
+    <button
       ref={setNodeRef}
+      onClick={onClick}
+      disabled={disabled}
       className={`flex-1 p-4 rounded-xl border-2 border-dashed flex items-center justify-center gap-2 transition-colors ${
-        isOver ? colorClass : 'border-gray-200 bg-white text-gray-400'
-      }`}
+        isOver ? colorClass : 
+        disabled ? 'border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed' :
+        'border-gray-200 bg-white text-gray-400 hover:border-gray-300 hover:bg-gray-50'
+      } ${!disabled && !isOver && onClick ? 'cursor-pointer' : ''}`}
     >
       <Icon className="w-5 h-5" />
       <span className="font-medium">{label}</span>
-    </div>
+    </button>
   );
 }
 
@@ -142,6 +163,7 @@ export default function FloorPlan({
 }) {
   const [tables, setTables] = useState(initialTables);
   const [activeTable, setActiveTable] = useState<RestaurantTable | null>(null);
+  const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [editingTable, setEditingTable] = useState<RestaurantTable | null>(null);
   const router = useRouter();
 
@@ -216,12 +238,41 @@ export default function FloorPlan({
     setEditingTable(null);
   };
 
+  const handleStatusClick = async (status: 'vacant' | 'occupied' | 'dirty') => {
+    if (!selectedTableId) return;
+    setTables((prev) =>
+      prev.map((t) => (t.id === selectedTableId ? { ...t, status } : t))
+    );
+    await onStatusChange(selectedTableId, status);
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex gap-4 mb-4">
-        <StatusZone id="vacant" label="Set Vacant" icon={CheckCircle} colorClass="border-green-500 bg-green-50 text-green-700" />
-        <StatusZone id="occupied" label="Set Occupied" icon={AlertCircle} colorClass="border-red-500 bg-red-50 text-red-700" />
-        <StatusZone id="dirty" label="Set Dirty" icon={Trash2} colorClass="border-yellow-500 bg-yellow-50 text-yellow-700" />
+        <StatusZone 
+          id="vacant" 
+          label="Set Vacant" 
+          icon={CheckCircle} 
+          colorClass="border-green-500 bg-green-50 text-green-700" 
+          onClick={() => handleStatusClick('vacant')}
+          disabled={!selectedTableId}
+        />
+        <StatusZone 
+          id="occupied" 
+          label="Set Occupied" 
+          icon={AlertCircle} 
+          colorClass="border-red-500 bg-red-50 text-red-700" 
+          onClick={() => handleStatusClick('occupied')}
+          disabled={!selectedTableId}
+        />
+        <StatusZone 
+          id="dirty" 
+          label="Set Dirty" 
+          icon={Trash2} 
+          colorClass="border-yellow-500 bg-yellow-50 text-yellow-700" 
+          onClick={() => handleStatusClick('dirty')}
+          disabled={!selectedTableId}
+        />
         <button
           onClick={() => onAdd()}
           className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition"
@@ -230,7 +281,10 @@ export default function FloorPlan({
         </button>
       </div>
 
-      <div className="relative w-full h-[600px] bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl overflow-hidden">
+      <div 
+        className="relative w-full h-[600px] bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl overflow-hidden"
+        onClick={() => setSelectedTableId(null)}
+      >
         <DndContext
           sensors={sensors}
           onDragStart={handleDragStart}
@@ -248,6 +302,8 @@ export default function FloorPlan({
                 key={table.id} 
                 table={table} 
                 reservation={tableReservation}
+                isSelected={selectedTableId === table.id}
+                onSelect={(id) => setSelectedTableId(id)}
                 onDelete={onDelete}
                 onEdit={setEditingTable}
               />

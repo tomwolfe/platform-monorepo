@@ -7,6 +7,7 @@ import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
 import { Users, Clock, CheckCircle, ChevronRight, AlertCircle } from "lucide-react";
 import { createReservation } from "../actions";
+import Link from "next/link";
 
 interface Table {
   id: string;
@@ -43,6 +44,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
   const [isLoading, setIsLoading] = useState(false);
   const [step, setStep] = useState(1); // 1: Date/Size/Time, 2: Selection, 3: Details, 4: Success
   const [guestInfo, setGuestInfo] = useState({ name: "", email: "" });
+  const [reservationId, setReservationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const { slug } = React.use(params);
@@ -136,7 +138,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
     setIsLoading(true);
     try {
       const duration = restaurant.defaultDurationMinutes || 90;
-      await createReservation({
+      const res = await createReservation({
         restaurantId: restaurant.id,
         tableId: availability.availableTables[0].id,
         guestName: guestInfo.name,
@@ -145,6 +147,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
         startTime: selectedTime,
         endTime: addMinutes(new Date(selectedTime), duration).toISOString(),
       });
+      setReservationId(res.id);
       setStep(4);
     } catch {
       setError("Failed to create reservation");
@@ -345,18 +348,29 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
           )}
 
           {step === 4 && (
-            <div className="text-center py-12 space-y-4">
-              <div className="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6">
+            <div className="text-center py-12 space-y-6">
+              <div className="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2">
                 <CheckCircle className="text-green-600 w-10 h-10" />
               </div>
-              <h2 className="text-2xl font-bold">See you soon!</h2>
-              <p className="text-gray-500">Your reservation has been confirmed. We&apos;ve sent an email to {guestInfo.email}.</p>
-              <button
-                onClick={() => setStep(1)}
-                className="text-blue-600 font-semibold"
-              >
-                Make another booking
-              </button>
+              <div className="space-y-2">
+                <h2 className="text-2xl font-bold">See you soon!</h2>
+                <p className="text-gray-500 px-4">Your reservation has been confirmed. We&apos;ve sent an email to {guestInfo.email}.</p>
+              </div>
+              
+              <div className="flex flex-col gap-3 px-8">
+                <Link
+                  href={`/book/manage/${reservationId}`}
+                  className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition text-center"
+                >
+                  Manage Reservation
+                </Link>
+                <button
+                  onClick={() => setStep(1)}
+                  className="text-gray-500 font-medium hover:text-gray-700"
+                >
+                  Make another booking
+                </button>
+              </div>
             </div>
           )}
         </div>

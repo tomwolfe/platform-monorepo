@@ -63,3 +63,16 @@ export async function createReservation(data: {
   revalidatePath(`/dashboard/${data.restaurantId}`);
   return reservation;
 }
+
+export async function cancelReservation(reservationId: string) {
+  const [reservation] = await db.update(reservations)
+    .set({ status: 'cancelled' })
+    .where(eq(reservations.id, reservationId))
+    .returning();
+
+  if (reservation) {
+    revalidatePath(`/dashboard/${reservation.restaurantId}`);
+    revalidatePath(`/book/manage/${reservationId}`);
+  }
+  return reservation;
+}

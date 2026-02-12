@@ -1,7 +1,7 @@
 'use server';
 
 import { db } from '@/db';
-import { restaurantTables, restaurants } from '@/db/schema';
+import { restaurantTables, restaurants, reservations } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { currentUser } from '@clerk/nextjs/server';
@@ -27,6 +27,44 @@ async function verifyOwnership(restaurantId: string) {
     throw new Error('Unauthorized');
   }
   return true;
+}
+
+export async function deleteReservation(reservationId: string, restaurantId: string) {
+  await verifyOwnership(restaurantId);
+  try {
+    await db.delete(reservations)
+      .where(and(
+        eq(reservations.id, reservationId),
+        eq(reservations.restaurantId, restaurantId)
+      ));
+    revalidatePath(`/dashboard/${restaurantId}`);
+  } catch (error) {
+    console.error('Failed to delete reservation:', error);
+    throw new Error('Failed to delete reservation');
+  }
+}
+
+export async function updateReservation(
+  reservationId: string, 
+  restaurantId: string, 
+  updates: { guestName?: string, partySize?: number, startTime?: Date }
+) {
+  await verifyOwnership(restaurantId);
+  try {
+    await db.update(reservations)
+      .set({
+        ...updates,
+        ...(updates.startTime ? { endTime: new Date(updates.startTime.getTime() + 90 * 60000) } : {}), // Default to 90 min if updated
+      })
+      .where(and(
+        eq(reservations.id, reservationId),
+        eq(reservations.restaurantId, restaurantId)
+      ));
+    revalidatePath(`/dashboard/${restaurantId}`);
+  } catch (error) {
+    console.error('Failed to update reservation:', error);
+    throw new Error('Failed to update reservation');
+  }
 }
 
 export async function updateRestaurantSettings(

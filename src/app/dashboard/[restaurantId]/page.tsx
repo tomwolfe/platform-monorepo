@@ -3,8 +3,9 @@ import { restaurants, reservations } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { notFound, redirect } from 'next/navigation';
 import FloorPlan from '@/components/dashboard/FloorPlan';
-import { updateTablePositions, updateTableStatus, updateRestaurantSettings, addTable, deleteTable, updateTableDetails } from './actions';
+import { updateTablePositions, updateTableStatus, updateRestaurantSettings, addTable, deleteTable, updateTableDetails, deleteReservation } from './actions';
 import { currentUser } from '@clerk/nextjs/server';
+import { Trash2 } from 'lucide-react';
 
 export default async function DashboardPage(props: { params: Promise<{ restaurantId: string }> }) {
   const params = await props.params;
@@ -171,6 +172,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -180,11 +182,21 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{res.partySize}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(res.startTime).toLocaleString()}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-semibold">Confirmed</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <form action={async () => {
+                      'use server';
+                      await deleteReservation(res.id, restaurantInternalId);
+                    }} className="inline">
+                      <button type="submit" className="text-red-600 hover:text-red-900 transition-colors">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </form>
+                  </td>
                 </tr>
               ))}
               {restaurant.reservations.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-6 py-4 text-center text-sm text-gray-500">No confirmed reservations found.</td>
+                  <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">No confirmed reservations found.</td>
                 </tr>
               )}
             </tbody>

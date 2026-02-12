@@ -13,9 +13,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ message: 'Missing slug' }, { status: 400 });
   }
 
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(slug);
+
   try {
     const restaurant = await db.query.restaurants.findFirst({
-      where: eq(restaurants.slug, slug),
+      where: isUuid 
+        ? eq(restaurants.id, slug) 
+        : eq(restaurants.slug, slug),
     });
 
     if (!restaurant) {

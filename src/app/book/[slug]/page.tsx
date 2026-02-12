@@ -135,7 +135,21 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
     }
   };
 
-  if (!restaurant) return <div className="min-h-screen flex items-center justify-center">Loading restaurant...</div>;
+  if (!restaurant) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        {error ? (
+          <div className="text-center">
+            <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+            <h1 className="text-xl font-bold text-gray-900">Error</h1>
+            <p className="text-gray-500">{error}</p>
+          </div>
+        ) : (
+          "Loading restaurant..."
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4">

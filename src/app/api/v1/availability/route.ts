@@ -113,17 +113,8 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
 }
 
 export async function GET(req: NextRequest) {
-  const { error, status, context } = await validateRequest(req);
-  if (error) return NextResponse.json({ message: error }, { status });
-
   const { searchParams } = new URL(req.url);
   const restaurantId = searchParams.get('restaurantId');
-  
-  if (restaurantId && restaurantId !== context!.restaurantId) {
-    return NextResponse.json({ message: 'Unauthorized access to this restaurant data' }, { status: 403 });
-  }
-
-  const targetRestaurantId = context!.restaurantId;
   const date = searchParams.get('date');
   const partySize = parseInt(searchParams.get('partySize') || '0');
 
@@ -131,6 +122,23 @@ export async function GET(req: NextRequest) {
 
   if (!restaurantId || restaurantId === 'undefined' || !uuidRegex.test(restaurantId) || !date || isNaN(partySize)) {
     return NextResponse.json({ message: 'Missing or invalid parameters' }, { status: 400 });
+  }
+
+  // Determine target restaurant ID
+  let targetRestaurantId: string;
+  
+  const apiKey = req.headers.get('x-api-key');
+  if (apiKey) {
+    const { error, status, context } = await validateRequest(req);
+    if (error) return NextResponse.json({ message: error }, { status });
+    
+    if (restaurantId !== context!.restaurantId) {
+      return NextResponse.json({ message: 'Unauthorized access to this restaurant data' }, { status: 403 });
+    }
+    targetRestaurantId = context!.restaurantId;
+  } else {
+    // If no API key, we allow public availability checks for a specific restaurant
+    targetRestaurantId = restaurantId;
   }
 
   try {

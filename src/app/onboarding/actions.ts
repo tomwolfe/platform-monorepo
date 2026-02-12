@@ -11,8 +11,9 @@ import crypto from "crypto";
 const onboardingSchema = z.object({
   name: z.string().min(2),
   slug: z.string().min(2),
-  timezone: z.string().default("UTC"),
+  timezone: z.string().min(1),
   tables: z.array(z.object({
+    id: z.string().optional(),
     tableNumber: z.string(),
     minCapacity: z.number().min(1),
     maxCapacity: z.number().min(1),

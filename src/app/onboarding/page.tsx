@@ -21,7 +21,7 @@ import { CSS } from '@dnd-kit/utilities';
 const onboardingSchema = z.object({
   name: z.string().min(2, "Name is too short"),
   slug: z.string().min(2, "Slug is too short").regex(/^[a-z0-9-]+$/, "Slug can only contain lowercase letters, numbers, and hyphens"),
-  timezone: z.string().default("UTC"),
+  timezone: z.string().min(1, "Please select a timezone"),
   tables: z.array(z.object({
     id: z.string(), // Temporary ID for DnD
     tableNumber: z.string(),

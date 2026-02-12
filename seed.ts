@@ -16,6 +16,7 @@ async function seed() {
     name: 'The Pesto Place',
     slug: 'demo',
     ownerEmail: 'owner@pestoplace.com',
+    ownerId: 'user_2abc123', // Demo Clerk ID
     apiKey: 'pk_test_123456789',
   }).returning();
 

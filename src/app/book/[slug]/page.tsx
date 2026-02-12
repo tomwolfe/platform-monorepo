@@ -23,7 +23,7 @@ interface AvailabilityResponse {
   suggestedSlots?: SuggestedSlot[];
 }
 
-export default function BookingPage({ params }: { params: { slug: string } }) {
+export default function BookingPage({ params }: { params: Promise<{ slug: string }> }) {
   const [restaurant, setRestaurant] = useState<any>(null);
   const [date, setDate] = useState<Date | undefined>(startOfToday());
   const [partySize, setPartySize] = useState(2);
@@ -34,8 +34,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
   const [guestInfo, setGuestInfo] = useState({ name: "", email: "" });
   const [error, setError] = useState<string | null>(null);
 
-  const resolvedParams = React.use(params as any) as any;
-  const slug = resolvedParams.slug;
+  const { slug } = React.use(params);
 
   useEffect(() => {
     fetch(`/api/v1/restaurant?slug=${slug}`)

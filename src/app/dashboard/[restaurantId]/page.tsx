@@ -1,5 +1,5 @@
 import { db } from '@/db';
-import { restaurants } from '@/db/schema';
+import { restaurants, reservations } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
 import FloorPlan from '@/components/dashboard/FloorPlan';
@@ -18,6 +18,10 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
       : eq(restaurants.slug, restaurantId),
     with: {
       tables: true,
+      reservations: {
+        where: eq(reservations.isVerified, true),
+        orderBy: (reservations, { asc }) => [asc(reservations.startTime)],
+      }
     },
   });
 
@@ -55,9 +59,41 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
         <h2 className="text-xl font-semibold mb-6">Floor Plan Editor</h2>
         <FloorPlan 
           initialTables={restaurant.tables} 
+          reservations={restaurant.reservations}
           onSave={handleSave} 
           onStatusChange={handleStatusChange}
         />
+      </section>
+
+      <section className="mt-8 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <h2 className="text-xl font-semibold mb-6">Confirmed Reservations</h2>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead>
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Guest</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {restaurant.reservations.map((res) => (
+                <tr key={res.id}>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{res.guestName}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{res.partySize}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(res.startTime).toLocaleString()}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-semibold">Confirmed</td>
+                </tr>
+              ))}
+              {restaurant.reservations.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-6 py-4 text-center text-sm text-gray-500">No confirmed reservations found.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6">

@@ -19,7 +19,7 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
           eq(reservations.status, 'confirmed'),
           and(
             eq(reservations.isVerified, false),
-            gte(reservations.createdAt, new Date(Date.now() - 20 * 60 * 1000))
+            gte(reservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
           )
         ),
         sql`(${reservations.startTime}, ${reservations.endTime}) OVERLAPS (${startTime.toISOString()}, ${endTime.toISOString()})`

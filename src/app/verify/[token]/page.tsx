@@ -2,6 +2,7 @@ import { db } from '@/db';
 import { reservations } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
+import { NotifyService } from '@/lib/notify';
 
 export default async function VerifyPage(props: { params: Promise<{ token: string }> }) {
   const params = await props.params;
@@ -9,6 +10,9 @@ export default async function VerifyPage(props: { params: Promise<{ token: strin
 
   const reservation = await db.query.reservations.findFirst({
     where: eq(reservations.verificationToken, token),
+    with: {
+      restaurant: true,
+    },
   });
 
   if (!reservation) {
@@ -28,6 +32,15 @@ export default async function VerifyPage(props: { params: Promise<{ token: strin
   await db.update(reservations)
     .set({ isVerified: true, status: 'confirmed' })
     .where(eq(reservations.id, reservation.id));
+
+  // Notify owner
+  if (reservation.restaurant && reservation.restaurant.ownerEmail) {
+    await NotifyService.notifyOwner(reservation.restaurant.ownerEmail, {
+      guestName: reservation.guestName,
+      partySize: reservation.partySize,
+      startTime: reservation.startTime,
+    });
+  }
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen py-2">

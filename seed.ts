@@ -15,6 +15,7 @@ async function seed() {
   const [restaurant] = await db.insert(restaurants).values({
     name: 'The Pesto Place',
     slug: 'demo',
+    ownerEmail: 'owner@pestoplace.com',
     apiKey: 'pk_test_123456789',
   }).returning();
 

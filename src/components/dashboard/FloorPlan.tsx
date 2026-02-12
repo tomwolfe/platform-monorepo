@@ -26,11 +26,21 @@ interface RestaurantTable {
   status: string | null;
 }
 
-interface DraggableTableProps {
-  table: RestaurantTable;
+interface Reservation {
+  id: string;
+  tableId: string | null;
+  guestName: string;
+  partySize: number;
+  startTime: Date;
+  endTime: Date;
 }
 
-function DraggableTable({ table }: DraggableTableProps) {
+interface DraggableTableProps {
+  table: RestaurantTable;
+  reservation?: Reservation;
+}
+
+function DraggableTable({ table, reservation }: DraggableTableProps) {
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: table.id,
     data: table,
@@ -44,6 +54,7 @@ function DraggableTable({ table }: DraggableTableProps) {
   };
 
   const getStatusColor = () => {
+    if (reservation) return 'border-purple-500 bg-purple-50';
     switch (table.status) {
       case 'occupied': return 'border-red-500 bg-red-50';
       case 'dirty': return 'border-yellow-500 bg-yellow-50';
@@ -63,7 +74,13 @@ function DraggableTable({ table }: DraggableTableProps) {
     >
       <Table className="w-6 h-6 mb-1" />
       <span className="font-bold">#{table.tableNumber}</span>
-      <span className="text-xs text-gray-500">{table.minCapacity}-{table.maxCapacity}</span>
+      {reservation ? (
+        <span className="text-[10px] text-purple-700 font-medium truncate w-full text-center">
+          {reservation.guestName}
+        </span>
+      ) : (
+        <span className="text-xs text-gray-500">{table.minCapacity}-{table.maxCapacity}</span>
+      )}
     </div>
   );
 }
@@ -84,8 +101,9 @@ function StatusZone({ id, label, icon: Icon, colorClass }: { id: string, label: 
   );
 }
 
-export default function FloorPlan({ initialTables, onSave, onStatusChange }: { 
+export default function FloorPlan({ initialTables, reservations = [], onSave, onStatusChange }: { 
   initialTables: RestaurantTable[], 
+  reservations?: Reservation[],
   onSave: (tables: RestaurantTable[]) => Promise<void>,
   onStatusChange: (tableId: string, status: 'vacant' | 'occupied' | 'dirty') => Promise<void>
 }) {
@@ -150,9 +168,10 @@ export default function FloorPlan({ initialTables, onSave, onStatusChange }: {
             backgroundSize: '20px 20px' 
           }} />
           
-          {tables.map((table) => (
-            <DraggableTable key={table.id} table={table} />
-          ))}
+          {tables.map((table) => {
+            const tableReservation = reservations.find(r => r.tableId === table.id);
+            return <DraggableTable key={table.id} table={table} reservation={tableReservation} />;
+          })}
 
           <DragOverlay>
             {activeTable ? (

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { reservations } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { NotifyService } from '@/lib/notify';
 
 export const runtime = 'edge';
 
@@ -21,11 +22,28 @@ export async function POST(req: NextRequest) {
       const reservationId = paymentIntent.metadata.reservationId;
 
       if (reservationId) {
-        await db.update(reservations)
-          .set({ isVerified: true })
-          .where(eq(reservations.id, reservationId));
-        
-        console.log(`Reservation ${reservationId} verified via payment.`);
+        const reservation = await db.query.reservations.findFirst({
+          where: eq(reservations.id, reservationId),
+          with: {
+            restaurant: true,
+          },
+        });
+
+        if (reservation) {
+          await db.update(reservations)
+            .set({ isVerified: true, status: 'confirmed' })
+            .where(eq(reservations.id, reservationId));
+          
+          if (reservation.restaurant && reservation.restaurant.ownerEmail) {
+            await NotifyService.notifyOwner(reservation.restaurant.ownerEmail, {
+              guestName: reservation.guestName,
+              partySize: reservation.partySize,
+              startTime: reservation.startTime,
+            });
+          }
+          
+          console.log(`Reservation ${reservationId} verified via payment.`);
+        }
       }
     }
 

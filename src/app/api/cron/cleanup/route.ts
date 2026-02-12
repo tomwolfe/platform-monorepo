@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
     const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000);
     
     // 1. Remove expired unverified reservations
@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
       .where(
         and(
           eq(reservations.isVerified, false),
-          lt(reservations.createdAt, thirtyMinutesAgo)
+          lt(reservations.createdAt, fifteenMinutesAgo)
         )
       );
 

@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
           eq(reservations.status, 'confirmed'),
           and(
             eq(reservations.isVerified, false),
-            gte(reservations.createdAt, new Date(Date.now() - 20 * 60 * 1000))
+            gte(reservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
           )
         ),
         sql`(${reservations.startTime}, ${reservations.endTime}) OVERLAPS (${start.toISOString()}, ${end.toISOString()})`
@@ -94,10 +94,8 @@ export async function POST(req: NextRequest) {
         <h1>Hello ${guestName},</h1>
         <p>Please confirm your reservation for ${partySize} people on ${start.toLocaleString()}.</p>
         <p><a href="${verifyUrl}">Click here to confirm your booking</a></p>
-        <p>This link will expire in 20 minutes.</p>
+        <p>This link will expire in 15 minutes.</p>
       `,
-      smsMessage: `Confirm your reservation at ${restaurant.name}: ${verifyUrl}`,
-      enableSms: restaurant.enableSms ?? false,
     });
 
     return NextResponse.json({

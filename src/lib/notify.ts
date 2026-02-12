@@ -4,36 +4,29 @@ export interface NotifyOptions {
   to: string;
   subject: string;
   html: string;
-  smsMessage?: string;
-  enableSms?: boolean;
 }
 
 export class NotifyService {
-  static async sendNotification({ to, subject, html, smsMessage, enableSms }: NotifyOptions) {
-    const promises: Promise<unknown>[] = [];
-
+  static async sendNotification({ to, subject, html }: NotifyOptions) {
     // Email is always sent
-    promises.push(
-      resend.emails.send({
-        from: 'TableStack <notifications@tablestack.io>',
-        to,
-        subject,
-        html,
-      }).catch(err => console.error('Email notification failed:', err))
-    );
-
-    // SMS placeholder
-    if (enableSms && smsMessage) {
-      promises.push(this.sendSms(to, smsMessage));
-    }
-
-    await Promise.all(promises);
+    await resend.emails.send({
+      from: 'TableStack <notifications@tablestack.io>',
+      to,
+      subject,
+      html,
+    }).catch(err => console.error('Email notification failed:', err));
   }
 
-  private static async sendSms(to: string, message: string) {
-    // Placeholder for Twilio or other SMS provider
-    console.log(`[SMS Placeholder] Sending to ${to}: ${message}`);
-    // return twilio.messages.create({ body: message, to, from: '...' });
-    return Promise.resolve({ success: true });
+  static async notifyOwner(ownerEmail: string, reservation: { guestName: string; partySize: number; startTime: Date }) {
+    await this.sendNotification({
+      to: ownerEmail,
+      subject: `New Verified Reservation: ${reservation.guestName}`,
+      html: `
+        <h1>New Reservation Confirmed</h1>
+        <p><strong>Guest:</strong> ${reservation.guestName}</p>
+        <p><strong>Party Size:</strong> ${reservation.partySize}</p>
+        <p><strong>Time:</strong> ${reservation.startTime.toLocaleString()}</p>
+      `,
+    });
   }
 }

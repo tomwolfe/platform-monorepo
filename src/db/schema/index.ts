@@ -5,9 +5,9 @@ export const restaurants = pgTable('restaurants', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
   slug: text('slug').unique().notNull(),
+  ownerEmail: text('owner_email').notNull(),
   timezone: text('timezone').default('UTC'),
   apiKey: text('api_key').unique().notNull(),
-  enableSms: boolean('enable_sms').default(false),
   createdAt: timestamp('created_at').defaultNow(),
 });
 

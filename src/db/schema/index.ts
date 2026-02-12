@@ -1,5 +1,6 @@
 import { pgTable, uuid, text, integer, timestamp, boolean, uniqueIndex, index } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
+import { waitlist } from './waitlist';
 
 export const restaurants = pgTable('restaurants', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -52,14 +53,7 @@ export const reservations = pgTable('reservations', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
-export const waitlist = pgTable('waitlist', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  restaurantId: uuid('restaurant_id').references(() => restaurants.id, { onDelete: 'cascade' }).notNull(),
-  guestName: text('guest_name').notNull(),
-  partySize: integer('party_size').notNull(),
-  priorityScore: integer('priority_score').default(0),
-  createdAt: timestamp('created_at').defaultNow(),
-});
+export * from './waitlist';
 
 export const guestProfiles = pgTable('guest_profiles', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -98,13 +92,6 @@ export const reservationsRelations = relations(reservations, ({ one }) => ({
   table: one(restaurantTables, {
     fields: [reservations.tableId],
     references: [restaurantTables.id],
-  }),
-}));
-
-export const waitlistRelations = relations(waitlist, ({ one }) => ({
-  restaurant: one(restaurants, {
-    fields: [waitlist.restaurantId],
-    references: [restaurants.id],
   }),
 }));
 

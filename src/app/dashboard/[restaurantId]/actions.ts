@@ -1,11 +1,13 @@
 'use server';
 
 import { db } from '@/db';
-import { restaurantTables, restaurants, reservations } from '@/db/schema';
+import { restaurantTables, restaurants, reservations, waitlist } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { currentUser } from '@clerk/nextjs/server';
 import { z } from 'zod';
+import { NotifyService } from '@/lib/notify';
+import Ably from 'ably';
 
 const SettingsSchema = z.object({
   openingTime: z.string().regex(/^\d{2}:\d{2}$/),
@@ -205,4 +207,39 @@ export async function updateTableDetails(
     console.error('Failed to update table details:', error);
     throw new Error('Failed to update table details');
   }
+}
+
+export async function updateWaitlistStatus(
+  waitlistId: string,
+  restaurantId: string,
+  status: 'waiting' | 'notified' | 'seated'
+) {
+  await verifyOwnership(restaurantId);
+
+  const [entry] = await db.update(waitlist)
+    .set({ status, updatedAt: new Date() })
+    .where(and(
+      eq(waitlist.id, waitlistId),
+      eq(waitlist.restaurantId, restaurantId)
+    ))
+    .returning();
+
+  if (!entry) throw new Error("Waitlist entry not found");
+
+  if (status === 'notified') {
+    await NotifyService.notifyGuestNext(entry.guestEmail, entry.guestName);
+  }
+
+  // Real-time update via Ably
+  if (process.env.ABLY_API_KEY) {
+    const ably = new Ably.Rest(process.env.ABLY_API_KEY);
+    const channel = ably.channels.get(`restaurant:${restaurantId}`);
+    await channel.publish('waitlist-updated', {
+      id: entry.id,
+      status: entry.status,
+    });
+  }
+
+  revalidatePath(`/dashboard/${restaurantId}`);
+  return entry;
 }

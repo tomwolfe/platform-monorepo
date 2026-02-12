@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { restaurants, reservations } from "@/db/schema";
+import { restaurants, reservations, waitlist } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { NotifyService } from "@/lib/notify";
@@ -80,8 +80,43 @@ export async function cancelReservation(reservationId: string) {
       });
     }
 
-    revalidatePath(`/dashboard/${reservation.restaurantId}`);
+    revalidatePath(`/dashboard/${data.restaurantId}`);
     revalidatePath(`/book/manage/${reservationId}`);
   }
   return reservation;
+}
+
+export async function addToWaitlist(data: {
+  restaurantId: string;
+  guestName: string;
+  guestEmail: string;
+  partySize: number;
+}) {
+  const restaurant = await db.query.restaurants.findFirst({
+    where: eq(restaurants.id, data.restaurantId),
+  });
+
+  if (!restaurant) throw new Error("Restaurant not found");
+
+  const [entry] = await db.insert(waitlist).values({
+    restaurantId: data.restaurantId,
+    guestName: data.guestName,
+    guestEmail: data.guestEmail,
+    partySize: data.partySize,
+    status: 'waiting',
+  }).returning();
+
+  if (entry && process.env.ABLY_API_KEY) {
+    const ably = new Ably.Rest(process.env.ABLY_API_KEY);
+    const channel = ably.channels.get(`restaurant:${data.restaurantId}`);
+    await channel.publish('waitlist-updated', {
+      id: entry.id,
+      guestName: entry.guestName,
+      partySize: entry.partySize,
+      status: entry.status,
+    });
+  }
+
+  revalidatePath(`/dashboard/${data.restaurantId}`);
+  return entry;
 }

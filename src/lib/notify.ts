@@ -29,4 +29,16 @@ export class NotifyService {
       `,
     });
   }
+
+  static async notifyGuestNext(guestEmail: string, guestName: string) {
+    await this.sendNotification({
+      to: guestEmail,
+      subject: "You are next! - TableStack",
+      html: `
+        <h1>Hi ${guestName},</h1>
+        <p>Your table is almost ready! Please head to the host stand.</p>
+        <p>See you soon!</p>
+      `,
+    });
+  }
 }

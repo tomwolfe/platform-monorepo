@@ -15,6 +15,9 @@ export const restaurants = pgTable('restaurants', {
   daysOpen: text('days_open').default('monday,tuesday,wednesday,thursday,friday,saturday,sunday'),
   defaultDurationMinutes: integer('default_duration_minutes').default(90),
   stripeAccountId: text('stripe_account_id'),
+  isShadow: boolean('is_shadow').default(false),
+  isClaimed: boolean('is_claimed').default(false),
+  claimToken: uuid('claim_token').defaultRandom(),
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => {
   return {

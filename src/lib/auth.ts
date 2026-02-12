@@ -5,7 +5,8 @@ import { eq } from 'drizzle-orm';
 import { redis } from './redis';
 
 export interface AuthContext {
-  restaurantId: string;
+  restaurantId?: string;
+  isInternal?: boolean;
 }
 
 /**
@@ -23,6 +24,15 @@ export async function validateRequest(req: NextRequest): Promise<{
 
   if (!apiKey) {
     return { error: 'Missing API key', status: 401 };
+  }
+
+  // Check for internal API key
+  if (process.env.INTERNAL_API_KEY && apiKey === process.env.INTERNAL_API_KEY) {
+    return {
+      context: {
+        isInternal: true,
+      },
+    };
   }
 
   // 1. Global Rate Limiting (IP-based) using Upstash Redis

@@ -257,3 +257,17 @@ export async function regenerateApiKey(restaurantId: string) {
   revalidatePath(`/dashboard/${restaurantId}`);
   return { apiKey: newKey };
 }
+
+export async function createStripeConnectAccount(restaurantId: string) {
+  await verifyOwnership(restaurantId);
+
+  // Mock Stripe Connect onboarding
+  const mockStripeAccountId = `acct_${Math.random().toString(36).substring(2, 12)}`;
+  
+  await db.update(restaurants)
+    .set({ stripeAccountId: mockStripeAccountId })
+    .where(eq(restaurants.id, restaurantId));
+
+  revalidatePath(`/dashboard/${restaurantId}`);
+  return { stripeAccountId: mockStripeAccountId };
+}

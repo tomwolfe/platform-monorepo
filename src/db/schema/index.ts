@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, timestamp, boolean, uniqueIndex, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, integer, timestamp, boolean, uniqueIndex, index, jsonb } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 import { waitlist } from './waitlist';
 
@@ -14,6 +14,7 @@ export const restaurants = pgTable('restaurants', {
   closingTime: text('closing_time').default('22:00'),
   daysOpen: text('days_open').default('monday,tuesday,wednesday,thursday,friday,saturday,sunday'),
   defaultDurationMinutes: integer('default_duration_minutes').default(90),
+  stripeAccountId: text('stripe_account_id'),
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => {
   return {
@@ -50,6 +51,7 @@ export const reservations = pgTable('reservations', {
   verificationToken: uuid('verification_token').defaultRandom(),
   depositAmount: integer('deposit_amount').default(0),
   stripePaymentIntentId: text('stripe_payment_intent_id'),
+  combinedTableIds: jsonb('combined_table_ids').$type<string[]>(),
   createdAt: timestamp('created_at').defaultNow(),
 });
 

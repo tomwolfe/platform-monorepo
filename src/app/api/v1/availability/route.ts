@@ -11,7 +11,7 @@ export const runtime = 'edge';
 async function getAvailableTables(restaurantId: string, startTime: Date, partySize: number, duration: number) {
   const endTime = addMinutes(startTime, duration);
 
-  const occupiedTableIds = db
+  const occupiedTableIdsQuery = db
     .select({ tableId: reservations.tableId })
     .from(reservations)
     .where(
@@ -28,18 +28,88 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
       )
     );
 
-  return await db
+  const occupiedTableIdsResult = await occupiedTableIdsQuery;
+  const occupiedTableIds = occupiedTableIdsResult.map(r => r.tableId).filter(Boolean) as string[];
+
+  // Also check combinedTableIds from reservations
+  const occupiedCombinedTableIdsQuery = await db
+    .select({ combinedTableIds: reservations.combinedTableIds })
+    .from(reservations)
+    .where(
+      and(
+        eq(reservations.restaurantId, restaurantId),
+        or(
+          eq(reservations.status, 'confirmed'),
+          and(
+            eq(reservations.isVerified, false),
+            gte(reservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
+          )
+        ),
+        sql`(${reservations.startTime}, ${reservations.endTime}) OVERLAPS (${startTime.toISOString()}::timestamptz, ${endTime.toISOString()}::timestamptz)`
+      )
+    );
+
+  occupiedCombinedTableIdsQuery.forEach(r => {
+    if (r.combinedTableIds) {
+      occupiedTableIds.push(...r.combinedTableIds);
+    }
+  });
+
+  const allTables = await db
     .select()
     .from(restaurantTables)
     .where(
       and(
         eq(restaurantTables.restaurantId, restaurantId),
         eq(restaurantTables.isActive, true),
-        eq(restaurantTables.status, 'vacant'),
-        gte(restaurantTables.maxCapacity, partySize),
-        sql`${restaurantTables.id} NOT IN (${occupiedTableIds})`
+        eq(restaurantTables.status, 'vacant')
       )
     );
+
+  const availableIndividualTables = allTables.filter(t => 
+    !occupiedTableIds.includes(t.id) && t.maxCapacity >= partySize
+  );
+
+  if (availableIndividualTables.length > 0) {
+    return availableIndividualTables.map(t => ({ ...t, isCombined: false }));
+  }
+
+  // If no individual table fits, try joining two tables
+  // For simplicity, we only try joining TWO adjacent tables
+  const vacantTables = allTables.filter(t => !occupiedTableIds.includes(t.id));
+  const suggestedCombos: any[] = [];
+
+  for (let i = 0; i < vacantTables.length; i++) {
+    for (let j = i + 1; j < vacantTables.length; j++) {
+      const t1 = vacantTables[i];
+      const t2 = vacantTables[j];
+
+      // Join capacity (e.g., two 2-tops = 4-top)
+      const combinedCapacity = t1.maxCapacity + t2.maxCapacity;
+      
+      if (combinedCapacity >= partySize) {
+        // Check adjacency (distance formula with threshold)
+        const distance = Math.sqrt(
+          Math.pow((t1.xPos || 0) - (t2.xPos || 0), 2) + 
+          Math.pow((t1.yPos || 0) - (t2.yPos || 0), 2)
+        );
+
+        if (distance < 120) { // Adjacency threshold in floor plan units
+          suggestedCombos.push({
+            id: `${t1.id}+${t2.id}`,
+            tableNumber: `${t1.tableNumber}+${t2.tableNumber}`,
+            combinedTableIds: [t1.id, t2.id],
+            maxCapacity: combinedCapacity,
+            isCombined: true,
+            table1: t1,
+            table2: t2,
+          });
+        }
+      }
+    }
+  }
+
+  return suggestedCombos;
 }
 
 export async function GET(req: NextRequest) {

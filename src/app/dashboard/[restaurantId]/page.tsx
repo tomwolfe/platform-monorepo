@@ -3,9 +3,9 @@ import { restaurants, reservations, waitlist } from '@/db/schema';
 import { eq, desc } from 'drizzle-orm';
 import { notFound, redirect } from 'next/navigation';
 import FloorPlan from '@/components/dashboard/FloorPlan';
-import { updateTablePositions, updateTableStatus, updateRestaurantSettings, addTable, deleteTable, updateTableDetails, deleteReservation, updateWaitlistStatus, regenerateApiKey } from './actions';
+import { updateTablePositions, updateTableStatus, updateRestaurantSettings, addTable, deleteTable, updateTableDetails, deleteReservation, updateWaitlistStatus, regenerateApiKey, createStripeConnectAccount } from './actions';
 import { currentUser } from '@clerk/nextjs/server';
-import { Trash2, Bell, UserCheck } from 'lucide-react';
+import { Trash2, Bell, UserCheck, CreditCard } from 'lucide-react';
 
 export default async function DashboardPage(props: { params: Promise<{ restaurantId: string }> }) {
   const params = await props.params;
@@ -286,7 +286,36 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
           <h3 className="text-blue-900 font-semibold mb-2">Total Tables</h3>
           <p className="text-3xl font-bold text-blue-600">{restaurant.tables.length}</p>
         </div>
-        {/* More stats could go here */}
+        
+        <div className="bg-purple-50 p-6 rounded-xl border border-purple-100 md:col-span-2 flex justify-between items-center">
+          <div>
+            <h3 className="text-purple-900 font-semibold mb-2 flex items-center">
+              <CreditCard className="w-4 h-4 mr-2" />
+              Payouts & Deposits
+            </h3>
+            {restaurant.stripeAccountId ? (
+              <div className="flex items-center text-purple-700">
+                <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
+                <span className="text-sm font-medium">Stripe Connected ({restaurant.stripeAccountId})</span>
+              </div>
+            ) : (
+              <p className="text-sm text-purple-600">Connect your Stripe account to start accepting deposits.</p>
+            )}
+          </div>
+          {!restaurant.stripeAccountId && (
+            <form action={async () => {
+              'use server';
+              await createStripeConnectAccount(restaurantInternalId);
+            }}>
+              <button 
+                type="submit"
+                className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors"
+              >
+                Connect Stripe
+              </button>
+            </form>
+          )}
+        </div>
       </section>
     </div>
   );

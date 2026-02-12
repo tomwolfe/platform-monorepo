@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { restaurantId, tableId, guestName, guestEmail, partySize, startTime } = body;
+    const { restaurantId, tableId, combinedTableIds, guestName, guestEmail, partySize, startTime } = body;
 
     const targetRestaurantId = context!.restaurantId;
 
@@ -22,13 +22,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: 'Unauthorized access to this restaurant' }, { status: 403 });
     }
 
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-    if (!tableId || !uuidRegex.test(tableId) || !guestName || !guestEmail || !partySize || !startTime) {
-      return NextResponse.json({ message: 'Missing or invalid required fields' }, { status: 400 });
+    if (!guestName || !guestEmail || !partySize || !startTime) {
+      return NextResponse.json({ message: 'Missing required guest or time fields' }, { status: 400 });
     }
 
-    // Verify Restaurant exists (context restaurantId is already verified to exist in validateRequest)
+    if (!tableId && (!combinedTableIds || !Array.isArray(combinedTableIds) || combinedTableIds.length === 0)) {
+      return NextResponse.json({ message: 'Missing table selection' }, { status: 400 });
+    }
+
+    // Verify Restaurant exists
     const restaurant = await db.query.restaurants.findFirst({
       where: eq(restaurants.id, targetRestaurantId),
     });
@@ -40,16 +42,12 @@ export async function POST(req: NextRequest) {
     const start = parseISO(startTime);
     const end = addMinutes(start, 90);
 
-    // Atomic check and insert
-    // Note: Edge runtime support for full transactions might vary depending on the DB driver.
-    // Neon HTTP driver doesn't support traditional transactions easily across multiple calls,
-    // but we can do it in a single sql block if needed.
-    // For now, let's use a simple check-then-insert.
+    const tablesToCheck = tableId ? [tableId] : combinedTableIds;
 
+    // Enhanced Conflict Detection for both single and combined tables
     const conflict = await db.query.reservations.findFirst({
       where: and(
         eq(reservations.restaurantId, targetRestaurantId),
-        eq(reservations.tableId, tableId),
         or(
           eq(reservations.status, 'confirmed'),
           and(
@@ -57,17 +55,30 @@ export async function POST(req: NextRequest) {
             gte(reservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
           )
         ),
-        sql`(${reservations.startTime}, ${reservations.endTime}) OVERLAPS (${start.toISOString()}, ${end.toISOString()})`
+        // Use overlap logic
+        sql`(${reservations.startTime}, ${reservations.endTime}) OVERLAPS (${start.toISOString()}, ${end.toISOString()})`,
+        // Check if ANY of the tables we want are occupied
+        or(
+          // Check if it matches our single tableId
+          tableId ? eq(reservations.tableId, tableId) : undefined,
+          // OR if our tableId is part of someone else's combinedTables
+          tableId ? sql`${reservations.combinedTableIds} @> ${JSON.stringify([tableId])}::jsonb` : undefined,
+          // OR if our combinedTableIds contains a tableId that is someone's single tableId
+          combinedTableIds ? sql`${reservations.tableId} = ANY(${sql.raw(`ARRAY['${tablesToCheck.join("','")}']::uuid[]`)})` : undefined,
+          // OR if our combinedTableIds overlap with someone else's combinedTableIds
+          combinedTableIds ? sql`${reservations.combinedTableIds} ?| ${sql.raw(`ARRAY['${tablesToCheck.join("','")}']`)}` : undefined
+        )
       ),
     });
 
     if (conflict) {
-      return NextResponse.json({ message: 'Table is no longer available' }, { status: 409 });
+      return NextResponse.json({ message: 'One or more tables are no longer available' }, { status: 409 });
     }
 
     const [newReservation] = await db.insert(reservations).values({
       restaurantId: targetRestaurantId,
-      tableId,
+      tableId: tableId || null,
+      combinedTableIds: combinedTableIds || null,
       guestName,
       guestEmail,
       partySize,

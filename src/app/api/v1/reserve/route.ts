@@ -4,32 +4,37 @@ import { restaurants, reservations, guestProfiles } from '@/db/schema';
 import { and, eq, gte, or, sql } from 'drizzle-orm';
 import { addMinutes, parseISO } from 'date-fns';
 import { NotifyService } from '@/lib/notify';
+import { validateRequest } from '@/lib/auth';
 
 export const runtime = 'edge';
 
 export async function POST(req: NextRequest) {
-  const apiKey = req.headers.get('x-api-key');
-  if (!apiKey) {
-    return NextResponse.json({ message: 'Missing API key' }, { status: 401 });
-  }
+  const { error, status, context } = await validateRequest(req);
+  if (error) return NextResponse.json({ message: error }, { status });
 
   try {
     const body = await req.json();
     const { restaurantId, tableId, guestName, guestEmail, partySize, startTime } = body;
 
+    const targetRestaurantId = context!.restaurantId;
+
+    if (restaurantId && restaurantId !== targetRestaurantId) {
+      return NextResponse.json({ message: 'Unauthorized access to this restaurant' }, { status: 403 });
+    }
+
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-    if (!restaurantId || !uuidRegex.test(restaurantId) || !tableId || !uuidRegex.test(tableId) || !guestName || !guestEmail || !partySize || !startTime) {
+    if (!tableId || !uuidRegex.test(tableId) || !guestName || !guestEmail || !partySize || !startTime) {
       return NextResponse.json({ message: 'Missing or invalid required fields' }, { status: 400 });
     }
 
-    // Verify API Key matches restaurant
+    // Verify Restaurant exists (context restaurantId is already verified to exist in validateRequest)
     const restaurant = await db.query.restaurants.findFirst({
-      where: and(eq(restaurants.id, restaurantId), eq(restaurants.apiKey, apiKey)),
+      where: eq(restaurants.id, targetRestaurantId),
     });
 
     if (!restaurant) {
-      return NextResponse.json({ message: 'Invalid API key or restaurant ID' }, { status: 403 });
+      return NextResponse.json({ message: 'Restaurant not found' }, { status: 404 });
     }
 
     const start = parseISO(startTime);
@@ -43,7 +48,7 @@ export async function POST(req: NextRequest) {
 
     const conflict = await db.query.reservations.findFirst({
       where: and(
-        eq(reservations.restaurantId, restaurantId),
+        eq(reservations.restaurantId, targetRestaurantId),
         eq(reservations.tableId, tableId),
         or(
           eq(reservations.status, 'confirmed'),
@@ -61,7 +66,7 @@ export async function POST(req: NextRequest) {
     }
 
     const [newReservation] = await db.insert(reservations).values({
-      restaurantId,
+      restaurantId: targetRestaurantId,
       tableId,
       guestName,
       guestEmail,
@@ -73,7 +78,7 @@ export async function POST(req: NextRequest) {
 
     // Upsert Guest Profile
     await db.insert(guestProfiles).values({
-      restaurantId,
+      restaurantId: targetRestaurantId,
       email: guestEmail,
       name: guestName,
       visitCount: 1,

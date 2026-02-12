@@ -8,6 +8,7 @@ import { currentUser } from '@clerk/nextjs/server';
 import { z } from 'zod';
 import { NotifyService } from '@/lib/notify';
 import Ably from 'ably';
+import { generateApiKey } from '@/lib/auth';
 
 const SettingsSchema = z.object({
   openingTime: z.string().regex(/^\d{2}:\d{2}$/),
@@ -242,4 +243,17 @@ export async function updateWaitlistStatus(
 
   revalidatePath(`/dashboard/${restaurantId}`);
   return entry;
+}
+
+export async function regenerateApiKey(restaurantId: string) {
+  await verifyOwnership(restaurantId);
+  
+  const newKey = generateApiKey();
+  
+  await db.update(restaurants)
+    .set({ apiKey: newKey })
+    .where(eq(restaurants.id, restaurantId));
+    
+  revalidatePath(`/dashboard/${restaurantId}`);
+  return { apiKey: newKey };
 }

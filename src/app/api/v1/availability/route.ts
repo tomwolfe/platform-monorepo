@@ -4,6 +4,7 @@ import { restaurantTables, reservations, restaurants } from '@/db/schema';
 import { and, eq, gte, or, sql } from 'drizzle-orm';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
+import { validateRequest } from '@/lib/auth';
 
 export const runtime = 'edge';
 
@@ -42,8 +43,17 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
 }
 
 export async function GET(req: NextRequest) {
+  const { error, status, context } = await validateRequest(req);
+  if (error) return NextResponse.json({ message: error }, { status });
+
   const { searchParams } = new URL(req.url);
   const restaurantId = searchParams.get('restaurantId');
+  
+  if (restaurantId && restaurantId !== context!.restaurantId) {
+    return NextResponse.json({ message: 'Unauthorized access to this restaurant data' }, { status: 403 });
+  }
+
+  const targetRestaurantId = context!.restaurantId;
   const date = searchParams.get('date');
   const partySize = parseInt(searchParams.get('partySize') || '0');
 
@@ -55,7 +65,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const restaurant = await db.query.restaurants.findFirst({
-      where: eq(restaurants.id, restaurantId),
+      where: eq(restaurants.id, targetRestaurantId),
     });
 
     if (!restaurant) {
@@ -79,7 +89,7 @@ export async function GET(req: NextRequest) {
     }
 
     const duration = restaurant.defaultDurationMinutes || 90;
-    const availableTables = await getAvailableTables(restaurantId, requestedDate, partySize, duration);
+    const availableTables = await getAvailableTables(targetRestaurantId, requestedDate, partySize, duration);
 
     const suggestedSlots: { time: string, availableTables: typeof availableTables }[] = [];
 
@@ -94,7 +104,7 @@ export async function GET(req: NextRequest) {
           continue;
         }
 
-        const tables = await getAvailableTables(restaurantId, suggestedTime, partySize, duration);
+        const tables = await getAvailableTables(targetRestaurantId, suggestedTime, partySize, duration);
         if (tables.length > 0) {
           suggestedSlots.push({
             time: suggestedTime.toISOString(),
@@ -105,7 +115,7 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json({
-      restaurantId,
+      restaurantId: targetRestaurantId,
       requestedTime: requestedDate.toISOString(),
       partySize,
       availableTables,

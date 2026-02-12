@@ -1,36 +1,74 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TableStack
+
+TableStack is a high-performance, multi-tenant, headless reservation engine designed for modern restaurants. It provides a robust API for managing bookings, a visual floor plan editor for owners, and a secure verification system to prevent ghost reservations.
+
+## Features
+
+- **Multi-Tenant Architecture**: Securely host multiple restaurants on a single platform with strict data isolation.
+- **Headless API**: Integrate reservations into any website or app with our standard REST endpoints.
+- **Visual Floor Plan**: An interactive, draggable floor plan editor using `@dnd-kit` for intuitive table management.
+- **Atomic Availability Engine**: Real-time availability calculation using PostgreSQL `OVERLAPS` and a temporary locking mechanism.
+- **Secure Verification**: Guest reservations are only confirmed after email verification via Resend, protecting restaurant inventory.
+- **Edge Optimized**: Built for Vercel Edge Runtime to ensure sub-100ms response times.
+
+## Tech Stack
+
+- **Framework**: [Next.js 15 (App Router)](https://nextjs.org/)
+- **Database**: [Neon Postgres](https://neon.tech/)
+- **ORM**: [Drizzle ORM](https://orm.drizzle.team/)
+- **Cache/Locks**: [Upstash Redis](https://upstash.com/)
+- **Email**: [Resend](https://resend.com/)
+- **UI Components**: Tailwind CSS, Lucide Icons
+- **Drag & Drop**: `@dnd-kit`
 
 ## Getting Started
 
-First, run the development server:
+### 1. Clone and Install
+
+```bash
+npm install
+```
+
+### 2. Configure Environment
+
+Copy `.env.example` to `.env` and fill in your credentials:
+
+```bash
+cp .env.example .env
+```
+
+Required variables:
+- `DATABASE_URL`: Neon Postgres connection string.
+- `UPSTASH_REDIS_REST_URL` & `UPSTASH_REDIS_REST_TOKEN`: Upstash Redis credentials.
+- `RESEND_API_KEY`: Resend API key for verification emails.
+- `CRON_SECRET`: Secret for protecting the cleanup CRON route.
+
+### 3. Setup Database
+
+Sync your schema and seed the demo data:
+
+```bash
+npm run db:push
+npm run db:seed
+```
+
+### 4. Run Development Server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) to see the landing page. Access the demo dashboard at `/dashboard/demo`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## API Reference
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Check Availability
+`GET /api/v1/availability?restaurantId=ID&date=ISO_DATE&partySize=INT`
 
-## Learn More
+### Create Reservation
+`POST /api/v1/reserve`
+Headers: `x-api-key: YOUR_KEY`
 
-To learn more about Next.js, take a look at the following resources:
+## License
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+MIT

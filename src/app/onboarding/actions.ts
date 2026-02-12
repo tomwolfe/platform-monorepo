@@ -33,6 +33,15 @@ export async function createRestaurant(data: z.infer<typeof onboardingSchema>) {
 
   const validated = onboardingSchema.parse(data);
 
+  // Check if slug is already taken
+  const existing = await db.query.restaurants.findFirst({
+    where: (restaurants, { eq }) => eq(restaurants.slug, validated.slug),
+  });
+
+  if (existing) {
+    return { error: "This public slug is already taken. Please choose another one." };
+  }
+
   const apiKey = `ts_${crypto.randomBytes(16).toString("hex")}`;
 
   const [restaurant] = await db.insert(restaurants).values({
@@ -55,8 +64,8 @@ export async function createRestaurant(data: z.infer<typeof onboardingSchema>) {
         tableNumber: table.tableNumber,
         minCapacity: table.minCapacity,
         maxCapacity: table.maxCapacity,
-        xPos: table.xPos,
-        yPos: table.yPos,
+        xPos: Math.round(table.xPos),
+        yPos: Math.round(table.yPos),
         tableType: table.tableType,
         status: 'vacant' as const,
       }))

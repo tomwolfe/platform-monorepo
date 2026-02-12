@@ -69,6 +69,7 @@ function DraggableTable({ table }: { table: OnboardingData['tables'][0] }) {
 export default function OnboardingPage() {
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
 
   const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<OnboardingData>({
     resolver: zodResolver(onboardingSchema),
@@ -139,10 +140,16 @@ export default function OnboardingPage() {
 
   const onSubmit = async (data: OnboardingData) => {
     setIsSubmitting(true);
+    setServerError(null);
     try {
-      await createRestaurant(data);
+      const result = await createRestaurant(data);
+      if (result?.error) {
+        setServerError(result.error);
+        setIsSubmitting(false);
+      }
     } catch (error) {
       console.error(error);
+      setServerError("An unexpected error occurred. Please try again.");
       setIsSubmitting(false);
     }
   };
@@ -159,6 +166,11 @@ export default function OnboardingPage() {
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="p-8">
+          {serverError && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm font-medium">
+              {serverError}
+            </div>
+          )}
           {step === 1 && (
             <div className="space-y-6">
               <div>

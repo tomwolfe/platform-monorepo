@@ -80,7 +80,7 @@ export async function cancelReservation(reservationId: string) {
       });
     }
 
-    revalidatePath(`/dashboard/${data.restaurantId}`);
+    revalidatePath(`/dashboard/${reservation.restaurantId}`);
     revalidatePath(`/book/manage/${reservationId}`);
   }
   return reservation;

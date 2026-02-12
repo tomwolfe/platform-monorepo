@@ -9,10 +9,11 @@ import {
   PointerSensor,
   DragEndEvent,
   DragStartEvent,
+  useDraggable,
+  useDroppable,
 } from '@dnd-kit/core';
-import { useDraggable } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
-import { Table } from 'lucide-react';
+import { Table, Trash2, CheckCircle, AlertCircle, LucideIcon } from 'lucide-react';
 
 interface RestaurantTable {
   id: string;
@@ -22,6 +23,7 @@ interface RestaurantTable {
   xPos: number | null;
   yPos: number | null;
   tableType: string | null;
+  status: string | null;
 }
 
 interface DraggableTableProps {
@@ -41,13 +43,21 @@ function DraggableTable({ table }: DraggableTableProps) {
     position: 'absolute' as const,
   };
 
+  const getStatusColor = () => {
+    switch (table.status) {
+      case 'occupied': return 'border-red-500 bg-red-50';
+      case 'dirty': return 'border-yellow-500 bg-yellow-50';
+      default: return 'border-gray-200 bg-white';
+    }
+  };
+
   return (
     <div
       ref={setNodeRef}
       style={style}
       {...listeners}
       {...attributes}
-      className={`p-4 border-2 rounded-lg bg-white shadow-md cursor-move flex flex-col items-center justify-center w-24 h-24 ${
+      className={`p-4 border-2 rounded-lg shadow-md cursor-move flex flex-col items-center justify-center w-24 h-24 ${getStatusColor()} ${
         table.tableType === 'round' ? 'rounded-full' : ''
       }`}
     >
@@ -58,7 +68,27 @@ function DraggableTable({ table }: DraggableTableProps) {
   );
 }
 
-export default function FloorPlan({ initialTables, onSave }: { initialTables: RestaurantTable[], onSave: (tables: RestaurantTable[]) => Promise<void> }) {
+function StatusZone({ id, label, icon: Icon, colorClass }: { id: string, label: string, icon: LucideIcon, colorClass: string }) {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  
+  return (
+    <div
+      ref={setNodeRef}
+      className={`flex-1 p-4 rounded-xl border-2 border-dashed flex items-center justify-center gap-2 transition-colors ${
+        isOver ? colorClass : 'border-gray-200 bg-white text-gray-400'
+      }`}
+    >
+      <Icon className="w-5 h-5" />
+      <span className="font-medium">{label}</span>
+    </div>
+  );
+}
+
+export default function FloorPlan({ initialTables, onSave, onStatusChange }: { 
+  initialTables: RestaurantTable[], 
+  onSave: (tables: RestaurantTable[]) => Promise<void>,
+  onStatusChange: (tableId: string, status: 'vacant' | 'occupied' | 'dirty') => Promise<void>
+}) {
   const [tables, setTables] = useState(initialTables);
   const [activeTable, setActiveTable] = useState<RestaurantTable | null>(null);
 
@@ -76,57 +106,73 @@ export default function FloorPlan({ initialTables, onSave }: { initialTables: Re
   }
 
   function handleDragEnd(event: DragEndEvent) {
-    const { active, delta } = event;
+    const { active, delta, over } = event;
     
-    setTables((prev) =>
-      prev.map((t) => {
-        if (t.id === active.id) {
-          return {
-            ...t,
-            xPos: (t.xPos || 0) + delta.x,
-            yPos: (t.yPos || 0) + delta.y,
-          };
-        }
-        return t;
-      })
-    );
+    if (over && ['vacant', 'occupied', 'dirty'].includes(over.id as string)) {
+      const newStatus = over.id as 'vacant' | 'occupied' | 'dirty';
+      setTables((prev) =>
+        prev.map((t) => (t.id === active.id ? { ...t, status: newStatus } : t))
+      );
+      onStatusChange(active.id as string, newStatus);
+    } else {
+      setTables((prev) =>
+        prev.map((t) => {
+          if (t.id === active.id) {
+            return {
+              ...t,
+              xPos: (t.xPos || 0) + delta.x,
+              yPos: (t.yPos || 0) + delta.y,
+            };
+          }
+          return t;
+        })
+      );
+    }
     setActiveTable(null);
   }
 
   return (
-    <div className="relative w-full h-[600px] bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl overflow-hidden">
-      <DndContext
-        sensors={sensors}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-      >
-        <div className="absolute inset-0" style={{ 
-          backgroundImage: 'radial-gradient(#e5e7eb 1px, transparent 1px)', 
-          backgroundSize: '20px 20px' 
-        }} />
-        
-        {tables.map((table) => (
-          <DraggableTable key={table.id} table={table} />
-        ))}
+    <div className="flex flex-col gap-4">
+      <div className="flex gap-4 mb-4">
+        <StatusZone id="vacant" label="Set Vacant" icon={CheckCircle} colorClass="border-green-500 bg-green-50 text-green-700" />
+        <StatusZone id="occupied" label="Set Occupied" icon={AlertCircle} colorClass="border-red-500 bg-red-50 text-red-700" />
+        <StatusZone id="dirty" label="Set Dirty" icon={Trash2} colorClass="border-yellow-500 bg-yellow-50 text-yellow-700" />
+      </div>
 
-        <DragOverlay>
-          {activeTable ? (
-            <div className={`p-4 border-2 border-blue-500 rounded-lg bg-white shadow-xl flex flex-col items-center justify-center w-24 h-24 opacity-80 ${
-              activeTable.tableType === 'round' ? 'rounded-full' : ''
-            }`}>
-              <Table className="w-6 h-6 mb-1" />
-              <span className="font-bold">#{activeTable.tableNumber}</span>
-            </div>
-          ) : null}
-        </DragOverlay>
-      </DndContext>
+      <div className="relative w-full h-[600px] bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl overflow-hidden">
+        <DndContext
+          sensors={sensors}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="absolute inset-0" style={{ 
+            backgroundImage: 'radial-gradient(#e5e7eb 1px, transparent 1px)', 
+            backgroundSize: '20px 20px' 
+          }} />
+          
+          {tables.map((table) => (
+            <DraggableTable key={table.id} table={table} />
+          ))}
 
-      <button
-        onClick={() => onSave(tables)}
-        className="absolute bottom-4 right-4 bg-blue-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-blue-700 transition shadow-lg"
-      >
-        Save Layout
-      </button>
+          <DragOverlay>
+            {activeTable ? (
+              <div className={`p-4 border-2 border-blue-500 rounded-lg bg-white shadow-xl flex flex-col items-center justify-center w-24 h-24 opacity-80 ${
+                activeTable.tableType === 'round' ? 'rounded-full' : ''
+              }`}>
+                <Table className="w-6 h-6 mb-1" />
+                <span className="font-bold">#{activeTable.tableNumber}</span>
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+
+        <button
+          onClick={() => onSave(tables)}
+          className="absolute bottom-4 right-4 bg-blue-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-blue-700 transition shadow-lg"
+        >
+          Save Layout
+        </button>
+      </div>
     </div>
   );
 }

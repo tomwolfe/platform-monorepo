@@ -1,10 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { restaurantTables, reservations } from '@/db/schema';
-import { and, eq, gte, lte, ne, or, sql } from 'drizzle-orm';
-import { addMinutes, parseISO, startOfDay, endOfDay } from 'date-fns';
+import { and, eq, gte, lte, or, sql } from 'drizzle-orm';
+import { addMinutes, parseISO } from 'date-fns';
 
 export const runtime = 'edge';
+
+async function getAvailableTables(restaurantId: string, startTime: Date, partySize: number) {
+  const endTime = addMinutes(startTime, 90);
+
+  const occupiedTableIds = db
+    .select({ tableId: reservations.tableId })
+    .from(reservations)
+    .where(
+      and(
+        eq(reservations.restaurantId, restaurantId),
+        or(
+          eq(reservations.status, 'confirmed'),
+          and(
+            eq(reservations.isVerified, false),
+            gte(reservations.createdAt, new Date(Date.now() - 20 * 60 * 1000))
+          )
+        ),
+        sql`(${reservations.startTime}, ${reservations.endTime}) OVERLAPS (${startTime.toISOString()}, ${endTime.toISOString()})`
+      )
+    );
+
+  return await db
+    .select()
+    .from(restaurantTables)
+    .where(
+      and(
+        eq(restaurantTables.restaurantId, restaurantId),
+        eq(restaurantTables.isActive, true),
+        eq(restaurantTables.status, 'vacant'),
+        gte(restaurantTables.maxCapacity, partySize),
+        lte(restaurantTables.minCapacity, partySize),
+        sql`${restaurantTables.id} NOT IN (${occupiedTableIds})`
+      )
+    );
+}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -18,59 +53,30 @@ export async function GET(req: NextRequest) {
 
   try {
     const requestedDate = parseISO(date);
-    
-    // For a real production app, we'd iterate through time slots (e.g. every 30 mins)
-    // But for this API, let's assume we are checking availability for a specific time 
-    // or just returning all tables available at ANY time on that day?
-    // Usually, availability is for a specific time. Let's assume 'date' is a full ISO string.
-    
-    const startTime = requestedDate;
-    const endTime = addMinutes(startTime, 90);
+    const availableTables = await getAvailableTables(restaurantId, requestedDate, partySize);
 
-    // Find tables that fit the party size and are NOT occupied
-    // Logic: 
-    // NOT IN (
-    //   SELECT table_id FROM reservations 
-    //   WHERE restaurant_id = $1
-    //     AND (status = 'confirmed' OR (is_verified = false AND created_at > now() - interval '20 minutes'))
-    //     AND (start_time, end_time) OVERLAPS ($3, $4)
-    // )
+    const suggestedSlots: { time: string, availableTables: typeof availableTables }[] = [];
 
-    const occupiedTableIds = db
-      .select({ tableId: reservations.tableId })
-      .from(reservations)
-      .where(
-        and(
-          eq(reservations.restaurantId, restaurantId),
-          or(
-            eq(reservations.status, 'confirmed'),
-            and(
-              eq(reservations.isVerified, false),
-              gte(reservations.createdAt, new Date(Date.now() - 20 * 60 * 1000))
-            )
-          ),
-          sql`(${reservations.startTime}, ${reservations.endTime}) OVERLAPS (${startTime.toISOString()}, ${endTime.toISOString()})`
-        )
-      );
-
-    const availableTables = await db
-      .select()
-      .from(restaurantTables)
-      .where(
-        and(
-          eq(restaurantTables.restaurantId, restaurantId),
-          eq(restaurantTables.isActive, true),
-          gte(restaurantTables.maxCapacity, partySize),
-          lte(restaurantTables.minCapacity, partySize),
-          sql`${restaurantTables.id} NOT IN (${occupiedTableIds})`
-        )
-      );
+    if (availableTables.length === 0) {
+      const offsets = [-30, 30];
+      for (const offset of offsets) {
+        const suggestedTime = addMinutes(requestedDate, offset);
+        const tables = await getAvailableTables(restaurantId, suggestedTime, partySize);
+        if (tables.length > 0) {
+          suggestedSlots.push({
+            time: suggestedTime.toISOString(),
+            availableTables: tables,
+          });
+        }
+      }
+    }
 
     return NextResponse.json({
       restaurantId,
-      date: startTime.toISOString(),
+      requestedTime: requestedDate.toISOString(),
       partySize,
       availableTables,
+      suggestedSlots: suggestedSlots.length > 0 ? suggestedSlots : undefined,
     });
   } catch (error) {
     console.error('Availability Error:', error);

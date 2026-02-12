@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { reservations } from '@/db/schema';
+import { reservations, restaurantTables } from '@/db/schema';
 import { and, eq, lt } from 'drizzle-orm';
 
 export const runtime = 'edge';
@@ -13,8 +13,10 @@ export async function GET(req: NextRequest) {
 
   try {
     const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000);
     
-    const deleted = await db.delete(reservations)
+    // 1. Remove expired unverified reservations
+    const deletedReservations = await db.delete(reservations)
       .where(
         and(
           eq(reservations.isVerified, false),
@@ -22,9 +24,21 @@ export async function GET(req: NextRequest) {
         )
       );
 
+    // 2. Auto-archive "dirty" tables to "vacant"
+    const cleanedTables = await db.update(restaurantTables)
+      .set({ status: 'vacant', updatedAt: new Date() })
+      .where(
+        and(
+          eq(restaurantTables.status, 'dirty'),
+          lt(restaurantTables.updatedAt, twentyMinutesAgo)
+        )
+      );
+
     return NextResponse.json({ 
       message: 'Cleanup successful',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      expiredReservationsRemoved: deletedReservations.rowCount,
+      dirtyTablesCleaned: cleanedTables.rowCount,
     });
   } catch (error) {
     console.error('Cleanup Error:', error);

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { restaurants, restaurantTables, reservations } from '@/db/schema';
+import { restaurants, reservations, guestProfiles } from '@/db/schema';
 import { and, eq, gte, or, sql } from 'drizzle-orm';
 import { addMinutes, parseISO } from 'date-fns';
-import { resend } from '@/lib/resend';
+import { NotifyService } from '@/lib/notify';
 
 export const runtime = 'edge';
 
@@ -69,11 +69,25 @@ export async function POST(req: NextRequest) {
       isVerified: false,
     }).returning();
 
-    // Send Verification Email
+    // Upsert Guest Profile
+    await db.insert(guestProfiles).values({
+      restaurantId,
+      email: guestEmail,
+      name: guestName,
+      visitCount: 1,
+    }).onConflictDoUpdate({
+      target: [guestProfiles.restaurantId, guestProfiles.email],
+      set: {
+        name: guestName, // Update name if it changed
+        visitCount: sql`${guestProfiles.visitCount} + 1`,
+        updatedAt: new Date(),
+      }
+    });
+
+    // Send Verification Notification
     const verifyUrl = `${new URL(req.url).origin}/verify/${newReservation.verificationToken}`;
     
-    await resend.emails.send({
-      from: 'TableStack <reservations@tablestack.io>', // You'll need a verified domain in Resend
+    await NotifyService.sendNotification({
       to: guestEmail,
       subject: `Confirm your reservation at ${restaurant.name}`,
       html: `
@@ -82,7 +96,9 @@ export async function POST(req: NextRequest) {
         <p><a href="${verifyUrl}">Click here to confirm your booking</a></p>
         <p>This link will expire in 20 minutes.</p>
       `,
-    }).catch(err => console.error('Email send failed:', err));
+      smsMessage: `Confirm your reservation at ${restaurant.name}: ${verifyUrl}`,
+      enableSms: restaurant.enableSms ?? false,
+    });
 
     return NextResponse.json({
       message: 'Reservation created. Please check your email to verify.',

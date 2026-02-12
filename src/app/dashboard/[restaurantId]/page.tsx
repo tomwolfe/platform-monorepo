@@ -1,16 +1,16 @@
 import { db } from '@/db';
-import { restaurants, restaurantTables } from '@/db/schema';
+import { restaurants } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
 import FloorPlan from '@/components/dashboard/FloorPlan';
-import { updateTablePositions } from './actions';
+import { updateTablePositions, updateTableStatus } from './actions';
 
-export default async function DashboardPage(props: { params: Promise<{ slug: string }> }) {
+export default async function DashboardPage(props: { params: Promise<{ restaurantId: string }> }) {
   const params = await props.params;
-  const slug = params.slug;
+  const restaurantId = params.restaurantId;
 
   const restaurant = await db.query.restaurants.findFirst({
-    where: eq(restaurants.slug, slug),
+    where: eq(restaurants.id, restaurantId),
     with: {
       tables: true,
     },
@@ -20,12 +20,17 @@ export default async function DashboardPage(props: { params: Promise<{ slug: str
     notFound();
   }
 
-  async function handleSave(tables: any[]) {
+  async function handleSave(tables: { id: string, xPos: number | null, yPos: number | null }[]) {
     'use server';
     await updateTablePositions(
       tables.map(t => ({ id: t.id, xPos: t.xPos, yPos: t.yPos })),
-      slug
+      restaurantId
     );
+  }
+
+  async function handleStatusChange(tableId: string, status: 'vacant' | 'occupied' | 'dirty') {
+    'use server';
+    await updateTableStatus(tableId, status, restaurantId);
   }
 
   return (
@@ -46,6 +51,7 @@ export default async function DashboardPage(props: { params: Promise<{ slug: str
         <FloorPlan 
           initialTables={restaurant.tables} 
           onSave={handleSave} 
+          onStatusChange={handleStatusChange}
         />
       </section>
 

@@ -429,11 +429,12 @@ export async function executePlan(
   let state = options.initialState || createInitialState(executionId);
   state = applyStateUpdate(state, { plan, status: "PLANNED" });
 
-  const transitionResult = transitionState(state, "EXECUTING");
-  if (!transitionResult.success) {
+  try {
+    state = transitionState(state, "EXECUTING");
+  } catch (error) {
     throw EngineErrorSchema.parse({
       code: "STATE_TRANSITION_INVALID",
-      message: transitionResult.error || "Failed to transition to EXECUTING",
+      message: error instanceof Error ? error.message : "Failed to transition to EXECUTING",
       recoverable: false,
       timestamp: new Date().toISOString(),
     });

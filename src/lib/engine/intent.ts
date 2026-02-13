@@ -11,7 +11,7 @@
  */
 
 import { z } from "zod";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import {
   Intent,
   IntentSchema,
@@ -23,6 +23,31 @@ import {
   EngineErrorSchema,
 } from "./types";
 import { generateStructured, GenerateStructuredResult } from "./llm";
+
+// ============================================================================
+// INTENT HASHING
+// Deterministic hashing for immutable intent linking
+// ============================================================================
+
+/**
+ * Generates a deterministic SHA-256 hash for an intent.
+ * Sorts parameters alphabetically to ensure "A and B" == "B and A".
+ */
+export function generateIntentHash(type: string, parameters: Record<string, unknown>): string {
+  const sortedParams: Record<string, unknown> = {};
+  const keys = Object.keys(parameters).sort();
+  
+  for (const key of keys) {
+    sortedParams[key] = parameters[key];
+  }
+
+  const payload = JSON.stringify({
+    type,
+    parameters: sortedParams,
+  });
+
+  return createHash("sha256").update(payload).digest("hex");
+}
 
 // ============================================================================
 // PARSED INTENT SCHEMA (LLM Output)
@@ -219,6 +244,7 @@ export async function parseIntent(
         parameters: fallbackParsedIntent.parameters,
         rawText: input.trim(),
         explanation: fallbackParsedIntent.explanation,
+        hash: generateIntentHash(fallbackParsedIntent.type, fallbackParsedIntent.parameters),
         metadata: IntentMetadataSchema.parse({
           version: "1.0.0",
           timestamp,
@@ -260,6 +286,7 @@ export async function parseIntent(
       parameters: parsedIntent.parameters,
       rawText: input.trim(),
       explanation: parsedIntent.explanation,
+      hash: generateIntentHash(parsedIntent.type, parsedIntent.parameters),
       metadata: IntentMetadataSchema.parse({
         version: "1.0.0",
         timestamp,

@@ -107,7 +107,7 @@ export function validateStateTransition(
 export function transitionState(
   state: ExecutionState,
   newStatus: ExecutionStatus
-): StateTransitionResult {
+): ExecutionState {
   const timestamp = new Date().toISOString();
   const currentStatus = state.status;
 
@@ -115,12 +115,7 @@ export function transitionState(
   const validation = validateStateTransition(currentStatus, newStatus);
   
   if (!validation.valid) {
-    return {
-      success: false,
-      previous_state: currentStatus,
-      error: validation.reason,
-      timestamp,
-    };
+    throw new Error(`Invalid state transition: ${validation.reason}`);
   }
 
   // Create new state with updated status
@@ -136,23 +131,7 @@ export function transitionState(
   }
 
   // Validate the updated state
-  try {
-    ExecutionStateSchema.parse(updatedState);
-  } catch (error) {
-    return {
-      success: false,
-      previous_state: currentStatus,
-      error: `State validation failed: ${error}`,
-      timestamp,
-    };
-  }
-
-  return {
-    success: true,
-    previous_state: currentStatus,
-    new_state: newStatus,
-    timestamp,
-  };
+  return ExecutionStateSchema.parse(updatedState);
 }
 
 // ============================================================================
@@ -279,22 +258,16 @@ export function setExecutionError(
   const timestamp = new Date().toISOString();
 
   // First transition to FAILED state
-  const transitionResult = transitionState(state, "FAILED");
+  const failedState = transitionState(state, "FAILED");
   
-  if (!transitionResult.success) {
-    throw new Error(`Cannot set error: ${transitionResult.error}`);
-  }
-
   // Apply error to state
-  return applyStateUpdate(state, {
-    status: "FAILED",
+  return applyStateUpdate(failedState, {
     error: {
       code: errorCode,
       message: errorMessage,
       step_id: stepId,
       details,
     },
-    completed_at: timestamp,
   });
 }
 
@@ -375,15 +348,9 @@ export class ExecutionStateMachine {
     return this.state.status;
   }
 
-  transition(newStatus: ExecutionStatus): StateTransitionResult {
-    const result = transitionState(this.state, newStatus);
-    
-    if (result.success && result.new_state) {
-      // Re-fetch state with updated status
-      this.state = applyStateUpdate(this.state, { status: result.new_state });
-    }
-    
-    return result;
+  transition(newStatus: ExecutionStatus): ExecutionState {
+    this.state = transitionState(this.state, newStatus);
+    return this.state;
   }
 
   setIntent(intent: ExecutionState["intent"]): void {

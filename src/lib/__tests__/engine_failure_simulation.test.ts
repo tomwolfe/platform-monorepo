@@ -380,28 +380,39 @@ async function testInvalidStateTransition(): Promise<void> {
   );
   
   // Test 4.4: Actual transition attempt with a valid intermediate state
-  const validTransition = transitionState(state, "PARSING");
-  assert(
-    "Transition to PARSING should succeed",
-    validTransition.success,
-    "Valid transition failed"
-  );
+  try {
+    const validTransition = transitionState(state, "PARSING");
+    assert(
+      "Transition to PARSING should succeed",
+      validTransition.status === "PARSING",
+      "Valid transition failed"
+    );
+  } catch (e) {
+    assert("Transition to PARSING should succeed", false, String(e));
+  }
   
   // Create a mock state with the new status for the next test
   const stateInParsing = { ...state, status: "PARSING" as ExecutionStatus };
   
-  const invalidTransition = transitionState(stateInParsing, "EXECUTING");
-  assert(
-    "Invalid transition should fail",
-    !invalidTransition.success,
-    "Invalid transition succeeded"
-  );
-  
-  assert(
-    "Invalid transition should provide error message",
-    invalidTransition.error !== undefined,
-    "No error message provided"
-  );
+  try {
+    transitionState(stateInParsing, "EXECUTING");
+    assert(
+      "Invalid transition should fail",
+      false,
+      "Invalid transition succeeded"
+    );
+  } catch (e) {
+    assert(
+      "Invalid transition should fail",
+      true,
+      "Invalid transition failed"
+    );
+    assert(
+      "Invalid transition should provide error message",
+      String(e).includes("Invalid state transition"),
+      "No error message provided"
+    );
+  }
   
   console.log("Invalid state transition tests completed");
 }

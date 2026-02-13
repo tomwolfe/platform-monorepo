@@ -168,8 +168,7 @@ interface OrchestrationResult {
 }
 
 import { getRegistryManager } from "@/lib/engine/registry";
-
-// ... existing imports ...
+import { verifyPlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/verifier";
 
 async function orchestrateExecution(
   input: string,
@@ -298,6 +297,41 @@ async function orchestrateExecution(
       );
 
       plan = planResult.plan;
+
+      // Step 3.5: Deterministic Verification Gate
+      const verification = verifyPlan(plan, DEFAULT_SAFETY_POLICY);
+      if (!verification.valid) {
+        tracer.addSystemEntry("plan_rejected", {
+          reason: verification.reason,
+          violation: verification.violation,
+        });
+
+        // Transition state to REJECTED
+        state = transitionState(state, "REJECTED");
+        await saveExecutionState(state);
+
+        const traceResult = tracer.finalize();
+
+        return {
+          success: false,
+          execution_id: executionId,
+          status: "REJECTED",
+          intent: parseResult.intent,
+          plan,
+          error: {
+            code: verification.violation || "PLAN_VALIDATION_FAILED",
+            message: verification.reason || "Plan verification failed",
+          },
+          trace: traceResult.trace,
+          metadata: {
+            duration_ms: Math.round(performance.now() - startTime),
+            total_tokens: traceResult.totalTokenUsage.totalTokens,
+            trace_id: executionId,
+            total_ms: Math.round(performance.now() - startTime),
+          },
+        };
+      }
+
       state = setPlan(state, plan);
       await saveExecutionState(state);
     }
@@ -520,8 +554,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       `[Execute] ${result.execution_id} completed in ${requestDuration}ms with status ${result.status}`
     );
 
+    let status = result.success ? 200 : 400;
+    if (result.status === "REJECTED") {
+      status = 403;
+    }
+
     return NextResponse.json(response, {
-      status: result.success ? 200 : 400,
+      status,
     });
   } catch (error) {
     const errorMessage =

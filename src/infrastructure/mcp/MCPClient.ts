@@ -94,7 +94,7 @@ export class MCPClient {
     // Attempt to derive return_schema from non-standard MCP metadata if available
     const return_schema = (tool as any).outputSchema || (tool as any).returnSchema || {};
     
-    const confirmationKeywords = ["book", "pay", "reserve", "buy", "send", "schedule", "delete", "remove"];
+    const confirmationKeywords = ["book", "pay", "reserve", "buy", "send", "schedule", "delete", "remove", "dispatch", "deliver"];
     const requires_confirmation = 
       confirmationKeywords.some(keyword => tool.name.toLowerCase().includes(keyword)) ||
       tool.name.toLowerCase().startsWith("delete_") ||
@@ -110,7 +110,9 @@ export class MCPClient {
       "search_query": "query",
       "contact_name": "name",
       "phone_number": "phone",
-      "email_address": "email"
+      "email_address": "email",
+      "delivery_address": "location_name",
+      "pickup_address": "location_name"
     };
 
     return {

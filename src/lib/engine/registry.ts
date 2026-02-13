@@ -24,6 +24,9 @@ export class RegistryManager {
     if (process.env.VERCEL_MCP_URL) {
       this.mcpClients.set("vercel", new MCPClient(process.env.VERCEL_MCP_URL));
     }
+    if (process.env.OPENDELIVER_MCP_URL) {
+      this.mcpClients.set("opendeliver", new MCPClient(process.env.OPENDELIVER_MCP_URL));
+    }
   }
 
   /**

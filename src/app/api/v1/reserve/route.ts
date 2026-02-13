@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { restaurants, reservations, guestProfiles } from '@/db/schema';
-import { and, eq, gte, or, sql } from 'drizzle-orm';
+import { restaurants, reservations, guestProfiles, restaurantTables } from '@/db/schema';
+import { and, eq, gte, lte, or, sql } from 'drizzle-orm';
 import { addMinutes, parseISO } from 'date-fns';
 import { NotifyService } from '@/lib/notify';
 import { validateRequest } from '@/lib/auth';
@@ -78,15 +78,36 @@ export async function POST(req: NextRequest) {
     // For shadow restaurants, we skip table conflict checks and just allow the booking
     const isShadow = restaurant.isShadow;
 
-    if (!isShadow && !tableId && (!combinedTableIds || !Array.isArray(combinedTableIds) || combinedTableIds.length === 0)) {
-      return NextResponse.json({ message: 'Missing table selection' }, { status: 400 });
-    }
-
     const start = parseISO(startTime);
     const end = addMinutes(start, 90);
 
+    let assignedTableId = tableId;
+
+    if (!isShadow && !assignedTableId && (!combinedTableIds || !Array.isArray(combinedTableIds) || combinedTableIds.length === 0)) {
+      // Auto-assign logic: find first vacant table matching partySize
+      const availableTable = await db.query.restaurantTables.findFirst({
+        where: and(
+          eq(restaurantTables.restaurantId, targetRestaurantId),
+          eq(restaurantTables.isActive, true),
+          lte(restaurantTables.minCapacity, partySize),
+          gte(restaurantTables.maxCapacity, partySize),
+          sql`NOT EXISTS (
+            SELECT 1 FROM ${reservations} r
+            WHERE r.table_id = ${restaurantTables.id}
+            AND r.status = 'confirmed'
+            AND (${reservations.startTime}, ${reservations.endTime}) OVERLAPS (${start.toISOString()}, ${end.toISOString()})
+          )`
+        ),
+      });
+
+      if (!availableTable) {
+        return NextResponse.json({ message: 'No suitable tables available for this time and party size' }, { status: 409 });
+      }
+      assignedTableId = availableTable.id;
+    }
+
     if (!isShadow) {
-      const tablesToCheck = tableId ? [tableId] : combinedTableIds;
+      const tablesToCheck = assignedTableId ? [assignedTableId] : combinedTableIds;
 
       // Enhanced Conflict Detection for both single and combined tables
       const conflict = await db.query.reservations.findFirst({
@@ -104,9 +125,9 @@ export async function POST(req: NextRequest) {
           // Check if ANY of the tables we want are occupied
           or(
             // Check if it matches our single tableId
-            tableId ? eq(reservations.tableId, tableId) : undefined,
+            assignedTableId ? eq(reservations.tableId, assignedTableId) : undefined,
             // OR if our tableId is part of someone else's combinedTables
-            tableId ? sql`${reservations.combinedTableIds} @> ${JSON.stringify([tableId])}::jsonb` : undefined,
+            assignedTableId ? sql`${reservations.combinedTableIds} @> ${JSON.stringify([assignedTableId])}::jsonb` : undefined,
             // OR if our combinedTableIds contains a tableId that is someone's single tableId
             combinedTableIds ? sql`${reservations.tableId} = ANY(${sql.raw(`ARRAY['${tablesToCheck.join("','")}']::uuid[]`)})` : undefined,
             // OR if our combinedTableIds overlap with someone else's combinedTableIds
@@ -122,7 +143,7 @@ export async function POST(req: NextRequest) {
 
     const [newReservation] = await db.insert(reservations).values({
       restaurantId: targetRestaurantId,
-      tableId: tableId || null,
+      tableId: assignedTableId || null,
       combinedTableIds: combinedTableIds || null,
       guestName,
       guestEmail,

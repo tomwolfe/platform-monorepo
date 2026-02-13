@@ -1,4 +1,5 @@
 import { resend } from './resend';
+import Ably from 'ably';
 
 export interface NotifyOptions {
   to: string;
@@ -7,6 +8,27 @@ export interface NotifyOptions {
 }
 
 export class NotifyService {
+  private static ably: Ably.Rest | null = null;
+
+  private static getAbly() {
+    if (!this.ably && process.env.ABLY_API_KEY) {
+      this.ably = new Ably.Rest(process.env.ABLY_API_KEY);
+    }
+    return this.ably;
+  }
+
+  static async broadcast(restaurantId: string, event: string, data: any) {
+    const ably = this.getAbly();
+    if (ably) {
+      const channel = ably.channels.get(`restaurant:${restaurantId}`);
+      await channel.publish(event, data).catch(err => console.error('Ably broadcast failed:', err));
+    }
+  }
+
+  static async notifyExternalDelivery(restaurantId: string, deliveryData: any) {
+    await this.broadcast(restaurantId, 'EXTERNAL_DELIVERY_UPDATE', deliveryData);
+  }
+
   static async sendNotification({ to, subject, html }: NotifyOptions) {
     // Email is always sent
     await resend.emails.send({

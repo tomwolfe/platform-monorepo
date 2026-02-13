@@ -27,6 +27,9 @@ export class RegistryManager {
     if (process.env.OPENDELIVER_MCP_URL) {
       this.mcpClients.set("opendeliver", new MCPClient(process.env.OPENDELIVER_MCP_URL));
     }
+    if (process.env.TABLESTACK_MCP_URL) {
+      this.mcpClients.set("tablestack", new MCPClient(process.env.TABLESTACK_MCP_URL));
+    }
   }
 
   /**
@@ -58,7 +61,12 @@ export class RegistryManager {
                 }
 
                 try {
-                  const result = await client.callTool(tool.name, params, context.abortSignal);
+                  // Pass trace_id in params if available in context
+                  const paramsWithTrace = {
+                    ...params,
+                    _trace_id: context.executionId
+                  };
+                  const result = await client.callTool(tool.name, paramsWithTrace, context.abortSignal);
                   
                   return {
                     success: true,

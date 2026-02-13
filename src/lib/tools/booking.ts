@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ToolDefinitionMetadata, ToolParameter } from "./types";
 import { geocode_location, search_web } from "./location_search";
 import { env } from "../config";
+import { signServiceToken } from "../../../../shared/auth";
 
 export const TableReservationSchema = z.object({
   restaurant_name: z.string().describe("The name of the restaurant."),
@@ -54,12 +55,13 @@ export async function reserve_restaurant(params: TableReservationParams): Promis
   const startTime = `${date}T${time}:00`;
 
   try {
+    const token = await signServiceToken({ service: 'intention-engine' });
     // 1. Try to reserve via TableStack
     let response = await fetch(`${env.TABLESTACK_API_URL}/reserve`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': env.TABLESTACK_INTERNAL_API_KEY || '',
+        'Authorization': `Bearer ${token}`
       },
       body: JSON.stringify({
         restaurantName: restaurant_name,
@@ -99,7 +101,7 @@ export async function reserve_restaurant(params: TableReservationParams): Promis
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': env.TABLESTACK_INTERNAL_API_KEY || '',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           restaurantName: restaurant_name,

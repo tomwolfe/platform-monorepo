@@ -37,6 +37,17 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // If internal and no slug, return all restaurants
+  if (isInternal) {
+    try {
+      const allRestaurants = await db.query.restaurants.findMany();
+      return NextResponse.json(allRestaurants);
+    } catch (error) {
+      console.error('All Restaurants Fetch Error:', error);
+      return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
+    }
+  }
+
   const { error, status, context } = await validateRequest(req);
   if (error) return NextResponse.json({ message: error }, { status });
 

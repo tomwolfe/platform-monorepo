@@ -35,14 +35,24 @@ export class NotifyService {
 
     // 2. Webhook to IntentionEngine
     const webhookUrl = process.env.INTENTION_ENGINE_WEBHOOK_URL;
+    const webhookSecret = process.env.WEBHOOK_SECRET || 'fallback_secret';
+
     if (webhookUrl) {
+      const payload = JSON.stringify({
+        event: 'reservation_rejected',
+        ...data
+      });
+
+      const { signWebhookPayload } = await import('./auth');
+      const signature = await signWebhookPayload(payload, webhookSecret);
+
       fetch(webhookUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          event: 'reservation_rejected',
-          ...data
-        })
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-ts-signature': signature
+        },
+        body: payload
       }).catch(err => console.error('Rejection Webhook failed:', err));
     }
   }

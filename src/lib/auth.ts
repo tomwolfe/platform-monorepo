@@ -92,3 +92,25 @@ async function rateLimit(identifier: string, limit: number, window: number) {
 export function generateApiKey() {
   return `ts_${Math.random().toString(36).substring(2)}${Math.random().toString(36).substring(2)}`;
 }
+
+/**
+ * Signs a webhook payload using HMAC-SHA256.
+ */
+export async function signWebhookPayload(payload: string, secret: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(secret);
+  const data = encoder.encode(payload);
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+
+  const signature = await crypto.subtle.sign('HMAC', cryptoKey, data);
+  return Array.from(new Uint8Array(signature))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}

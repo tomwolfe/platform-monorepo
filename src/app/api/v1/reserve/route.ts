@@ -185,26 +185,36 @@ export async function POST(req: NextRequest) {
     // High-Value Guest Hook: Trigger logistics if guest is frequent
     if ((profile.visitCount ?? 0) >= 5) {
       const webhookUrl = process.env.INTENTION_ENGINE_WEBHOOK_URL || 'http://localhost:3000/api/webhooks';
+      const webhookSecret = process.env.WEBHOOK_SECRET || 'fallback_secret';
+      
       if (webhookUrl) {
+        const payload = JSON.stringify({
+          event: 'high_value_guest_reservation',
+          guest: {
+            name: profile.name,
+            email: profile.email,
+            visitCount: profile.visitCount,
+            defaultDeliveryAddress: profile.defaultDeliveryAddress
+          },
+          reservation: {
+            id: newReservation.id,
+            restaurantName: restaurant.name,
+            startTime: newReservation.startTime,
+            partySize: newReservation.partySize
+          }
+        });
+
+        const { signWebhookPayload } = await import('@/lib/auth');
+        const signature = await signWebhookPayload(payload, webhookSecret);
+
         // Fire and forget webhook
         fetch(webhookUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            event: 'high_value_guest_reservation',
-            guest: {
-              name: profile.name,
-              email: profile.email,
-              visitCount: profile.visitCount,
-              defaultDeliveryAddress: profile.defaultDeliveryAddress
-            },
-            reservation: {
-              id: newReservation.id,
-              restaurantName: restaurant.name,
-              startTime: newReservation.startTime,
-              partySize: newReservation.partySize
-            }
-          })
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-ts-signature': signature
+          },
+          body: payload
         }).catch(err => console.error('Webhook failed:', err));
       }
     }

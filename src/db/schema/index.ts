@@ -55,6 +55,7 @@ export const reservations = pgTable('reservations', {
   depositAmount: integer('deposit_amount').default(0),
   stripePaymentIntentId: text('stripe_payment_intent_id'),
   combinedTableIds: jsonb('combined_table_ids').$type<string[]>(),
+  metadata: jsonb('metadata'),
   createdAt: timestamp('created_at').defaultNow(),
 });
 

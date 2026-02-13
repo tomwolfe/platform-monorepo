@@ -23,7 +23,8 @@ export async function POST(req: NextRequest) {
       guestName, 
       guestEmail, 
       partySize, 
-      startTime 
+      startTime,
+      metadata
     } = body;
 
     let targetRestaurantId = context!.restaurantId;
@@ -151,6 +152,7 @@ export async function POST(req: NextRequest) {
       startTime: start,
       endTime: end,
       isVerified: isShadow ? true : false,
+      metadata: metadata || null,
     }).returning();
 
     // Upsert Guest Profile

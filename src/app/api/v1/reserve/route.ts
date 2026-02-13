@@ -133,7 +133,7 @@ export async function POST(req: NextRequest) {
     }).returning();
 
     // Upsert Guest Profile
-    await db.insert(guestProfiles).values({
+    const [profile] = await db.insert(guestProfiles).values({
       restaurantId: targetRestaurantId,
       email: guestEmail,
       name: guestName,
@@ -145,7 +145,34 @@ export async function POST(req: NextRequest) {
         visitCount: sql`${guestProfiles.visitCount} + 1`,
         updatedAt: new Date(),
       }
-    });
+    }).returning();
+
+    // High-Value Guest Hook: Trigger logistics if guest is frequent
+    if (profile.visitCount >= 5) {
+      const webhookUrl = process.env.INTENTION_ENGINE_WEBHOOK_URL || 'http://localhost:3000/api/webhooks';
+      if (webhookUrl) {
+        // Fire and forget webhook
+        fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event: 'high_value_guest_reservation',
+            guest: {
+              name: profile.name,
+              email: profile.email,
+              visitCount: profile.visitCount,
+              defaultDeliveryAddress: profile.defaultDeliveryAddress
+            },
+            reservation: {
+              id: newReservation.id,
+              restaurantName: restaurant.name,
+              startTime: newReservation.startTime,
+              partySize: newReservation.partySize
+            }
+          })
+        }).catch(err => console.error('Webhook failed:', err));
+      }
+    }
 
     if (isShadow) {
       // Send Claim Invitation to Owner

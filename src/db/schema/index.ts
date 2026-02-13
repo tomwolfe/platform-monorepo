@@ -65,6 +65,7 @@ export const guestProfiles = pgTable('guest_profiles', {
   restaurantId: uuid('restaurant_id').references(() => restaurants.id, { onDelete: 'cascade' }).notNull(),
   email: text('email').notNull(),
   name: text('name').notNull(),
+  defaultDeliveryAddress: text('default_delivery_address'),
   visitCount: integer('visit_count').default(0),
   preferences: text('preferences'),
   createdAt: timestamp('created_at').defaultNow(),

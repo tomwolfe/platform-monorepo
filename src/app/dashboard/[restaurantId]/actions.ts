@@ -128,12 +128,42 @@ export async function updateTableStatus(
 ) {
   await verifyOwnership(restaurantId);
   try {
-    await db.update(restaurantTables)
+    const [table] = await db.update(restaurantTables)
       .set({ status, updatedAt: new Date() })
       .where(and(
         eq(restaurantTables.id, tableId),
         eq(restaurantTables.restaurantId, restaurantId)
-      ));
+      ))
+      .returning();
+
+    // Delivery Hotspot Hook: Notify OpenDeliver when a table is vacant
+    const openDeliverWebhookUrl = process.env.OPEN_DELIVER_WEBHOOK_URL || 'http://localhost:3001/api/webhooks';
+    if (status === 'vacant' && openDeliverWebhookUrl) {
+      const restaurant = await db.query.restaurants.findFirst({
+        where: eq(restaurants.id, restaurantId),
+      });
+
+      if (restaurant) {
+        // Fire and forget webhook to OpenDeliver
+        fetch(openDeliverWebhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event: 'delivery_hotspot_available',
+            venue: {
+              id: restaurant.id,
+              name: restaurant.name,
+              location: restaurant.timezone // Simplified, usually would be address
+            },
+            table: {
+              id: table.id,
+              number: table.tableNumber
+            }
+          })
+        }).catch(err => console.error('Hotspot webhook failed:', err));
+      }
+    }
+
     revalidatePath(`/dashboard/${restaurantId}`);
   } catch (error) {
     console.error('Failed to update table status:', error);

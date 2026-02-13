@@ -3,6 +3,7 @@ import { db } from '@/db';
 import { restaurants } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { redis } from './redis';
+import { verifyServiceToken } from '../../../shared/auth';
 
 export interface AuthContext {
   restaurantId?: string;
@@ -10,23 +11,35 @@ export interface AuthContext {
 }
 
 /**
- * Validates the API key and applies rate limiting.
- * Usage in API routes:
- * const { error, status, context } = await validateRequest(req);
- * if (error) return NextResponse.json({ message: error }, { status });
+ * Validates the API key or JWT service token and applies rate limiting.
  */
 export async function validateRequest(req: NextRequest): Promise<{
   error?: string;
   status?: number;
   context?: AuthContext;
 }> {
+  const authHeader = req.headers.get('authorization');
   const apiKey = req.headers.get('x-api-key');
 
-  if (!apiKey) {
-    return { error: 'Missing API key', status: 401 };
+  // Check for JWT service token first
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    const payload = await verifyServiceToken(token);
+    if (payload) {
+      return {
+        context: {
+          isInternal: true,
+          restaurantId: (payload as any).restaurantId,
+        },
+      };
+    }
   }
 
-  // Check for internal API key
+  if (!apiKey) {
+    return { error: 'Missing API key or valid Bearer token', status: 401 };
+  }
+
+  // Check for internal API key (legacy)
   if (process.env.INTERNAL_API_KEY && apiKey === process.env.INTERNAL_API_KEY) {
     return {
       context: {

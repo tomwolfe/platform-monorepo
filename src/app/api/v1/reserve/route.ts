@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
     }).returning();
 
     // High-Value Guest Hook: Trigger logistics if guest is frequent
-    if (profile.visitCount >= 5) {
+    if ((profile.visitCount ?? 0) >= 5) {
       const webhookUrl = process.env.INTENTION_ENGINE_WEBHOOK_URL || 'http://localhost:3000/api/webhooks';
       if (webhookUrl) {
         // Fire and forget webhook

@@ -1,15 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { validateRequest } from '@/lib/auth';
+import { validateRequest, verifyWebhookPayload } from '@/lib/auth';
 import { NotifyService } from '@/lib/notify';
 
 export const runtime = 'edge';
 
 export async function POST(req: NextRequest) {
+  const bodyText = await req.text();
+  const signature = req.headers.get('x-ts-signature');
+  const secret = process.env.INTERNAL_SYSTEM_KEY || 'fallback_secret';
+
+  const isValid = await verifyWebhookPayload(bodyText, signature || '', secret);
+  if (!isValid) {
+    return NextResponse.json({ message: 'Invalid signature' }, { status: 401 });
+  }
+
   const { error, status, context } = await validateRequest(req);
   if (error) return NextResponse.json({ message: error }, { status });
 
   try {
-    const body = await req.json();
+    const body = JSON.parse(bodyText);
     const { 
       restaurantId, 
       orderId, 

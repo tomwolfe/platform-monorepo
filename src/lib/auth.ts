@@ -114,3 +114,30 @@ export async function signWebhookPayload(payload: string, secret: string): Promi
     .map(b => b.toString(16).padStart(2, '0'))
     .join('');
 }
+
+/**
+ * Verifies a webhook payload using HMAC-SHA256.
+ */
+export async function verifyWebhookPayload(payload: string, signature: string, secret: string): Promise<boolean> {
+  if (!signature || !secret) return false;
+  
+  try {
+    const encoder = new TextEncoder();
+    const keyData = encoder.encode(secret);
+    const data = encoder.encode(payload);
+
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw',
+      keyData,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['verify']
+    );
+
+    const signatureBytes = new Uint8Array(signature.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
+    return await crypto.subtle.verify('HMAC', cryptoKey, signatureBytes, data);
+  } catch (e) {
+    console.error("Webhook verification failed:", e);
+    return false;
+  }
+}

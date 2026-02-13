@@ -76,6 +76,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: 'Restaurant not found' }, { status: 404 });
     }
 
+    // Fetch guest profile for metadata propagation
+    const existingProfile = await db.query.guestProfiles.findFirst({
+      where: and(
+        eq(guestProfiles.restaurantId, targetRestaurantId),
+        eq(guestProfiles.email, guestEmail)
+      )
+    });
+
     // For shadow restaurants, we skip table conflict checks and just allow the booking
     const isShadow = restaurant.isShadow;
 
@@ -106,7 +114,9 @@ export async function POST(req: NextRequest) {
           guestEmail,
           partySize,
           startTime,
-          restaurantName: restaurant.name
+          restaurantName: restaurant.name,
+          visitCount: existingProfile?.visitCount || 0,
+          preferences: existingProfile?.preferences || {}
         });
         return NextResponse.json({ message: 'No suitable tables available for this time and party size' }, { status: 409 });
       }
@@ -148,7 +158,9 @@ export async function POST(req: NextRequest) {
           guestEmail,
           partySize,
           startTime,
-          restaurantName: restaurant.name
+          restaurantName: restaurant.name,
+          visitCount: existingProfile?.visitCount || 0,
+          preferences: existingProfile?.preferences || {}
         });
         return NextResponse.json({ message: 'One or more tables are no longer available' }, { status: 409 });
       }
@@ -185,7 +197,7 @@ export async function POST(req: NextRequest) {
     // High-Value Guest Hook: Trigger logistics if guest is frequent
     if ((profile.visitCount ?? 0) >= 5) {
       const webhookUrl = process.env.INTENTION_ENGINE_WEBHOOK_URL || 'http://localhost:3000/api/webhooks';
-      const webhookSecret = process.env.WEBHOOK_SECRET || 'fallback_secret';
+      const webhookSecret = process.env.INTERNAL_SYSTEM_KEY || 'fallback_secret';
       
       if (webhookUrl) {
         const payload = JSON.stringify({

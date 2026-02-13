@@ -29,13 +29,13 @@ export class NotifyService {
     await this.broadcast(restaurantId, 'EXTERNAL_DELIVERY_UPDATE', deliveryData);
   }
 
-  static async notifyRejection(restaurantId: string, data: { guestEmail: string; partySize: number; startTime: any; restaurantName: string }) {
+  static async notifyRejection(restaurantId: string, data: { guestEmail: string; partySize: number; startTime: any; restaurantName: string; visitCount?: number; preferences?: any }) {
     // 1. Ably Broadcast
     await this.broadcast(restaurantId, 'reservation_rejected', data);
 
     // 2. Webhook to IntentionEngine
     const webhookUrl = process.env.INTENTION_ENGINE_WEBHOOK_URL;
-    const webhookSecret = process.env.WEBHOOK_SECRET || 'fallback_secret';
+    const webhookSecret = process.env.INTERNAL_SYSTEM_KEY || 'fallback_secret';
 
     if (webhookUrl) {
       const payload = JSON.stringify({

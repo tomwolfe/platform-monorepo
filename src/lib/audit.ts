@@ -1,14 +1,7 @@
-import { Redis } from "@upstash/redis";
+import { redis } from "./redis-client";
 import type { Plan, Intent } from "./schema";
 import { env } from "./config";
 import type { AuditLog } from "./types";
-
-const redis = (env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN)
-  ? new Redis({
-      url: env.UPSTASH_REDIS_REST_URL,
-      token: env.UPSTASH_REDIS_REST_TOKEN,
-    })
-  : null;
 
 const AUDIT_LOG_PREFIX = "audit_log:";
 const USER_LOGS_PREFIX = "user_logs:";

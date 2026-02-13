@@ -7,6 +7,7 @@ import { env } from "@/lib/config";
 import { inferIntent } from "@/lib/intent";
 import { Redis } from "@upstash/redis";
 import { getUserPreferences, updateUserPreferences } from "@/lib/preferences";
+import { redis } from "@/lib/redis-client";
 
 export const runtime = "edge";
 export const maxDuration = 30;
@@ -15,13 +16,6 @@ const openai = createOpenAI({
   apiKey: env.LLM_API_KEY,
   baseURL: env.LLM_BASE_URL,
 });
-
-const redis = (env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN)
-  ? new Redis({
-      url: env.UPSTASH_REDIS_REST_URL,
-      token: env.UPSTASH_REDIS_REST_TOKEN,
-    })
-  : null;
 
 const ChatRequestSchema = z.object({
   messages: z.array(z.any()),

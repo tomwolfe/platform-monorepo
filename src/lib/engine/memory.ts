@@ -10,7 +10,7 @@
  * - Type-safe operations
  */
 
-import { Redis } from "@upstash/redis";
+import { redis } from "../redis-client";
 import {
   MemoryEntry,
   MemoryEntrySchema,
@@ -21,14 +21,6 @@ import {
   ExecutionTrace,
   EngineErrorSchema,
 } from "./types";
-
-// ============================================================================
-// REDIS CLIENT CONFIGURATION
-// Environment-based configuration
-// ============================================================================
-
-const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL;
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 
 // ============================================================================
 // MEMORY CONFIGURATION
@@ -70,17 +62,7 @@ export class MemoryClient {
   private namespace: string;
 
   constructor(namespace: string = MEMORY_CONFIG.default_namespace) {
-    if (!REDIS_URL || !REDIS_TOKEN) {
-      throw new Error(
-        "Redis configuration missing. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN environment variables."
-      );
-    }
-
-    this.redis = new Redis({
-      url: REDIS_URL,
-      token: REDIS_TOKEN,
-    });
-
+    this.redis = redis;
     this.namespace = namespace;
   }
 

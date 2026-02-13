@@ -1,14 +1,7 @@
 import { z } from "zod";
 import { RestaurantResultSchema } from "../schema";
-import { Redis } from "@upstash/redis";
+import { redis } from "../redis-client";
 import { env } from "../config";
-
-const redis = (env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN)
-  ? new Redis({
-      url: env.UPSTASH_REDIS_REST_URL,
-      token: env.UPSTASH_REDIS_REST_TOKEN,
-    })
-  : null;
 
 export const GeocodeSchema = z.object({
   location: z.string().min(1).describe("The city, neighborhood, or specific place name to geocode. Use 'nearby' for the user's current area."),

@@ -134,7 +134,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const baseUrl = process.env.TABLESTACK_API_URL || "https://table-stack.vercel.app/api/v1";
             const apiKey = process.env.TABLESTACK_INTERNAL_API_KEY;
             
-            await fetch(`${baseUrl}/external-delivery`, {
+            await fetch(`${baseUrl}/delivery-log`, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
@@ -143,11 +143,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               body: JSON.stringify({
                 restaurantId: restaurant_id,
                 orderId: order_id,
-                status: "dispatched"
+                pickupAddress: pickup_address,
+                deliveryAddress: delivery_address,
+                customerId: customer_id,
+                priceDetails: (args as any).price_details
               })
             });
           } catch (e) {
-            console.error("Failed to notify TableStack of dispatch:", e);
+            console.error("Failed to notify TableStack of delivery log:", e);
           }
         }
 

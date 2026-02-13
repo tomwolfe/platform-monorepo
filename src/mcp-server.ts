@@ -11,6 +11,13 @@ import {
   TOOL_METADATA
 } from "./lib/mcp/tools.js";
 import { redis } from "./lib/redis-client.js";
+import pg from 'pg';
+import { signWebhookPayload } from "./lib/auth.js";
+
+const { Pool } = pg;
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
+});
 
 const server = new Server(
   {
@@ -157,8 +164,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "dispatch_intent": {
-        const { order_id, pickup_address, delivery_address, customer_id, max_price, restaurant_id } = args as any;
+        const { order_id, pickup_address, delivery_address, customer_id, max_price, restaurant_id, priority } = args as any;
         
+        // Query Postgres for high trust drivers
+        let lowCapacityWarning = "";
+        try {
+          const result = await pool.query('SELECT COUNT(*) FROM drivers WHERE trust_score > 80 AND is_active = TRUE');
+          const count = parseInt(result.rows[0].count);
+          if (count === 0) {
+            lowCapacityWarning = " WARNING: Low Capacity - no high-trust drivers currently available.";
+          }
+        } catch (dbError) {
+          console.error("Postgres query failed:", dbError);
+        }
+
         // Store in Redis for driver network to poll
         const intentKey = `opendeliver:intent:${order_id}`;
         await redis.set(intentKey, {
@@ -168,6 +187,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           customer_id,
           max_price,
           restaurant_id,
+          priority,
           status: "pending",
           timestamp: new Date().toISOString()
         }, { ex: 3600 }); // Expire in 1 hour
@@ -181,20 +201,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const baseUrl = process.env.TABLESTACK_API_URL || "https://table-stack.vercel.app/api/v1";
             const apiKey = process.env.TABLESTACK_INTERNAL_API_KEY;
             
+            const payload = JSON.stringify({
+              restaurantId: restaurant_id,
+              orderId: order_id,
+              pickupAddress: pickup_address,
+              deliveryAddress: delivery_address,
+              customerId: customer_id,
+              priceDetails: (args as any).price_details,
+              priority
+            });
+            const signature = await signWebhookPayload(payload, process.env.INTERNAL_SYSTEM_KEY || "fallback_secret");
+
             await fetch(`${baseUrl}/delivery-log`, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                ...(apiKey ? { "x-api-key": apiKey } : {})
+                ...(apiKey ? { "x-api-key": apiKey } : {}),
+                "x-ts-signature": signature
               },
-              body: JSON.stringify({
-                restaurantId: restaurant_id,
-                orderId: order_id,
-                pickupAddress: pickup_address,
-                deliveryAddress: delivery_address,
-                customerId: customer_id,
-                priceDetails: (args as any).price_details
-              })
+              body: payload
             });
           } catch (e) {
             console.error("Failed to notify TableStack of delivery log:", e);
@@ -204,7 +229,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return {
           content: [{
             type: "text",
-            text: `Delivery intent dispatched for order ${order_id}. Drivers are being notified.`
+            text: `Delivery intent dispatched for order ${order_id}. Drivers are being notified.${lowCapacityWarning}`
           }]
         };
       }

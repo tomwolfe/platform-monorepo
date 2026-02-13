@@ -25,3 +25,11 @@ export async function validateRequest(req: Request | any): Promise<{
 
   return { error: 'Invalid API key', status: 403 };
 }
+
+/**
+ * Signs a webhook payload using HMAC-SHA256.
+ */
+export async function signWebhookPayload(payload: string, secret: string): Promise<string> {
+  const { createHmac } = await import('crypto');
+  return createHmac('sha256', secret).update(payload).digest('hex');
+}

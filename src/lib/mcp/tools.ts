@@ -42,6 +42,7 @@ export const DISPATCH_INTENT_TOOL: Tool = {
       delivery_address: { type: "string" },
       customer_id: { type: "string" },
       restaurant_id: { type: "string", description: "The TableStack restaurant ID to notify." },
+      priority: { type: "boolean", description: "Set to true for high-value guests to trigger priority driver matching." },
       price_details: {
         type: "object",
         properties: {

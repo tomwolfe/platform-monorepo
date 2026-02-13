@@ -1,9 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db } from '@/db';
 import { restaurants } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { redis } from './redis';
-import { verifyServiceToken } from '../../../shared/auth';
+import { verifyServiceToken } from './shared-auth';
 
 export interface AuthContext {
   restaurantId?: string;
@@ -29,7 +29,7 @@ export async function validateRequest(req: NextRequest): Promise<{
       return {
         context: {
           isInternal: true,
-          restaurantId: (payload as any).restaurantId,
+          restaurantId: payload.restaurantId as string | undefined,
         },
       };
     }
@@ -54,7 +54,7 @@ export async function validateRequest(req: NextRequest): Promise<{
   const window = 60; // per 60 seconds
   
   try {
-    const { success, limit: remaining, reset } = await rateLimit(ip, limit, window);
+    const { success } = await rateLimit(ip, limit, window);
     
     if (!success) {
       return { 

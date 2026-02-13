@@ -109,6 +109,8 @@ export class MCPClient {
       "location_name": "query",
       "search_query": "query",
       "contact_name": "name",
+      "customer_name": "name",
+      "order_summary": "items",
       "phone_number": "phone",
       "email_address": "email",
       "delivery_address": "location_name",

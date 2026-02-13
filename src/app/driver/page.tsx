@@ -6,10 +6,38 @@ import { Truck, MapPin, DollarSign, Star, Bell, Navigation } from 'lucide-react'
 export default function DriverDashboard() {
   const [isOnline, setIsOnline] = useState(false);
   const [trustScore, setTrustScore] = useState(94);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [availableOrders, setAvailableOrders] = useState([
-    { id: 'ORD-123', pickup: 'Green Garden', delivery: '123 Tech Lane', payout: 8.50, distance: '1.2km' },
-    { id: 'ORD-124', pickup: 'Burger Barn', delivery: '456 Oak St', payout: 12.00, distance: '3.5km', priority: true },
+    { 
+      id: 'ORD-123', 
+      pickup: 'Green Garden', 
+      delivery: '123 Tech Lane', 
+      basePay: 5.50, 
+      tip: 3.00, 
+      total: 8.50, 
+      distance: '1.2km' 
+    },
+    { 
+      id: 'ORD-124', 
+      pickup: 'Burger Barn', 
+      delivery: '456 Oak St', 
+      basePay: 7.00, 
+      tip: 5.00, 
+      total: 12.00, 
+      distance: '3.5km', 
+      priority: true 
+    },
   ]);
+
+  const handleAccept = (id: string) => {
+    if (confirmingId === id) {
+      // Final acceptance logic would go here
+      setAvailableOrders(orders => orders.filter(o => o.id !== id));
+      setConfirmingId(null);
+    } else {
+      setConfirmingId(id);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-900 text-white p-6">
@@ -93,7 +121,21 @@ export default function DriverDashboard() {
                 }`}>
                   <div className="flex justify-between items-start mb-4">
                     <span className="text-xs font-mono text-slate-500">{order.id}</span>
-                    <span className="text-xl font-bold text-emerald-400">${order.payout.toFixed(2)}</span>
+                    <div className="text-right">
+                      <div className="text-3xl font-black text-emerald-400 tracking-tighter">${order.total.toFixed(2)}</div>
+                      <div className="text-[10px] text-slate-500 uppercase font-bold">Guaranteed Total</div>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-2 mb-6 p-3 bg-slate-900/50 rounded-xl border border-slate-700/50">
+                    <div>
+                      <p className="text-[10px] text-slate-500 uppercase">Base Pay</p>
+                      <p className="text-sm font-semibold">${order.basePay.toFixed(2)}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] text-emerald-500/70 uppercase">Driver Tip</p>
+                      <p className="text-sm font-semibold text-emerald-400">${order.tip.toFixed(2)}</p>
+                    </div>
                   </div>
                   
                   <div className="space-y-4 mb-6">
@@ -113,8 +155,15 @@ export default function DriverDashboard() {
                     </div>
                   </div>
 
-                  <button className="w-full bg-white text-slate-900 py-3 rounded-xl font-bold hover:bg-emerald-400 transition-colors">
-                    Accept Intent
+                  <button 
+                    onClick={() => handleAccept(order.id)}
+                    className={`w-full py-3 rounded-xl font-bold transition-all ${
+                      confirmingId === order.id 
+                        ? 'bg-emerald-500 text-white animate-pulse' 
+                        : 'bg-white text-slate-900 hover:bg-emerald-400'
+                    }`}
+                  >
+                    {confirmingId === order.id ? 'CONFIRM ACCEPTANCE' : 'ACCEPT INTENT'}
                   </button>
                 </div>
               ))}

@@ -39,9 +39,17 @@ export const DISPATCH_INTENT_TOOL: Tool = {
       pickup_address: { type: "string" },
       delivery_address: { type: "string" },
       customer_id: { type: "string" },
-      max_price: { type: "number" }
+      price_details: {
+        type: "object",
+        properties: {
+          base_pay: { type: "number" },
+          tip: { type: "number" },
+          total: { type: "number" }
+        },
+        required: ["base_pay", "tip", "total"]
+      }
     },
-    required: ["order_id", "pickup_address", "delivery_address", "customer_id", "max_price"]
+    required: ["order_id", "pickup_address", "delivery_address", "customer_id", "price_details"]
   }
 };
 

@@ -29,6 +29,24 @@ export class NotifyService {
     await this.broadcast(restaurantId, 'EXTERNAL_DELIVERY_UPDATE', deliveryData);
   }
 
+  static async notifyRejection(restaurantId: string, data: { guestEmail: string; partySize: number; startTime: any; restaurantName: string }) {
+    // 1. Ably Broadcast
+    await this.broadcast(restaurantId, 'reservation_rejected', data);
+
+    // 2. Webhook to IntentionEngine
+    const webhookUrl = process.env.INTENTION_ENGINE_WEBHOOK_URL;
+    if (webhookUrl) {
+      fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event: 'reservation_rejected',
+          ...data
+        })
+      }).catch(err => console.error('Rejection Webhook failed:', err));
+    }
+  }
+
   static async sendNotification({ to, subject, html }: NotifyOptions) {
     // Email is always sent
     await resend.emails.send({

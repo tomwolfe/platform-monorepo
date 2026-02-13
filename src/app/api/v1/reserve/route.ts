@@ -102,6 +102,12 @@ export async function POST(req: NextRequest) {
       });
 
       if (!availableTable) {
+        await NotifyService.notifyRejection(targetRestaurantId, {
+          guestEmail,
+          partySize,
+          startTime,
+          restaurantName: restaurant.name
+        });
         return NextResponse.json({ message: 'No suitable tables available for this time and party size' }, { status: 409 });
       }
       assignedTableId = availableTable.id;
@@ -138,6 +144,12 @@ export async function POST(req: NextRequest) {
       });
 
       if (conflict) {
+        await NotifyService.notifyRejection(targetRestaurantId, {
+          guestEmail,
+          partySize,
+          startTime,
+          restaurantName: restaurant.name
+        });
         return NextResponse.json({ message: 'One or more tables are no longer available' }, { status: 409 });
       }
     }

@@ -80,6 +80,17 @@ export async function mobility_request(params: MobilityRequestParams): Promise<{
   const { service, pickup_location, destination_location, ride_type } = validated.data;
 
   const resolveCoords = async (loc: UnifiedLocation) => {
+    // Handle case where loc is a JSON string (e.g., from AI SDK serialization)
+    if (typeof loc === "string") {
+      try {
+        const parsed = JSON.parse(loc);
+        if (parsed && typeof parsed === "object" && "lat" in parsed && "lon" in parsed) {
+          return { lat: parsed.lat, lon: parsed.lon };
+        }
+      } catch {
+        // Not a JSON string, treat as regular address string
+      }
+    }
     if (typeof loc === "object") return { lat: loc.lat, lon: loc.lon };
     const geo = await geocode_location({ location: loc });
     if (geo.success && geo.result) return { lat: geo.result.lat, lon: geo.result.lon };
@@ -131,6 +142,17 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
   let { origin, destination, travel_mode } = validated.data;
   
   const resolveCoords = async (loc: UnifiedLocation) => {
+    // Handle case where loc is a JSON string (e.g., from AI SDK serialization)
+    if (typeof loc === "string") {
+      try {
+        const parsed = JSON.parse(loc);
+        if (parsed && typeof parsed === "object" && "lat" in parsed && "lon" in parsed) {
+          return { lat: parsed.lat, lon: parsed.lon };
+        }
+      } catch {
+        // Not a JSON string, treat as regular address string
+      }
+    }
     if (typeof loc === "object") return { lat: loc.lat, lon: loc.lon };
     const geo = await geocode_location({ location: loc });
     if (geo.success && geo.result) return { lat: geo.result.lat, lon: geo.result.lon };

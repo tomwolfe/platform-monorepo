@@ -154,3 +154,63 @@ export async function verifyWebhookPayload(payload: string, signature: string, s
     return false;
   }
 }
+
+/**
+ * Verifies a webhook payload using HMAC-SHA256, including a timestamp check.
+ */
+export async function verifySignature(payload: string, signature: string, timestamp: number, secret: string): Promise<boolean> {
+  const MAX_AGE_MS = 300000; // 5 minute expiry
+
+  if (!signature || !timestamp) return false;
+  
+  // 1. Check age
+  if (Date.now() - timestamp > MAX_AGE_MS) return false;
+
+  // 2. Re-sign and compare
+  const data = `${timestamp}.${payload}`;
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(secret);
+  const dataData = encoder.encode(data);
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['verify']
+  );
+
+  try {
+    const signatureBytes = new Uint8Array(signature.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
+    return await crypto.subtle.verify('HMAC', cryptoKey, signatureBytes, dataData);
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Signs a webhook payload using HMAC-SHA256, including a timestamp.
+ */
+export async function signPayload(payload: string, secret: string): Promise<{ signature: string; timestamp: number }> {
+  const timestamp = Date.now();
+  const data = `${timestamp}.${payload}`;
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(secret);
+  const dataData = encoder.encode(data);
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+
+  const signature = await crypto.subtle.sign('HMAC', cryptoKey, dataData);
+  return {
+    signature: Array.from(new Uint8Array(signature))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join(''),
+    timestamp
+  };
+}

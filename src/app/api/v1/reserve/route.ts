@@ -216,15 +216,16 @@ export async function POST(req: NextRequest) {
           }
         });
 
-        const { signWebhookPayload } = await import('@/lib/auth');
-        const signature = await signWebhookPayload(payload, webhookSecret);
+        const { signPayload } = await import('@/lib/auth');
+        const { signature, timestamp } = await signPayload(payload, webhookSecret);
 
         // Fire and forget webhook
         fetch(webhookUrl, {
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
-            'x-ts-signature': signature
+            'x-signature': signature,
+            'x-timestamp': timestamp.toString()
           },
           body: payload
         }).catch(err => console.error('Webhook failed:', err));

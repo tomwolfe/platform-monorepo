@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { validateRequest, verifyWebhookPayload } from '@/lib/auth';
+import { validateRequest, verifySignature } from '@/lib/auth';
 import { NotifyService } from '@/lib/notify';
 
 export const runtime = 'edge';
 
 export async function POST(req: NextRequest) {
   const bodyText = await req.text();
-  const signature = req.headers.get('x-ts-signature');
+  const signature = req.headers.get('x-signature');
+  const timestamp = Number(req.headers.get('x-timestamp'));
   const secret = process.env.INTERNAL_SYSTEM_KEY || 'fallback_secret';
 
-  const isValid = await verifyWebhookPayload(bodyText, signature || '', secret);
+  const isValid = await verifySignature(bodyText, signature || '', timestamp, secret);
   if (!isValid) {
-    return NextResponse.json({ message: 'Invalid signature' }, { status: 401 });
+    return NextResponse.json({ message: 'Invalid signature or expired request' }, { status: 401 });
   }
 
   const { error, status, context } = await validateRequest(req);

@@ -43,14 +43,15 @@ export class NotifyService {
         ...data
       });
 
-      const { signWebhookPayload } = await import('./auth');
-      const signature = await signWebhookPayload(payload, webhookSecret);
+      const { signPayload } = await import('./auth');
+      const { signature, timestamp } = await signPayload(payload, webhookSecret);
 
       fetch(webhookUrl, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'x-ts-signature': signature
+          'x-signature': signature,
+          'x-timestamp': timestamp.toString()
         },
         body: payload
       }).catch(err => console.error('Rejection Webhook failed:', err));

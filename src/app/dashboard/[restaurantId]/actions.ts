@@ -136,30 +136,53 @@ export async function updateTableStatus(
       ))
       .returning();
 
-    // Delivery Hotspot Hook: Notify OpenDeliver when a table is vacant
+    // 1. Real-time update via Ably
+    if (process.env.ABLY_API_KEY) {
+      const ably = new Ably.Rest(process.env.ABLY_API_KEY);
+      const channel = ably.channels.get(`restaurant:${restaurantId}`);
+      await channel.publish('table-status-update', {
+        restaurantId,
+        tableId: table.id,
+        status: table.status,
+        updatedAt: table.updatedAt?.toISOString() || new Date().toISOString(),
+      });
+    }
+
+    // 2. Delivery Hotspot Hook: Notify OpenDeliver when a table is vacant
     const openDeliverWebhookUrl = process.env.OPEN_DELIVER_WEBHOOK_URL || 'http://localhost:3001/api/webhooks';
+    const webhookSecret = process.env.INTERNAL_SYSTEM_KEY || 'fallback_secret';
+    
     if (status === 'vacant' && openDeliverWebhookUrl) {
       const restaurant = await db.query.restaurants.findFirst({
         where: eq(restaurants.id, restaurantId),
       });
 
       if (restaurant) {
+        const payload = JSON.stringify({
+          event: 'delivery_hotspot_available',
+          venue: {
+            id: restaurant.id,
+            name: restaurant.name,
+            location: restaurant.timezone // Simplified, usually would be address
+          },
+          table: {
+            id: table.id,
+            number: table.tableNumber
+          }
+        });
+
+        const { signPayload } = await import('@/lib/auth');
+        const { signature, timestamp } = await signPayload(payload, webhookSecret);
+
         // Fire and forget webhook to OpenDeliver
         fetch(openDeliverWebhookUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            event: 'delivery_hotspot_available',
-            venue: {
-              id: restaurant.id,
-              name: restaurant.name,
-              location: restaurant.timezone // Simplified, usually would be address
-            },
-            table: {
-              id: table.id,
-              number: table.tableNumber
-            }
-          })
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-signature': signature,
+            'x-timestamp': timestamp.toString()
+          },
+          body: payload
         }).catch(err => console.error('Hotspot webhook failed:', err));
       }
     }

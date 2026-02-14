@@ -26,6 +26,7 @@ import {
   get_live_operational_state,
   getLiveOperationalStateToolDefinition
 } from "./operational_state";
+import { storefrontTools } from "./storefront";
 import { RestaurantResultSchema } from "../schema";
 
 /**
@@ -34,6 +35,9 @@ import { RestaurantResultSchema } from "../schema";
  * return schema, category, and confirmation requirements.
  */
 export const TOOLS: Map<string, ToolDefinition> = new Map([
+  ["create_product", storefrontTools.create_product],
+  ["update_product", storefrontTools.update_product],
+  ["delete_product", storefrontTools.delete_product],
   ["geocode_location", {
     name: "geocode_location",
     version: "1.0.0",

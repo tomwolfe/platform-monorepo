@@ -116,11 +116,13 @@ export class MCPClient {
       "delivery_address": "location_name",
       "pickup_address": "location_name",
       "restaurant_id": "venue_id",
+      "merchant_id": "venue_id",
       "restaurantName": "pickup_address",
       "guestEmail": "email",
       "target_destination": "delivery_address",
       "source_location": "pickup_address",
-      "user_id": "customer_id"
+      "user_id": "customer_id",
+      "product_id": "item_id"
     };
 
     return {

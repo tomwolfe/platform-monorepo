@@ -117,7 +117,10 @@ export class MCPClient {
       "pickup_address": "location_name",
       "restaurant_id": "venue_id",
       "restaurantName": "pickup_address",
-      "guestEmail": "email"
+      "guestEmail": "email",
+      "target_destination": "delivery_address",
+      "source_location": "pickup_address",
+      "user_id": "customer_id"
     };
 
     return {

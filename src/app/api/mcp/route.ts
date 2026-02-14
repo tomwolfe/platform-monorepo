@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { stores, products, stock } from '@/lib/db/schema';
-import { eq, and, gt, sql, desc, like, ilike } from 'drizzle-orm';
+import { eq, and, gt, sql, ilike } from 'drizzle-orm';
 import { z } from 'zod';
 import { TOOL_METADATA, FIND_PRODUCT_NEARBY_TOOL, RESERVE_STOCK_ITEM_TOOL, PARAMETER_ALIASES } from '@/lib/mcp';
 
@@ -48,7 +48,7 @@ function validateSecurityHeaders(req: NextRequest): NextResponse | null {
  * Maps standardized parameters to internal parameter names
  * Handles venue_id -> store_id mapping for cross-project compatibility
  */
-function mapParameters(params: Record<string, any>): Record<string, any> {
+function mapParameters(params: Record<string, unknown>): Record<string, unknown> {
   const mapped = { ...params };
   
   // Apply parameter aliases
@@ -189,9 +189,9 @@ export async function POST(req: NextRequest) {
           content: [{ type: 'text', text: `Successfully reserved ${quantity} items of product ${product_id} at store ${store_id}.` }] 
         });
 
-      } catch (error: any) {
+      } catch (error: unknown) {
         return NextResponse.json({ 
-          content: [{ type: 'text', text: `Reservation failed: ${error.message}` }],
+          content: [{ type: 'text', text: `Reservation failed: ${error instanceof Error ? error.message : 'Unknown error'}` }],
           isError: true
         });
       }
@@ -199,8 +199,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ error: 'Unknown tool' }, { status: 400 });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('MCP Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 });
   }
 }

@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, doublePrecision, integer, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, doublePrecision, integer, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 export const stores = pgTable('stores', {

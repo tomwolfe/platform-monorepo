@@ -8,21 +8,26 @@ export type AppAuth = {
   sessionClaims?: any;
 };
 
+const hasClerkKeys = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && 
+                     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY.length > 20;
+
 export async function getAppAuth(): Promise<AppAuth> {
-  // 1. Try Clerk first
-  try {
-    const { userId, sessionClaims } = await clerkAuth();
-    if (userId) {
-      return { 
-        userId, 
-        source: 'clerk',
-        sessionClaims,
-        role: (sessionClaims as any)?.metadata?.role
-      };
+  // 1. Try Clerk first if configured
+  if (hasClerkKeys) {
+    try {
+      const { userId, sessionClaims } = await clerkAuth();
+      if (userId) {
+        return { 
+          userId, 
+          source: 'clerk',
+          sessionClaims,
+          role: (sessionClaims as any)?.metadata?.role
+        };
+      }
+    } catch (error) {
+      // clerkAuth() might throw if clerkMiddleware wasn't run
+      console.debug("Clerk auth failed or skipped:", error);
     }
-  } catch (error) {
-    // clerkAuth() might throw if clerkMiddleware wasn't run or keys are missing
-    console.debug("Clerk auth failed or skipped:", error);
   }
 
   // 2. Try Bridge session

@@ -13,7 +13,7 @@ export async function verifyBridgeToken(token: string) {
     const { payload } = await jose.jwtVerify(token, secret, {
       algorithms: ['HS256'],
     });
-    return payload as { clerkUserId: string; role: string };
+    return payload as { clerkUserId: string; role: string; restaurantId?: string };
   } catch (error) {
     console.error('Bridge token verification failed:', error);
     return null;

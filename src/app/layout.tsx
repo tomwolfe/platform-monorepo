@@ -22,6 +22,8 @@ export default async function RootLayout({
 }>) {
   const cookieStore = await cookies();
   const hasBridgeSession = cookieStore.has('app_bridge_session');
+  const clerkKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  const hasValidClerkKey = clerkKey && clerkKey.length > 20;
 
   const content = (
     <html lang="en">
@@ -32,7 +34,8 @@ export default async function RootLayout({
             <div className="flex gap-6 items-center">
               <Link href="/search" className="text-sm font-medium hover:text-primary">Search</Link>
               <Link href="/inventory" className="text-sm font-medium hover:text-primary">Inventory</Link>
-              {!hasBridgeSession && (
+              
+              {hasValidClerkKey && !hasBridgeSession ? (
                 <>
                   <SignedOut>
                     <SignInButton />
@@ -41,12 +44,11 @@ export default async function RootLayout({
                     <UserButton />
                   </SignedIn>
                 </>
-              )}
-              {hasBridgeSession && (
+              ) : hasBridgeSession ? (
                 <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full font-medium">
                   Bridge Session
                 </span>
-              )}
+              ) : null}
             </div>
           </div>
         </nav>
@@ -58,12 +60,12 @@ export default async function RootLayout({
     </html>
   );
 
-  if (hasBridgeSession) {
+  if (!hasValidClerkKey || hasBridgeSession) {
     return content;
   }
 
   return (
-    <ClerkProvider publishableKey={process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}>
+    <ClerkProvider publishableKey={clerkKey}>
       {content}
     </ClerkProvider>
   );

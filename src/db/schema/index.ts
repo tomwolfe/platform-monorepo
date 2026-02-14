@@ -63,6 +63,7 @@ export const reservations = pgTable('reservations', {
 });
 
 export * from './waitlist';
+export * from './inventory';
 
 export const guestProfiles = pgTable('guest_profiles', {
   id: uuid('id').primaryKey().defaultRandom(),

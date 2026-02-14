@@ -2,34 +2,20 @@
 
 import { db } from '@/db';
 import { restaurantTables, restaurants, reservations, waitlist } from '@/db/schema';
-import { eq, and } from 'drizzle-orm';
-import { revalidatePath } from 'next/cache';
-import { currentUser } from '@clerk/nextjs/server';
-import { z } from 'zod';
-import { NotifyService } from '@/lib/notify';
-import Ably from 'ably';
-import { generateApiKey } from '@/lib/auth';
+import { signBridgeToken } from '@/lib/tokens';
+import { redirect } from 'next/navigation';
 
-const SettingsSchema = z.object({
-  openingTime: z.string().regex(/^\d{2}:\d{2}$/),
-  closingTime: z.string().regex(/^\d{2}:\d{2}$/),
-  daysOpen: z.string(),
-  timezone: z.string(),
-  defaultDurationMinutes: z.number().int().min(1).max(480),
-});
-
-async function verifyOwnership(restaurantId: string) {
+export async function redirectToStoreFront() {
   const user = await currentUser();
   if (!user) throw new Error('Unauthorized');
 
-  const restaurant = await db.query.restaurants.findFirst({
-    where: eq(restaurants.id, restaurantId),
+  const token = await signBridgeToken({
+    clerkUserId: user.id,
+    role: 'merchant', // Default role for dashboard users
   });
 
-  if (!restaurant || restaurant.ownerId !== user.id) {
-    throw new Error('Unauthorized');
-  }
-  return true;
+  const storesUrl = process.env.STORES_URL || 'http://localhost:3000';
+  redirect(`${storesUrl}/api/auth/bridge?bridge_token=${token}`);
 }
 
 export async function deleteReservation(reservationId: string, restaurantId: string) {

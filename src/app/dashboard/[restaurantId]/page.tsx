@@ -5,8 +5,8 @@ import { notFound, redirect } from 'next/navigation';
 import FloorPlan from '@/components/dashboard/FloorPlan';
 import LiveView from '@/components/dashboard/LiveView';
 import { updateTablePositions, updateTableStatus, updateRestaurantSettings, addTable, deleteTable, updateTableDetails, deleteReservation, updateWaitlistStatus, regenerateApiKey, createStripeConnectAccount } from './actions';
-import { currentUser } from '@clerk/nextjs/server';
-import { Trash2, Bell, UserCheck, CreditCard } from 'lucide-react';
+import { Trash2, Bell, UserCheck, CreditCard, Store } from 'lucide-react';
+import { UserMenu } from '@/components/nav/UserMenu';
 
 export default async function DashboardPage(props: { params: Promise<{ restaurantId: string }> }) {
   const params = await props.params;
@@ -82,7 +82,9 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
           <h1 className="text-3xl font-bold text-gray-900">{restaurant.name} Dashboard</h1>
           <p className="text-gray-500">Manage your floor plan and reservations</p>
         </div>
-        <div className="bg-gray-100 px-4 py-2 rounded-lg flex items-center space-x-4">
+        <div className="flex items-center gap-6">
+          <UserMenu />
+          <div className="bg-gray-100 px-4 py-2 rounded-lg flex items-center space-x-4">
           <div>
             <span className="text-sm font-medium text-gray-600">API Key: </span>
             <code className="text-sm bg-gray-200 px-2 py-1 rounded">{restaurant.apiKey}</code>

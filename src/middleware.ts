@@ -7,8 +7,9 @@ const isPublicRoute = createRouteMatcher(['/api/auth/bridge', '/shop(.*)']);
 export default clerkMiddleware(async (auth, request) => {
   const { pathname } = request.nextUrl;
   
-  // Allow bridge session cookie to bypass Clerk for /shop
-  if (pathname.startsWith('/shop')) {
+  // Allow bridge session cookie to bypass Clerk for specific routes
+  const bridgeAllowedRoutes = ['/shop', '/search', '/inventory', '/'];
+  if (bridgeAllowedRoutes.some(route => pathname === route || pathname.startsWith(route + '/'))) {
     const bridgeSession = request.cookies.get('app_bridge_session');
     if (bridgeSession) {
       return NextResponse.next();

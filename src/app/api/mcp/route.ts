@@ -4,6 +4,7 @@ import { stores, products, stock } from '@/lib/db/schema';
 import { eq, and, gt, sql, ilike } from 'drizzle-orm';
 import { z } from 'zod';
 import { TOOL_METADATA, FIND_PRODUCT_NEARBY_TOOL, RESERVE_STOCK_ITEM_TOOL, PARAMETER_ALIASES } from '@/lib/mcp';
+import { SecurityProvider } from '@/lib/security';
 
 const findProductSchema = z.object({
   product_query: z.string(),
@@ -23,18 +24,7 @@ const reserveStockSchema = z.object({
  * Returns 401 if key is missing or invalid
  */
 function validateSecurityHeaders(req: NextRequest): NextResponse | null {
-  const internalKey = req.headers.get('x-internal-system-key') || req.headers.get('INTERNAL_SYSTEM_KEY');
-  const validKey = process.env.INTERNAL_SYSTEM_KEY;
-
-  if (!validKey) {
-    console.error('INTERNAL_SYSTEM_KEY not configured');
-    return NextResponse.json(
-      { error: 'Server configuration error' },
-      { status: 500 }
-    );
-  }
-
-  if (!internalKey || internalKey !== validKey) {
+  if (!SecurityProvider.validateHeaders(req.headers)) {
     return NextResponse.json(
       { error: 'Unauthorized: Invalid or missing Internal System Key' },
       { status: 401 }

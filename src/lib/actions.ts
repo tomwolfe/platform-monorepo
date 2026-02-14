@@ -5,13 +5,7 @@ import { stores, products, stock } from "@/lib/db/schema";
 import { eq, and, gt, sql, ilike, desc } from "drizzle-orm";
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
-
-const searchSchema = z.object({
-  product_query: z.string().min(1, "Product query is required"),
-  user_lat: z.number(),
-  user_lng: z.number(),
-  max_radius_miles: z.number().default(10),
-});
+import { SearchSchema } from "@shared/schema";
 
 const reserveSchema = z.object({
   product_id: z.string().uuid(),
@@ -25,7 +19,7 @@ export async function searchProducts(formData: {
   user_lng: number;
   max_radius_miles: number;
 }) {
-  const validated = searchSchema.parse(formData);
+  const validated = SearchSchema.parse(formData);
   const { product_query, user_lat, user_lng, max_radius_miles } = validated;
 
   const distance = sql`

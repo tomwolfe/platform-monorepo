@@ -51,7 +51,7 @@ export async function searchProducts(formData: {
     .innerJoin(products, eq(stock.productId, products.id))
     .where(
       and(
-        sql`${products.name} % ${product_query}`,
+        sql`${products.name} % ${product_query}::text`,
         gt(stock.availableQuantity, 0),
         sql`${distance} < ${max_radius_miles}`
       )

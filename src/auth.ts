@@ -7,6 +7,7 @@ import GitHub from "next-auth/providers/github";
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: DrizzleAdapter(getDb()),
   providers: [GitHub],
+  secret: process.env.AUTH_SECRET,
   callbacks: {
     session({ session, user }) {
       if (session.user) {

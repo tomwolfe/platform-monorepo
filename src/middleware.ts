@@ -18,16 +18,16 @@ const hasClerkKeys = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY &&
 export default async function middleware(request: NextRequest, event: any) {
   const { pathname } = request.nextUrl;
   
+  // Internal key bypass
+  const internalKey = request.headers.get('x-internal-key');
+  const validKey = process.env.INTERNAL_SYSTEM_KEY;
+
+  if (internalKey && validKey && internalKey === validKey) {
+    return NextResponse.next();
+  }
+
   // If no Clerk keys, we can't use clerkMiddleware
   if (!hasClerkKeys) {
-    // Basic API security if internal key is present
-    if (isApiRoute(request) && !pathname.startsWith('/api/webhooks')) {
-        const internalKey = request.headers.get('x-internal-system-key');
-        const validKey = process.env.INTERNAL_SYSTEM_KEY;
-        if (internalKey && internalKey === validKey) {
-            return NextResponse.next();
-        }
-    }
     return NextResponse.next();
   }
 
@@ -37,19 +37,7 @@ export default async function middleware(request: NextRequest, event: any) {
     if (isPublicRoute(request)) {
       return NextResponse.next();
     }
-
-    if (isApiRoute(request)) {
-      const { pathname } = request.nextUrl;
-      
-      if (!pathname.startsWith('/api/webhooks')) {
-          const internalKey = request.headers.get('x-internal-system-key');
-          const validKey = process.env.INTERNAL_SYSTEM_KEY;
-
-          if (internalKey && internalKey === validKey) {
-              return NextResponse.next();
-          }
-      }
-    }
+    return NextResponse.next();
   })(request, event);
 }
 

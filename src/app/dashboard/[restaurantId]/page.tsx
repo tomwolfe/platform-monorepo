@@ -3,6 +3,7 @@ import { restaurants, reservations, waitlist } from '@/db/schema';
 import { eq, desc } from 'drizzle-orm';
 import { notFound, redirect } from 'next/navigation';
 import FloorPlan from '@/components/dashboard/FloorPlan';
+import LiveView from '@/components/dashboard/LiveView';
 import { updateTablePositions, updateTableStatus, updateRestaurantSettings, addTable, deleteTable, updateTableDetails, deleteReservation, updateWaitlistStatus, regenerateApiKey, createStripeConnectAccount } from './actions';
 import { currentUser } from '@clerk/nextjs/server';
 import { Trash2, Bell, UserCheck, CreditCard } from 'lucide-react';
@@ -75,6 +76,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
+      <LiveView restaurantId={restaurantInternalId} />
       <header className="mb-8 flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">{restaurant.name} Dashboard</h1>

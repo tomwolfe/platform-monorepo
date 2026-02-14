@@ -14,6 +14,8 @@ import {
 } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 import { Table, Trash2, CheckCircle, AlertCircle, LucideIcon, Plus, Settings2, X, Save } from 'lucide-react';
+import Ably from 'ably';
+import { useRouter } from 'next/navigation';
 
 interface RestaurantTable {
   id: string;
@@ -139,9 +141,6 @@ function StatusZone({
   );
 }
 
-import Ably from 'ably';
-import { useRouter } from 'next/navigation';
-
 export default function FloorPlan({ 
   initialTables, 
   reservations = [], 
@@ -154,7 +153,7 @@ export default function FloorPlan({
 }: { 
   initialTables: RestaurantTable[], 
   reservations?: Reservation[],
-  onSave: (tables: RestaurantTable[]) => Promise<void>,
+  onSave: (tables: any[]) => Promise<void>,
   onStatusChange: (tableId: string, status: 'vacant' | 'occupied' | 'dirty') => Promise<void>,
   onAdd: () => Promise<void>,
   onDelete: (id: string) => Promise<void>,
@@ -165,6 +164,7 @@ export default function FloorPlan({
   const [activeTable, setActiveTable] = useState<RestaurantTable | null>(null);
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [editingTable, setEditingTable] = useState<RestaurantTable | null>(null);
+  const [listMode, setListMode] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -253,87 +253,136 @@ export default function FloorPlan({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex gap-4 mb-4">
-        <StatusZone 
-          id="vacant" 
-          label="Set Vacant" 
-          icon={CheckCircle} 
-          colorClass="border-green-500 bg-green-50 text-green-700" 
-          onClick={() => handleStatusClick('vacant')}
-          disabled={!selectedTableId}
-        />
-        <StatusZone 
-          id="occupied" 
-          label="Set Occupied" 
-          icon={AlertCircle} 
-          colorClass="border-red-500 bg-red-50 text-red-700" 
-          onClick={() => handleStatusClick('occupied')}
-          disabled={!selectedTableId}
-        />
-        <StatusZone 
-          id="dirty" 
-          label="Set Dirty" 
-          icon={Trash2} 
-          colorClass="border-yellow-500 bg-yellow-50 text-yellow-700" 
-          onClick={() => handleStatusClick('dirty')}
-          disabled={!selectedTableId}
-        />
-        <button
-          onClick={() => onAdd()}
-          className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition"
-        >
-          <Plus className="w-5 h-5" /> Add Table
-        </button>
+      <div className="flex justify-between items-center mb-4">
+        <div className="flex gap-4 flex-1">
+          <StatusZone 
+            id="vacant" 
+            label="Set Vacant" 
+            icon={CheckCircle} 
+            colorClass="border-green-500 bg-green-50 text-green-700" 
+            onClick={() => handleStatusClick('vacant')}
+            disabled={!selectedTableId}
+          />
+          <StatusZone 
+            id="occupied" 
+            label="Set Occupied" 
+            icon={AlertCircle} 
+            colorClass="border-red-500 bg-red-50 text-red-700" 
+            onClick={() => handleStatusClick('occupied')}
+            disabled={!selectedTableId}
+          />
+          <StatusZone 
+            id="dirty" 
+            label="Set Dirty" 
+            icon={Trash2} 
+            colorClass="border-yellow-500 bg-yellow-50 text-yellow-700" 
+            onClick={() => handleStatusClick('dirty')}
+            disabled={!selectedTableId}
+          />
+          <button
+            onClick={() => onAdd()}
+            className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition"
+          >
+            <Plus className="w-5 h-5" /> Add Table
+          </button>
+        </div>
+        <div className="ml-4">
+          <button
+            onClick={() => setListMode(!listMode)}
+            className="px-4 py-2 border-2 border-gray-200 rounded-xl font-semibold hover:bg-gray-50 transition flex items-center gap-2"
+          >
+            <Table className="w-4 h-4" />
+            {listMode ? 'Canvas Mode' : 'List Mode'}
+          </button>
+        </div>
       </div>
 
-      <div 
-        className="relative w-full h-[600px] bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl overflow-hidden"
-        onClick={() => setSelectedTableId(null)}
-      >
-        <DndContext
-          sensors={sensors}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
+      {listMode ? (
+        <div className="bg-white border-2 border-gray-100 rounded-xl overflow-hidden shadow-sm">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Table #</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Capacity</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {tables.map((table) => (
+                <tr key={table.id} className={selectedTableId === table.id ? 'bg-blue-50' : ''} onClick={() => setSelectedTableId(table.id)}>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">#{table.tableNumber}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{table.minCapacity}-{table.maxCapacity}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`px-2 py-1 text-xs font-semibold rounded-full capitalize ${
+                      table.status === 'occupied' ? 'bg-red-100 text-red-700' :
+                      table.status === 'dirty' ? 'bg-yellow-100 text-yellow-700' :
+                      'bg-green-100 text-green-700'
+                    }`}>
+                      {table.status || 'vacant'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">{table.tableType || 'square'}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                    <button onClick={() => setEditingTable(table)} className="text-blue-600 hover:text-blue-900"><Settings2 className="w-4 h-4" /></button>
+                    <button onClick={() => onDelete(table.id)} className="text-red-600 hover:text-red-900"><Trash2 className="w-4 h-4" /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div 
+          className="relative w-full h-[600px] bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl overflow-hidden"
+          onClick={() => setSelectedTableId(null)}
         >
-          <div className="absolute inset-0" style={{ 
-            backgroundImage: 'radial-gradient(#e5e7eb 1px, transparent 1px)', 
-            backgroundSize: '20px 20px' 
-          }} />
-          
-          {tables.map((table) => {
-            const tableReservation = reservations.find(r => r.tableId === table.id);
-            return (
-              <DraggableTable 
-                key={table.id} 
-                table={table} 
-                reservation={tableReservation}
-                isSelected={selectedTableId === table.id}
-                onSelect={(id) => setSelectedTableId(id)}
-                onDelete={onDelete}
-                onEdit={setEditingTable}
-              />
-            );
-          })}
+          <DndContext
+            sensors={sensors}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+          >
+            <div className="absolute inset-0" style={{ 
+              backgroundImage: 'radial-gradient(#e5e7eb 1px, transparent 1px)', 
+              backgroundSize: '20px 20px' 
+            }} />
+            
+            {tables.map((table) => {
+              const tableReservation = reservations.find(r => r.tableId === table.id);
+              return (
+                <DraggableTable 
+                  key={table.id} 
+                  table={table} 
+                  reservation={tableReservation}
+                  isSelected={selectedTableId === table.id}
+                  onSelect={(id) => setSelectedTableId(id)}
+                  onDelete={onDelete}
+                  onEdit={setEditingTable}
+                />
+              );
+            })}
 
-          <DragOverlay>
-            {activeTable ? (
-              <div className={`p-4 border-2 border-blue-500 rounded-lg bg-white shadow-xl flex flex-col items-center justify-center w-24 h-24 opacity-80 ${
-                activeTable.tableType === 'round' ? 'rounded-full' : ''
-              }`}>
-                <Table className="w-6 h-6 mb-1" />
-                <span className="font-bold">#{activeTable.tableNumber}</span>
-              </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
+            <DragOverlay>
+              {activeTable ? (
+                <div className={`p-4 border-2 border-blue-500 rounded-lg bg-white shadow-xl flex flex-col items-center justify-center w-24 h-24 opacity-80 ${
+                  activeTable.tableType === 'round' ? 'rounded-full' : ''
+                }`}>
+                  <Table className="w-6 h-6 mb-1" />
+                  <span className="font-bold">#{activeTable.tableNumber}</span>
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
 
-        <button
-          onClick={() => onSave(tables)}
-          className="absolute bottom-4 right-4 bg-blue-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-blue-700 transition shadow-lg flex items-center gap-2"
-        >
-          <Save className="w-4 h-4" /> Save Layout
-        </button>
-      </div>
+          <button
+            onClick={() => onSave(tables)}
+            className="absolute bottom-4 right-4 bg-blue-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-blue-700 transition shadow-lg flex items-center gap-2"
+          >
+            <Save className="w-4 h-4" /> Save Layout
+          </button>
+        </div>
+      )}
 
       {editingTable && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">

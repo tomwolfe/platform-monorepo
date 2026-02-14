@@ -4,6 +4,7 @@ import { restaurants } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { redis } from './redis';
 import { verifyServiceToken } from './shared-auth';
+import { SecurityProvider } from './security';
 
 export interface AuthContext {
   restaurantId?: string;
@@ -20,6 +21,15 @@ export async function validateRequest(req: NextRequest): Promise<{
 }> {
   const authHeader = req.headers.get('authorization');
   const apiKey = req.headers.get('x-api-key');
+
+  // 0. Check for standardized internal system key
+  if (SecurityProvider.validateHeaders(req.headers)) {
+    return {
+      context: {
+        isInternal: true,
+      },
+    };
+  }
 
   // Check for JWT service token first
   if (authHeader?.startsWith('Bearer ')) {
@@ -159,6 +169,11 @@ export async function verifyWebhookPayload(payload: string, signature: string, s
  * Verifies a webhook payload using HMAC-SHA256, including a timestamp check.
  */
 export async function verifySignature(payload: string, signature: string, timestamp: number, secret: string): Promise<boolean> {
+  // If secret matches internal key, use SecurityProvider for standardized verification
+  if (secret === process.env.INTERNAL_SYSTEM_KEY) {
+    return await SecurityProvider.verifySignature(payload, signature, timestamp);
+  }
+  
   const MAX_AGE_MS = 300000; // 5 minute expiry
 
   if (!signature || !timestamp) return false;
@@ -192,6 +207,11 @@ export async function verifySignature(payload: string, signature: string, timest
  * Signs a webhook payload using HMAC-SHA256, including a timestamp.
  */
 export async function signPayload(payload: string, secret: string): Promise<{ signature: string; timestamp: number }> {
+  // If secret matches internal key, use SecurityProvider for standardized signing
+  if (secret === process.env.INTERNAL_SYSTEM_KEY) {
+    return await SecurityProvider.signPayload(payload);
+  }
+
   const timestamp = Date.now();
   const data = `${timestamp}.${payload}`;
   const encoder = new TextEncoder();

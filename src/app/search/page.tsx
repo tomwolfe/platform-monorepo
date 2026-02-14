@@ -11,6 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { AlertCircle } from "lucide-react";
 
 export default async function SearchPage({
   searchParams,
@@ -89,8 +90,16 @@ async function SearchResults({
           </TableHeader>
           <TableBody>
             {results.map((result) => (
-              <TableRow key={`${result.store_id}-${result.product_id}`}>
-                <TableCell className="font-medium">{result.product_name}</TableCell>
+              <TableRow key={`${result.store_id}-${result.product_id}`} className={result.available_quantity < 5 ? "bg-orange-50/50" : ""}>
+                <TableCell className="font-medium">
+                  {result.product_name}
+                  {result.available_quantity < 5 && (
+                    <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800">
+                      <AlertCircle className="w-3 h-3 mr-1" />
+                      Low Stock
+                    </span>
+                  )}
+                </TableCell>
                 <TableCell>
                   <div>
                     <div className="font-medium">{result.store_name}</div>
@@ -99,7 +108,11 @@ async function SearchResults({
                 </TableCell>
                 <TableCell>{result.distance_miles} miles</TableCell>
                 <TableCell>${result.price.toFixed(2)}</TableCell>
-                <TableCell>{result.available_quantity}</TableCell>
+                <TableCell>
+                  <span className={result.available_quantity < 5 ? "text-orange-600 font-bold" : ""}>
+                    {result.available_quantity}
+                  </span>
+                </TableCell>
                 <TableCell className="text-right">
                   <ReserveButton 
                     productId={result.product_id}

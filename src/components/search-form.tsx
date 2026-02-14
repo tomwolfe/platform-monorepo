@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
+import { MapPin, Loader2 } from "lucide-react";
 
 export function SearchForm() {
   const router = useRouter();
@@ -15,6 +16,35 @@ export function SearchForm() {
   const [lat, setLat] = useState(searchParams.get("lat") || "40.7128");
   const [lng, setLng] = useState(searchParams.get("lng") || "-74.0060");
   const [radius, setRadius] = useState(searchParams.get("radius") || "10");
+  const [isLocating, setIsLocating] = useState(false);
+
+  const handleGeolocation = () => {
+    if (!navigator.geolocation) {
+      alert("Geolocation is not supported by your browser");
+      return;
+    }
+
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLat(position.coords.latitude.toString());
+        setLng(position.coords.longitude.toString());
+        setIsLocating(false);
+      },
+      (error) => {
+        console.error("Error getting location:", error);
+        setIsLocating(false);
+        alert("Unable to retrieve your location");
+      }
+    );
+  };
+
+  useEffect(() => {
+    // Only auto-locate if lat/lng are at defaults and not provided in searchParams
+    if (!searchParams.get("lat") && !searchParams.get("lng") && lat === "40.7128" && lng === "-74.0060") {
+      handleGeolocation();
+    }
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,7 +71,20 @@ export function SearchForm() {
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="lat">Latitude</Label>
+            <div className="flex justify-between items-center">
+              <Label htmlFor="lat">Latitude</Label>
+              <Button 
+                type="button" 
+                variant="ghost" 
+                size="sm" 
+                className="h-6 px-2 text-xs"
+                onClick={handleGeolocation}
+                disabled={isLocating}
+              >
+                {isLocating ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <MapPin className="h-3 w-3 mr-1" />}
+                Locate Me
+              </Button>
+            </div>
             <Input
               id="lat"
               type="number"

@@ -7,6 +7,9 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { SearchSchema } from "@/lib/shared-schema";
 
+import { auth } from "@/auth";
+import { reservations, users } from "@/lib/db/schema";
+
 const reserveSchema = z.object({
   product_id: z.string().uuid(),
   store_id: z.string().uuid(),
@@ -48,7 +51,7 @@ export async function searchProducts(formData: {
     .innerJoin(products, eq(stock.productId, products.id))
     .where(
       and(
-        ilike(products.name, `%${product_query}%`),
+        sql`${products.name} % ${product_query}`,
         gt(stock.availableQuantity, 0),
         sql`${distance} < ${max_radius_miles}`
       )
@@ -67,6 +70,11 @@ export async function reserveStock(data: {
   store_id: string;
   quantity: number;
 }) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return { success: false, error: "Authentication required" };
+  }
+
   const { product_id, store_id, quantity } = reserveSchema.parse(data);
 
   try {
@@ -83,16 +91,14 @@ export async function reserveStock(data: {
         .for("update"); // Lock the row
 
       if (currentStock.length === 0) {
-        return { success: false, error: "Stock record not found" };
+        throw new Error("Stock record not found");
       }
 
       if (currentStock[0].availableQuantity < quantity) {
-        return { 
-          success: false, 
-          error: `Insufficient stock. Available: ${currentStock[0].availableQuantity}` 
-        };
+        throw new Error(`Insufficient stock. Available: ${currentStock[0].availableQuantity}`);
       }
 
+      // Update stock
       await tx
         .update(stock)
         .set({ 
@@ -106,6 +112,15 @@ export async function reserveStock(data: {
           )
         );
 
+      // Create reservation
+      await tx.insert(reservations).values({
+        userId: session.user.id,
+        productId: product_id,
+        storeId: store_id,
+        quantity: quantity,
+        status: 'pending',
+      });
+
       revalidatePath("/inventory");
       revalidatePath("/search");
       return { success: true };
@@ -116,7 +131,23 @@ export async function reserveStock(data: {
 }
 
 export async function getInventory() {
-  const results = await db
+  const session = await auth();
+  if (!session?.user?.id) {
+    throw new Error("Authentication required");
+  }
+
+  // Get user details to find managedStoreId
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, session.user.id))
+    .limit(1);
+
+  if (!user || user.role !== "merchant" || !user.managedStoreId) {
+    return { stock: [], reservations: [] };
+  }
+
+  const stockResults = await db
     .select({
       id: stock.id,
       store_id: stores.id,
@@ -131,7 +162,23 @@ export async function getInventory() {
     .from(stock)
     .innerJoin(stores, eq(stock.storeId, stores.id))
     .innerJoin(products, eq(stock.productId, products.id))
+    .where(eq(stock.storeId, user.managedStoreId))
     .orderBy(desc(stock.updatedAt));
 
-  return results;
+  const reservationResults = await db
+    .select({
+      id: reservations.id,
+      user_email: users.email,
+      product_name: products.name,
+      quantity: reservations.quantity,
+      status: reservations.status,
+      created_at: reservations.createdAt,
+    })
+    .from(reservations)
+    .innerJoin(users, eq(reservations.userId, users.id))
+    .innerJoin(products, eq(reservations.productId, products.id))
+    .where(eq(reservations.storeId, user.managedStoreId))
+    .orderBy(desc(reservations.createdAt));
+
+  return { stock: stockResults, reservations: reservationResults };
 }

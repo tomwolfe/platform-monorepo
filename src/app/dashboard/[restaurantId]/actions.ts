@@ -4,6 +4,36 @@ import { db } from '@/db';
 import { restaurantTables, restaurants, reservations, waitlist } from '@/db/schema';
 import { signBridgeToken } from '@/lib/tokens';
 import { redirect } from 'next/navigation';
+import { currentUser } from '@clerk/nextjs/server';
+import { revalidatePath } from 'next/cache';
+import { eq, and } from 'drizzle-orm';
+import { z } from 'zod';
+import Ably from 'ably';
+import { NotifyService } from '@/lib/notify';
+import { generateApiKey } from '@/lib/auth';
+
+const SettingsSchema = z.object({
+  openingTime: z.string().nullable(),
+  closingTime: z.string().nullable(),
+  daysOpen: z.string().nullable(),
+  timezone: z.string().nullable(),
+  defaultDurationMinutes: z.number().min(15).max(480),
+});
+
+async function verifyOwnership(restaurantId: string) {
+  const user = await currentUser();
+  if (!user) throw new Error('Unauthorized');
+
+  const restaurant = await db.query.restaurants.findFirst({
+    where: and(
+      eq(restaurants.id, restaurantId),
+      eq(restaurants.ownerId, user.id)
+    ),
+  });
+
+  if (!restaurant) throw new Error('Forbidden');
+  return restaurant;
+}
 
 export async function redirectToStoreFront() {
   const user = await currentUser();

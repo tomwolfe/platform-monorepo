@@ -2,6 +2,7 @@ import { db } from '@/db';
 import { restaurants, reservations, waitlist } from '@/db/schema';
 import { eq, desc } from 'drizzle-orm';
 import { notFound, redirect } from 'next/navigation';
+import { currentUser } from '@clerk/nextjs/server';
 import FloorPlan from '@/components/dashboard/FloorPlan';
 import LiveView from '@/components/dashboard/LiveView';
 import { updateTablePositions, updateTableStatus, updateRestaurantSettings, addTable, deleteTable, updateTableDetails, deleteReservation, updateWaitlistStatus, regenerateApiKey, createStripeConnectAccount } from './actions';
@@ -101,6 +102,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
               Regenerate
             </button>
           </form>
+        </div>
         </div>
       </header>
 

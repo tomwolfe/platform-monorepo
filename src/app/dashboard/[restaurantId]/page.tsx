@@ -84,7 +84,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
           <p className="text-gray-500">Manage your floor plan and reservations</p>
         </div>
         <div className="flex items-center gap-6">
-          <UserMenu />
+          <UserMenu restaurantId={restaurantInternalId} />
           <div className="bg-gray-100 px-4 py-2 rounded-lg flex items-center space-x-4">
           <div>
             <span className="text-sm font-medium text-gray-600">API Key: </span>

@@ -10,8 +10,26 @@ export const runtime = 'edge';
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const slug = searchParams.get('slug');
-  const apiKeyHeader = req.headers.get('x-api-key');
-  const isInternal = apiKeyHeader === process.env.INTERNAL_API_KEY;
+  const id = searchParams.get('id');
+  const apiKeyHeader = req.headers.get('x-api-key') || req.headers.get('x-internal-key');
+  const isInternal = apiKeyHeader === process.env.INTERNAL_API_KEY || 
+                     apiKeyHeader === process.env.INTERNAL_SYSTEM_KEY;
+
+  // Allow internal access by ID
+  if (id && isInternal) {
+    try {
+      const restaurant = await db.query.restaurants.findFirst({
+        where: eq(restaurants.id, id),
+      });
+      if (!restaurant) {
+        return NextResponse.json({ message: 'Restaurant not found' }, { status: 404 });
+      }
+      return NextResponse.json(restaurant);
+    } catch (error) {
+      console.error('Restaurant ID Fetch Error:', error);
+      return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
+    }
+  }
 
   // Allow public access if slug is provided
   if (slug) {

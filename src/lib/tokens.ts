@@ -8,7 +8,11 @@ if (!INTERNAL_SYSTEM_KEY) {
 
 const secret = new TextEncoder().encode(INTERNAL_SYSTEM_KEY);
 
-export async function signBridgeToken(payload: { clerkUserId: string; role: string }) {
+export async function signBridgeToken(payload: { 
+  clerkUserId: string; 
+  role: string;
+  restaurantId?: string;
+}) {
   return await new jose.SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
@@ -21,7 +25,7 @@ export async function verifyBridgeToken(token: string) {
     const { payload } = await jose.jwtVerify(token, secret, {
       algorithms: ['HS256'],
     });
-    return payload as { clerkUserId: string; role: string };
+    return payload as { clerkUserId: string; role: string; restaurantId?: string };
   } catch (error) {
     console.error('Bridge token verification failed:', error);
     return null;

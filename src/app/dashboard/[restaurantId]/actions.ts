@@ -35,13 +35,14 @@ async function verifyOwnership(restaurantId: string) {
   return restaurant;
 }
 
-export async function redirectToStoreFront() {
+export async function redirectToStoreFront(restaurantId?: string) {
   const user = await currentUser();
   if (!user) throw new Error('Unauthorized');
 
   const token = await signBridgeToken({
     clerkUserId: user.id,
     role: 'merchant', // Default role for dashboard users
+    restaurantId,
   });
 
   const storesUrl = process.env.STORES_URL || 'http://localhost:3000';

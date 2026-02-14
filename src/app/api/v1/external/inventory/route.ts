@@ -11,8 +11,11 @@ export async function GET(req: NextRequest) {
     return new NextResponse('Unauthorized', { status: 401 });
   }
 
+  const { searchParams } = new URL(req.url);
+  const restaurantId = searchParams.get('restaurantId');
+
   try {
-    const results = await db
+    const query = db
       .select({
         id: products.id,
         name: products.name,
@@ -25,6 +28,11 @@ export async function GET(req: NextRequest) {
       .from(products)
       .innerJoin(inventoryLevels, eq(products.id, inventoryLevels.productId));
 
+    if (restaurantId) {
+      query.where(eq(products.restaurantId, restaurantId));
+    }
+
+    const results = await query;
     return NextResponse.json(results);
   } catch (error) {
     console.error('Failed to fetch inventory:', error);

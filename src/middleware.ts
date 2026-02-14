@@ -2,8 +2,23 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 const isApiRoute = createRouteMatcher(['/api(.*)']);
+const isPublicRoute = createRouteMatcher(['/api/auth/bridge', '/shop(.*)']);
 
 export default clerkMiddleware(async (auth, request) => {
+  const { pathname } = request.nextUrl;
+  
+  // Allow bridge session cookie to bypass Clerk for /shop
+  if (pathname.startsWith('/shop')) {
+    const bridgeSession = request.cookies.get('app_bridge_session');
+    if (bridgeSession) {
+      return NextResponse.next();
+    }
+  }
+
+  if (isPublicRoute(request)) {
+    return NextResponse.next();
+  }
+
   if (isApiRoute(request)) {
     const { pathname } = request.nextUrl;
     

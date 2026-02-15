@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import "@repo/ui-theme";
+@import "@repo/ui-theme/styles";
 
 :root {
   --background: #ffffff;

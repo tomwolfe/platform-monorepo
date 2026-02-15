@@ -245,6 +245,65 @@ export default function Home() {
                               );
                             }
 
+                            if (toolName === 'find_product_nearby' && output.success && Array.isArray(output.result)) {
+                              return (
+                                <div className="space-y-4">
+                                  {output.result.length === 0 ? (
+                                    <p className="text-sm text-slate-500 italic">No products found nearby.</p>
+                                  ) : (
+                                    <div className="grid grid-cols-1 gap-3">
+                                      {output.result.map((p: any, i: number) => (
+                                        <div key={i} className="flex flex-col p-4 border rounded-lg bg-white shadow-sm">
+                                          <div className="flex justify-between items-start mb-2">
+                                            <div>
+                                              <h4 className="font-bold text-base">{p.product_name}</h4>
+                                              <p className="text-sm text-slate-600">{p.store_name}</p>
+                                            </div>
+                                            <div className="text-right">
+                                              <p className="font-bold text-blue-600">${p.price.toFixed(2)}</p>
+                                              <p className="text-xs text-slate-500">{p.distance_miles} miles away</p>
+                                            </div>
+                                          </div>
+                                          <div className="flex justify-between items-center mt-2">
+                                            <span className={`text-xs px-2 py-1 rounded ${p.available_quantity < 5 ? 'bg-orange-100 text-orange-800' : 'bg-green-100 text-green-800'}`}>
+                                              {p.available_quantity < 5 ? `Low Stock: ${p.available_quantity}` : `In Stock: ${p.available_quantity}`}
+                                            </span>
+                                            <button
+                                              onClick={() => {
+                                                sendMessage({ 
+                                                  text: `I want to reserve 1 unit of ${p.product_name} at ${p.store_name}.` 
+                                                }, {
+                                                  body: { userLocation }
+                                                });
+                                              }}
+                                              className="bg-blue-600 text-white px-4 py-1.5 rounded text-sm font-bold hover:bg-blue-700 transition-colors"
+                                            >
+                                              Reserve Now
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            }
+
+                            if (toolName === 'reserve_stock_item' && output.success) {
+                              return (
+                                <div className="bg-green-50 p-4 rounded-lg border border-green-200 flex items-center gap-4">
+                                  <div className="bg-green-100 p-3 rounded-full text-green-600">
+                                    <Activity size={24} />
+                                  </div>
+                                  <div>
+                                    <p className="text-sm font-bold text-green-800">Reservation Confirmed</p>
+                                    <p className="text-xs text-green-700">{output.result.message}</p>
+                                    <p className="text-[10px] text-green-600 mt-1 uppercase tracking-wider">ID: {output.result.reservation_id}</p>
+                                  </div>
+                                </div>
+                              );
+                            }
+
                             if (toolName === 'add_calendar_event' && output.success && output.result?.download_url) {
                               const details = output.result.event_details;
                               return (

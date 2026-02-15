@@ -40,7 +40,6 @@ export async function getMcpClients() {
   const urls = {
     tablestack: env.TABLESTACK_MCP_URL,
     opendeliver: env.OPENDELIVER_MCP_URL,
-    storefront: env.STOREFRONT_MCP_URL,
   };
 
   const clients: Record<string, Client> = {};

@@ -40,6 +40,8 @@ import { SERVICES } from "@repo/shared";
  * Tool registry with complete ToolDefinition metadata for all tools.
  */
 export const TOOLS: Map<string, ToolDefinition> = new Map([
+  ["find_product_nearby", storefrontTools.find_product_nearby],
+  ["reserve_stock_item", storefrontTools.reserve_stock_item],
   ["create_product", storefrontTools.create_product],
   ["update_product", storefrontTools.update_product],
   ["delete_product", storefrontTools.delete_product],
@@ -256,7 +258,6 @@ export async function discoverDynamicTools() {
   const serviceEndpoints = [
     `${SERVICES.TABLESTACK.URL}/api/mcp/tools`,
     `${SERVICES.OPENDELIVERY.URL}/api/mcp/tools`,
-    `${SERVICES.STOREFRONT.URL}/api/mcp/tools`,
   ];
 
   for (const endpoint of serviceEndpoints) {

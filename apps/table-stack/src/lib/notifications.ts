@@ -28,32 +28,12 @@ export class NotifyService {
     // 1. Ably Broadcast
     await this.broadcast(restaurantId, 'reservation_rejected', data);
 
-    // 2. Webhook to IntentionEngine
-    const { getIntentionEngineWebhookUrl, getInternalSystemKey } = await import('./env');
-    const webhookUrl = getIntentionEngineWebhookUrl();
-    const webhookSecret = getInternalSystemKey();
-
-    if (webhookUrl) {
-      const payload = JSON.stringify({
-        event: 'reservation_rejected',
-        ...data
-      });
-
-      const { signPayload } = await import('./auth');
-      const { signature, timestamp } = await signPayload(payload, webhookSecret);
-
-      await withNervousSystemTracing(async ({ correlationId }) => {
-        return fetch(webhookUrl, {
-          method: 'POST',
-          headers: injectTracingHeaders({ 
-            'Content-Type': 'application/json',
-            'x-signature': signature,
-            'x-timestamp': timestamp.toString()
-          }, correlationId),
-          body: payload
-        });
-      }).catch(err => console.error('Rejection Webhook failed:', err));
-    }
+    // 2. Nervous System Event
+    const { RealtimeService } = await import('@repo/shared');
+    await RealtimeService.publishNervousSystemEvent('reservation_rejected', {
+      ...data,
+      restaurantId
+    }).catch(err => console.error('Nervous System Event failed:', err));
   }
 
   static async sendNotification({ to, subject, html }: NotifyOptions) {

@@ -347,6 +347,8 @@ export const AddCalendarEventSchema = z.object({
   events: z.array(EventItemSchema)
 });
 
+export * from './bridge';
+
 export type ToolInput = Record<string, unknown>;
 export type ToolOutput = {
   content: Array<{ type: string; text: string }>;

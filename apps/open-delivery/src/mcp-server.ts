@@ -287,36 +287,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }).catch(err => console.error("Ably publish failed:", err));
         }
 
-        // Notify TableStack via Webhook
+        // Notify Nervous System Mesh of delivery log
         if (restaurant_id) {
           try {
-            const baseUrl = process.env.TABLESTACK_API_URL || "https://table-stack.vercel.app/api/v1";
-            const token = await signServiceToken({ service: 'opendeliver', restaurantId: restaurant_id, traceId });
-            
-            const payload = JSON.stringify({
+            const { RealtimeService } = await import('@repo/shared');
+            await RealtimeService.publish('nervous-system:delivery-updates', 'delivery_logged', {
               restaurantId: restaurant_id,
               orderId: order_id,
               pickupAddress: pickup_address,
               deliveryAddress: delivery_address,
               customerId: customer_id,
               priceDetails: (args as any).price_details,
-              priority
-            });
-            const { signature, timestamp } = await signPayload(payload);
-
-            await fetch(`${baseUrl}/delivery-log`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${token}`,
-                "x-signature": signature,
-                "x-timestamp": timestamp.toString(),
-                "x-trace-id": traceId
-              },
-              body: payload
+              priority,
+              traceId
             });
           } catch (e) {
-            console.error("Failed to notify TableStack of delivery log:", e);
+            console.error("Failed to publish delivery log to mesh:", e);
           }
         }
 

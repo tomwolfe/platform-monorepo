@@ -208,43 +208,23 @@ export async function POST(req: NextRequest) {
 
     // High-Value Guest Hook: Trigger logistics if guest is frequent
     if ((profile.visitCount ?? 0) >= 5) {
-      const { getIntentionEngineWebhookUrl, getInternalSystemKey } = await import('@/lib/env');
-      const webhookUrl = getIntentionEngineWebhookUrl();
-      const webhookSecret = getInternalSystemKey();
+      const { RealtimeService } = await import('@repo/shared');
       
-      if (webhookUrl) {
-        const payload = JSON.stringify({
-          event: 'high_value_guest_reservation',
-          guest: {
-            name: profile.name,
-            email: profile.email,
-            visitCount: profile.visitCount,
-            defaultDeliveryAddress: profile.defaultDeliveryAddress
-          },
-          reservation: {
-            id: newReservation.id,
-            restaurantName: restaurant.name,
-            startTime: newReservation.startTime,
-            partySize: newReservation.partySize
-          }
-        });
-
-        const { signPayload } = await import('@/lib/auth');
-        const { signature, timestamp } = await signPayload(payload, webhookSecret);
-
-        // Fire and forget webhook with tracing
-        await withNervousSystemTracing(async ({ correlationId }) => {
-          return fetch(webhookUrl, {
-            method: 'POST',
-            headers: injectTracingHeaders({ 
-              'Content-Type': 'application/json',
-              'x-signature': signature,
-              'x-timestamp': timestamp.toString()
-            }, correlationId),
-            body: payload
-          });
-        }).catch(err => console.error('Webhook failed:', err));
-      }
+      // Publish to Nervous System mesh
+      await RealtimeService.publishNervousSystemEvent('high_value_guest_reservation', {
+        guest: {
+          name: profile.name,
+          email: profile.email,
+          visitCount: profile.visitCount,
+          defaultDeliveryAddress: profile.defaultDeliveryAddress
+        },
+        reservation: {
+          id: newReservation.id,
+          restaurantName: restaurant.name,
+          startTime: newReservation.startTime,
+          partySize: newReservation.partySize
+        }
+      }).catch(err => console.error('Nervous System Event failed:', err));
     }
 
     if (isShadow) {

@@ -14,6 +14,7 @@
 
 import { z } from "zod";
 import { PersistenceProvider } from "../../../infrastructure/PersistenceProvider";
+import { DB_REFLECTED_SCHEMAS } from "@repo/mcp-protocol";
 import {
   ToolDefinition,
   ToolDefinitionSchema,
@@ -308,6 +309,13 @@ export class ToolRegistry {
     parameters: Record<string, unknown>
   ): { valid: boolean; error?: string } {
     try {
+      // Automatic Source-of-Truth Validation: Prefer reflected DB schemas
+      const automatedSchema = (DB_REFLECTED_SCHEMAS as any)[definition.name];
+      if (automatedSchema) {
+        automatedSchema.parse(parameters);
+        return { valid: true };
+      }
+
       const zodSchema = mapJsonSchemaToZod(definition.inputSchema);
       zodSchema.parse(parameters);
       return { valid: true };
@@ -333,6 +341,8 @@ export class ToolRegistry {
     output: unknown
   ): { valid: boolean; error?: string } {
     try {
+      // For output, we don't always have the table name, 
+      // but if the schema matches one of our reflected models, we can use it.
       const zodSchema = mapJsonSchemaToZod(schema);
       zodSchema.parse(output);
       return { valid: true };

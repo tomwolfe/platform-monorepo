@@ -3,6 +3,7 @@ import { relations } from 'drizzle-orm';
 
 export const userRoleEnum = pgEnum('user_role', ['shopper', 'merchant']);
 export const reservationStatusEnum = pgEnum('reservation_status', ['pending', 'fulfilled']);
+export const orderStatusEnum = pgEnum('order_status', ['pending', 'preparing', 'ready_for_pickup', 'out_for_delivery', 'delivered']);
 
 export const stores = pgTable('stores', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -59,10 +60,22 @@ export const productReservations = pgTable('product_reservations', {
   updatedAt: timestamp('updated_at').defaultNow(),
 });
 
+export const orders = pgTable('orders', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  storeId: uuid('store_id').references(() => stores.id, { onDelete: 'cascade' }).notNull(),
+  status: orderStatusEnum('status').notNull().default('pending'),
+  total: doublePrecision('total').notNull(),
+  deliveryAddress: text('delivery_address'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+
 export const storesRelations = relations(stores, ({ many }) => ({
   stock: many(stock),
   users: many(users),
   reservations: many(productReservations),
+  orders: many(orders),
 }));
 
 export const storeProductsRelations = relations(storeProducts, ({ many }) => ({

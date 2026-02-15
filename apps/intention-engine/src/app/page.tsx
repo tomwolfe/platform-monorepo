@@ -5,6 +5,7 @@ import { useChat } from "@ai-sdk/react";
 import { Trash2, Calendar, MapPin, Loader2, Activity } from "lucide-react";
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls, isToolUIPart, getToolName } from "ai";
 import { AuditLogViewer } from "@/components/AuditLogViewer";
+import { useMesh } from "@/hooks/useMesh";
 
 export default function Home() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -12,6 +13,15 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [showAudit, setShowAudit] = useState(false);
+  const [meshEvents, setMeshEvents] = useState<any[]>([]);
+
+  useMesh((name, data) => {
+    setMeshEvents(prev => [{ name, data, timestamp: new Date().toISOString() }, ...prev].slice(0, 5));
+    // Optionally trigger proactive inference if it's a high-value guest
+    if (name === 'high_value_guest_reservation') {
+      console.log('High value guest detected on mesh, UI could proactively suggest actions.');
+    }
+  });
 
   useEffect(() => {
     if (navigator.geolocation) {
@@ -142,6 +152,23 @@ export default function Home() {
           {userLocation && (<p className="text-xs text-slate-500 flex items-center gap-1"><MapPin size={12} />Location: {userLocation.lat.toFixed(4)}, {userLocation.lng.toFixed(4)}</p>)}
         </form>
       </div>
+
+      {meshEvents.length > 0 && (
+        <div className="mb-8 p-4 bg-amber-50 border border-amber-200 rounded-lg animate-pulse">
+          <div className="flex items-center gap-2 text-amber-800 font-bold text-sm mb-2">
+            <Activity size={16} />
+            Real-time Mesh Events Heard
+          </div>
+          <div className="space-y-1">
+            {meshEvents.map((ev, i) => (
+              <div key={i} className="text-xs text-amber-700 flex justify-between">
+                <span>{ev.name}</span>
+                <span className="opacity-50">{new Date(ev.timestamp).toLocaleTimeString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-6">
         {messages.map((m) => (

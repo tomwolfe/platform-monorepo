@@ -127,3 +127,36 @@ export class SecurityProvider {
 // Aliases for backward compatibility
 export const signBridgeToken = signInternalToken;
 export const verifyBridgeToken = verifyInternalToken;
+
+/**
+ * unifiedAuth - Shared logic for validating both Clerk and internal service tokens.
+ * Since @clerk/nextjs can only be used in Next.js apps, this is a helper 
+ * that can be integrated into a project's middleware.ts.
+ */
+export async function validateUnifiedAuth(req: Request, options: {
+  internalKey?: string | null;
+  serviceToken?: string | null;
+  clerkAuth?: any;
+}) {
+  const { internalKey, serviceToken, clerkAuth } = options;
+
+  // 1. Internal System Key (highest priority, for local/dev/simplicity)
+  if (internalKey && SecurityProvider.validateInternalKey(internalKey)) {
+    return { type: 'internal', authorized: true };
+  }
+
+  // 2. Service-to-Service JWT (Standardized Security)
+  if (serviceToken) {
+    const payload = await verifyServiceToken(serviceToken);
+    if (payload) {
+      return { type: 'service', authorized: true, payload };
+    }
+  }
+
+  // 3. Clerk Session (User Auth)
+  if (clerkAuth && clerkAuth.userId) {
+    return { type: 'user', authorized: true, userId: clerkAuth.userId };
+  }
+
+  return { type: 'none', authorized: false };
+}

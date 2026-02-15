@@ -47,6 +47,9 @@ importers:
       '@repo/mcp-protocol':
         specifier: workspace:*
         version: link:../../packages/mcp-protocol
+      '@repo/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@repo/ui-theme':
         specifier: workspace:*
         version: link:../../packages/ui-theme
@@ -138,6 +141,9 @@ importers:
       '@repo/mcp-protocol':
         specifier: workspace:*
         version: link:../../packages/mcp-protocol
+      '@repo/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@repo/ui-theme':
         specifier: workspace:*
         version: link:../../packages/ui-theme
@@ -235,6 +241,9 @@ importers:
       '@repo/mcp-protocol':
         specifier: workspace:*
         version: link:../../packages/mcp-protocol
+      '@repo/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@repo/ui-theme':
         specifier: workspace:*
         version: link:../../packages/ui-theme
@@ -344,6 +353,9 @@ importers:
       '@repo/mcp-protocol':
         specifier: workspace:*
         version: link:../../packages/mcp-protocol
+      '@repo/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@repo/ui-theme':
         specifier: workspace:*
         version: link:../../packages/ui-theme
@@ -484,6 +496,34 @@ importers:
         version: 8.5.6
       typescript:
         specifier: ^5.7.3
+        version: 5.9.3
+
+  packages/shared:
+    dependencies:
+      '@upstash/redis':
+        specifier: ^1.36.2
+        version: 1.36.2
+      ably:
+        specifier: ^2.17.1
+        version: 2.17.1(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
+      resend:
+        specifier: ^4.1.1
+        version: 4.8.0(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
+      uuid:
+        specifier: ^11.0.0
+        version: 11.1.0
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      '@repo/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/uuid':
+        specifier: ^10.0.0
+        version: 10.0.0
+      typescript:
+        specifier: ^5.0.0
         version: 5.9.3
 
   packages/typescript-config:
@@ -1815,6 +1855,9 @@ packages:
 
   '@types/responselike@1.0.3':
     resolution: {integrity: sha512-H/+L+UkTV33uf49PH5pCAUBVPNj2nDBXTN+qS1dOwyyg24l3CcicicCA7ca+HMvJBZcFgl5r8e+RR6elsb4Lyw==}
+
+  '@types/uuid@10.0.0':
+    resolution: {integrity: sha512-7gqG38EyHgyP1S+7+xomFtL+ZNHcKv6DwNaCZmJmo1vgMugyF3TCnXVg4t1uk89mLNwnLtnY3TpOpCOyp1/xHQ==}
 
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
@@ -3990,6 +4033,10 @@ packages:
     peerDependencies:
       react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
+  uuid@11.1.0:
+    resolution: {integrity: sha512-0/A9rDy9P7cJ+8w1c9WD9V//9Wj15Ce2MPz8Ri6032usz+NfePxx5AcN3bN+r6ZL6jEo066/yNYB3tn4pQEx+A==}
+    hasBin: true
+
   vary@1.1.2:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
@@ -5102,6 +5149,8 @@ snapshots:
   '@types/responselike@1.0.3':
     dependencies:
       '@types/node': 20.19.33
+
+  '@types/uuid@10.0.0': {}
 
   '@types/ws@8.18.1':
     dependencies:
@@ -7532,6 +7581,8 @@ snapshots:
   use-sync-external-store@1.6.0(react@19.0.0):
     dependencies:
       react: 19.0.0
+
+  uuid@11.1.0: {}
 
   vary@1.1.2: {}
 

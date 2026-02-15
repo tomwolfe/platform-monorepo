@@ -22,6 +22,7 @@
     "@repo/auth": "workspace:*",
     "@repo/database": "workspace:*",
     "@repo/mcp-protocol": "workspace:*",
+    "@repo/shared": "workspace:*",
     "@repo/ui-theme": "workspace:*",
     "@upstash/redis": "^1.36.2",
     "ably": "^2.17.1",

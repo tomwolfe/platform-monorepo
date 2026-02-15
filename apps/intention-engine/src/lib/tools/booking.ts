@@ -3,6 +3,7 @@ import { ToolDefinitionMetadata, ToolParameter } from "./types";
 import { geocode_location, search_web } from "./location_search";
 import { env } from "../config";
 import { signServiceToken } from "@repo/auth";
+import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared";
 
 export const TableReservationSchema = z.object({
   restaurant_name: z.string().describe("The name of the restaurant."),
@@ -53,59 +54,21 @@ export async function reserve_restaurant(params: TableReservationParams): Promis
   }
 
   const startTime = `${date}T${time}:00`;
+  const idempotencyKey = `reserve-${contact_email || contact_phone}-${startTime}-${restaurant_name}`;
 
   try {
     const token = await signServiceToken({ service: 'intention-engine' });
-    // 1. Try to reserve via TableStack
-    let response = await fetch(`${env.TABLESTACK_API_URL}/reserve`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        restaurantName: restaurant_name,
-        guestName: contact_name,
-        guestEmail: contact_email || 'guest@example.com',
-        partySize: party_size,
-        startTime,
-      }),
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      return {
-        success: true,
-        result: {
-          status: "confirmed",
-          message: data.message,
-          booking_id: data.bookingId,
-        }
-      };
-    }
-
-    // 2. If not found or unauthorized, try discovery
-    if (response.status === 404 || response.status === 400) {
-      console.log(`Restaurant ${restaurant_name} not found in TableStack. Initiating shadow discovery...`);
-      
-      // Use DuckDuckGo via search_web for email extraction
-      const searchResult = await search_web(`${restaurant_name} restaurant email contact`);
-      const discoveredEmail = searchResult.success && searchResult.result.email 
-        ? searchResult.result.email 
-        : `info@${restaurant_name.toLowerCase().replace(/ /g, '')}.com`; // Fallback heuristic
-      
-      console.log(`Discovered email for ${restaurant_name}: ${discoveredEmail}`);
-
-      // 3. Create Shadow Reservation
-      response = await fetch(`${env.TABLESTACK_API_URL}/reserve`, {
+    
+    return await withNervousSystemTracing(async ({ correlationId }) => {
+      // 1. Try to reserve via TableStack
+      let response = await fetch(`${env.TABLESTACK_API_URL}/reserve`, {
         method: 'POST',
-        headers: {
+        headers: injectTracingHeaders({
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
-        },
+        }, correlationId, idempotencyKey),
         body: JSON.stringify({
           restaurantName: restaurant_name,
-          restaurantEmail: discoveredEmail,
           guestName: contact_name,
           guestEmail: contact_email || 'guest@example.com',
           partySize: party_size,
@@ -118,16 +81,58 @@ export async function reserve_restaurant(params: TableReservationParams): Promis
         return {
           success: true,
           result: {
-            status: "shadow_confirmed",
-            message: `We've sent a reservation request to ${restaurant_name}. They will contact you at ${discoveredEmail} if there are any issues.`,
+            status: "confirmed",
+            message: data.message,
             booking_id: data.bookingId,
           }
         };
       }
-    }
 
-    const errorData = await response.json();
-    return { success: false, error: errorData.message || "Failed to reserve restaurant" };
+      // 2. If not found or unauthorized, try discovery
+      if (response.status === 404 || response.status === 400) {
+        console.log(`Restaurant ${restaurant_name} not found in TableStack. Initiating shadow discovery...`);
+        
+        // Use DuckDuckGo via search_web for email extraction
+        const searchResult = await search_web(`${restaurant_name} restaurant email contact`);
+        const discoveredEmail = searchResult.success && searchResult.result.email 
+          ? searchResult.result.email 
+          : `info@${restaurant_name.toLowerCase().replace(/ /g, '')}.com`; // Fallback heuristic
+        
+        console.log(`Discovered email for ${restaurant_name}: ${discoveredEmail}`);
+
+        // 3. Create Shadow Reservation
+        response = await fetch(`${env.TABLESTACK_API_URL}/reserve`, {
+          method: 'POST',
+          headers: injectTracingHeaders({
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          }, correlationId, idempotencyKey),
+          body: JSON.stringify({
+            restaurantName: restaurant_name,
+            restaurantEmail: discoveredEmail,
+            guestName: contact_name,
+            guestEmail: contact_email || 'guest@example.com',
+            partySize: party_size,
+            startTime,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          return {
+            success: true,
+            result: {
+              status: "shadow_confirmed",
+              message: `We've sent a reservation request to ${restaurant_name}. They will contact you at ${discoveredEmail} if there are any issues.`,
+              booking_id: data.bookingId,
+            }
+          };
+        }
+      }
+
+      const errorData = await response.json();
+      return { success: false, error: errorData.message || "Failed to reserve restaurant" };
+    });
 
   } catch (error: any) {
     return { success: false, error: error.message };

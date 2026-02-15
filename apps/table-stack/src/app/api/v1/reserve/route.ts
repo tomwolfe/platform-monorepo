@@ -6,12 +6,23 @@ import { and, eq, gte, lte, or, sql } from 'drizzle-orm';
 import { addMinutes, parseISO } from 'date-fns';
 import { NotifyService } from '@/lib/notify';
 import { validateRequest } from '@/lib/auth';
+import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, withNervousSystemTracing, injectTracingHeaders } from '@repo/shared';
+import { redis } from '@/lib/redis';
 
 export const runtime = 'edge';
 
 export async function POST(req: NextRequest) {
   const { error, status, context } = await validateRequest(req);
   if (error) return NextResponse.json({ message: error }, { status });
+
+  const idempotencyKey = req.headers.get(IDEMPOTENCY_KEY_HEADER);
+  if (idempotencyKey) {
+    const idempotencyService = new IdempotencyService(redis);
+    const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey);
+    if (isDuplicate) {
+      return NextResponse.json({ message: 'Reservation already processed' }, { status: 200, headers: { 'x-idempotency-duplicate': 'true' } });
+    }
+  }
 
   try {
     const body = await req.json();
@@ -221,15 +232,17 @@ export async function POST(req: NextRequest) {
         const { signPayload } = await import('@/lib/auth');
         const { signature, timestamp } = await signPayload(payload, webhookSecret);
 
-        // Fire and forget webhook
-        fetch(webhookUrl, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'x-signature': signature,
-            'x-timestamp': timestamp.toString()
-          },
-          body: payload
+        // Fire and forget webhook with tracing
+        await withNervousSystemTracing(async ({ correlationId }) => {
+          return fetch(webhookUrl, {
+            method: 'POST',
+            headers: injectTracingHeaders({ 
+              'Content-Type': 'application/json',
+              'x-signature': signature,
+              'x-timestamp': timestamp.toString()
+            }, correlationId),
+            body: payload
+          });
         }).catch(err => console.error('Webhook failed:', err));
       }
     }

@@ -1,7 +1,3 @@
-import { Resend } from 'resend';
+import { getResendClient } from '@repo/shared';
 
-if (!process.env.RESEND_API_KEY) {
-  console.warn('RESEND_API_KEY is missing');
-}
-
-export const resend = new Resend(process.env.RESEND_API_KEY || 're_dummy_key');
+export const resend = getResendClient();

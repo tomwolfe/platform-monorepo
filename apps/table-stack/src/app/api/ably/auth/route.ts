@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
-import Ably from 'ably';
+import { getAblyClient } from '@repo/shared';
 
 export async function GET() {
-  if (!process.env.ABLY_API_KEY) {
+  const client = getAblyClient();
+  if (!client) {
     return NextResponse.json({ error: 'Ably API key not configured' }, { status: 500 });
   }
 
-  const client = new Ably.Rest(process.env.ABLY_API_KEY);
   const tokenRequestData = await client.auth.createTokenRequest({ clientId: 'tablestack-dashboard' });
   return NextResponse.json(tokenRequestData);
 }

@@ -5,6 +5,8 @@ import { createAuditLog } from "@/lib/audit";
 import { z } from "zod";
 import { handleTableStackRejection } from "@/lib/listeners/tablestack";
 import { verifySignature } from "@repo/auth";
+import { IdempotencyService, IDEMPOTENCY_KEY_HEADER } from "@repo/shared";
+import { redis } from "@/lib/redis-client";
 
 export const runtime = "edge";
 
@@ -35,11 +37,21 @@ export async function POST(req: NextRequest) {
     const rawBody = await req.text();
     const signature = req.headers.get("x-signature");
     const timestamp = Number(req.headers.get("x-timestamp"));
+    const idempotencyKey = req.headers.get(IDEMPOTENCY_KEY_HEADER);
 
     // Fail-Fast: Security Check
     if (!signature || !timestamp || !(await verifySignature(rawBody, signature, timestamp))) {
       console.warn("[IntentionEngine Webhook] Unauthorized request blocked");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Idempotency Check
+    if (idempotencyKey) {
+      const idempotencyService = new IdempotencyService(redis);
+      const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey);
+      if (isDuplicate) {
+        return NextResponse.json({ message: "Event already processed", duplicate: true });
+      }
     }
 
     const body = JSON.parse(rawBody);

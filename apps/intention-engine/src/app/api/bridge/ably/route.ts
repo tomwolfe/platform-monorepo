@@ -2,6 +2,7 @@ import { redis } from "@/lib/redis-client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { verifySignature } from "@repo/auth";
+import { IdempotencyService, IDEMPOTENCY_KEY_HEADER } from "@repo/shared";
 
 // Schema for Ably message payloads from TableStack
 const AblyStateSchema = z.object({
@@ -19,6 +20,7 @@ export async function POST(req: Request) {
     const rawBody = await req.text();
     const signature = req.headers.get("x-signature");
     const timestamp = Number(req.headers.get("x-timestamp"));
+    const idempotencyKey = req.headers.get(IDEMPOTENCY_KEY_HEADER);
 
     // 1. Validate Webhook Security (HMAC)
     if (signature && timestamp) {
@@ -28,12 +30,21 @@ export async function POST(req: Request) {
        }
     }
 
+    // 2. Idempotency Check
+    if (idempotencyKey) {
+      const idempotencyService = new IdempotencyService(redis);
+      const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey);
+      if (isDuplicate) {
+        return NextResponse.json({ synced: true, duplicate: true });
+      }
+    }
+
     const body = JSON.parse(rawBody);
     
-    // 2. Validate Ably Webhook Schema
+    // 3. Validate Ably Webhook Schema
     const event = AblyStateSchema.parse(body);
 
-    // 3. Mirror UI state to AI memory (Redis)
+    // 4. Mirror UI state to AI memory (Redis)
     // We use a separate prefix for state to avoid collisions if needed, 
     // but the redis client already adds 'ie:'
     const key = `state:${event.data.restaurantId}:tables`;

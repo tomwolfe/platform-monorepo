@@ -14,9 +14,9 @@ import {
 import { redis } from "./lib/redis-client.js";
 import { Pool } from '@neondatabase/serverless';
 import { signServiceToken, signPayload } from "@repo/auth";
-import Ably from "ably";
+import { getAblyClient } from "@repo/shared";
 
-const ably = process.env.ABLY_API_KEY ? new Ably.Rest(process.env.ABLY_API_KEY) : null;
+const ably = getAblyClient();
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,

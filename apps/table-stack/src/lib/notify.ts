@@ -1,5 +1,5 @@
 import { resend } from './resend';
-import Ably from 'ably';
+import { getAblyClient, withNervousSystemTracing, injectTracingHeaders } from '@repo/shared';
 
 export interface NotifyOptions {
   to: string;
@@ -8,13 +8,8 @@ export interface NotifyOptions {
 }
 
 export class NotifyService {
-  private static ably: Ably.Rest | null = null;
-
   private static getAbly() {
-    if (!this.ably && process.env.ABLY_API_KEY) {
-      this.ably = new Ably.Rest(process.env.ABLY_API_KEY);
-    }
-    return this.ably;
+    return getAblyClient();
   }
 
   static async broadcast(restaurantId: string, event: string, data: any) {
@@ -47,14 +42,16 @@ export class NotifyService {
       const { signPayload } = await import('./auth');
       const { signature, timestamp } = await signPayload(payload, webhookSecret);
 
-      fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'x-signature': signature,
-          'x-timestamp': timestamp.toString()
-        },
-        body: payload
+      await withNervousSystemTracing(async ({ correlationId }) => {
+        return fetch(webhookUrl, {
+          method: 'POST',
+          headers: injectTracingHeaders({ 
+            'Content-Type': 'application/json',
+            'x-signature': signature,
+            'x-timestamp': timestamp.toString()
+          }, correlationId),
+          body: payload
+        });
       }).catch(err => console.error('Rejection Webhook failed:', err));
     }
   }

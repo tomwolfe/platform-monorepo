@@ -8,6 +8,9 @@ export * from "./schemas/storefront";
 export * from "./schemas/communication";
 export * from "./schemas/context";
 export * from "./schemas/operational_state";
+export * from "./schemas/parallel_execution";
+export * from "./schemas/table_management";
+export * from "./schemas/delivery_fulfillment";
 
 import { MobilityRequestSchema, RouteEstimateSchema } from "./schemas/mobility";
 import { GetAvailabilitySchema, BookTableSchema, TableReservationSchema } from "./schemas/booking";
@@ -16,6 +19,36 @@ import { ListVendorsSchema, GetMenuSchema, FindProductNearbySchema, ReserveStock
 import { CommunicationSchema } from "./schemas/communication";
 import { WeatherSchema } from "./schemas/context";
 import { GetLiveOperationalStateSchema, LiveStateSchema } from "./schemas/operational_state";
+import {
+  ParallelExecutionSchema,
+  StepDependencySchema,
+  ParallelExecutionResultSchema,
+  DependencyResolverInputSchema,
+  DependencyResolverOutputSchema,
+} from "./schemas/parallel_execution";
+import {
+  GetTableAvailabilitySchema,
+  GetTableLayoutSchema,
+  GetReservationSchema,
+  ListReservationsSchema,
+  CheckTableConflictsSchema,
+  CreateReservationSchema,
+  UpdateReservationSchema,
+  CancelReservationSchema,
+  AddToWaitlistSchema,
+  UpdateWaitlistStatusSchema,
+  ValidateReservationSchema,
+} from "./schemas/table_management";
+import {
+  CalculateDeliveryQuoteSchema,
+  IntentFulfillmentSchema,
+  GetFulfillmentStatusSchema,
+  CancelFulfillmentSchema,
+  UpdateFulfillmentSchema,
+  ValidateFulfillmentSchema,
+  DeliveryAddressSchema,
+  DeliveryItemSchema,
+} from "./schemas/delivery_fulfillment";
 
 export const ToolCapabilitySchema = z.object({
   name: z.string(),
@@ -51,6 +84,63 @@ export const TOOLS = {
       schema: GetLiveOperationalStateSchema,
     }
   },
+  tableManagement: {
+    getTableAvailability: {
+      name: "get_table_availability",
+      description: "Check table availability for a specific date and party size.",
+      schema: GetTableAvailabilitySchema,
+    },
+    getTableLayout: {
+      name: "get_table_layout",
+      description: "Retrieve the table layout for a restaurant.",
+      schema: GetTableLayoutSchema,
+    },
+    getReservation: {
+      name: "get_reservation",
+      description: "Retrieve a specific reservation by ID.",
+      schema: GetReservationSchema,
+    },
+    listReservations: {
+      name: "list_reservations",
+      description: "List reservations for a restaurant with optional filters.",
+      schema: ListReservationsSchema,
+    },
+    checkTableConflicts: {
+      name: "check_table_conflicts",
+      description: "Check for conflicting reservations before booking.",
+      schema: CheckTableConflictsSchema,
+    },
+    createReservation: {
+      name: "create_reservation",
+      description: "Create a new table reservation. REQUIRES CONFIRMATION.",
+      schema: CreateReservationSchema,
+    },
+    updateReservation: {
+      name: "update_reservation",
+      description: "Update an existing reservation. REQUIRES CONFIRMATION.",
+      schema: UpdateReservationSchema,
+    },
+    cancelReservation: {
+      name: "cancel_reservation",
+      description: "Cancel a reservation. REQUIRES CONFIRMATION.",
+      schema: CancelReservationSchema,
+    },
+    addToWaitlist: {
+      name: "add_to_waitlist",
+      description: "Add a party to the restaurant waitlist.",
+      schema: AddToWaitlistSchema,
+    },
+    updateWaitlistStatus: {
+      name: "update_waitlist_status",
+      description: "Update the status of a waitlist entry.",
+      schema: UpdateWaitlistStatusSchema,
+    },
+    validateReservation: {
+      name: "validate_reservation",
+      description: "Validate a reservation without creating it (dry run).",
+      schema: ValidateReservationSchema,
+    },
+  },
   openDelivery: {
     calculateQuote: {
       name: "calculateQuote",
@@ -62,6 +152,38 @@ export const TOOLS = {
       description: "Retrieve the real-time location of the delivery driver.",
       schema: GetDriverLocationSchema,
     }
+  },
+  deliveryFulfillment: {
+    calculateDeliveryQuote: {
+      name: "calculate_delivery_quote",
+      description: "Calculate a detailed delivery quote with pricing breakdown.",
+      schema: CalculateDeliveryQuoteSchema,
+    },
+    fulfillIntent: {
+      name: "fulfill_intent",
+      description: "Dispatch a delivery intent to the driver network. REQUIRES CONFIRMATION.",
+      schema: IntentFulfillmentSchema,
+    },
+    getFulfillmentStatus: {
+      name: "get_fulfillment_status",
+      description: "Check the real-time status of a delivery fulfillment.",
+      schema: GetFulfillmentStatusSchema,
+    },
+    cancelFulfillment: {
+      name: "cancel_fulfillment",
+      description: "Cancel an in-progress delivery fulfillment. REQUIRES CONFIRMATION.",
+      schema: CancelFulfillmentSchema,
+    },
+    updateFulfillment: {
+      name: "update_fulfillment",
+      description: "Update an active fulfillment details. REQUIRES CONFIRMATION.",
+      schema: UpdateFulfillmentSchema,
+    },
+    validateFulfillment: {
+      name: "validate_fulfillment",
+      description: "Validate a fulfillment without dispatching (dry run).",
+      schema: ValidateFulfillmentSchema,
+    },
   },
   storeFront: {
     listVendors: {
@@ -117,7 +239,19 @@ export const TOOLS = {
       description: "Authorized to access real-time weather data.",
       schema: WeatherSchema,
     }
-  }
+  },
+  parallelExecution: {
+    resolveDependencies: {
+      name: "resolve_dependencies",
+      description: "Analyze and resolve dependencies for parallel task execution.",
+      schema: DependencyResolverInputSchema,
+    },
+    executeParallel: {
+      name: "execute_parallel",
+      description: "Execute multiple steps in parallel with dependency resolution.",
+      schema: ParallelExecutionSchema,
+    },
+  },
 } as const;
 
 export type McpToolRegistry = typeof TOOLS;
@@ -319,7 +453,29 @@ export const TOOL_METADATA = {
   reserve_stock_item: { requires_confirmation: true },
   check_availability: { requires_confirmation: false },
   book_tablestack_reservation: { requires_confirmation: true },
-  discover_restaurant: { requires_confirmation: false }
+  discover_restaurant: { requires_confirmation: false },
+  // Table Management
+  get_table_availability: { requires_confirmation: false },
+  get_table_layout: { requires_confirmation: false },
+  get_reservation: { requires_confirmation: false },
+  list_reservations: { requires_confirmation: false },
+  check_table_conflicts: { requires_confirmation: false },
+  create_reservation: { requires_confirmation: true },
+  update_reservation: { requires_confirmation: true },
+  cancel_reservation: { requires_confirmation: true },
+  add_to_waitlist: { requires_confirmation: false },
+  update_waitlist_status: { requires_confirmation: false },
+  validate_reservation: { requires_confirmation: false },
+  // Delivery Fulfillment
+  calculate_delivery_quote: { requires_confirmation: false },
+  fulfill_intent: { requires_confirmation: true },
+  get_fulfillment_status: { requires_confirmation: false },
+  cancel_fulfillment: { requires_confirmation: true },
+  update_fulfillment: { requires_confirmation: true },
+  validate_fulfillment: { requires_confirmation: false },
+  // Parallel Execution
+  resolve_dependencies: { requires_confirmation: false },
+  execute_parallel: { requires_confirmation: false },
 };
 
 export const PARAMETER_ALIASES = {

@@ -26,6 +26,16 @@ import {
 import { saveExecutionState, getMemoryClient } from "./memory";
 import { MCPClient } from "../../infrastructure/mcp/MCPClient";
 import { validateOutputAgainstConstraints } from "./intent";
+import { IdempotencyService } from "@repo/shared";
+import { NormalizationService } from "@repo/shared";
+import { DependencyResolver } from "./dependency-resolver";
+import {
+  validateBeforeExecution,
+  extractErrorCode,
+  isClientOrServerError,
+  attemptErrorRecovery,
+  logExecutionResults,
+} from "./execution-helpers";
 
 // ============================================================================
 // SCORE OUTCOME
@@ -104,6 +114,7 @@ interface StepExecutionContext {
   step: PlanStep;
   toolExecutor: ToolExecutor;
   traceCallback?: (entry: TraceEntry) => void;
+  idempotencyService?: IdempotencyService;
 }
 
 // ============================================================================
@@ -203,9 +214,10 @@ function resolveStepParameters(
 async function executeStep(
   context: StepExecutionContext
 ): Promise<StepExecutionState> {
-  const { state, step, toolExecutor, traceCallback } = context;
+  const { state, step, toolExecutor, traceCallback, idempotencyService } = context;
   const stepStartTime = performance.now();
   const timestamp = new Date().toISOString();
+  const stepIndex = state.step_states.findIndex(s => s.step_id === step.id) ?? 0;
 
   return await Tracer.startActiveSpan(`execute_step:${step.tool_name}`, async (span) => {
     const toolDef = getToolRegistry().getDefinition(step.tool_name);
@@ -216,6 +228,24 @@ async function executeStep(
     });
 
     try {
+      // IDEMPOTENCY CHECK: Check if this step has already been executed
+      const idempotencyKey = `${state.intent?.id || state.execution_id}:${stepIndex}`;
+      if (idempotencyService) {
+        const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey);
+        if (isDuplicate) {
+          console.log(`[Idempotency] Step ${step.tool_name} (${step.id}) already executed, skipping`);
+          span.setAttributes({ idempotency_skip: true });
+          return {
+            step_id: step.id,
+            status: "completed",
+            output: { skipped: true, reason: "Already executed (idempotent)" },
+            completed_at: new Date().toISOString(),
+            latency_ms: 0,
+            attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+          };
+        }
+      }
+
       let stepState = updateStepState(state, step.id, {
         status: "in_progress",
         started_at: timestamp,
@@ -287,6 +317,22 @@ async function executeStep(
         };
       }
 
+      // DRY RUN: Validate before execution if service supports it
+      const validationResult = await validateBeforeExecution(step, resolvedParameters);
+      if (!validationResult.valid) {
+        return {
+          step_id: step.id,
+          status: "failed",
+          error: {
+            code: "VALIDATION_FAILED",
+            message: validationResult.error || "Pre-execution validation failed",
+          },
+          completed_at: new Date().toISOString(),
+          latency_ms: 0,
+          attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+        };
+      }
+
       const toolResult = await toolExecutor.execute(
         step.tool_name,
         resolvedParameters,
@@ -343,6 +389,37 @@ async function executeStep(
           attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
         };
       } else {
+        // ERROR RECOVERY: Check if it's a 4xx/5xx error and attempt normalization
+        const errorCode = extractErrorCode(toolResult.error);
+        if (isClientOrServerError(errorCode)) {
+          const recoveryResult = await attemptErrorRecovery(
+            step,
+            resolvedParameters,
+            toolResult.error,
+            errorCode
+          );
+          
+          if (recoveryResult.recovered && recoveryResult.correctedParameters) {
+            // Retry with corrected parameters
+            const retryResult = await toolExecutor.execute(
+              step.tool_name,
+              recoveryResult.correctedParameters,
+              step.timeout_ms
+            );
+            
+            if (retryResult.success) {
+              return {
+                step_id: step.id,
+                status: "completed",
+                output: retryResult.output,
+                completed_at: new Date().toISOString(),
+                latency_ms: latencyMs,
+                attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+              };
+            }
+          }
+        }
+
         const isValidationError = toolResult.error?.toLowerCase().includes("invalid parameters");
         return {
           step_id: step.id,
@@ -350,6 +427,7 @@ async function executeStep(
           error: {
             code: isValidationError ? "TOOL_VALIDATION_FAILED" : "TOOL_EXECUTION_FAILED",
             message: toolResult.error || "Unknown tool execution error",
+            httpCode: errorCode,
           },
           completed_at: new Date().toISOString(),
           latency_ms: latencyMs,
@@ -445,6 +523,7 @@ export async function executePlan(
     initialState?: ExecutionState;
     traceCallback?: (entry: TraceEntry) => void;
     persistState?: boolean;
+    idempotencyService?: IdempotencyService;
   } = {}
 ): Promise<ExecutionResult> {
   const startTime = performance.now();
@@ -506,7 +585,8 @@ export async function executePlan(
         }
       }
 
-      // Execute ready steps in parallel
+      // Execute ready steps in parallel using Promise.allSettled
+      const stepIds = readySteps.map(s => s.id);
       const stepResultsSettled = await Promise.allSettled(
         readySteps.map((step) =>
           executeStep({
@@ -514,9 +594,13 @@ export async function executePlan(
             step,
             toolExecutor,
             traceCallback: options.traceCallback,
+            idempotencyService: options.idempotencyService,
           })
         )
       );
+      
+      // Log all execution results (no floating promises)
+      logExecutionResults(stepIds, stepResultsSettled, "PARALLEL_EXECUTION");
 
       let anyFailed = false;
       let anyAwaitingConfirmation = false;

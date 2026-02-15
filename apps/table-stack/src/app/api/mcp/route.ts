@@ -7,6 +7,7 @@ import { and, eq, gte, or, sql } from 'drizzle-orm';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
 import { SecurityProvider } from "@repo/auth";
+import { randomUUID } from "crypto";
 
 // Create a singleton server instance
 const server = new McpServer({
@@ -14,7 +15,40 @@ const server = new McpServer({
   version: "0.1.0",
 });
 
-async function getAvailableTables(restaurantId: string, startTime: Date, partySize: number, duration: number) {
+/**
+ * Extract trace ID from request headers or generate new one
+ */
+function extractTraceId(request: NextRequest): string {
+  return request.headers.get("x-trace-id") || 
+         request.headers.get("x-request-id") || 
+         randomUUID();
+}
+
+/**
+ * Create response with trace ID included
+ */
+function createResponse(data: any, traceId: string, isError = false) {
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({
+        ...data,
+        traceId,
+        timestamp: new Date().toISOString(),
+      })
+    }],
+    isError,
+  };
+}
+
+async function getAvailableTables(
+  restaurantId: string, 
+  startTime: Date, 
+  partySize: number, 
+  duration: number,
+  traceId: string
+) {
+  console.log(`[Trace:${traceId}] Getting available tables for restaurant ${restaurantId}`);
   const endTime = addMinutes(startTime, duration);
 
   const occupiedTableIdsResult = await db
@@ -111,17 +145,20 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
   return suggestedCombos;
 }
 
+// Existing getAvailability tool with traceId support
 server.tool(
   TOOLS.tableStack.getAvailability.name,
   TOOLS.tableStack.getAvailability.description,
   TOOLS.tableStack.getAvailability.schema.shape,
-  async ({ restaurantId, date, partySize }) => {
+  async ({ restaurantId, date, partySize }, _extra) => {
+    const traceId = _extra?.traceId || randomUUID();
+    
     const restaurant = await db.query.restaurants.findFirst({
       where: eq(restaurants.id, restaurantId),
     });
 
     if (!restaurant) {
-      return { content: [{ type: "text", text: "Restaurant not found" }], isError: true };
+      return createResponse({ error: "Restaurant not found" }, traceId, true);
     }
 
     const requestedDate = parseISO(date);
@@ -132,16 +169,22 @@ server.tool(
     const openDays = restaurant.daysOpen?.split(',').map((d: string) => d.trim().toLowerCase()) || [];
     
     if (!openDays.includes(dayOfWeek)) {
-      return { content: [{ type: "text", text: JSON.stringify({ message: 'Restaurant is closed on this day', availableTables: [] }) }] };
+      return createResponse({ 
+        message: 'Restaurant is closed on this day', 
+        availableTables: [] 
+      }, traceId);
     }
 
     const timeStr = format(restaurantTime, 'HH:mm', { timeZone: timezone });
     if (timeStr < (restaurant.openingTime || '00:00') || timeStr > (restaurant.closingTime || '23:59')) {
-      return { content: [{ type: "text", text: JSON.stringify({ message: 'Restaurant is closed at this time', availableTables: [] }) }] };
+      return createResponse({ 
+        message: 'Restaurant is closed at this time', 
+        availableTables: [] 
+      }, traceId);
     }
 
     const duration = restaurant.defaultDurationMinutes || 90;
-    const availableTables = await getAvailableTables(restaurantId, requestedDate, partySize, duration);
+    const availableTables = await getAvailableTables(restaurantId, requestedDate, partySize, duration, traceId);
 
     const suggestedSlots: any[] = [];
     if (availableTables.length === 0) {
@@ -155,7 +198,7 @@ server.tool(
           continue;
         }
 
-        const tables = await getAvailableTables(restaurantId, suggestedTime, partySize, duration);
+        const tables = await getAvailableTables(restaurantId, suggestedTime, partySize, duration, traceId);
         if (tables.length > 0) {
           suggestedSlots.push({
             time: suggestedTime.toISOString(),
@@ -165,32 +208,30 @@ server.tool(
       }
     }
 
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          restaurantId,
-          requestedTime: requestedDate.toISOString(),
-          partySize,
-          availableTables,
-          suggestedSlots: suggestedSlots.length > 0 ? suggestedSlots : undefined,
-        })
-      }]
-    };
+    return createResponse({
+      restaurantId,
+      requestedTime: requestedDate.toISOString(),
+      partySize,
+      availableTables,
+      suggestedSlots: suggestedSlots.length > 0 ? suggestedSlots : undefined,
+    }, traceId);
   }
 );
 
+// Existing bookTable tool with traceId support
 server.tool(
   TOOLS.tableStack.bookTable.name,
   TOOLS.tableStack.bookTable.description,
   TOOLS.tableStack.bookTable.schema.shape,
-  async ({ restaurantId, tableId, guestName, guestEmail, partySize, startTime }) => {
+  async ({ restaurantId, tableId, guestName, guestEmail, partySize, startTime }, _extra) => {
+    const traceId = _extra?.traceId || randomUUID();
+    
     const restaurant = await db.query.restaurants.findFirst({
       where: eq(restaurants.id, restaurantId),
     });
 
     if (!restaurant) {
-      return { content: [{ type: "text", text: "Restaurant not found" }], isError: true };
+      return createResponse({ error: "Restaurant not found" }, traceId, true);
     }
 
     const start = parseISO(startTime);
@@ -213,40 +254,76 @@ server.tool(
       isVerified: true,
     }).returning();
 
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          status: "confirmed",
-          message: "Reservation confirmed successfully",
-          booking_id: newReservation.id,
-        })
-      }]
-    };
+    console.log(`[Trace:${traceId}] Created reservation ${newReservation.id} for ${guestName}`);
+
+    return createResponse({
+      status: "confirmed",
+      message: "Reservation confirmed successfully",
+      booking_id: newReservation.id,
+    }, traceId);
   }
 );
 
+// Table Management Tools - DRY RUN Validation
 server.tool(
-  (TOOLS.tableStack as any).getLiveOperationalState.name,
-  (TOOLS.tableStack as any).getLiveOperationalState.description,
-  (TOOLS.tableStack as any).getLiveOperationalState.schema.shape,
-  async ({ restaurant_id }: any) => {
+  "validate_reservation",
+  "Validate a reservation without creating it (dry run)",
+  {
+    restaurantId: TOOLS.tableStack.getAvailability.schema.shape.restaurantId,
+    date: TOOLS.tableStack.getAvailability.schema.shape.date,
+    partySize: TOOLS.tableStack.getAvailability.schema.shape.partySize,
+  },
+  async ({ restaurantId, date, partySize }, _extra) => {
+    const traceId = _extra?.traceId || randomUUID();
+    
+    const restaurant = await db.query.restaurants.findFirst({
+      where: eq(restaurants.id, restaurantId),
+    });
+
+    if (!restaurant) {
+      return createResponse({ 
+        valid: false, 
+        error: "Restaurant not found" 
+      }, traceId, true);
+    }
+
+    const requestedDate = parseISO(date);
+    const duration = restaurant.defaultDurationMinutes || 90;
+    const availableTables = await getAvailableTables(restaurantId, requestedDate, partySize, duration, traceId);
+
+    const isValid = availableTables.length > 0;
+    
+    return createResponse({
+      valid: isValid,
+      restaurantId,
+      requestedTime: requestedDate.toISOString(),
+      partySize,
+      availableTables: isValid ? availableTables : undefined,
+      message: isValid 
+        ? "Reservation is valid and can be created" 
+        : "No tables available for requested time and party size",
+    }, traceId);
+  }
+);
+
+// Operational State tool with traceId
+server.tool(
+  (TOOLS.tableStack as any).getLiveOperationalState?.name || "get_live_operational_state",
+  "Retrieve real-time table status for a restaurant",
+  { restaurant_id: TOOLS.tableStack.getAvailability.schema.shape.restaurantId },
+  async ({ restaurant_id }: any, _extra) => {
+    const traceId = _extra?.traceId || randomUUID();
     const key = `state:${restaurant_id}:tables`;
     const { getRedisClient, ServiceNamespace } = await import("@repo/shared");
     const redis = getRedisClient(ServiceNamespace.TS);
     
     const liveData = await redis.hgetall(key);
     
-    return {
-      content: [{
-        type: "text" as const,
-        text: JSON.stringify({
-          restaurant_id,
-          live_data: liveData || {},
-          message: liveData ? "Live operational state retrieved successfully." : "No live data available."
-        })
-      }]
-    };
+    return createResponse({
+      restaurant_id,
+      live_data: liveData || {},
+      message: liveData ? "Live operational state retrieved successfully." : "No live data available."
+    }, traceId);
   }
 );
 
@@ -275,6 +352,9 @@ export async function GET(request: NextRequest) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
+  const traceId = extractTraceId(request);
+  console.log(`[Trace:${traceId}] MCP SSE connection established`);
+
   const { readable, writable } = new TransformStream();
   const writer = writable.getWriter();
   const encoder = new TextEncoder();
@@ -284,6 +364,9 @@ export async function GET(request: NextRequest) {
     end: () => writer.close(),
   } as any);
 
+  // Pass traceId to tool context
+  (transport as any).traceId = traceId;
+
   await server.connect(transport);
 
   return new NextResponse(readable, {
@@ -291,6 +374,7 @@ export async function GET(request: NextRequest) {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
+      'X-Trace-Id': traceId,
     },
   });
 }
@@ -304,11 +388,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "No active transport" }, { status: 400 });
   }
 
+  const traceId = extractTraceId(request);
+
   try {
     const body = await request.json();
+    // Attach traceId to transport for tool execution context
+    (transport as any).traceId = traceId;
     await (transport as any).handlePostRequest(request, NextResponse as any);
-    return new NextResponse("OK");
+    
+    return new NextResponse("OK", {
+      headers: {
+        'X-Trace-Id': traceId,
+      },
+    });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ 
+      error: error.message,
+      traceId,
+    }, { 
+      status: 500,
+      headers: {
+        'X-Trace-Id': traceId,
+      },
+    });
   }
 }

@@ -108,7 +108,7 @@ export async function GET(req: NextRequest) {
   // Set cookie for the bridge session
   const response = NextResponse.redirect(new URL('/shop', req.url)); 
   
-  response.cookies.set('app_bridge_session', JSON.stringify(payload), {
+  response.cookies.set('app_bridge_session', JSON.stringify({ ...payload, token }), {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',

@@ -37,12 +37,20 @@ export async function getAppAuth(): Promise<AppAuth> {
   if (bridgeSession?.value) {
     try {
       const payload = JSON.parse(bridgeSession.value);
-      if (payload && payload.clerkUserId) {
-        return { 
-          userId: payload.clerkUserId, 
-          role: payload.role,
-          source: 'bridge' 
-        };
+      if (payload && payload.clerkUserId && payload.token) {
+        // Validate with TableStack (Core Ecosystem Requirement)
+        const { verifySessionWithTableStack } = await import('./tablestack');
+        const isValid = await verifySessionWithTableStack(payload.token);
+        
+        if (isValid) {
+          return { 
+            userId: payload.clerkUserId, 
+            role: payload.role,
+            source: 'bridge' 
+          };
+        } else {
+          console.warn("Bridge session failed TableStack validation");
+        }
       }
     } catch (e) {
       console.error("Failed to parse bridge session cookie:", e);

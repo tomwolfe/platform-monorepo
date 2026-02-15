@@ -48,3 +48,27 @@ export async function getTableStackRestaurant(restaurantId: string) {
 
   return response.json();
 }
+
+export async function verifySessionWithTableStack(token: string) {
+  const tableStackUrl = process.env.TABLESTACK_URL || 'http://localhost:3002';
+  const internalKey = process.env.INTERNAL_SYSTEM_KEY;
+
+  if (!internalKey) return false;
+
+  try {
+    const response = await fetch(`${tableStackUrl}/api/v1/verify-session`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-internal-key': internalKey,
+      },
+      body: JSON.stringify({ token }),
+      cache: 'no-store',
+    });
+
+    return response.ok;
+  } catch (e) {
+    console.error('Failed to verify session with TableStack:', e);
+    return false;
+  }
+}

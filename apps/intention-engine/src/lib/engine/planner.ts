@@ -51,9 +51,9 @@ const RawPlanStepSchema = z.object({
   tool_name: z.string(),
   tool_version: z.string().optional(),
   parameters: z.record(z.string(), z.unknown()),
-  dependencies: z.array(z.number().int().nonnegative()).default([]), // References step_number, not UUID
+  dependencies: z.array(z.number().int().nonnegative()), // References step_number, not UUID
   description: z.string(),
-  requires_confirmation: z.boolean().default(false),
+  requires_confirmation: z.boolean(),
   estimated_tokens: z.number().int().nonnegative().optional(),
 });
 

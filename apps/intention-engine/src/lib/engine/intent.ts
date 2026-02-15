@@ -59,7 +59,7 @@ const ParsedIntentSchema = z.object({
   confidence: z.number().min(0).max(1),
   parameters: z.record(z.string(), z.unknown()),
   explanation: z.string(),
-  requires_clarification: z.boolean().default(false),
+  requires_clarification: z.boolean(),
   clarification_prompt: z.string().optional(),
 });
 

@@ -5,6 +5,7 @@ import { ToolDefinition } from "../../lib/engine/types";
 import { z } from "zod";
 import { mapJsonSchemaToZod } from "../../lib/engine/schema-utils";
 import { mcpConfig } from "../../lib/mcp-config";
+import { parameter_aliases as shared_aliases } from "@repo/mcp-protocol";
 
 /**
  * MCPClient connects to remote MCP servers and maps their tools 
@@ -115,6 +116,7 @@ export class MCPClient {
       "phone_number": "phone",
       "email_address": "email",
       ...mcpConfig.parameter_aliases, // Use centralized aliases
+      ...shared_aliases,
       "guestEmail": "email",
       "target_destination": "delivery_address",
       "source_location": "pickup_address",

@@ -1,0 +1,12 @@
+{
+  "name": "@repo/ui-theme",
+  "version": "0.0.0",
+  "private": true,
+  "exports": {
+    ".": "./src/index.css"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
+    "postcss": "^8.5.1"
+  }
+}

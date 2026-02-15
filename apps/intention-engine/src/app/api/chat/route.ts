@@ -8,6 +8,7 @@ import { inferIntent } from "@/lib/intent";
 import { Redis } from "@upstash/redis";
 import { getUserPreferences, updateUserPreferences } from "@/lib/preferences";
 import { redis } from "@/lib/redis-client";
+import { getMcpClients } from "@/lib/mcp-client";
 
 export const runtime = "edge";
 export const maxDuration = 30;
@@ -24,6 +25,45 @@ const ChatRequestSchema = z.object({
     lng: z.number().min(-180).max(180),
   }).nullable().optional(),
 });
+
+/**
+ * Dynamically fetches tools from all registered MCP servers.
+ */
+async function getTools(auditLogId: string, userLocation?: { lat: number, lng: number }) {
+  const clients = await getMcpClients();
+  const tools: Record<string, any> = {};
+  const { executeToolWithContext } = await import("@/app/actions");
+
+  for (const [serviceName, client] of Object.entries(clients)) {
+    try {
+      const { tools: mcpTools } = await client.listTools();
+      
+      for (const mcpTool of mcpTools) {
+        tools[mcpTool.name] = tool({
+          description: mcpTool.description,
+          inputSchema: z.record(z.any()), 
+          execute: async (params) => {
+            console.log(`Executing MCP tool ${mcpTool.name} from ${serviceName}`, params);
+            
+            const result = await client.callTool({
+              name: mcpTool.name,
+              arguments: {
+                ...params,
+                userLocation // Inject context if needed
+              }
+            });
+            
+            return result;
+          },
+        });
+      }
+    } catch (error) {
+      console.error(`Error listing tools for ${serviceName}:`, error);
+    }
+  }
+  
+  return tools;
+}
 
 export async function POST(req: Request) {
   try {
@@ -79,7 +119,7 @@ export async function POST(req: Request) {
         .join("\n");
     }
 
-    // Step 2: Semantic Memory & Proactive Retrieval (Phase 2 Upgrade)
+    // Step 2: Semantic Memory & Proactive Retrieval
     const getRelevantFailures = function(text: string, logs: any[]) {
       const keywords = text.toLowerCase().split(/\W+/).filter(w => w.length > 3);
       const failures: string[] = [];
@@ -92,14 +132,6 @@ export async function POST(req: Request) {
               
               if (hasOverlap) {
                 let specificWarning = `Previous attempt at ${step.tool_name} with parameters ${JSON.stringify(step.input)} failed with error: "${step.error}".`;
-                
-                // Specific advice based on tool and error
-                if (step.tool_name === "search_restaurant" && step.input.location) {
-                  specificWarning = `Previous attempt to search restaurants in "${step.input.location}" failed with "${step.error}"; try an alternative coordinate or broader search radius.`;
-                } else if (step.tool_name === "geocode_location") {
-                  specificWarning = `Previous attempt to geocode "${step.input.location}" failed; try providing a more specific city or landmark name.`;
-                }
-                
                 failures.push(specificWarning);
               }
             }
@@ -124,10 +156,8 @@ export async function POST(req: Request) {
       intentInferenceLatency = Date.now() - intentStart;
       intent = inferenceResult.hypotheses.primary;
       rawModelResponse = inferenceResult.rawResponse;
-      console.log("[Phase 4] Structured Intent Inferred:", intent.type, "Confidence:", intent.confidence);
     } catch (e) {
       console.error("Intent inference failed, falling back to UNKNOWN", e);
-      // Create a minimal valid intent object
       intent = { 
         id: crypto.randomUUID(),
         type: "UNKNOWN", 
@@ -140,92 +170,23 @@ export async function POST(req: Request) {
 
     // Initialize Audit Log
     const auditLog = await createAuditLog(intent, undefined, userLocation || undefined, userIp);
-    await updateAuditLog(auditLog.id, { 
-      rawModelResponse,
-      inferenceLatencies: { intentInference: intentInferenceLatency },
-      metadata: { learnedPreferences: userPreferences }
-    });
-
-    const locationContext = userLocation 
-      ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}.`
-      : "The user's location is unknown.";
-
-    // Memory Context
-    const memoryContext = recentLogs.length > 0 
-      ? `Recent interaction history:\n${recentLogs.map(l => `- Intent: ${l.intent}, Outcome: ${l.final_outcome || 'N/A'}`).join('\n')}`
-      : "";
-
-    // Logic driven by intent:
-    // 1. Dynamic System Prompt (with tool capabilities injection)
-    // 2. Filtered Toolset
     
-    // Get dynamic tool capabilities for the system prompt
-    const toolCapabilitiesPrompt = getToolCapabilitiesPrompt();
+    // Fetch dynamic tools from MCP servers
+    const mcpTools = await getTools(auditLog.id, userLocation || undefined);
     
-    let systemPrompt = `You are an Intention Engine.
-    ${userPreferences ? `### Known User Facts:\n${JSON.stringify(userPreferences)}` : ""}
-
-    Today's date is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.
-    The user's inferred intent is: ${intent.type} (Confidence: ${intent.confidence})
-    Extracted Parameters: ${JSON.stringify(intent.parameters)}
-    
-    ${locationContext}
-
-    ${memoryContext}
-
-    ${failureWarnings}
-
-    ${intent.type === 'CLARIFICATION_REQUIRED' ? `IMPORTANT: Your confidence in the user's intent is LOW. You MUST ask a clarification question. Explanation: "${intent.explanation}"` : ""}
-    ${intent.type === 'CLARIFICATION_REQUIRED' ? `IMPORTANT: Required information is missing: ${intent.parameters.missingFields.join(", ")}. You MUST ask the user specifically for these missing details.` : ""}
-
-    If a tool returns success: false, you MUST acknowledge the error and attempt to REPLAN. 
-    Explain what went wrong and provide a modified plan or alternative action to the user.
-    Do not simply repeat the same failed call.
-
-    IMPORTANT TRANSACTIONAL GUARD: 
-    - NEVER call 'add_calendar_event' for a booking until the booking tool has returned 'success: true'.
-    - If a booking tool returns 'CONFIRMATION_REQUIRED', you must stop, present the details to the user, and ask for their confirmation. Do NOT call the booking tool with 'is_confirmed: true' until the user has explicitly said yes.
-
-    If a user request requires multiple steps (e.g., finding a place and then scheduling it), the intent is PLANNING.
-    When intent is PLANNING:
-    1. Acknowledge the multi-step goal.
-    2. Outline a structured step-by-step plan to the user.
-    3. Execute tools according to the plan.
-    4. Ensure action tools (booking, rides) are only called after user confirmation of the specific details.
-
-    ${toolCapabilitiesPrompt}
-    `;
-
+    // Combine with legacy tools for fallback/transition
     const allTools = {
+      ...mcpTools,
       geocode_location: tool({
         description: "Converts a city or place name to lat/lon coordinates.",
         inputSchema: z.object({
           location: z.string().describe("The city or place name to geocode."),
         }),
         execute: async (params) => {
-          console.log("Executing geocode_location", params);
           const result = await executeToolWithContext("geocode_location", { ...params, userLocation: userLocation || undefined }, {
             audit_log_id: auditLog.id,
             step_index: auditLog.steps.length
           });
-          return result;
-        },
-      }),
-      search_restaurant: tool({
-        description: "Search for restaurants nearby based on cuisine and location.",
-        inputSchema: z.object({
-          cuisine: z.string().optional(),
-          lat: z.number().optional(),
-          lon: z.number().optional(),
-          location: z.string().optional(),
-        }),
-        execute: async (params: any) => {
-          console.log("Executing search_restaurant", params);
-          const result = await executeToolWithContext("search_restaurant", { ...params, userLocation: userLocation || undefined }, {
-            audit_log_id: auditLog.id,
-            step_index: auditLog.steps.length
-          });
-          
           return result;
         },
       }),
@@ -237,102 +198,10 @@ export async function POST(req: Request) {
             start_time: z.string(),
             end_time: z.string(),
             location: z.string().optional(),
-            restaurant_name: z.string().optional(),
-            restaurant_address: z.string().optional(),
           })),
         }),
         execute: async (params: any) => {
-          console.log("Executing add_calendar_event", params);
           const result = await executeToolWithContext("add_calendar_event", params, {
-            audit_log_id: auditLog.id,
-            step_index: auditLog.steps.length
-          });
-          return result;
-        },
-      }),
-      request_ride: tool({
-        description: "Authorized to perform real-time ride requests from mobility services. Can book rides with Uber, Tesla, and Lyft with full ride-hailing authority.",
-        inputSchema: z.object({
-          service: z.enum(["uber", "lyft", "tesla"]).describe("The mobility service to use (uber, lyft, or tesla)."),
-          pickup_location: UnifiedLocationSchema.describe("The pickup location. Can be a string address OR an object with lat/lon coordinates."),
-          dropoff_location: UnifiedLocationSchema.describe("The dropoff location. Can be a string address OR an object with lat/lon coordinates."),
-          ride_type: z.enum(["economy", "premium", "xl"]).optional().describe("The type of ride (economy, premium, or xl)."),
-        }),
-        execute: async (params: any) => {
-          console.log("Executing request_ride", params);
-          const result = await executeToolWithContext("request_ride", params, {
-            audit_log_id: auditLog.id,
-            step_index: auditLog.steps.length
-          });
-          return result;
-        },
-      }),
-      get_route_estimate: tool({
-        description: "Authorized to access real-time routing data. Provides live drive time and distance estimates with traffic-aware calculations.",
-        inputSchema: z.object({
-          origin: UnifiedLocationSchema.describe("The starting location. Can be a string address OR an object with lat/lon coordinates."),
-          destination: UnifiedLocationSchema.describe("The destination location. Can be a string address OR an object with lat/lon coordinates."),
-          mode: z.enum(["driving", "walking", "transit"]).optional().describe("The mode of transportation."),
-        }),
-        execute: async (params: any) => {
-          console.log("Executing get_route_estimate", params);
-          const result = await executeToolWithContext("get_route_estimate", params, {
-            audit_log_id: auditLog.id,
-            step_index: auditLog.steps.length
-          });
-          return result;
-        },
-      }),
-      book_restaurant_table: tool({
-        description: "Authorized to perform real-time restaurant reservations. Can finalize live table bookings with confirmation codes and full reservation authority.",
-        inputSchema: z.object({
-          restaurant_name: z.string().describe("The name of the restaurant."),
-          restaurant_address: z.string().describe("The address of the restaurant."),
-          date: z.string().describe("The date of the reservation (ISO 8601 format)."),
-          time: z.string().describe("The time of the reservation."),
-          party_size: z.number().describe("The number of people in the party."),
-          contact_name: z.string().describe("The name for the reservation."),
-          contact_phone: z.string().describe("The phone number for the reservation."),
-          contact_email: z.string().optional().describe("The email address for the reservation."),
-          special_requests: z.string().optional().describe("Any special requests for the reservation."),
-          is_confirmed: z.boolean().optional().describe("Set to true ONLY if the user has explicitly confirmed these specific details."),
-        }),
-        execute: async (params: any) => {
-          console.log("Executing book_restaurant_table", params);
-          const result = await executeToolWithContext("book_restaurant_table", params, {
-            audit_log_id: auditLog.id,
-            step_index: auditLog.steps.length
-          });
-          return result;
-        },
-      }),
-      send_comm: tool({
-        description: "Authorized to perform real-time communications. Can send live emails and SMS messages with full messaging authority.",
-        inputSchema: z.object({
-          type: z.enum(["email", "sms"]).describe("The type of communication (email or sms)."),
-          to: z.string().describe("The recipient address or phone number."),
-          subject: z.string().optional().describe("The subject line (for email)."),
-          body: z.string().describe("The message body content."),
-        }),
-        execute: async (params: any) => {
-          console.log("Executing send_comm", params);
-          const result = await executeToolWithContext("send_comm", params, {
-            audit_log_id: auditLog.id,
-            step_index: auditLog.steps.length
-          });
-          return result;
-        },
-      }),
-      get_weather_data: tool({
-        description: "Authorized to access real-time weather data. Provides live forecasts and current conditions with full meteorological authority.",
-        inputSchema: z.object({
-          location: UnifiedLocationSchema.describe("The location for weather lookup. Can be a string address OR an object with lat/lon coordinates."),
-          date: z.string().optional().describe("Optional date for the weather forecast in ISO 8601 format."),
-          type: z.enum(["current", "forecast"]).optional().describe("Whether to get current conditions or forecast (legacy parameter)."),
-        }),
-        execute: async (params: any) => {
-          console.log("Executing get_weather_data", params);
-          const result = await executeToolWithContext("get_weather_data", params, {
             audit_log_id: auditLog.id,
             step_index: auditLog.steps.length
           });
@@ -341,45 +210,28 @@ export async function POST(req: Request) {
       }),
     };
 
-    // Filter tools based on intent to minimize surface area (Phase 3: Tool Scoping)
-    let enabledTools: any = {};
-    const intentType = intent.type.toUpperCase();
+    const locationContext = userLocation 
+      ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}.`
+      : "The user's location is unknown.";
 
-    if (intentType === "SEARCH" || intentType === "RESTAURANT" || intentType === "UNKNOWN" || intentType === "PLANNING") {
-      enabledTools.search_restaurant = allTools.search_restaurant;
-      enabledTools.geocode_location = allTools.geocode_location;
-    }
+    const memoryContext = recentLogs.length > 0 
+      ? `Recent interaction history:\n${recentLogs.map(l => `- Intent: ${l.intent}, Outcome: ${l.final_outcome || 'N/A'}`).join('\n')}`
+      : "";
+
+    const toolCapabilitiesPrompt = getToolCapabilitiesPrompt();
     
-    // Only provide calendar tool if it's explicitly about scheduling, or planning, or unknown.
-    // Specifically NOT provided for RESTAURANT intent in the first turn as per requirements.
-    if (intentType === "SCHEDULE" || intentType === "UNKNOWN" || intentType === "PLANNING") {
-      enabledTools.add_calendar_event = allTools.add_calendar_event;
-    }
+    let systemPrompt = `You are an Intention Engine.
+    Today's date is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.
+    The user's inferred intent is: ${intent.type} (Confidence: ${intent.confidence})
+    
+    ${locationContext}
+    ${memoryContext}
+    ${failureWarnings}
 
-    // Mobility and route tools for transportation intents
-    if (intentType === "MOBILITY" || intentType === "TRANSPORT" || intentType === "RIDE" || intentType === "UNKNOWN" || intentType === "PLANNING") {
-      enabledTools.request_ride = allTools.request_ride;
-      enabledTools.get_route_estimate = allTools.get_route_estimate;
-    }
+    If a tool returns success: false, you MUST acknowledge the error and attempt to REPLAN. 
 
-    // Weather tool for weather intents
-    if (intentType === "WEATHER" || intentType === "UNKNOWN" || intentType === "PLANNING") {
-      enabledTools.get_weather_data = allTools.get_weather_data;
-    }
-
-    // Reservation tool for booking intents
-    if (intentType === "RESERVATION" || intentType === "BOOKING" || intentType === "UNKNOWN" || intentType === "PLANNING") {
-      enabledTools.book_restaurant_table = allTools.book_restaurant_table;
-    }
-
-    // Communication tool for messaging intents
-    if (intentType === "COMMUNICATION" || intentType === "MESSAGE" || intentType === "EMAIL" || intentType === "SMS" || intentType === "UNKNOWN" || intentType === "PLANNING") {
-      enabledTools.send_comm = allTools.send_comm;
-    }
-
-    if (intentType === "ACTION") {
-      enabledTools = allTools; // Action can be anything
-    }
+    ${toolCapabilitiesPrompt}
+    `;
 
     const providerConfig = await getProvider(intent.type);
     const customProvider = createOpenAI({
@@ -391,31 +243,15 @@ export async function POST(req: Request) {
       model: customProvider.chat(providerConfig.model),
       messages: coreMessages,
       system: systemPrompt,
-      tools: enabledTools,
+      tools: allTools,
       stopWhen: stepCountIs(5),
       onFinish: async (event) => {
         const totalLatency = Date.now() - startTime;
         try {
-          // Retrieve current log to preserve steps already logged in execute
-          const currentLog = await (await import("@/lib/audit")).getAuditLog(auditLog.id);
-          
-          // Phase 2: Post-execution preference extraction
-          const anySuccess = currentLog?.steps.some(s => s.status === "executed");
-          if (intent.type === "ACTION" && anySuccess) {
-            await updateUserPreferences(userIp, intent.parameters);
-            // Refresh preferences for logging
-            const updatedPrefs = await getUserPreferences(userIp);
-            await (await import("@/lib/audit")).updateAuditLog(auditLog.id, {
-              metadata: { ...currentLog?.metadata, learnedPreferences: updatedPrefs }
-            });
-          }
-
           await (await import("@/lib/audit")).updateAuditLog(auditLog.id, {
             final_outcome: event.text,
             inferenceLatencies: {
-              ...currentLog?.inferenceLatencies,
               total: totalLatency,
-              planGeneration: totalLatency - (currentLog?.inferenceLatencies?.intentInference || 0)
             }
           });
         } catch (err) {

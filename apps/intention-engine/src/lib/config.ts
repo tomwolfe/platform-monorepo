@@ -10,6 +10,7 @@ const envSchema = z.object({
   TABLESTACK_API_URL: z.string().url().optional(),
   TABLESTACK_MCP_URL: z.string().url().optional(),
   OPENDELIVER_MCP_URL: z.string().url().optional(),
+  STOREFRONT_MCP_URL: z.string().url().optional(),
   TABLESTACK_INTERNAL_API_KEY: z.string().optional(),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });
@@ -20,6 +21,7 @@ const getDefaults = () => {
     TABLESTACK_API_URL: process.env.TABLESTACK_API_URL || (isDev ? "http://localhost:3005/api/v1" : "https://table-stack.vercel.app/api/v1"),
     TABLESTACK_MCP_URL: process.env.TABLESTACK_MCP_URL || (isDev ? "http://localhost:3005/api/mcp" : "https://table-stack.vercel.app/api/mcp"),
     OPENDELIVER_MCP_URL: process.env.OPENDELIVER_MCP_URL || (isDev ? "http://localhost:3001/api/mcp" : "https://open-deliver.vercel.app/api/mcp"),
+    STOREFRONT_MCP_URL: process.env.STOREFRONT_MCP_URL || (isDev ? "http://localhost:3003/api/mcp" : "https://store-front.vercel.app/api/mcp"),
   };
 };
 

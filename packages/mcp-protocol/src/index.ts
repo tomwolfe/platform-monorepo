@@ -1,5 +1,88 @@
-import { z } from "zod";
+import * as zod from "zod";
+const z = zod.z;
 
+/**
+ * MCP Tool Definitions for the Nervous System monorepo.
+ */
+
+// --- TableStack Tools ---
+export const GetAvailabilitySchema = z.object({
+  restaurantId: z.string().describe("The internal ID of the restaurant."),
+  date: z.string().describe("ISO 8601 date (e.g., '2026-02-12')."),
+  partySize: z.number().describe("Number of guests.")
+});
+
+export const BookTableSchema = z.object({
+  restaurantId: z.string().describe("The internal ID of the restaurant."),
+  tableId: z.string().describe("The ID of the table to book."),
+  guestName: z.string().describe("The name for the reservation."),
+  guestEmail: z.string().describe("The email for the reservation."),
+  partySize: z.number().describe("Number of guests."),
+  startTime: z.string().describe("ISO 8601 start time.")
+});
+
+// --- OpenDelivery Tools ---
+export const CalculateQuoteSchema = z.object({
+  pickup_address: z.string().describe("Address where the delivery starts."),
+  delivery_address: z.string().describe("Address where the delivery ends."),
+  items: z.array(z.string()).describe("List of items to be delivered.")
+});
+
+export const GetDriverLocationSchema = z.object({
+  order_id: z.string().describe("The unique identifier of the order.")
+});
+
+// --- StoreFront Tools ---
+export const ListVendorsSchema = z.object({
+  latitude: z.number().describe("Latitude for location-based search."),
+  longitude: z.number().describe("Longitude for location-based search."),
+  radius_km: z.number().optional().default(10).describe("Search radius in kilometers.")
+});
+
+export const GetMenuSchema = z.object({
+  store_id: z.string().describe("The internal ID of the store.")
+});
+
+export const TOOLS = {
+  tableStack: {
+    getAvailability: {
+      name: "getAvailability",
+      description: "Checks real-time table availability for a restaurant.",
+      schema: GetAvailabilitySchema,
+    },
+    bookTable: {
+      name: "bookTable",
+      description: "Finalizes a reservation on TableStack. REQUIRES CONFIRMATION.",
+      schema: BookTableSchema,
+    }
+  },
+  openDelivery: {
+    calculateQuote: {
+      name: "calculateQuote",
+      description: "Get a delivery price and time estimate.",
+      schema: CalculateQuoteSchema,
+    },
+    getDriverLocation: {
+      name: "getDriverLocation",
+      description: "Retrieve the real-time location of the delivery driver.",
+      schema: GetDriverLocationSchema,
+    }
+  },
+  storeFront: {
+    listVendors: {
+      name: "listVendors",
+      description: "Search for local vendors (stores, restaurants) based on location.",
+      schema: ListVendorsSchema,
+    },
+    getMenu: {
+      name: "getMenu",
+      description: "Retrieve the menu/product list for a specific store.",
+      schema: GetMenuSchema,
+    }
+  }
+} as const;
+
+// Legacy tool definitions and schemas for backward compatibility
 export const DISPATCH_INTENT_TOOL = {
   name: "dispatch_intent",
   description: "Dispatch a delivery intent to the driver network. REQUIRES CONFIRMATION.",
@@ -10,8 +93,8 @@ export const DISPATCH_INTENT_TOOL = {
       pickup_address: { type: "string" },
       delivery_address: { type: "string" },
       customer_id: { type: "string" },
-      restaurant_id: { type: "string", description: "The TableStack restaurant ID to notify." },
-      priority: { type: "boolean", description: "Set to true for high-value guests to trigger priority driver matching." },
+      restaurant_id: { type: "string" },
+      priority: { type: "boolean" },
       price_details: {
         type: "object",
         properties: {
@@ -48,7 +131,7 @@ export const RESERVE_STOCK_ITEM_TOOL = {
     type: "object",
     properties: {
       product_id: { type: "string" },
-      venue_id: { type: "string", description: "The store or restaurant ID." },
+      venue_id: { type: "string" },
       quantity: { type: "number" }
     },
     required: ["product_id", "venue_id", "quantity"]
@@ -57,13 +140,13 @@ export const RESERVE_STOCK_ITEM_TOOL = {
 
 export const CHECK_AVAILABILITY_TOOL = {
   name: "check_availability",
-  description: "Checks real-time table availability for a restaurant. Returns available tables and suggested slots if the requested time is full.",
+  description: "Checks real-time table availability for a restaurant.",
   inputSchema: {
     type: "object",
     properties: {
-      restaurantId: { type: "string", description: "The internal ID of the restaurant." },
-      date: { type: "string", description: "ISO 8601 date and time (e.g., '2026-02-12T19:00:00Z')." },
-      partySize: { type: "number", description: "Number of guests." }
+      restaurantId: { type: "string" },
+      date: { type: "string" },
+      partySize: { type: "number" }
     },
     required: ["restaurantId", "date", "partySize"]
   }
@@ -71,17 +154,16 @@ export const CHECK_AVAILABILITY_TOOL = {
 
 export const BOOK_RESERVATION_TOOL = {
   name: "book_tablestack_reservation",
-  description: "Finalizes a reservation on TableStack using a specific table ID. REQUIRES CONFIRMATION.",
+  description: "Finalizes a reservation on TableStack. REQUIRES CONFIRMATION.",
   inputSchema: {
     type: "object",
     properties: {
-      restaurantId: { type: "string", description: "The internal ID of the restaurant." },
-      tableId: { type: "string", description: "The ID of the table to book (obtained from availability)." },
-      guestName: { type: "string", description: "The name for the reservation." },
-      guestEmail: { type: "string", description: "The email for the reservation." },
-      partySize: { type: "number", description: "Number of guests." },
-      startTime: { type: "string", description: "ISO 8601 start time." },
-      is_confirmed: { type: "boolean", description: "Set to true ONLY if the user has explicitly confirmed these specific details." }
+      restaurantId: { type: "string" },
+      tableId: { type: "string" },
+      guestName: { type: "string" },
+      guestEmail: { type: "string" },
+      partySize: { type: "number" },
+      startTime: { type: "string" }
     },
     required: ["restaurantId", "tableId", "guestName", "guestEmail", "partySize", "startTime"]
   }
@@ -93,52 +175,9 @@ export const DISCOVER_RESTAURANT_TOOL = {
   inputSchema: {
     type: "object",
     properties: {
-      restaurant_slug: { type: "string", description: "The slug of the restaurant (e.g., 'the-fancy-bistro')." }
+      restaurant_slug: { type: "string" }
     },
     required: ["restaurant_slug"]
-  }
-} as const;
-
-export const CREATE_PRODUCT_TOOL = {
-  name: "create_product",
-  description: "Create a new product in the system. REQUIRES CONFIRMATION. Only available for merchants.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      name: { type: "string", description: "Product name" },
-      description: { type: "string", description: "Product description" },
-      price: { type: "number", description: "Product price" },
-      category: { type: "string", description: "Product category" }
-    },
-    required: ["name", "price", "category"]
-  }
-} as const;
-
-export const UPDATE_PRODUCT_TOOL = {
-  name: "update_product",
-  description: "Update an existing product. REQUIRES CONFIRMATION.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      product_id: { type: "string", description: "The ID of the product to update" },
-      name: { type: "string", description: "New product name" },
-      description: { type: "string", description: "New product description" },
-      price: { type: "number", description: "New product price" },
-      category: { type: "string", description: "New product category" }
-    },
-    required: ["product_id"]
-  }
-} as const;
-
-export const DELETE_PRODUCT_TOOL = {
-  name: "delete_product",
-  description: "Delete a product from the system. REQUIRES CONFIRMATION.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      product_id: { type: "string", description: "The ID of the product to delete" }
-    },
-    required: ["product_id"]
   }
 } as const;
 
@@ -148,14 +187,7 @@ export const GEOCODE_LOCATION_TOOL = {
   inputSchema: {
     type: "object",
     properties: {
-      location: { type: "string" },
-      userLocation: {
-        type: "object",
-        properties: {
-          lat: { type: "number" },
-          lng: { type: "number" }
-        }
-      }
+      location: { type: "string" }
     },
     required: ["location"]
   }
@@ -170,14 +202,7 @@ export const SEARCH_RESTAURANT_TOOL = {
       cuisine: { type: "string" },
       lat: { type: "number" },
       lon: { type: "number" },
-      location: { type: "string" },
-      userLocation: {
-        type: "object",
-        properties: {
-          lat: { type: "number" },
-          lng: { type: "number" }
-        }
-      }
+      location: { type: "string" }
     }
   }
 } as const;
@@ -195,10 +220,7 @@ export const ADD_CALENDAR_EVENT_TOOL = {
           properties: {
             title: { type: "string" },
             start_time: { type: "string" },
-            end_time: { type: "string" },
-            location: { type: "string" },
-            restaurant_name: { type: "string" },
-            restaurant_address: { type: "string" }
+            end_time: { type: "string" }
           },
           required: ["title", "start_time", "end_time"]
         }
@@ -216,8 +238,7 @@ export const GET_LOCAL_VENDORS_TOOL = {
     properties: {
       latitude: { type: "number" },
       longitude: { type: "number" },
-      radius_km: { type: "number" },
-      category: { type: "string" }
+      radius_km: { type: "number" }
     },
     required: ["latitude", "longitude"]
   }
@@ -231,9 +252,7 @@ export const QUOTE_DELIVERY_TOOL = {
     properties: {
       pickup_address: { type: "string" },
       delivery_address: { type: "string" },
-      items: { type: "array", items: { type: "string" } },
-      restaurant_id: { type: "string", description: "The TableStack restaurant ID to check for kitchen load." },
-      system_key: { type: "string", description: "Internal system key for special offers." }
+      items: { type: "array", items: { type: "string" } }
     },
     required: ["pickup_address", "delivery_address", "items"]
   }
@@ -241,11 +260,11 @@ export const QUOTE_DELIVERY_TOOL = {
 
 export const CHECK_KITCHEN_LOAD_TOOL = {
   name: "check_kitchen_load",
-  description: "Check the current load of a restaurant's kitchen including active reservations and waitlist.",
+  description: "Check the current load of a restaurant's kitchen.",
   inputSchema: {
     type: "object",
     properties: {
-      restaurant_id: { type: "string", description: "The TableStack restaurant ID." }
+      restaurant_id: { type: "string" }
     },
     required: ["restaurant_id"]
   }
@@ -260,10 +279,7 @@ export const TOOL_METADATA = {
   reserve_stock_item: { requires_confirmation: true },
   check_availability: { requires_confirmation: false },
   book_tablestack_reservation: { requires_confirmation: true },
-  discover_restaurant: { requires_confirmation: false },
-  create_product: { requires_confirmation: true },
-  update_product: { requires_confirmation: true },
-  delete_product: { requires_confirmation: true }
+  discover_restaurant: { requires_confirmation: false }
 };
 
 export const PARAMETER_ALIASES = {
@@ -273,65 +289,16 @@ export const PARAMETER_ALIASES = {
   "restaurant_name": "pickup_address",
   "pickup_address": "restaurant_address",
   "delivery_address": "target_address",
-  "venue_id": "store_id",
-  "vendor_id": "store_id",
-  "shop_id": "store_id"
 };
 
-// Zod schemas for shared use
-export const DeliveryIntentSchema = z.object({
-  order_id: z.string(),
-  pickup_address: z.string(),
-  delivery_address: z.string(),
-  customer_id: z.string(),
-  restaurant_id: z.string().optional(),
-  priority: z.boolean().optional(),
-  price_details: z.object({
-    base_pay: z.number(),
-    tip: z.number(),
-    total: z.number()
-  })
-});
-
-export const FindProductSchema = z.object({
-  product_query: z.string(),
-  user_lat: z.number(),
-  user_lng: z.number(),
-  max_radius_miles: z.number().default(10)
-});
-
-export const ReserveStockSchema = z.object({
-  product_id: z.string(),
-  venue_id: z.string(),
-  quantity: z.number().int().positive()
-});
-
-export const CheckAvailabilitySchema = z.object({
-  restaurantId: z.string(),
-  date: z.string(),
-  partySize: z.number()
-});
-
-export const BookReservationSchema = z.object({
-  restaurantId: z.string(),
-  tableId: z.string(),
-  guestName: z.string(),
-  guestEmail: z.string(),
-  partySize: z.number(),
-  startTime: z.string(),
-  is_confirmed: z.boolean().optional()
-});
-
-export const DiscoverRestaurantSchema = z.object({
-  restaurant_slug: z.string()
+export const UserLocationSchema = z.object({
+  lat: z.number(),
+  lng: z.number(),
 });
 
 export const GeocodeSchema = z.object({
   location: z.string(),
-  userLocation: z.object({
-    lat: z.number(),
-    lng: z.number()
-  }).optional()
+  userLocation: UserLocationSchema.optional(),
 });
 
 export const SearchRestaurantSchema = z.object({
@@ -339,10 +306,7 @@ export const SearchRestaurantSchema = z.object({
   lat: z.number().optional(),
   lon: z.number().optional(),
   location: z.string().optional(),
-  userLocation: z.object({
-    lat: z.number(),
-    lng: z.number()
-  }).optional()
+  userLocation: UserLocationSchema.optional(),
 });
 
 export const EventItemSchema = z.object({
@@ -351,19 +315,12 @@ export const EventItemSchema = z.object({
   end_time: z.string(),
   location: z.string().optional(),
   restaurant_name: z.string().optional(),
-  restaurant_address: z.string().optional()
+  restaurant_address: z.string().optional(),
 });
 
 export const AddCalendarEventSchema = z.object({
   events: z.array(EventItemSchema)
 });
-
-export type DeliveryIntent = z.infer<typeof DeliveryIntentSchema>;
-export type FindProduct = z.infer<typeof FindProductSchema>;
-export type ReserveStock = z.infer<typeof ReserveStockSchema>;
-export type CheckAvailability = z.infer<typeof CheckAvailabilitySchema>;
-export type BookReservation = z.infer<typeof BookReservationSchema>;
-export type DiscoverRestaurant = z.infer<typeof DiscoverRestaurantSchema>;
 
 export type ToolInput = Record<string, unknown>;
 export type ToolOutput = {

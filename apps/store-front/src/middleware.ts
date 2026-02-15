@@ -18,6 +18,13 @@ const hasClerkKeys = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY &&
 export default async function middleware(request: NextRequest, event: any) {
   const { pathname } = request.nextUrl;
   
+  // Trace ID Propagation
+  const traceId = request.headers.get('x-trace-id') || request.headers.get('x-correlation-id');
+  const response = NextResponse.next();
+  if (traceId) {
+    response.headers.set('x-trace-id', traceId);
+  }
+
   // Internal key bypass
   const internalKey = request.headers.get('x-internal-key');
   const validKey = process.env.INTERNAL_SYSTEM_KEY;

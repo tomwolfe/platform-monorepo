@@ -32,15 +32,12 @@ import {
   GEOCODE_LOCATION_TOOL, 
   SEARCH_RESTAURANT_TOOL, 
   ADD_CALENDAR_EVENT_TOOL,
-  GeocodeSchema,
-  SearchRestaurantSchema,
-  AddCalendarEventSchema
+  AppCapabilitiesSchema
 } from "@repo/mcp-protocol";
+import { SERVICES } from "@repo/shared";
 
 /**
  * Tool registry with complete ToolDefinition metadata for all tools.
- * Each tool is registered with its full definition including inputSchema,
- * return schema, category, and confirmation requirements.
  */
 export const TOOLS: Map<string, ToolDefinition> = new Map([
   ["create_product", storefrontTools.create_product],
@@ -255,43 +252,52 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
   }]
 ]);
 
-/**
- * Returns a string representation of all available tools for LLM prompting.
- */
+export async function discoverDynamicTools() {
+  const serviceEndpoints = [
+    `${SERVICES.TABLESTACK.URL}/api/mcp/tools`,
+    `${SERVICES.OPENDELIVERY.URL}/api/mcp/tools`,
+    `${SERVICES.STOREFRONT.URL}/api/mcp/tools`,
+  ];
+
+  for (const endpoint of serviceEndpoints) {
+    try {
+      const res = await fetch(endpoint);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const capabilities = AppCapabilitiesSchema.parse(data);
+      
+      for (const tool of capabilities.tools) {
+        if (!TOOLS.has(tool.name)) {
+           console.log(`[MCP Discovery] Discovered new tool: ${tool.name} from ${capabilities.app_name}`);
+        }
+      }
+    } catch (e) {
+      console.error(`Failed to discover tools from ${endpoint}:`, e);
+    }
+  }
+}
+
 export function getToolDefinitions(): string {
   let definitions = "";
   TOOLS.forEach((tool, name) => {
-    const params = Object.keys(tool.inputSchema.properties).join(", ");
+    const params = Object.keys(tool.inputSchema.properties || {}).join(", ");
     definitions += `- ${name}(${params}): ${tool.description}\n`;
   });
   return definitions;
 }
 
-/**
- * Gets a tool definition by name.
- */
 export function getTool(name: string): ToolDefinition | undefined {
   return TOOLS.get(name);
 }
 
-/**
- * Gets all tools by category.
- */
 export function getToolsByCategory(category: string): ToolDefinition[] {
   return Array.from(TOOLS.values()).filter(tool => tool.category === category);
 }
 
-/**
- * Gets all tools that require confirmation.
- */
 export function getToolsRequiringConfirmation(): ToolDefinition[] {
   return Array.from(TOOLS.values()).filter(tool => tool.requires_confirmation);
 }
 
-/**
- * Returns an array of all available tools.
- * This is the unified source of truth for tool discovery.
- */
 export function listTools(): ToolDefinition[] {
   return Array.from(TOOLS.values());
 }

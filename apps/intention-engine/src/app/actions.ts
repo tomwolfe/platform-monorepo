@@ -5,6 +5,9 @@ import { getAuditLog, updateAuditLog, getUserAuditLogs } from "@/lib/audit";
 import { replan } from "@/lib/planner";
 import { AuditLog } from "@/lib/types";
 
+import { startTrace } from "@/lib/observability";
+import { withNervousSystemTracing } from "@repo/shared";
+
 export async function executeToolWithContext(
   tool_name: string, 
   parameters: any, 
@@ -20,47 +23,54 @@ export async function executeToolWithContext(
   let attempts = 0;
   const maxRetries = 3;
 
-  while (attempts < maxRetries) {
-    try {
-      result = await toolDef.execute(parameters);
-      
-      // Technical vs Logical error detection
-      const technicalErrorKeywords = [
-        "429", "network", "timeout", "fetch", "socket", "hang up", 
-        "overpass api error", "rate limit", "503", "502", "504", 
-        "internal server error", "connection refused"
-      ];
-      const isTechnicalError = !result.success && result.error && technicalErrorKeywords.some(k => result.error.toLowerCase().includes(k));
+  const traceId = context.audit_log_id;
+  const span = startTrace(`tool_execution:${tool_name}`, traceId);
 
-      if (isTechnicalError && attempts < maxRetries - 1) {
-        throw new Error(result.error); // Trigger retry
+  result = await withNervousSystemTracing(async () => {
+    while (attempts < maxRetries) {
+      try {
+        result = await toolDef.execute(parameters);
+        
+        // Technical vs Logical error detection
+        const technicalErrorKeywords = [
+          "429", "network", "timeout", "fetch", "socket", "hang up", 
+          "overpass api error", "rate limit", "503", "502", "504", 
+          "internal server error", "connection refused"
+        ];
+        const isTechnicalError = !result.success && result.error && technicalErrorKeywords.some(k => result.error.toLowerCase().includes(k));
+
+        if (isTechnicalError && attempts < maxRetries - 1) {
+          throw new Error(result.error); // Trigger retry
+        }
+        
+        return result; 
+      } catch (error: any) {
+        attempts++;
+        const errorMessage = error.message?.toLowerCase() || "";
+        const isRetryable = errorMessage.includes('429') || 
+                            errorMessage.includes('network') || 
+                            errorMessage.includes('timeout') || 
+                            errorMessage.includes('fetch') ||
+                            errorMessage.includes('overpass api error') ||
+                            errorMessage.includes('rate limit') ||
+                            errorMessage.includes('503') ||
+                            errorMessage.includes('502') ||
+                            errorMessage.includes('504');
+        
+        if (isRetryable && attempts < maxRetries) {
+          const delay = Math.pow(2, attempts) * 1000;
+          console.warn(`Technical error in ${tool_name}, retrying in ${delay}ms... (Attempt ${attempts}/${maxRetries})`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        return { success: false, error: error.message || "Unknown error" };
       }
-      
-      break; 
-    } catch (error: any) {
-      attempts++;
-      const errorMessage = error.message?.toLowerCase() || "";
-      const isRetryable = errorMessage.includes('429') || 
-                          errorMessage.includes('network') || 
-                          errorMessage.includes('timeout') || 
-                          errorMessage.includes('fetch') ||
-                          errorMessage.includes('overpass api error') ||
-                          errorMessage.includes('rate limit') ||
-                          errorMessage.includes('503') ||
-                          errorMessage.includes('502') ||
-                          errorMessage.includes('504');
-      
-      if (isRetryable && attempts < maxRetries) {
-        const delay = Math.pow(2, attempts) * 1000;
-        console.warn(`Technical error in ${tool_name}, retrying in ${delay}ms... (Attempt ${attempts}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
-      }
-      
-      result = { success: false, error: error.message || "Unknown error" };
-      break;
     }
-  }
+  }, { 'x-correlation-id': traceId });
+
+  span.end();
+
 
   // Schema Enforcement (Phase 1.2)
   if (result.success && toolDef.responseSchema) {

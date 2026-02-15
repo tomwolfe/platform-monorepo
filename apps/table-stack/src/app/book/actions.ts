@@ -4,8 +4,7 @@ import { db } from "@repo/database";
 import { restaurants, restaurantReservations, restaurantWaitlist } from "@repo/database";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { NotifyService } from "@/lib/notify";
-import Ably from "ably";
+import { NotifyService } from "@/lib/notifications";
 
 export async function createReservation(data: {
   restaurantId: string;
@@ -47,17 +46,13 @@ export async function createReservation(data: {
     });
 
     // Real-time update via Ably
-    if (process.env.ABLY_API_KEY) {
-      const ably = new Ably.Rest(process.env.ABLY_API_KEY);
-      const channel = ably.channels.get(`restaurant:${restaurant.id}`);
-      await channel.publish('NEW_RESERVATION', {
-        id: reservation.id,
-        guestName: reservation.guestName,
-        partySize: reservation.partySize,
-        startTime: reservation.startTime,
-        tableId: reservation.tableId,
-      });
-    }
+    await NotifyService.broadcast(restaurant.id, 'reservation.created', {
+      id: reservation.id,
+      guestName: reservation.guestName,
+      partySize: reservation.partySize,
+      startTime: reservation.startTime,
+      tableId: reservation.tableId,
+    });
   }
 
   revalidatePath(`/dashboard/${data.restaurantId}`);
@@ -72,13 +67,9 @@ export async function cancelReservation(reservationId: string) {
 
   if (reservation) {
     // Real-time update via Ably
-    if (process.env.ABLY_API_KEY) {
-      const ably = new Ably.Rest(process.env.ABLY_API_KEY);
-      const channel = ably.channels.get(`restaurant:${reservation.restaurantId}`);
-      await channel.publish('RESERVATION_CANCELLED', {
-        id: reservation.id,
-      });
-    }
+    await NotifyService.broadcast(reservation.restaurantId, 'RESERVATION_CANCELLED', {
+      id: reservation.id,
+    });
 
     revalidatePath(`/dashboard/${reservation.restaurantId}`);
     revalidatePath(`/book/manage/${reservationId}`);
@@ -106,10 +97,8 @@ export async function addToWaitlist(data: {
     status: 'waiting',
   }).returning();
 
-  if (entry && process.env.ABLY_API_KEY) {
-    const ably = new Ably.Rest(process.env.ABLY_API_KEY);
-    const channel = ably.channels.get(`restaurant:${data.restaurantId}`);
-    await channel.publish('restaurantWaitlist-updated', {
+  if (entry) {
+    await NotifyService.broadcast(data.restaurantId, 'restaurantWaitlist-updated', {
       id: entry.id,
       guestName: entry.guestName,
       partySize: entry.partySize,

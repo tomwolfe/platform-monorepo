@@ -1,27 +1,8 @@
-/**
- * IntentionEngine - API Layer
- * Phase 9: HTTP API for execution orchestration
- *
- * Flow:
- * 1. Create executionId
- * 2. Transition to RECEIVED
- * 3. Parse intent
- * 4. If needed, generate plan
- * 5. Execute
- * 6. Update memory
- * 7. Return structured result + trace
- *
- * Constraints:
- * - No business logic in route
- * - Only orchestration
- * - Route thin
- * - All logic in engine
- * - Trace returned
- */
-
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { randomUUID } from "crypto";
+import { withNervousSystemTracing } from "@repo/shared";
+import { startTrace } from "@/lib/observability";
 
 // Engine imports
 import {
@@ -30,7 +11,6 @@ import {
   Intent,
   Plan,
   ExecutionTrace,
-  EngineErrorSchema,
 } from "@/lib/engine/types";
 import { parseIntent, ParseResult, validateIntentConfidence } from "@/lib/engine/intent";
 import { generatePlan, PlannerResult } from "@/lib/engine/planner";
@@ -43,26 +23,20 @@ import {
 import {
   createInitialState,
   transitionState,
-  applyStateUpdate,
   setIntent,
   setPlan,
 } from "@/lib/engine/state-machine";
 import { saveExecutionState, loadExecutionState, getMemoryClient } from "@/lib/engine/memory";
 import {
-  ExecutionTracer,
   createTracer,
-  TracerResult,
 } from "@/lib/engine/tracing";
 import {
   getToolRegistry,
-  ToolFunction,
-  ToolExecutionContext,
 } from "@/lib/engine/tools/registry";
+import { getRegistryManager } from "@/lib/engine/registry";
+import { verifyPlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/verifier";
 
-// ============================================================================
-// REQUEST/RESPONSE SCHEMAS
-// Validation schemas for API
-// ============================================================================
+export const runtime = "nodejs";
 
 const ExecuteRequestSchema = z.object({
   input: z.string().min(1).max(10000),
@@ -103,11 +77,6 @@ const ExecuteResponseSchema = z.object({
   }),
 });
 
-// ============================================================================
-// CREATE TOOL EXECUTOR
-// Factory for tool executor using the registry
-// ============================================================================
-
 function createToolExecutorForExecution(
   executionId: string
 ): ToolExecutor {
@@ -141,11 +110,6 @@ function createToolExecutorForExecution(
   };
 }
 
-// ============================================================================
-// ORCHESTRATION ENGINE
-// Main execution orchestration (business logic)
-// ============================================================================
-
 interface OrchestrationResult {
   success: boolean;
   execution_id: string;
@@ -167,9 +131,6 @@ interface OrchestrationResult {
   };
 }
 
-import { getRegistryManager } from "@/lib/engine/registry";
-import { verifyPlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/verifier";
-
 async function orchestrateExecution(
   input: string,
   context: { execution_id?: string; user_context?: Record<string, unknown> } = {},
@@ -178,149 +139,67 @@ async function orchestrateExecution(
   const startTime = performance.now();
   const executionId = context.execution_id || randomUUID();
 
-  // Initialize Registry and Discovery
-  const registryManager = getRegistryManager();
-  await registryManager.discoverRemoteTools();
+  return await withNervousSystemTracing(async ({ correlationId }) => {
+    const span = startTrace("orchestration", correlationId);
 
-  // Initialize tracer
-  const tracer = createTracer(executionId);
-  tracer.addSystemEntry("execution_started", { input: input.slice(0, 100) });
+    // Initialize Registry and Discovery
+    const registryManager = getRegistryManager();
+    await registryManager.discoverRemoteTools();
 
-  try {
-    // Step 1: Create initial state
-    let state = createInitialState(executionId);
-    tracer.addStateTransitionEntry("none", "RECEIVED", true);
+    // Initialize tracer
+    const tracer = createTracer(executionId);
+    tracer.addSystemEntry("execution_started", { input: input.slice(0, 100) });
 
-    // Persist initial state
-    await saveExecutionState(state);
+    try {
+      // Step 1: Create initial state
+      let state = createInitialState(executionId);
+      tracer.addStateTransitionEntry("none", "RECEIVED", true);
 
-    // Step 2: Parse intent
-    tracer.addSystemEntry("parsing_intent");
-    const parseResult: ParseResult = await parseIntent(input, {
-      execution_id: executionId,
-      user_context: context.user_context,
-    });
+      // Persist initial state
+      await saveExecutionState(state);
 
-    // Add intent trace entry
-    tracer.addIntentEntry(
-      input,
-      parseResult.intent,
-      parseResult.latency_ms,
-      parseResult.intent.metadata.model_id || "unknown",
-      {
-        prompt: parseResult.token_usage.prompt_tokens,
-        completion: parseResult.token_usage.completion_tokens,
-      }
-    );
-
-    // Update state with intent
-    state = setIntent(state, parseResult.intent);
-    await saveExecutionState(state);
-
-    // Validate intent confidence and type
-    const validation = validateIntentConfidence(parseResult.intent);
-    
-    if (!validation.valid) {
-      tracer.addSystemEntry("intent_rejected", {
-        reason: validation.reason,
+      // Step 2: Parse intent
+      tracer.addSystemEntry("parsing_intent");
+      const parseResult: ParseResult = await parseIntent(input, {
+        execution_id: executionId,
+        user_context: context.user_context,
       });
 
-      const traceResult = tracer.finalize();
-
-      return {
-        success: false,
-        execution_id: executionId,
-        status: "REJECTED",
-        intent: parseResult.intent,
-        error: {
-          code: "INTENT_VALIDATION_FAILED",
-          message: validation.reason || "Intent validation failed",
-        },
-        trace: traceResult.trace,
-        metadata: {
-          duration_ms: Math.round(performance.now() - startTime),
-          total_tokens: traceResult.totalTokenUsage.totalTokens,
-          trace_id: executionId,
-          total_ms: Math.round(performance.now() - startTime),
-        },
-      };
-    }
-
-    // Check if intent requires clarification
-    if (parseResult.intent.requires_clarification) {
-      tracer.addSystemEntry("clarification_required", {
-        prompt: parseResult.intent.clarification_prompt,
-      });
-
-      const traceResult = tracer.finalize();
-
-      return {
-        success: false,
-        execution_id: executionId,
-        status: "REJECTED",
-        intent: parseResult.intent,
-        error: {
-          code: "CLARIFICATION_REQUIRED",
-          message:
-            parseResult.intent.clarification_prompt ||
-            "Additional information needed",
-        },
-        trace: traceResult.trace,
-        metadata: {
-          duration_ms: Math.round(performance.now() - startTime),
-          total_tokens: traceResult.totalTokenUsage.totalTokens,
-          trace_id: executionId,
-          total_ms: Math.round(performance.now() - startTime),
-        },
-      };
-    }
-
-    // Step 3: Generate plan (unless skipped)
-    let plan: Plan | undefined;
-    if (!options.skip_planning) {
-      tracer.addSystemEntry("generating_plan");
-      const planResult: PlannerResult = await generatePlan(parseResult.intent, {
-        execution_id: executionId,
-        available_tools: registryManager.listAllTools(),
-      });
-
-      // Add planning trace entry
-      tracer.addPlanningEntry(
-        { intent_type: parseResult.intent.type },
-        { plan_id: planResult.plan.id, steps: planResult.plan.steps.length },
-        planResult.latency_ms,
-        planResult.trace_entry.model_id || "unknown",
+      // Add intent trace entry
+      tracer.addIntentEntry(
+        input,
+        parseResult.intent,
+        parseResult.latency_ms,
+        parseResult.intent.metadata.model_id || "unknown",
         {
-          prompt: planResult.token_usage.prompt_tokens,
-          completion: planResult.token_usage.completion_tokens,
+          prompt: parseResult.token_usage.prompt_tokens,
+          completion: parseResult.token_usage.completion_tokens,
         }
       );
 
-      plan = planResult.plan;
+      // Update state with intent
+      state = setIntent(state, parseResult.intent);
+      await saveExecutionState(state);
 
-      // Step 3.5: Deterministic Verification Gate
-      const verification = verifyPlan(plan, DEFAULT_SAFETY_POLICY);
-      if (!verification.valid) {
-        tracer.addSystemEntry("plan_rejected", {
-          reason: verification.reason,
-          violation: verification.violation,
+      // Validate intent confidence and type
+      const validation = validateIntentConfidence(parseResult.intent);
+      
+      if (!validation.valid) {
+        tracer.addSystemEntry("intent_rejected", {
+          reason: validation.reason,
         });
 
-        // Transition state to REJECTED
-        state = transitionState(state, "REJECTED");
-        await saveExecutionState(state);
-
         const traceResult = tracer.finalize();
+        span.end();
 
         return {
           success: false,
           execution_id: executionId,
           status: "REJECTED",
           intent: parseResult.intent,
-          plan,
           error: {
-            code: verification.violation || "PLAN_VALIDATION_FAILED",
-            message: verification.reason || "Plan verification failed",
+            code: "INTENT_VALIDATION_FAILED",
+            message: validation.reason || "Intent validation failed",
           },
           trace: traceResult.trace,
           metadata: {
@@ -332,99 +211,219 @@ async function orchestrateExecution(
         };
       }
 
-      state = setPlan(state, plan);
-      await saveExecutionState(state);
-    }
-
-    // Step 4: Execute plan
-    if (plan) {
-      tracer.addSystemEntry("executing_plan", {
-        step_count: plan.steps.length,
-      });
-
-      const toolExecutor = createToolExecutorForExecution(executionId);
-      const orchestrator = new ExecutionOrchestrator(toolExecutor, {
-        traceCallback: (entry) => {
-          // Forward trace entries to our tracer
-          if (entry.step_id) {
-            tracer.addExecutionEntry(
-              entry.step_id,
-              entry.event as any,
-              entry.input,
-              entry.output,
-              entry.error as string,
-              entry.latency_ms
-            );
-          }
-        },
-      });
-
-      const executionResult: ExecutionResult = await orchestrator.execute(
-        plan,
-        executionId
-      );
-
-      // Add completion trace entry
-      tracer.addSystemEntry("execution_completed", {
-        success: executionResult.success,
-        completed_steps: executionResult.completed_steps,
-        failed_steps: executionResult.failed_steps,
-      });
-
-      // Phase 3: Session Summary Generation
-      try {
-        const sessionSummaryPrompt = `Generate a 1-sentence summary of the user's progress based on this execution:
-  Intent: ${parseResult.intent.rawText}
-  Result: ${executionResult.summary || "In progress"}
-  Status: ${executionResult.state.status}`;
-
-        const sessionSummaryResponse = await generateText({
-          modelType: "summarization",
-          prompt: sessionSummaryPrompt,
-          systemPrompt: "You are a concise progress tracker. Summarize in exactly one sentence."
+      // Check if intent requires clarification
+      if (parseResult.intent.requires_clarification) {
+        tracer.addSystemEntry("clarification_required", {
+          prompt: parseResult.intent.clarification_prompt,
         });
 
-        const memory = getMemoryClient();
-        await memory.store({
-          type: "user_context",
-          namespace: executionId,
-          data: { summary: sessionSummaryResponse.content },
-          version: 1,
-        });
-      } catch (summaryError) {
-        console.error("Failed to generate session summary:", summaryError);
+        const traceResult = tracer.finalize();
+        span.end();
+
+        return {
+          success: false,
+          execution_id: executionId,
+          status: "REJECTED",
+          intent: parseResult.intent,
+          error: {
+            code: "CLARIFICATION_REQUIRED",
+            message:
+              parseResult.intent.clarification_prompt ||
+              "Additional information needed",
+          },
+          trace: traceResult.trace,
+          metadata: {
+            duration_ms: Math.round(performance.now() - startTime),
+            total_tokens: traceResult.totalTokenUsage.totalTokens,
+            trace_id: executionId,
+            total_ms: Math.round(performance.now() - startTime),
+          },
+        };
       }
 
-      // Finalize trace
-      const traceResult = tracer.finalize();
+      // Step 3: Generate plan (unless skipped)
+      let plan: Plan | undefined;
+      if (!options.skip_planning) {
+        tracer.addSystemEntry("generating_plan");
+        const planResult: PlannerResult = await generatePlan(parseResult.intent, {
+          execution_id: executionId,
+          available_tools: registryManager.listAllTools(),
+        });
 
-      return {
-        success: executionResult.success,
-        execution_id: executionId,
-        status: executionResult.state.status,
-        intent: parseResult.intent,
-        plan,
-        execution_result: executionResult,
-        error: executionResult.error,
-        trace: traceResult.trace,
-        metadata: {
-          duration_ms: Math.round(performance.now() - startTime),
-          total_tokens: traceResult.totalTokenUsage.totalTokens,
+        // Add planning trace entry
+        tracer.addPlanningEntry(
+          { intent_type: parseResult.intent.type },
+          { plan_id: planResult.plan.id, steps: planResult.plan.steps.length },
+          planResult.latency_ms,
+          planResult.trace_entry.model_id || "unknown",
+          {
+            prompt: planResult.token_usage.prompt_tokens,
+            completion: planResult.token_usage.completion_tokens,
+          }
+        );
+
+        plan = planResult.plan;
+
+        // Step 3.5: Deterministic Verification Gate
+        const verification = verifyPlan(plan, DEFAULT_SAFETY_POLICY);
+        if (!verification.valid) {
+          tracer.addSystemEntry("plan_rejected", {
+            reason: verification.reason,
+            violation: verification.violation,
+          });
+
+          // Transition state to REJECTED
+          state = transitionState(state, "REJECTED");
+          await saveExecutionState(state);
+
+          const traceResult = tracer.finalize();
+          span.end();
+
+          return {
+            success: false,
+            execution_id: executionId,
+            status: "REJECTED",
+            intent: parseResult.intent,
+            plan,
+            error: {
+              code: verification.violation || "PLAN_VALIDATION_FAILED",
+              message: verification.reason || "Plan verification failed",
+            },
+            trace: traceResult.trace,
+            metadata: {
+              duration_ms: Math.round(performance.now() - startTime),
+              total_tokens: traceResult.totalTokenUsage.totalTokens,
+              trace_id: executionId,
+              total_ms: Math.round(performance.now() - startTime),
+            },
+          };
+        }
+
+        state = setPlan(state, plan);
+        await saveExecutionState(state);
+      }
+
+      // Step 4: Execute plan
+      if (plan) {
+        tracer.addSystemEntry("executing_plan", {
           step_count: plan.steps.length,
-          trace_id: executionId,
-          total_ms: Math.round(performance.now() - startTime),
-        },
-      };
-    } else {
-      // No plan to execute (planning skipped or no plan generated)
+        });
+
+        const toolExecutor = createToolExecutorForExecution(executionId);
+        const orchestrator = new ExecutionOrchestrator(toolExecutor, {
+          traceCallback: (entry) => {
+            // Forward trace entries to our tracer
+            if (entry.step_id) {
+              tracer.addExecutionEntry(
+                entry.step_id,
+                entry.event as any,
+                entry.input,
+                entry.output,
+                entry.error as string,
+                entry.latency_ms
+              );
+            }
+          },
+        });
+
+        const executionResult: ExecutionResult = await orchestrator.execute(
+          plan,
+          executionId
+        );
+
+        // Add completion trace entry
+        tracer.addSystemEntry("execution_completed", {
+          success: executionResult.success,
+          completed_steps: executionResult.completed_steps,
+          failed_steps: executionResult.failed_steps,
+        });
+
+        // Session Summary Generation
+        try {
+          const sessionSummaryPrompt = `Generate a 1-sentence summary of the user's progress based on this execution:
+    Intent: ${parseResult.intent.rawText}
+    Result: ${executionResult.summary || "In progress"}
+    Status: ${executionResult.state.status}`;
+
+          const sessionSummaryResponse = await generateText({
+            modelType: "summarization",
+            prompt: sessionSummaryPrompt,
+            systemPrompt: "You are a concise progress tracker. Summarize in exactly one sentence."
+          });
+
+          const memory = getMemoryClient();
+          await memory.store({
+            type: "user_context",
+            namespace: executionId,
+            data: { summary: sessionSummaryResponse.content },
+            version: 1,
+          });
+        } catch (summaryError) {
+          console.error("Failed to generate session summary:", summaryError);
+        }
+
+        // Finalize trace
+        const traceResult = tracer.finalize();
+        span.end();
+
+        return {
+          success: executionResult.success,
+          execution_id: executionId,
+          status: executionResult.state.status,
+          intent: parseResult.intent,
+          plan,
+          execution_result: executionResult,
+          error: executionResult.error,
+          trace: traceResult.trace,
+          metadata: {
+            duration_ms: Math.round(performance.now() - startTime),
+            total_tokens: traceResult.totalTokenUsage.totalTokens,
+            step_count: plan.steps.length,
+            trace_id: executionId,
+            total_ms: Math.round(performance.now() - startTime),
+          },
+        };
+      } else {
+        // No plan to execute (planning skipped or no plan generated)
+        const traceResult = tracer.finalize();
+        span.end();
+
+        return {
+          success: true,
+          execution_id: executionId,
+          status: "PLANNED",
+          intent: parseResult.intent,
+          plan,
+          trace: traceResult.trace,
+          metadata: {
+            duration_ms: Math.round(performance.now() - startTime),
+            total_tokens: traceResult.totalTokenUsage.totalTokens,
+            trace_id: executionId,
+            total_ms: Math.round(performance.now() - startTime),
+          },
+        };
+      }
+    } catch (error) {
+      // Handle orchestration errors
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const errorCode =
+        error && typeof error === "object" && "code" in error
+          ? String(error.code)
+          : "ORCHESTRATION_ERROR";
+
+      tracer.addErrorEntry("system", errorCode, errorMessage);
       const traceResult = tracer.finalize();
+      span.end();
 
       return {
-        success: true,
+        success: false,
         execution_id: executionId,
-        status: "PLANNED",
-        intent: parseResult.intent,
-        plan,
+        status: "FAILED",
+        error: {
+          code: errorCode,
+          message: errorMessage,
+        },
         trace: traceResult.trace,
         metadata: {
           duration_ms: Math.round(performance.now() - startTime),
@@ -434,41 +433,8 @@ async function orchestrateExecution(
         },
       };
     }
-  } catch (error) {
-    // Handle orchestration errors
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
-    const errorCode =
-      error && typeof error === "object" && "code" in error
-        ? String(error.code)
-        : "ORCHESTRATION_ERROR";
-
-    tracer.addErrorEntry("system", errorCode, errorMessage);
-    const traceResult = tracer.finalize();
-
-    return {
-      success: false,
-      execution_id: executionId,
-      status: "FAILED",
-      error: {
-        code: errorCode,
-        message: errorMessage,
-      },
-      trace: traceResult.trace,
-      metadata: {
-        duration_ms: Math.round(performance.now() - startTime),
-        total_tokens: traceResult.totalTokenUsage.totalTokens,
-        trace_id: executionId,
-        total_ms: Math.round(performance.now() - startTime),
-      },
-    };
-  }
+  }, { 'x-trace-id': executionId });
 }
-
-// ============================================================================
-// GET EXECUTION STATUS
-// Retrieve execution status and trace
-// ============================================================================
 
 async function getExecutionStatus(
   executionId: string
@@ -505,10 +471,6 @@ async function getExecutionStatus(
     };
   }
 }
-
-// ============================================================================
-// API ROUTE HANDLERS
-// ============================================================================
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const requestStartTime = performance.now();

@@ -5,8 +5,10 @@ import { createAuditLog } from "@/lib/audit";
 import { getPlanWithAvoidance } from "@/app/actions";
 import { getMemoryClient } from "@/lib/engine/memory";
 import { z } from "zod";
+import { withNervousSystemTracing } from "@repo/shared";
+import { startTrace } from "@/lib/observability";
 
-export const runtime = "edge";
+export const runtime = "nodejs"; // AsyncLocalStorage needs nodejs runtime
 
 const IntentRequestSchema = z.object({
   text: z.string().min(1),
@@ -27,58 +29,64 @@ export async function POST(req: NextRequest) {
     const { text } = validatedBody.data;
     const userId = req.headers.get("x-forwarded-for") || "anonymous";
 
-    try {
-      const { avoidTools } = await getPlanWithAvoidance(text, userId);
+    return await withNervousSystemTracing(async ({ correlationId }) => {
+      const span = startTrace("intent_inference", correlationId);
       
-      // Fetch history for contextual resolution
-      const memory = getMemoryClient();
-      const recentStates = await memory.getRecentSuccessfulIntents(3);
-      const history = recentStates
-        .map(s => s.intent)
-        .filter((i): i is any => i !== undefined);
+      try {
+        const { avoidTools } = await getPlanWithAvoidance(text, userId);
+        
+        // Fetch history for contextual resolution
+        const memory = getMemoryClient();
+        const recentStates = await memory.getRecentSuccessfulIntents(3);
+        const history = recentStates
+          .map(s => s.intent)
+          .filter((i): i is any => i !== undefined);
 
-      const { hypotheses, rawResponse } = await inferIntent(text, avoidTools, history);
-      const intent = hypotheses.primary;
-      
-      let plan = null;
-      let auditLogId = null;
+        const { hypotheses, rawResponse } = await inferIntent(text, avoidTools, history);
+        const intent = hypotheses.primary;
+        
+        let plan = null;
+        let auditLogId = null;
 
-      if (!hypotheses.isAmbiguous && (intent.type === "PLANNING" || intent.confidence > 0.7)) {
-        plan = await generatePlan(text);
-      }
-      
-      const auditLog = await createAuditLog(intent, plan || undefined, undefined, userId);
-      auditLogId = auditLog.id;
-      
-      // Phase 3: Debuggability & Inspection
-      console.log("[Intent Engine] Input:", text);
-      console.log("[Intent Engine] Inferred Intent:", JSON.stringify(intent, null, 2));
-      if (plan) {
-        console.log("[Intent Engine] Generated Plan:", JSON.stringify(plan, null, 2));
-      }
-
-      return NextResponse.json({
-        success: true,
-        intent,
-        plan,
-        audit_log_id: auditLogId,
-        // Phase 3: Raw model output is accessible
-        _debug: {
-          timestamp: new Date().toISOString(),
-          model: "glm-4.7-flash",
-          rawResponse,
-          historyCount: history.length
+        if (!hypotheses.isAmbiguous && (intent.type === "PLANNING" || intent.confidence > 0.7)) {
+          plan = await generatePlan(text);
         }
-      });
-    } catch (error: any) {
-      console.error("[Intent Engine] Inference Error:", error);
-      
-      return NextResponse.json({ 
-        success: false,
-        error: "Failed to infer intent", 
-        details: error.message,
-      }, { status: 500 });
-    }
+        
+        const auditLog = await createAuditLog(intent, plan || undefined, undefined, userId);
+        auditLogId = auditLog.id;
+        
+        // Phase 3: Debuggability & Inspection
+        console.log("[Intent Engine] Input:", text);
+        console.log("[Intent Engine] Inferred Intent:", JSON.stringify(intent, null, 2));
+        if (plan) {
+          console.log("[Intent Engine] Generated Plan:", JSON.stringify(plan, null, 2));
+        }
+
+        span.end();
+
+        return NextResponse.json({
+          success: true,
+          intent,
+          plan,
+          audit_log_id: auditLogId,
+          _debug: {
+            timestamp: new Date().toISOString(),
+            model: "glm-4.7-flash",
+            rawResponse,
+            historyCount: history.length
+          }
+        });
+      } catch (error: any) {
+        span.end();
+        console.error("[Intent Engine] Inference Error:", error);
+        
+        return NextResponse.json({ 
+          success: false,
+          error: "Failed to infer intent", 
+          details: error.message,
+        }, { status: 500 });
+      }
+    }, { 'x-trace-id': req.headers.get('x-trace-id') || undefined });
   } catch (error: any) {
     return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
   }

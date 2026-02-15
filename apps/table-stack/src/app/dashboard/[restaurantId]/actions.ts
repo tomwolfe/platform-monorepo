@@ -8,7 +8,7 @@ import { revalidatePath } from 'next/cache';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import Ably from 'ably';
-import { NotifyService } from '@/lib/notify';
+import { NotifyService } from '@/lib/notifications';
 import { generateApiKey } from '@/lib/auth';
 
 const SettingsSchema = z.object({

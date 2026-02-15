@@ -1,7 +1,7 @@
 import { ToolDefinition, ToolDefinitionMetadata, ExecuteToolResult } from "./tools/types";
 import { geocode_location, search_restaurant } from "./tools/location_search";
 import { add_calendar_event } from "./tools/calendar";
-import { TOOLS, getTool, getToolsByCategory, getToolsRequiringConfirmation, listTools } from "./tools/registry";
+import { TOOLS, getTool, getToolsByCategory, getToolsRequiringConfirmation, listTools, discoverDynamicTools } from "./tools/registry";
 import { GeocodeSchema, SearchRestaurantSchema } from "@repo/mcp-protocol";
 
 /**
@@ -42,6 +42,7 @@ export {
   getToolsByCategory,
   getToolsRequiringConfirmation,
   listTools,
+  discoverDynamicTools,
   TOOLS,
   GeocodeSchema,
   SearchRestaurantSchema

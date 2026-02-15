@@ -226,6 +226,30 @@ server.tool(
   }
 );
 
+server.tool(
+  (TOOLS.tableStack as any).getLiveOperationalState.name,
+  (TOOLS.tableStack as any).getLiveOperationalState.description,
+  (TOOLS.tableStack as any).getLiveOperationalState.schema.shape,
+  async ({ restaurant_id }: any) => {
+    const key = `state:${restaurant_id}:tables`;
+    const { getRedisClient } = await import("@repo/shared");
+    const redis = getRedisClient("table-stack", "ts");
+    
+    const liveData = await redis.hgetall(key);
+    
+    return {
+      content: [{
+        type: "text" as const,
+        text: JSON.stringify({
+          restaurant_id,
+          live_data: liveData || {},
+          message: liveData ? "Live operational state retrieved successfully." : "No live data available."
+        })
+      }]
+    };
+  }
+);
+
 // Manage active transports
 let transport: SSEServerTransport | null = null;
 

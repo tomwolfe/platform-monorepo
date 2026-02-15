@@ -1,9 +1,13 @@
 import { Plan, PlanSchema, Intent } from "./schema";
 import { env } from "./config";
-import { getToolDefinitions } from "./tools";
+import { getToolDefinitions, discoverDynamicTools } from "./tools";
 
 export async function generatePlan(intent: string | Intent, userLocation?: { lat: number; lng: number } | null): Promise<Plan> {
+  // Discover dynamic tools before planning
+  await discoverDynamicTools().catch(e => console.error("Dynamic tool discovery failed:", e));
+
   const intentText = typeof intent === "string" ? intent : intent.rawText;
+
   const apiKey = env.LLM_API_KEY;
   const baseUrl = env.LLM_BASE_URL;
   const model = env.LLM_MODEL;

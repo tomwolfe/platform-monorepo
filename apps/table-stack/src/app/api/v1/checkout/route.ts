@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from "@repo/database";
 import { restaurantReservations } from "@repo/database";
 import { eq } from 'drizzle-orm';
-import { NotifyService } from '@/lib/notify';
+import { NotifyService } from '@/lib/notifications';
 
 export const runtime = 'edge';
 

@@ -1,19 +1,36 @@
+const CLUSTER_ENV = process.env.CLUSTER_ENV === 'true';
+
+export const getServiceUrl = (serviceName: string, defaultPort: number) => {
+  const envVarName = `${serviceName.toUpperCase()}_URL`;
+  if (process.env[envVarName]) {
+    return process.env[envVarName]!;
+  }
+  
+  if (CLUSTER_ENV) {
+    // Internal K8s/Docker DNS: http://service-name:port
+    return `http://${serviceName.toLowerCase().replace('_', '-')}:${defaultPort}`;
+  }
+  
+  return `http://localhost:${defaultPort}`;
+};
+
 export const SERVICES = {
   INTENTION_ENGINE: {
-    URL: process.env.INTENTION_ENGINE_URL || 'http://localhost:3000',
-    API_URL: process.env.INTENTION_ENGINE_API_URL || 'http://localhost:3000/api',
+    get URL() { return getServiceUrl('INTENTION_ENGINE', 3000); },
+    get API_URL() { return `${this.URL}/api`; },
   },
   STOREFRONT: {
-    URL: process.env.STOREFRONT_URL || 'http://localhost:3003',
-    MCP_URL: process.env.STOREFRONT_MCP_URL || 'http://localhost:3003/api/mcp',
+    get URL() { return getServiceUrl('STOREFRONT', 3003); },
+    get MCP_URL() { return `${this.URL}/api/mcp`; },
   },
   TABLESTACK: {
-    URL: process.env.TABLESTACK_URL || 'http://localhost:3005',
-    API_URL: process.env.TABLESTACK_API_URL || 'http://localhost:3005/api/v1',
-    MCP_URL: process.env.TABLESTACK_MCP_URL || 'http://localhost:3005/api/mcp',
+    get URL() { return getServiceUrl('TABLESTACK', 3005); },
+    get API_URL() { return `${this.URL}/api/v1`; },
+    get MCP_URL() { return `${this.URL}/api/mcp`; },
   },
   OPENDELIVERY: {
-    URL: process.env.OPENDELIVERY_URL || 'http://localhost:3001',
-    MCP_URL: process.env.OPENDELIVERY_MCP_URL || 'http://localhost:3001/api/mcp',
+    get URL() { return getServiceUrl('OPENDELIVERY', 3001); },
+    get MCP_URL() { return `${this.URL}/api/mcp`; },
   },
 } as const;
+

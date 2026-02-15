@@ -10,7 +10,7 @@ import { getUserPreferences, updateUserPreferences } from "@/lib/preferences";
 import { redis } from "@/lib/redis-client";
 import { getMcpClients } from "@/lib/mcp-client";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const openai = createOpenAI({

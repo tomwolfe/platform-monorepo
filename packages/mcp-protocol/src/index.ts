@@ -43,6 +43,26 @@ export const GetMenuSchema = z.object({
   store_id: z.string().describe("The internal ID of the store.")
 });
 
+export const GetLiveOperationalStateSchema = z.object({
+  restaurant_id: z.string().describe("The unique identifier for the restaurant.")
+});
+
+export const ToolCapabilitySchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  inputSchema: z.any(),
+  requires_confirmation: z.boolean().default(false),
+});
+
+export const AppCapabilitiesSchema = z.object({
+  app_name: z.string(),
+  version: z.string(),
+  tools: z.array(ToolCapabilitySchema),
+});
+
+export type ToolCapability = zod.infer<typeof ToolCapabilitySchema>;
+export type AppCapabilities = zod.infer<typeof AppCapabilitiesSchema>;
+
 export const TOOLS = {
   tableStack: {
     getAvailability: {
@@ -54,6 +74,11 @@ export const TOOLS = {
       name: "bookTable",
       description: "Finalizes a reservation on TableStack. REQUIRES CONFIRMATION.",
       schema: BookTableSchema,
+    },
+    getLiveOperationalState: {
+      name: "getLiveOperationalState",
+      description: "Retrieve real-time table status for a restaurant.",
+      schema: GetLiveOperationalStateSchema,
     }
   },
   openDelivery: {

@@ -4,7 +4,7 @@ import { db } from "@repo/database";
 import { restaurants, restaurantReservations, guestProfiles, restaurantTables } from "@repo/database";
 import { and, eq, gte, lte, or, sql } from 'drizzle-orm';
 import { addMinutes, parseISO } from 'date-fns';
-import { NotifyService } from '@/lib/notify';
+import { NotifyService } from '@/lib/notifications';
 import { validateRequest } from '@/lib/auth';
 import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, withNervousSystemTracing, injectTracingHeaders } from '@repo/shared';
 import { redis } from '@/lib/redis';

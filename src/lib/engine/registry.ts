@@ -27,7 +27,9 @@ export class RegistryManager {
     }
     
     // OpenDeliver uses mcpConfig for transport
-    this.mcpClients.set("opendeliver", new MCPClient(mcpConfig.transport.opendeliver));
+    if (mcpConfig.transport.opendeliver) {
+      this.mcpClients.set("opendeliver", new MCPClient(mcpConfig.transport.opendeliver));
+    }
 
     if (process.env.TABLESTACK_MCP_URL) {
       this.mcpClients.set("tablestack", new MCPClient(process.env.TABLESTACK_MCP_URL));

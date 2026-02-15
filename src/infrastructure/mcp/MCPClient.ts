@@ -114,10 +114,7 @@ export class MCPClient {
       "order_summary": "items",
       "phone_number": "phone",
       "email_address": "email",
-      "delivery_address": "location_name",
-      "pickup_address": "location_name",
       ...mcpConfig.parameter_aliases, // Use centralized aliases
-      "restaurantName": "pickup_address",
       "guestEmail": "email",
       "target_destination": "delivery_address",
       "source_location": "pickup_address",

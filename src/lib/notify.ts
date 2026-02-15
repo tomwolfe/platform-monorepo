@@ -34,8 +34,9 @@ export class NotifyService {
     await this.broadcast(restaurantId, 'reservation_rejected', data);
 
     // 2. Webhook to IntentionEngine
-    const webhookUrl = process.env.INTENTION_ENGINE_WEBHOOK_URL;
-    const webhookSecret = process.env.INTERNAL_SYSTEM_KEY || 'fallback_secret';
+    const { getIntentionEngineWebhookUrl, getInternalSystemKey } = await import('./env');
+    const webhookUrl = getIntentionEngineWebhookUrl();
+    const webhookSecret = getInternalSystemKey();
 
     if (webhookUrl) {
       const payload = JSON.stringify({

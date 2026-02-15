@@ -197,8 +197,9 @@ export async function POST(req: NextRequest) {
 
     // High-Value Guest Hook: Trigger logistics if guest is frequent
     if ((profile.visitCount ?? 0) >= 5) {
-      const webhookUrl = process.env.INTENTION_ENGINE_WEBHOOK_URL || 'http://localhost:3000/api/webhooks';
-      const webhookSecret = process.env.INTERNAL_SYSTEM_KEY || 'fallback_secret';
+      const { getIntentionEngineWebhookUrl, getInternalSystemKey } = await import('@/lib/env');
+      const webhookUrl = getIntentionEngineWebhookUrl();
+      const webhookSecret = getInternalSystemKey();
       
       if (webhookUrl) {
         const payload = JSON.stringify({

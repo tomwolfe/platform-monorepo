@@ -78,7 +78,7 @@ export class NotifyService {
         <h1>Congratulations!</h1>
         <p>A customer has just requested a reservation at <strong>${restaurantName}</strong> via TableStack.</p>
         <p>We've created a "Shadow Profile" for your restaurant to ensure you don't miss out on these bookings.</p>
-        <p>To manage your reservations, customize your profile, and claim your account, please click the link below:</p>
+        <p>To manage your restaurantReservations, customize your profile, and claim your account, please click the link below:</p>
         <p><a href="${claimUrl}">Claim My Restaurant</a></p>
         <p>If you have any questions, feel free to reply to this email.</p>
       `,

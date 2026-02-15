@@ -12,7 +12,9 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "@repo/database": "workspace:*",
     "@repo/mcp-protocol": "workspace:*",
+    "@repo/ui-theme": "workspace:*",
     "@upstash/redis": "^1.36.2",
     "ably": "^2.17.1",
     "jose": "^6.1.3",

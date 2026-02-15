@@ -1,5 +1,4 @@
-import { db } from "@/lib/db";
-import { products } from "@/lib/db/schema";
+import { db, storeProducts } from "@repo/database";
 import { 
   Table, 
   TableBody, 
@@ -26,7 +25,7 @@ export default async function AdminProductsPage() {
     redirect("/");
   }
 
-  const allProducts = await db.select().from(products).orderBy(desc(products.createdAt));
+  const allProducts = await db.select().from(storeProducts).orderBy(desc(storeProducts.createdAt));
 
   return (
     <div className="space-y-6">

@@ -1,7 +1,7 @@
 "use server";
 
-import { db } from "@/db";
-import { restaurants, reservations, waitlist } from "@/db/schema";
+import { db } from "@repo/database";
+import { restaurants, restaurantReservations, restaurantWaitlist } from "@repo/database";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { NotifyService } from "@/lib/notify";
@@ -22,7 +22,7 @@ export async function createReservation(data: {
     throw new Error("Invalid restaurant or table ID");
   }
 
-  const [reservation] = await db.insert(reservations).values({
+  const [reservation] = await db.insert(restaurantReservations).values({
     restaurantId: data.restaurantId,
     tableId: data.tableId,
     guestName: data.guestName,
@@ -65,9 +65,9 @@ export async function createReservation(data: {
 }
 
 export async function cancelReservation(reservationId: string) {
-  const [reservation] = await db.update(reservations)
+  const [reservation] = await db.update(restaurantReservations)
     .set({ status: 'cancelled' })
-    .where(eq(reservations.id, reservationId))
+    .where(eq(restaurantReservations.id, reservationId))
     .returning();
 
   if (reservation) {
@@ -98,7 +98,7 @@ export async function addToWaitlist(data: {
 
   if (!restaurant) throw new Error("Restaurant not found");
 
-  const [entry] = await db.insert(waitlist).values({
+  const [entry] = await db.insert(restaurantWaitlist).values({
     restaurantId: data.restaurantId,
     guestName: data.guestName,
     guestEmail: data.guestEmail,
@@ -109,7 +109,7 @@ export async function addToWaitlist(data: {
   if (entry && process.env.ABLY_API_KEY) {
     const ably = new Ably.Rest(process.env.ABLY_API_KEY);
     const channel = ably.channels.get(`restaurant:${data.restaurantId}`);
-    await channel.publish('waitlist-updated', {
+    await channel.publish('restaurantWaitlist-updated', {
       id: entry.id,
       guestName: entry.guestName,
       partySize: entry.partySize,

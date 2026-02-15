@@ -1,7 +1,6 @@
 "use server";
 
-import { db } from "@/lib/db";
-import { products, stock, users } from "@/lib/db/schema";
+import { db, storeProducts, stock, users } from "@repo/database";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
@@ -37,7 +36,7 @@ export async function createProduct(data: z.infer<typeof productSchema>) {
   const validated = productSchema.parse(data);
 
   return await db.transaction(async (tx) => {
-    const [newProduct] = await tx.insert(products).values({
+    const [newProduct] = await tx.insert(storeProducts).values({
       name: validated.name,
       description: validated.description,
       price: validated.price,
@@ -61,12 +60,12 @@ export async function createProduct(data: z.infer<typeof productSchema>) {
 export async function updateProduct(id: string, data: Partial<z.infer<typeof productSchema>>) {
   await validateMerchant();
   
-  const [updatedProduct] = await db.update(products)
+  const [updatedProduct] = await db.update(storeProducts)
     .set({
       ...data,
       updatedAt: new Date(),
     })
-    .where(eq(products.id, id))
+    .where(eq(storeProducts.id, id))
     .returning();
 
   revalidatePath("/inventory");
@@ -77,7 +76,7 @@ export async function updateProduct(id: string, data: Partial<z.infer<typeof pro
 export async function deleteProduct(id: string) {
   await validateMerchant();
 
-  await db.delete(products).where(eq(products.id, id));
+  await db.delete(storeProducts).where(eq(storeProducts.id, id));
 
   revalidatePath("/inventory");
   revalidatePath("/admin/products");

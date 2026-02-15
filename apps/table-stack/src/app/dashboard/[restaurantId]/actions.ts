@@ -1,7 +1,6 @@
 'use server';
 
-import { db } from '@/db';
-import { restaurantTables, restaurants, reservations, waitlist } from '@/db/schema';
+import { db, restaurantTables, restaurants, restaurantReservations, restaurantWaitlist } from '@repo/database';
 import { signBridgeToken } from '@/lib/tokens';
 import { redirect } from 'next/navigation';
 import { currentUser } from '@clerk/nextjs/server';
@@ -52,10 +51,10 @@ export async function redirectToStoreFront(restaurantId?: string) {
 export async function deleteReservation(reservationId: string, restaurantId: string) {
   await verifyOwnership(restaurantId);
   try {
-    await db.delete(reservations)
+    await db.delete(restaurantReservations)
       .where(and(
-        eq(reservations.id, reservationId),
-        eq(reservations.restaurantId, restaurantId)
+        eq(restaurantReservations.id, reservationId),
+        eq(restaurantReservations.restaurantId, restaurantId)
       ));
     revalidatePath(`/dashboard/${restaurantId}`);
   } catch (error) {
@@ -71,14 +70,14 @@ export async function updateReservation(
 ) {
   await verifyOwnership(restaurantId);
   try {
-    await db.update(reservations)
+    await db.update(restaurantReservations)
       .set({
         ...updates,
         ...(updates.startTime ? { endTime: new Date(updates.startTime.getTime() + 90 * 60000) } : {}), // Default to 90 min if updated
       })
       .where(and(
-        eq(reservations.id, reservationId),
-        eq(reservations.restaurantId, restaurantId)
+        eq(restaurantReservations.id, reservationId),
+        eq(restaurantReservations.restaurantId, restaurantId)
       ));
     revalidatePath(`/dashboard/${restaurantId}`);
   } catch (error) {
@@ -287,11 +286,11 @@ export async function updateWaitlistStatus(
 ) {
   await verifyOwnership(restaurantId);
 
-  const [entry] = await db.update(waitlist)
+  const [entry] = await db.update(restaurantWaitlist)
     .set({ status, updatedAt: new Date() })
     .where(and(
-      eq(waitlist.id, waitlistId),
-      eq(waitlist.restaurantId, restaurantId)
+      eq(restaurantWaitlist.id, waitlistId),
+      eq(restaurantWaitlist.restaurantId, restaurantId)
     ))
     .returning();
 
@@ -305,7 +304,7 @@ export async function updateWaitlistStatus(
   if (process.env.ABLY_API_KEY) {
     const ably = new Ably.Rest(process.env.ABLY_API_KEY);
     const channel = ably.channels.get(`restaurant:${restaurantId}`);
-    await channel.publish('waitlist-updated', {
+    await channel.publish('restaurantWaitlist-updated', {
       id: entry.id,
       status: entry.status,
     });

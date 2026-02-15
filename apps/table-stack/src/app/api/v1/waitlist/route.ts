@@ -1,7 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/db';
-import { waitlist } from '@/db/schema/waitlist';
+import { db, restaurantWaitlist } from "@repo/database";
 import { and, eq } from 'drizzle-orm';
 import { validateRequest } from '@/lib/auth';
 
@@ -27,10 +26,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const entries = await db.query.waitlist.findMany({
+    const entries = await db.query.restaurantWaitlist.findMany({
       where: and(
-        eq(waitlist.restaurantId, restaurantId),
-        eq(waitlist.status, 'waiting')
+        eq(restaurantWaitlist.restaurantId, restaurantId),
+        eq(restaurantWaitlist.status, 'waiting')
       ),
     });
 

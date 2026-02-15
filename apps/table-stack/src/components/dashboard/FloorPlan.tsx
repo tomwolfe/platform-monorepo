@@ -143,7 +143,7 @@ function StatusZone({
 
 export default function FloorPlan({ 
   initialTables, 
-  reservations = [], 
+  restaurantReservations = [], 
   onSave, 
   onStatusChange,
   onAdd,
@@ -152,7 +152,7 @@ export default function FloorPlan({
   restaurantId 
 }: { 
   initialTables: RestaurantTable[], 
-  reservations?: Reservation[],
+  restaurantReservations?: Reservation[],
   onSave: (tables: any[]) => Promise<void>,
   onStatusChange: (tableId: string, status: 'vacant' | 'occupied' | 'dirty') => Promise<void>,
   onAdd: () => Promise<void>,
@@ -349,7 +349,7 @@ export default function FloorPlan({
             }} />
             
             {tables.map((table) => {
-              const tableReservation = reservations.find(r => r.tableId === table.id);
+              const tableReservation = restaurantReservations.find(r => r.tableId === table.id);
               return (
                 <DraggableTable 
                   key={table.id} 

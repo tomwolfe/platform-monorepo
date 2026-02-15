@@ -9,9 +9,8 @@ import {
   BOOK_RESERVATION_TOOL,
   DISCOVER_RESTAURANT_TOOL,
   TOOL_METADATA
-} from "./tools.js";
-import { db } from "../db/index.js";
-import { restaurants, restaurantTables, reservations } from "../db/schema/index.js";
+} from "@repo/mcp-protocol";
+import { db, restaurants, restaurantTables, restaurantReservations } from "@repo/database";
 import { and, eq, gte, or, sql } from 'drizzle-orm';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
@@ -32,38 +31,38 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
   const endTime = addMinutes(startTime, duration);
 
   const occupiedTableIdsResult = await db
-    .select({ tableId: reservations.tableId })
-    .from(reservations)
+    .select({ tableId: restaurantReservations.tableId })
+    .from(restaurantReservations)
     .where(
       and(
-        eq(reservations.restaurantId, restaurantId),
+        eq(restaurantReservations.restaurantId, restaurantId),
         or(
-          eq(reservations.status, 'confirmed'),
+          eq(restaurantReservations.status, 'confirmed'),
           and(
-            eq(reservations.isVerified, false),
-            gte(reservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
+            eq(restaurantReservations.isVerified, false),
+            gte(restaurantReservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
           )
         ),
-        sql`(${reservations.startTime}, ${reservations.endTime}) OVERLAPS (${startTime.toISOString()}::timestamptz, ${endTime.toISOString()}::timestamptz)`
+        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${startTime.toISOString()}::timestamptz, ${endTime.toISOString()}::timestamptz)`
       )
     );
 
   const occupiedTableIds = occupiedTableIdsResult.map(r => r.tableId).filter(Boolean) as string[];
 
   const occupiedCombinedTableIdsResult = await db
-    .select({ combinedTableIds: reservations.combinedTableIds })
-    .from(reservations)
+    .select({ combinedTableIds: restaurantReservations.combinedTableIds })
+    .from(restaurantReservations)
     .where(
       and(
-        eq(reservations.restaurantId, restaurantId),
+        eq(restaurantReservations.restaurantId, restaurantId),
         or(
-          eq(reservations.status, 'confirmed'),
+          eq(restaurantReservations.status, 'confirmed'),
           and(
-            eq(reservations.isVerified, false),
-            gte(reservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
+            eq(restaurantReservations.isVerified, false),
+            gte(restaurantReservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
           )
         ),
-        sql`(${reservations.startTime}, ${reservations.endTime}) OVERLAPS (${startTime.toISOString()}::timestamptz, ${endTime.toISOString()}::timestamptz)`
+        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${startTime.toISOString()}::timestamptz, ${endTime.toISOString()}::timestamptz)`
       )
     );
 
@@ -236,7 +235,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const isCombined = tableId.includes('+');
         const tableIds = isCombined ? tableId.split('+') : [tableId];
 
-        const [newReservation] = await db.insert(reservations).values({
+        const [newReservation] = await db.insert(restaurantReservations).values({
           restaurantId,
           tableId: isCombined ? null : tableId,
           combinedTableIds: isCombined ? tableIds : null,

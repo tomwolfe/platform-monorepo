@@ -1,23 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { stores, products, stock } from '@/lib/db/schema';
+import { db, stores, storeProducts, stock } from '@repo/database';
 import { eq, and, gt, sql, ilike } from 'drizzle-orm';
-import { z } from 'zod';
-import { TOOL_METADATA, FIND_PRODUCT_NEARBY_TOOL, RESERVE_STOCK_ITEM_TOOL, PARAMETER_ALIASES } from '@/lib/mcp';
+import { 
+  FindProductSchema, 
+  ReserveStockSchema, 
+  FIND_PRODUCT_NEARBY_TOOL, 
+  RESERVE_STOCK_ITEM_TOOL, 
+  TOOL_METADATA,
+  PARAMETER_ALIASES
+} from '@repo/mcp-protocol';
 import { SecurityProvider } from '@/lib/security';
-
-const findProductSchema = z.object({
-  product_query: z.string(),
-  user_lat: z.number(),
-  user_lng: z.number(),
-  max_radius_miles: z.number().default(10)
-});
-
-const reserveStockSchema = z.object({
-  product_id: z.string(),
-  venue_id: z.string(), // Standardized cross-project identifier
-  quantity: z.number().int().positive()
-});
 
 /**
  * Security Middleware: Validates INTERNAL_SYSTEM_KEY header
@@ -77,7 +69,7 @@ export async function POST(req: NextRequest) {
     const mappedParams = mapParameters(params);
 
     if (tool === 'find_product_nearby') {
-      const { product_query, user_lat, user_lng, max_radius_miles } = findProductSchema.parse(mappedParams);
+      const { product_query, user_lat, user_lng, max_radius_miles } = FindProductSchema.parse(mappedParams);
 
       // Haversine formula for distance in miles
       // 3959 * acos( cos( radians(user_lat) ) * cos( radians( latitude ) ) * cos( radians( longitude ) - radians(user_lng) ) + sin( radians(user_lat) ) * sin( radians( latitude ) ) )
@@ -95,16 +87,16 @@ export async function POST(req: NextRequest) {
       const results = await db
         .select({
           store: stores,
-          product: products,
+          product: storeProducts,
           stock: stock,
           distance: distance
         })
         .from(stock)
         .innerJoin(stores, eq(stock.storeId, stores.id))
-        .innerJoin(products, eq(stock.productId, products.id))
+        .innerJoin(storeProducts, eq(stock.productId, storeProducts.id))
         .where(
           and(
-            ilike(products.name, `%${product_query}%`),
+            ilike(storeProducts.name, `%${product_query}%`),
             gt(stock.availableQuantity, 0),
             sql`${distance} < ${max_radius_miles}`
           )
@@ -134,7 +126,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (tool === 'reserve_stock_item') {
-      const { product_id, venue_id, quantity } = reserveStockSchema.parse(mappedParams);
+      const { product_id, venue_id, quantity } = ReserveStockSchema.parse(mappedParams);
       
       // venue_id is mapped to store_id internally
       const store_id = venue_id;

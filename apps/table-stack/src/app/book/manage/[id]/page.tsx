@@ -1,5 +1,5 @@
-import { db } from "@/db";
-import { reservations } from "@/db/schema";
+import { db } from "@repo/database";
+import { restaurantReservations } from "@repo/database";
 import { eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { format } from "date-fns";
@@ -11,8 +11,8 @@ export default async function ManageBookingPage(props: { params: Promise<{ id: s
   const params = await props.params;
   const reservationId = params.id;
 
-  const reservation = await db.query.reservations.findFirst({
-    where: eq(reservations.id, reservationId),
+  const reservation = await db.query.restaurantReservations.findFirst({
+    where: eq(restaurantReservations.id, reservationId),
     with: {
       restaurant: true,
       table: true,

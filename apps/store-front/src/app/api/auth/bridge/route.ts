@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyBridgeToken } from '@/lib/tokens';
-import { db } from '@/lib/db';
-import { users, stores, products, stock } from '@/lib/db/schema';
+import { db, users, stores, storeProducts, stock } from '@repo/database';
 import { eq, sql } from 'drizzle-orm';
 import { getTableStackRestaurant, getTableStackInventory } from '@/lib/tablestack';
 
@@ -53,7 +52,7 @@ export async function GET(req: NextRequest) {
       if (tsInventory && Array.isArray(tsInventory)) {
         for (const item of tsInventory) {
           // Upsert product
-          await db.insert(products).values({
+          await db.insert(storeProducts).values({
             id: item.id,
             name: item.name,
             description: item.description,
@@ -61,7 +60,7 @@ export async function GET(req: NextRequest) {
             category: item.category,
             updatedAt: new Date(),
           }).onConflictDoUpdate({
-            target: products.id,
+            target: storeProducts.id,
             set: {
               name: item.name,
               description: item.description,

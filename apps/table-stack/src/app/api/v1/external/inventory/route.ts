@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/db';
-import { products, inventoryLevels } from '@/db/schema';
+import { db, restaurantProducts, inventoryLevels } from "@repo/database";
 import { eq } from 'drizzle-orm';
 import { SecurityProvider } from '@/lib/security';
 
@@ -17,19 +16,19 @@ export async function GET(req: NextRequest) {
   try {
     const query = db
       .select({
-        id: products.id,
-        name: products.name,
-        description: products.description,
-        price: products.price,
-        category: products.category,
+        id: restaurantProducts.id,
+        name: restaurantProducts.name,
+        description: restaurantProducts.description,
+        price: restaurantProducts.price,
+        category: restaurantProducts.category,
         availableQuantity: inventoryLevels.availableQuantity,
-        restaurantId: products.restaurantId,
+        restaurantId: restaurantProducts.restaurantId,
       })
-      .from(products)
-      .innerJoin(inventoryLevels, eq(products.id, inventoryLevels.productId));
+      .from(restaurantProducts)
+      .innerJoin(inventoryLevels, eq(restaurantProducts.id, inventoryLevels.productId));
 
     if (restaurantId) {
-      query.where(eq(products.restaurantId, restaurantId));
+      query.where(eq(restaurantProducts.restaurantId, restaurantId));
     }
 
     const results = await query;

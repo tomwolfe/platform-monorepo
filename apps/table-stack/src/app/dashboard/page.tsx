@@ -1,5 +1,5 @@
-import { db } from '@/db';
-import { restaurants } from '@/db/schema';
+import { db } from "@repo/database";
+import { restaurants } from "@repo/database";
 import { currentUser } from '@clerk/nextjs/server';
 import { eq } from 'drizzle-orm';
 import { redirect } from 'next/navigation';

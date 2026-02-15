@@ -1,5 +1,5 @@
-import { db } from '@/db';
-import { reservations } from '@/db/schema';
+import { db } from "@repo/database";
+import { restaurantReservations } from "@repo/database";
 import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
 import { NotifyService } from '@/lib/notify';
@@ -8,8 +8,8 @@ export default async function VerifyPage(props: { params: Promise<{ token: strin
   const params = await props.params;
   const token = params.token;
 
-  const reservation = await db.query.reservations.findFirst({
-    where: eq(reservations.verificationToken, token),
+  const reservation = await db.query.restaurantReservations.findFirst({
+    where: eq(restaurantReservations.verificationToken, token),
     with: {
       restaurant: true,
     },
@@ -29,9 +29,9 @@ export default async function VerifyPage(props: { params: Promise<{ token: strin
   }
 
   // Update verification status
-  await db.update(reservations)
+  await db.update(restaurantReservations)
     .set({ isVerified: true, status: 'confirmed' })
-    .where(eq(reservations.id, reservation.id));
+    .where(eq(restaurantReservations.id, reservation.id));
 
   // Notify owner
   if (reservation.restaurant && reservation.restaurant.ownerEmail) {

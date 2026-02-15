@@ -6,12 +6,10 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@libsql/client": "^0.14.0",
+    "@neondatabase/serverless": "^1.0.2",
     "drizzle-orm": "^0.38.4"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.1.18",
-    "drizzle-kit": "^0.30.2",
-    "postcss": "^8.5.1"
+    "drizzle-kit": "^0.30.2"
   }
 }

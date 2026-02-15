@@ -1,5 +1,7 @@
-import { pgTable, uuid, text, integer, timestamp, boolean, uniqueIndex, index, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, integer, timestamp, boolean, uniqueIndex, index, jsonb, pgEnum, doublePrecision } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
+
+export const waitlistStatusEnum = pgEnum('waitlist_status', ['waiting', 'notified', 'seated']);
 
 export const restaurants = pgTable('restaurants', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -42,7 +44,7 @@ export const restaurantTables = pgTable('restaurant_tables', {
   updatedAt: timestamp('updated_at').defaultNow(),
 });
 
-export const reservations = pgTable('reservations', {
+export const restaurantReservations = pgTable('restaurant_reservations', {
   id: uuid('id').primaryKey().defaultRandom(),
   restaurantId: uuid('restaurant_id').references(() => restaurants.id, { onDelete: 'cascade' }).notNull(),
   tableId: uuid('table_id').references(() => restaurantTables.id),
@@ -61,21 +63,32 @@ export const reservations = pgTable('reservations', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
-export const waitlist = pgTable('waitlist', {
+export const restaurantWaitlist = pgTable('restaurant_waitlist', {
   id: uuid('id').primaryKey().defaultRandom(),
   restaurantId: uuid('restaurant_id').references(() => restaurants.id, { onDelete: 'cascade' }).notNull(),
   guestName: text('guest_name').notNull(),
   guestEmail: text('guest_email').notNull(),
   partySize: integer('party_size').notNull(),
-  status: text('status').default('waiting'), // 'waiting', 'seated', 'cancelled'
-  joinedAt: timestamp('joined_at').defaultNow(),
+  status: waitlistStatusEnum('status').default('waiting').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
 });
 
-export const inventory = pgTable('inventory', {
+export const restaurantProducts = pgTable('restaurant_products', {
   id: uuid('id').primaryKey().defaultRandom(),
   restaurantId: uuid('restaurant_id').references(() => restaurants.id, { onDelete: 'cascade' }).notNull(),
-  itemName: text('item_name').notNull(),
-  quantity: integer('quantity').notNull(),
+  name: text('name').notNull(),
+  description: text('description'),
+  price: doublePrecision('price').notNull(),
+  category: text('category').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+
+export const inventoryLevels = pgTable('inventory_levels', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  productId: uuid('product_id').references(() => restaurantProducts.id, { onDelete: 'cascade' }).notNull(),
+  availableQuantity: integer('available_quantity').notNull().default(0),
   updatedAt: timestamp('updated_at').defaultNow(),
 });
 
@@ -97,9 +110,10 @@ export const guestProfiles = pgTable('guest_profiles', {
 
 export const restaurantsRelations = relations(restaurants, ({ many }) => ({
   tables: many(restaurantTables),
-  reservations: many(reservations),
-  waitlist: many(waitlist),
+  restaurantReservations: many(restaurantReservations),
+  restaurantWaitlist: many(restaurantWaitlist),
   guestProfiles: many(guestProfiles),
+  restaurantProducts: many(restaurantProducts),
 }));
 
 export const restaurantTablesRelations = relations(restaurantTables, ({ one }) => ({
@@ -109,14 +123,39 @@ export const restaurantTablesRelations = relations(restaurantTables, ({ one }) =
   }),
 }));
 
-export const reservationsRelations = relations(reservations, ({ one }) => ({
+export const restaurantReservationsRelations = relations(restaurantReservations, ({ one }) => ({
   restaurant: one(restaurants, {
-    fields: [reservations.restaurantId],
+    fields: [restaurantReservations.restaurantId],
     references: [restaurants.id],
   }),
   table: one(restaurantTables, {
-    fields: [reservations.tableId],
+    fields: [restaurantReservations.tableId],
     references: [restaurantTables.id],
+  }),
+}));
+
+export const restaurantWaitlistRelations = relations(restaurantWaitlist, ({ one }) => ({
+  restaurant: one(restaurants, {
+    fields: [restaurantWaitlist.restaurantId],
+    references: [restaurants.id],
+  }),
+}));
+
+export const restaurantProductsRelations = relations(restaurantProducts, ({ one, many }) => ({
+  restaurant: one(restaurants, {
+    fields: [restaurantProducts.restaurantId],
+    references: [restaurants.id],
+  }),
+  inventory: one(inventoryLevels, {
+    fields: [restaurantProducts.id],
+    references: [inventoryLevels.productId],
+  }),
+}));
+
+export const inventoryLevelsRelations = relations(inventoryLevels, ({ one }) => ({
+  product: one(restaurantProducts, {
+    fields: [inventoryLevels.productId],
+    references: [restaurantProducts.id],
   }),
 }));
 

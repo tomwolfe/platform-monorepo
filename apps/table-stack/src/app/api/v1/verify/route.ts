@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/db';
-import { reservations } from '@/db/schema';
+import { db } from "@repo/database";
+import { restaurantReservations } from "@repo/database";
 import { eq } from 'drizzle-orm';
 import { NotifyService } from '@/lib/notify';
 
@@ -18,8 +18,8 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const reservation = await db.query.reservations.findFirst({
-      where: eq(reservations.verificationToken, token),
+    const reservation = await db.query.restaurantReservations.findFirst({
+      where: eq(restaurantReservations.verificationToken, token),
       with: {
         restaurant: true,
       },
@@ -34,9 +34,9 @@ export async function GET(req: NextRequest) {
     }
 
     // Mark as verified
-    await db.update(reservations)
+    await db.update(restaurantReservations)
       .set({ isVerified: true, status: 'confirmed' })
-      .where(eq(reservations.id, reservation.id));
+      .where(eq(restaurantReservations.id, reservation.id));
 
     // Notify owner
     if (reservation.restaurant && reservation.restaurant.ownerEmail) {

@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
-import { db } from '@/db';
-import { restaurants } from '@/db/schema';
+import { db } from "@repo/database";
+import { restaurants } from "@repo/database";
 import { eq } from 'drizzle-orm';
 import { redis } from './redis';
 import { verifyServiceToken } from './shared-auth';

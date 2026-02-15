@@ -6,7 +6,7 @@ import {
   CHECK_KITCHEN_LOAD_TOOL,
   DISPATCH_INTENT_TOOL,
   TOOL_METADATA 
-} from '@/lib/mcp/tools';
+} from '@repo/mcp-protocol';
 import { redis } from "@/lib/redis-client";
 import pg from 'pg';
 import { getTableStackApiUrl, getInternalSystemKey } from '@/lib/env';

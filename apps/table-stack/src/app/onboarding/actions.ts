@@ -1,7 +1,7 @@
 "use server";
 
-import { db } from "@/db";
-import { restaurants, restaurantTables } from "@/db/schema";
+import { db } from "@repo/database";
+import { restaurants, restaurantTables } from "@repo/database";
 import { currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";

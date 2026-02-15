@@ -5,7 +5,7 @@ import { ToolDefinition } from "../../lib/engine/types";
 import { z } from "zod";
 import { mapJsonSchemaToZod } from "../../lib/engine/schema-utils";
 import { mcpConfig } from "../../lib/mcp-config";
-import { parameter_aliases as shared_aliases } from "@repo/mcp-protocol";
+import { PARAMETER_ALIASES as shared_aliases, ToolInput, ToolOutput } from "@repo/mcp-protocol";
 
 /**
  * MCPClient connects to remote MCP servers and maps their tools 
@@ -55,13 +55,13 @@ export class MCPClient {
   /**
    * Calls a tool on the remote MCP server with exponential backoff retry.
    */
-  async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<any> {
+  async callTool(name: string, args: ToolInput, signal?: AbortSignal): Promise<ToolOutput> {
     return this.withRetry(async () => {
       const result = await this.client.callTool({
         name,
         arguments: args,
       });
-      return result;
+      return result as ToolOutput;
     });
   }
 

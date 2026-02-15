@@ -1,14 +1,6 @@
 import 'dotenv/config';
-import { neon } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-http';
-import { restaurants, restaurantTables } from './src/db/schema';
+import { db, restaurants, restaurantTables } from "@repo/database";
 import { eq } from 'drizzle-orm';
-
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) throw new Error('DATABASE_URL is not set');
-
-const sql = neon(databaseUrl);
-const db = drizzle(sql);
 
 async function seed() {
   console.log('🌱 Seeding demo restaurant...');

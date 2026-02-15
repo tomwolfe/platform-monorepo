@@ -1,14 +1,12 @@
 "use server";
 
-import { db } from "@/lib/db";
-import { stores, products, stock } from "@/lib/db/schema";
+import { db, stores, storeProducts, stock, productReservations, users } from "@repo/database";
 import { eq, and, gt, sql, ilike, desc } from "drizzle-orm";
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { SearchSchema } from "@/lib/shared-schema";
 
 import { getAppAuth } from "@/lib/auth";
-import { reservations, users } from "@/lib/db/schema";
 
 const reserveSchema = z.object({
   product_id: z.string().uuid(),
@@ -39,19 +37,19 @@ export async function searchProducts(formData: {
     .select({
       store_id: stores.id,
       store_name: stores.name,
-      product_id: products.id,
-      product_name: products.name,
-      price: products.price,
+      product_id: storeProducts.id,
+      product_name: storeProducts.name,
+      price: storeProducts.price,
       available_quantity: stock.availableQuantity,
       distance_miles: distance,
       full_address: stores.fullAddress,
     })
     .from(stock)
     .innerJoin(stores, eq(stock.storeId, stores.id))
-    .innerJoin(products, eq(stock.productId, products.id))
+    .innerJoin(storeProducts, eq(stock.productId, storeProducts.id))
     .where(
       and(
-        sql`${products.name} % ${product_query}::text`,
+        sql`${storeProducts.name} % ${product_query}::text`,
         gt(stock.availableQuantity, 0),
         sql`${distance} < ${max_radius_miles}`
       )
@@ -117,7 +115,7 @@ export async function reserveStock(data: {
           )
         );
 
-      await tx.insert(reservations).values({
+      await tx.insert(productReservations).values({
         userId: user.id,
         productId: product_id,
         storeId: store_id,
@@ -156,33 +154,33 @@ export async function getInventory() {
       id: stock.id,
       store_id: stores.id,
       store_name: stores.name,
-      product_id: products.id,
-      product_name: products.name,
-      price: products.price,
+      product_id: storeProducts.id,
+      product_name: storeProducts.name,
+      price: storeProducts.price,
       available_quantity: stock.availableQuantity,
-      category: products.category,
+      category: storeProducts.category,
       updated_at: stock.updatedAt,
     })
     .from(stock)
     .innerJoin(stores, eq(stock.storeId, stores.id))
-    .innerJoin(products, eq(stock.productId, products.id))
+    .innerJoin(storeProducts, eq(stock.productId, storeProducts.id))
     .where(eq(stock.storeId, user.managedStoreId))
     .orderBy(desc(stock.updatedAt));
 
   const reservationResults = await db
     .select({
-      id: reservations.id,
+      id: productReservations.id,
       user_email: users.email,
-      product_name: products.name,
-      quantity: reservations.quantity,
-      status: reservations.status,
-      created_at: reservations.createdAt,
+      product_name: storeProducts.name,
+      quantity: productReservations.quantity,
+      status: productReservations.status,
+      created_at: productReservations.createdAt,
     })
-    .from(reservations)
-    .innerJoin(users, eq(reservations.userId, users.id))
-    .innerJoin(products, eq(reservations.productId, products.id))
-    .where(eq(reservations.storeId, user.managedStoreId))
-    .orderBy(desc(reservations.createdAt));
+    .from(productReservations)
+    .innerJoin(users, eq(productReservations.userId, users.id))
+    .innerJoin(storeProducts, eq(productReservations.productId, storeProducts.id))
+    .where(eq(productReservations.storeId, user.managedStoreId))
+    .orderBy(desc(productReservations.createdAt));
 
   return { stock: stockResults, reservations: reservationResults };
 }

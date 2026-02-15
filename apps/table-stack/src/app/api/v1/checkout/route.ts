@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/db';
-import { reservations } from '@/db/schema';
+import { db } from "@repo/database";
+import { restaurantReservations } from "@repo/database";
 import { eq } from 'drizzle-orm';
 import { NotifyService } from '@/lib/notify';
 
@@ -23,17 +23,17 @@ export async function POST(req: NextRequest) {
       const reservationId = paymentIntent.metadata.reservationId;
 
       if (reservationId) {
-        const reservation = await db.query.reservations.findFirst({
-          where: eq(reservations.id, reservationId),
+        const reservation = await db.query.restaurantReservations.findFirst({
+          where: eq(restaurantReservations.id, reservationId),
           with: {
             restaurant: true,
           },
         });
 
         if (reservation) {
-          await db.update(reservations)
+          await db.update(restaurantReservations)
             .set({ isVerified: true, status: 'confirmed' })
-            .where(eq(reservations.id, reservationId));
+            .where(eq(restaurantReservations.id, reservationId));
           
           if (reservation.restaurant && reservation.restaurant.ownerEmail) {
             await NotifyService.notifyOwner(reservation.restaurant.ownerEmail, {

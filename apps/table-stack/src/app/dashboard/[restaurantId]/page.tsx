@@ -1,5 +1,5 @@
-import { db } from '@/db';
-import { restaurants, reservations, waitlist } from '@/db/schema';
+import { db } from "@repo/database";
+import { restaurants, restaurantReservations, restaurantWaitlist } from "@repo/database";
 import { eq, desc } from 'drizzle-orm';
 import { notFound, redirect } from 'next/navigation';
 import { currentUser } from '@clerk/nextjs/server';
@@ -27,12 +27,12 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
       : eq(restaurants.slug, restaurantId),
     with: {
       tables: true,
-      reservations: {
-        where: eq(reservations.isVerified, true),
-        orderBy: (reservations, { asc }) => [asc(reservations.startTime)],
+      restaurantReservations: {
+        where: eq(restaurantReservations.isVerified, true),
+        orderBy: (restaurantReservations, { asc }) => [asc(restaurantReservations.startTime)],
       },
-      waitlist: {
-        orderBy: (waitlist, { desc }) => [desc(waitlist.createdAt)],
+      restaurantWaitlist: {
+        orderBy: (restaurantWaitlist, { desc }) => [desc(restaurantWaitlist.createdAt)],
       }
     },
   });
@@ -81,7 +81,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
       <header className="mb-8 flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">{restaurant.name} Dashboard</h1>
-          <p className="text-gray-500">Manage your floor plan and reservations</p>
+          <p className="text-gray-500">Manage your floor plan and restaurantReservations</p>
         </div>
         <div className="flex items-center gap-6">
           <UserMenu restaurantId={restaurantInternalId} />
@@ -110,7 +110,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
         <h2 className="text-xl font-semibold mb-6">Floor Plan Editor</h2>
         <FloorPlan 
           initialTables={restaurant.tables} 
-          reservations={restaurant.reservations.filter(r => r.status === 'confirmed')}
+          restaurantReservations={restaurant.restaurantReservations.filter(r => r.status === 'confirmed')}
           onSave={handleSave} 
           onStatusChange={handleStatusChange}
           onAdd={handleAddTable}
@@ -199,7 +199,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {restaurant.waitlist.filter(w => w.status !== 'seated').map((w) => (
+              {restaurant.restaurantWaitlist.filter(w => w.status !== 'seated').map((w) => (
                 <tr key={w.id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{w.guestName}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{w.partySize}</td>
@@ -231,7 +231,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
                   </td>
                 </tr>
               ))}
-              {restaurant.waitlist.filter(w => w.status !== 'seated').length === 0 && (
+              {restaurant.restaurantWaitlist.filter(w => w.status !== 'seated').length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">Waitlist is currently empty.</td>
                 </tr>
@@ -255,7 +255,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {restaurant.reservations.map((res) => (
+              {restaurant.restaurantReservations.map((res) => (
                 <tr key={res.id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{res.guestName}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{res.partySize}</td>
@@ -277,9 +277,9 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
                   </td>
                 </tr>
               ))}
-              {restaurant.reservations.length === 0 && (
+              {restaurant.restaurantReservations.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">No reservations found.</td>
+                  <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">No restaurantReservations found.</td>
                 </tr>
               )}
             </tbody>

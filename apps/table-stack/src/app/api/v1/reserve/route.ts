@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/db';
-import { restaurants, reservations, guestProfiles, restaurantTables } from '@/db/schema';
+import { db } from "@repo/database";
+import { restaurants, restaurantReservations, guestProfiles, restaurantTables } from "@repo/database";
 import { and, eq, gte, lte, or, sql } from 'drizzle-orm';
 import { addMinutes, parseISO } from 'date-fns';
 import { NotifyService } from '@/lib/notify';
@@ -102,10 +102,10 @@ export async function POST(req: NextRequest) {
           lte(restaurantTables.minCapacity, partySize),
           gte(restaurantTables.maxCapacity, partySize),
           sql`NOT EXISTS (
-            SELECT 1 FROM ${reservations} r
+            SELECT 1 FROM ${restaurantReservations} r
             WHERE r.table_id = ${restaurantTables.id}
             AND r.status = 'confirmed'
-            AND (${reservations.startTime}, ${reservations.endTime}) OVERLAPS (${start.toISOString()}, ${end.toISOString()})
+            AND (${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${start.toISOString()}, ${end.toISOString()})
           )`
         ),
       });
@@ -128,28 +128,28 @@ export async function POST(req: NextRequest) {
       const tablesToCheck = assignedTableId ? [assignedTableId] : combinedTableIds;
 
       // Enhanced Conflict Detection for both single and combined tables
-      const conflict = await db.query.reservations.findFirst({
+      const conflict = await db.query.restaurantReservations.findFirst({
         where: and(
-          eq(reservations.restaurantId, targetRestaurantId),
+          eq(restaurantReservations.restaurantId, targetRestaurantId),
           or(
-            eq(reservations.status, 'confirmed'),
+            eq(restaurantReservations.status, 'confirmed'),
             and(
-              eq(reservations.isVerified, false),
-              gte(reservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
+              eq(restaurantReservations.isVerified, false),
+              gte(restaurantReservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
             )
           ),
           // Use overlap logic
-          sql`(${reservations.startTime}, ${reservations.endTime}) OVERLAPS (${start.toISOString()}, ${end.toISOString()})`,
+          sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${start.toISOString()}, ${end.toISOString()})`,
           // Check if ANY of the tables we want are occupied
           or(
             // Check if it matches our single tableId
-            assignedTableId ? eq(reservations.tableId, assignedTableId) : undefined,
+            assignedTableId ? eq(restaurantReservations.tableId, assignedTableId) : undefined,
             // OR if our tableId is part of someone else's combinedTables
-            assignedTableId ? sql`${reservations.combinedTableIds} @> ${JSON.stringify([assignedTableId])}::jsonb` : undefined,
+            assignedTableId ? sql`${restaurantReservations.combinedTableIds} @> ${JSON.stringify([assignedTableId])}::jsonb` : undefined,
             // OR if our combinedTableIds contains a tableId that is someone's single tableId
-            combinedTableIds ? sql`${reservations.tableId} = ANY(${sql.raw(`ARRAY['${tablesToCheck.join("','")}']::uuid[]`)})` : undefined,
+            combinedTableIds ? sql`${restaurantReservations.tableId} = ANY(${sql.raw(`ARRAY['${tablesToCheck.join("','")}']::uuid[]`)})` : undefined,
             // OR if our combinedTableIds overlap with someone else's combinedTableIds
-            combinedTableIds ? sql`${reservations.combinedTableIds} ?| ${sql.raw(`ARRAY['${tablesToCheck.join("','")}']`)}` : undefined
+            combinedTableIds ? sql`${restaurantReservations.combinedTableIds} ?| ${sql.raw(`ARRAY['${tablesToCheck.join("','")}']`)}` : undefined
           )
         ),
       });
@@ -167,7 +167,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const [newReservation] = await db.insert(reservations).values({
+    const [newReservation] = await db.insert(restaurantReservations).values({
       restaurantId: targetRestaurantId,
       tableId: assignedTableId || null,
       combinedTableIds: combinedTableIds || null,

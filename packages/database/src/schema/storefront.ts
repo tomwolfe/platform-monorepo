@@ -14,7 +14,7 @@ export const stores = pgTable('stores', {
   updatedAt: timestamp('updated_at').defaultNow(),
 });
 
-export const products = pgTable('products', {
+export const storeProducts = pgTable('store_products', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
   description: text('description'),
@@ -27,7 +27,7 @@ export const products = pgTable('products', {
 export const stock = pgTable('stock', {
   id: uuid('id').primaryKey().defaultRandom(),
   storeId: uuid('store_id').references(() => stores.id, { onDelete: 'cascade' }).notNull(),
-  productId: uuid('product_id').references(() => products.id, { onDelete: 'cascade' }).notNull(),
+  productId: uuid('product_id').references(() => storeProducts.id, { onDelete: 'cascade' }).notNull(),
   availableQuantity: integer('available_quantity').notNull().default(0),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => {
@@ -51,7 +51,7 @@ export const users = pgTable('user', {
 export const productReservations = pgTable('product_reservations', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
-  productId: uuid('product_id').references(() => products.id, { onDelete: 'cascade' }).notNull(),
+  productId: uuid('product_id').references(() => storeProducts.id, { onDelete: 'cascade' }).notNull(),
   storeId: uuid('store_id').references(() => stores.id, { onDelete: 'cascade' }).notNull(),
   quantity: integer('quantity').notNull(),
   status: reservationStatusEnum('status').notNull().default('pending'),
@@ -65,7 +65,7 @@ export const storesRelations = relations(stores, ({ many }) => ({
   reservations: many(productReservations),
 }));
 
-export const productsRelations = relations(products, ({ many }) => ({
+export const storeProductsRelations = relations(storeProducts, ({ many }) => ({
   stock: many(stock),
   reservations: many(productReservations),
 }));
@@ -75,9 +75,9 @@ export const stockRelations = relations(stock, ({ one }) => ({
     fields: [stock.storeId],
     references: [stores.id],
   }),
-  product: one(products, {
+  product: one(storeProducts, {
     fields: [stock.productId],
-    references: [products.id],
+    references: [storeProducts.id],
   }),
 }));
 
@@ -94,9 +94,9 @@ export const productReservationsRelations = relations(productReservations, ({ on
     fields: [productReservations.userId],
     references: [users.id],
   }),
-  product: one(products, {
+  product: one(storeProducts, {
     fields: [productReservations.productId],
-    references: [products.id],
+    references: [storeProducts.id],
   }),
   store: one(stores, {
     fields: [productReservations.storeId],

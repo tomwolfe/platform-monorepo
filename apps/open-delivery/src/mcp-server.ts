@@ -10,7 +10,7 @@ import {
   CHECK_KITCHEN_LOAD_TOOL,
   DISPATCH_INTENT_TOOL,
   TOOL_METADATA
-} from "./lib/mcp/tools.js";
+} from "@repo/mcp-protocol";
 import { redis } from "./lib/redis-client.js";
 import pg from 'pg';
 import { signServiceToken } from "./lib/auth.js";

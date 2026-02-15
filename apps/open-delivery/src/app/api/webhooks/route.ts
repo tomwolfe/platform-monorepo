@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { verifySignature } from "@/lib/security";
+import { verifySignature } from "@repo/auth";
 
 export const runtime = "edge";
 

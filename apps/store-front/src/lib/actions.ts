@@ -57,7 +57,7 @@ export async function searchProducts(formData: {
     .orderBy(distance)
     .limit(20);
 
-  return results.map(r => ({
+  return results.map((r: any) => ({
     ...r,
     distance_miles: Number(r.distance_miles).toFixed(2)
   }));
@@ -81,7 +81,7 @@ export async function reserveStock(data: {
   const { product_id, store_id, quantity } = reserveSchema.parse(data);
 
   try {
-    return await db.transaction(async (tx) => {
+    return await db.transaction(async (tx: any) => {
       const currentStock = await tx
         .select()
         .from(stock)

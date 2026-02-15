@@ -47,7 +47,7 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
       )
     );
 
-  const occupiedTableIds = occupiedTableIdsResult.map(r => r.tableId).filter(Boolean) as string[];
+  const occupiedTableIds = occupiedTableIdsResult.map((r: { tableId: string | null }) => r.tableId).filter(Boolean) as string[];
 
   const occupiedCombinedTableIdsResult = await db
     .select({ combinedTableIds: restaurantReservations.combinedTableIds })
@@ -66,7 +66,7 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
       )
     );
 
-  occupiedCombinedTableIdsResult.forEach(r => {
+  occupiedCombinedTableIdsResult.forEach((r: { combinedTableIds: string[] | null }) => {
     if (r.combinedTableIds) {
       occupiedTableIds.push(...(r.combinedTableIds as string[]));
     }
@@ -83,15 +83,15 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
       )
     );
 
-  const availableIndividualTables = allTables.filter(t => 
+  const availableIndividualTables = allTables.filter((t: any) => 
     !occupiedTableIds.includes(t.id) && t.maxCapacity >= partySize
   );
 
   if (availableIndividualTables.length > 0) {
-    return availableIndividualTables.map(t => ({ ...t, isCombined: false }));
+    return availableIndividualTables.map((t: any) => ({ ...t, isCombined: false }));
   }
 
-  const vacantTables = allTables.filter(t => !occupiedTableIds.includes(t.id));
+  const vacantTables = allTables.filter((t: any) => !occupiedTableIds.includes(t.id));
   const suggestedCombos: any[] = [];
 
   for (let i = 0; i < vacantTables.length; i++) {
@@ -130,7 +130,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       CHECK_AVAILABILITY_TOOL,
       BOOK_RESERVATION_TOOL,
       DISCOVER_RESTAURANT_TOOL,
-    ].map(tool => ({
+    ].map((tool: any) => ({
       ...tool,
       annotations: {
         requires_confirmation: (TOOL_METADATA as any)[tool.name]?.requires_confirmation || false
@@ -160,7 +160,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const restaurantTime = toZonedTime(requestedDate, timezone);
         
         const dayOfWeek = format(restaurantTime, 'eeee', { timeZone: timezone }).toLowerCase();
-        const openDays = restaurant.daysOpen?.split(',').map(d => d.trim().toLowerCase()) || [];
+        const openDays = restaurant.daysOpen?.split(',').map((d: string) => d.trim().toLowerCase()) || [];
         
         if (!openDays.includes(dayOfWeek)) {
           return { content: [{ type: "text", text: JSON.stringify({ message: 'Restaurant is closed on this day', availableTables: [] }) }] };

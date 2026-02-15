@@ -8,8 +8,13 @@ export const schema = {
   ...tablestackSchema,
 };
 
-const sql = neon(process.env.DATABASE_URL!);
-export const db = drizzle(sql, { schema });
+const databaseUrl = process.env.DATABASE_URL!;
 
+// We avoid calling neon() if databaseUrl is missing, which can happen during build
+// This allows the package to be imported during build time for type checking/metadata
+const sql = databaseUrl ? neon(databaseUrl) : null;
+export const db = sql ? drizzle(sql, { schema }) : (null as any);
+
+export type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
 export * from './schema/storefront';
 export * from './schema/tablestack';

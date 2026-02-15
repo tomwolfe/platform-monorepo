@@ -3,10 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "exports": {
-    ".": "./src/index.css"
+    ".": "./src/index.css",
+    "./colors": "./src/colors.ts"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
-    "postcss": "^8.5.1"
+    "postcss": "^8.5.1",
+    "tailwindcss": "^4.0.3"
   }
 }

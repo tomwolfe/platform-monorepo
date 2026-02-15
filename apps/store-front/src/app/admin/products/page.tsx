@@ -1,4 +1,4 @@
-import { db, storeProducts } from "@repo/database";
+import { db, storeProducts, type InferSelectModel } from "@repo/database";
 import { 
   Table, 
   TableBody, 
@@ -59,7 +59,7 @@ export default async function AdminProductsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {allProducts.map((product) => (
+              {allProducts.map((product: InferSelectModel<typeof storeProducts>) => (
                 <TableRow key={product.id}>
                   <TableCell className="font-medium">{product.name}</TableCell>
                   <TableCell>{product.category}</TableCell>

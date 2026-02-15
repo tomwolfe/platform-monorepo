@@ -1,7 +1,8 @@
 import { ToolDefinition, ToolDefinitionMetadata, ExecuteToolResult } from "./tools/types";
-import { geocode_location, search_restaurant, GeocodeSchema, SearchRestaurantSchema } from "./tools/location_search";
+import { geocode_location, search_restaurant } from "./tools/location_search";
 import { add_calendar_event } from "./tools/calendar";
 import { TOOLS, getTool, getToolsByCategory, getToolsRequiringConfirmation, listTools } from "./tools/registry";
+import { GeocodeSchema, SearchRestaurantSchema } from "@repo/mcp-protocol";
 
 /**
  * Returns a string representation of all available tools for LLM prompting.

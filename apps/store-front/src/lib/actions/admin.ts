@@ -35,7 +35,7 @@ export async function createProduct(data: z.infer<typeof productSchema>) {
   const user = await validateMerchant();
   const validated = productSchema.parse(data);
 
-  return await db.transaction(async (tx) => {
+  return await db.transaction(async (tx: any) => {
     const [newProduct] = await tx.insert(storeProducts).values({
       name: validated.name,
       description: validated.description,

@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+
+export const dynamic = 'force-dynamic';
+
 import { db, stores, storeProducts, stock } from '@repo/database';
 import { eq, and, gt, sql, ilike } from 'drizzle-orm';
 import { 
@@ -9,7 +12,7 @@ import {
   TOOL_METADATA,
   PARAMETER_ALIASES
 } from '@repo/mcp-protocol';
-import { SecurityProvider } from '@/lib/security';
+import { SecurityProvider } from '@repo/auth';
 
 /**
  * Security Middleware: Validates INTERNAL_SYSTEM_KEY header
@@ -104,7 +107,7 @@ export async function POST(req: NextRequest) {
         .orderBy(distance) // Order by distance closest first
         .limit(10);
 
-      const mappedResults = results.map(({ store, product, stock, distance }) => ({
+      const mappedResults = results.map(({ store, product, stock, distance }: any) => ({
         store_id: store.id,
         venue_id: store.id, // IntentionEngine mapping
         store_name: store.name,
@@ -132,7 +135,7 @@ export async function POST(req: NextRequest) {
       const store_id = venue_id;
 
       try {
-        await db.transaction(async (tx) => {
+        await db.transaction(async (tx: any) => {
           // Check current stock
           const currentStock = await tx
             .select()

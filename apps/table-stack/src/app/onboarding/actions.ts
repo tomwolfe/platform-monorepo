@@ -35,7 +35,7 @@ export async function createRestaurant(data: z.infer<typeof onboardingSchema>) {
 
   // Check if slug is already taken
   const existing = await db.query.restaurants.findFirst({
-    where: (restaurants, { eq }) => eq(restaurants.slug, validated.slug),
+    where: (rest: any, { eq }: any) => eq(rest.slug, validated.slug),
   });
 
   if (existing) {

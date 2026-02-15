@@ -89,7 +89,7 @@ async function SearchResults({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {results.map((result) => (
+            {results.map((result: any) => (
               <TableRow key={`${result.store_id}-${result.product_id}`} className={result.available_quantity < 5 ? "bg-orange-50/50" : ""}>
                 <TableCell className="font-medium">
                   {result.product_name}

@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import { colors } from "@repo/ui-theme/colors";
 
 const config: Config = {
   content: [
@@ -7,7 +8,11 @@ const config: Config = {
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
-    extend: {},
+    extend: {
+      colors: {
+        ...colors,
+      },
+    },
   },
   plugins: [],
 };

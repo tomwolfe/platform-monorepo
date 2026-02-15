@@ -24,7 +24,7 @@ export const DISPATCH_INTENT_TOOL = {
     },
     required: ["order_id", "pickup_address", "delivery_address", "customer_id", "price_details"]
   }
-};
+} as const;
 
 export const FIND_PRODUCT_NEARBY_TOOL = {
   name: "find_product_nearby",
@@ -39,7 +39,7 @@ export const FIND_PRODUCT_NEARBY_TOOL = {
     },
     required: ["product_query", "user_lat", "user_lng"]
   }
-};
+} as const;
 
 export const RESERVE_STOCK_ITEM_TOOL = {
   name: "reserve_stock_item",
@@ -53,7 +53,7 @@ export const RESERVE_STOCK_ITEM_TOOL = {
     },
     required: ["product_id", "venue_id", "quantity"]
   }
-};
+} as const;
 
 export const CHECK_AVAILABILITY_TOOL = {
   name: "check_availability",
@@ -67,7 +67,7 @@ export const CHECK_AVAILABILITY_TOOL = {
     },
     required: ["restaurantId", "date", "partySize"]
   }
-};
+} as const;
 
 export const BOOK_RESERVATION_TOOL = {
   name: "book_tablestack_reservation",
@@ -85,7 +85,7 @@ export const BOOK_RESERVATION_TOOL = {
     },
     required: ["restaurantId", "tableId", "guestName", "guestEmail", "partySize", "startTime"]
   }
-};
+} as const;
 
 export const DISCOVER_RESTAURANT_TOOL = {
   name: "discover_restaurant",
@@ -97,7 +97,7 @@ export const DISCOVER_RESTAURANT_TOOL = {
     },
     required: ["restaurant_slug"]
   }
-};
+} as const;
 
 export const CREATE_PRODUCT_TOOL = {
   name: "create_product",
@@ -112,7 +112,7 @@ export const CREATE_PRODUCT_TOOL = {
     },
     required: ["name", "price", "category"]
   }
-};
+} as const;
 
 export const UPDATE_PRODUCT_TOOL = {
   name: "update_product",
@@ -128,7 +128,7 @@ export const UPDATE_PRODUCT_TOOL = {
     },
     required: ["product_id"]
   }
-};
+} as const;
 
 export const DELETE_PRODUCT_TOOL = {
   name: "delete_product",
@@ -140,7 +140,73 @@ export const DELETE_PRODUCT_TOOL = {
     },
     required: ["product_id"]
   }
-};
+} as const;
+
+export const GEOCODE_LOCATION_TOOL = {
+  name: "geocode_location",
+  description: "Converts city names, addresses, or place names to precise lat/lon coordinates.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      location: { type: "string" },
+      userLocation: {
+        type: "object",
+        properties: {
+          lat: { type: "number" },
+          lng: { type: "number" }
+        }
+      }
+    },
+    required: ["location"]
+  }
+} as const;
+
+export const SEARCH_RESTAURANT_TOOL = {
+  name: "search_restaurant",
+  description: "Search for restaurants based on cuisine and location.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      cuisine: { type: "string" },
+      lat: { type: "number" },
+      lon: { type: "number" },
+      location: { type: "string" },
+      userLocation: {
+        type: "object",
+        properties: {
+          lat: { type: "number" },
+          lng: { type: "number" }
+        }
+      }
+    }
+  }
+} as const;
+
+export const ADD_CALENDAR_EVENT_TOOL = {
+  name: "add_calendar_event",
+  description: "Add one or more events to the calendar.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      events: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            start_time: { type: "string" },
+            end_time: { type: "string" },
+            location: { type: "string" },
+            restaurant_name: { type: "string" },
+            restaurant_address: { type: "string" }
+          },
+          required: ["title", "start_time", "end_time"]
+        }
+      }
+    },
+    required: ["events"]
+  }
+} as const;
 
 export const GET_LOCAL_VENDORS_TOOL = {
   name: "get_local_vendors",
@@ -155,7 +221,7 @@ export const GET_LOCAL_VENDORS_TOOL = {
     },
     required: ["latitude", "longitude"]
   }
-};
+} as const;
 
 export const QUOTE_DELIVERY_TOOL = {
   name: "quote_delivery",
@@ -171,7 +237,7 @@ export const QUOTE_DELIVERY_TOOL = {
     },
     required: ["pickup_address", "delivery_address", "items"]
   }
-};
+} as const;
 
 export const CHECK_KITCHEN_LOAD_TOOL = {
   name: "check_kitchen_load",
@@ -183,7 +249,7 @@ export const CHECK_KITCHEN_LOAD_TOOL = {
     },
     required: ["restaurant_id"]
   }
-};
+} as const;
 
 export const TOOL_METADATA = {
   get_local_vendors: { requires_confirmation: false },
@@ -258,6 +324,38 @@ export const BookReservationSchema = z.object({
 
 export const DiscoverRestaurantSchema = z.object({
   restaurant_slug: z.string()
+});
+
+export const GeocodeSchema = z.object({
+  location: z.string(),
+  userLocation: z.object({
+    lat: z.number(),
+    lng: z.number()
+  }).optional()
+});
+
+export const SearchRestaurantSchema = z.object({
+  cuisine: z.string().optional(),
+  lat: z.number().optional(),
+  lon: z.number().optional(),
+  location: z.string().optional(),
+  userLocation: z.object({
+    lat: z.number(),
+    lng: z.number()
+  }).optional()
+});
+
+export const EventItemSchema = z.object({
+  title: z.string(),
+  start_time: z.string(),
+  end_time: z.string(),
+  location: z.string().optional(),
+  restaurant_name: z.string().optional(),
+  restaurant_address: z.string().optional()
+});
+
+export const AddCalendarEventSchema = z.object({
+  events: z.array(EventItemSchema)
 });
 
 export type DeliveryIntent = z.infer<typeof DeliveryIntentSchema>;

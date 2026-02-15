@@ -1,7 +1,7 @@
 'use server';
 
 import { db, restaurantTables, restaurants, restaurantReservations, restaurantWaitlist } from '@repo/database';
-import { signBridgeToken } from '@/lib/tokens';
+import { signBridgeToken } from '@repo/auth';
 import { redirect } from 'next/navigation';
 import { currentUser } from '@clerk/nextjs/server';
 import { revalidatePath } from 'next/cache';
@@ -219,7 +219,7 @@ export async function addTable(restaurantId: string) {
     });
     
     const nextNumber = existingTables.length > 0 
-      ? (Math.max(...existingTables.map(t => parseInt(t.tableNumber) || 0)) + 1).toString()
+      ? (Math.max(...existingTables.map((t: any) => parseInt(t.tableNumber) || 0)) + 1).toString()
       : "1";
 
     await db.insert(restaurantTables).values({

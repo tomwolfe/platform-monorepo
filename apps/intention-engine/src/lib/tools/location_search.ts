@@ -2,14 +2,7 @@ import { z } from "zod";
 import { RestaurantResultSchema } from "../schema";
 import { redis } from "../redis-client";
 import { env } from "../config";
-
-export const GeocodeSchema = z.object({
-  location: z.string().min(1).describe("The city, neighborhood, or specific place name to geocode. Use 'nearby' for the user's current area."),
-  userLocation: z.object({
-    lat: z.number().describe("User's current latitude"),
-    lng: z.number().describe("User's current longitude")
-  }).optional().describe("The user's current GPS coordinates for biasing search results.")
-});
+import { GeocodeSchema, SearchRestaurantSchema } from "@repo/mcp-protocol";
 
 export async function geocode_location(params: z.infer<typeof GeocodeSchema>) {
   const validated = GeocodeSchema.safeParse(params);
@@ -61,17 +54,6 @@ export async function geocode_location(params: z.infer<typeof GeocodeSchema>) {
     return { success: false, error: error.message };
   }
 }
-
-export const SearchRestaurantSchema = z.object({
-  cuisine: z.string().optional().describe("The type of cuisine to search for (e.g., 'Italian', 'Sushi', 'Burgers')."),
-  lat: z.number().optional().describe("Latitude for the search center."),
-  lon: z.number().optional().describe("Longitude for the search center."),
-  location: z.string().optional().describe("A text-based location (e.g., 'Soho, London') to search near if coordinates are not provided."),
-  userLocation: z.object({
-    lat: z.number().describe("User's current latitude"),
-    lng: z.number().describe("User's current longitude")
-  }).optional().describe("The user's current GPS coordinates for proximity biasing.")
-});
 
 export async function search_restaurant(params: z.infer<typeof SearchRestaurantSchema>) {
   const validated = SearchRestaurantSchema.safeParse(params);

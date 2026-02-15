@@ -29,10 +29,10 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
       tables: true,
       restaurantReservations: {
         where: eq(restaurantReservations.isVerified, true),
-        orderBy: (restaurantReservations, { asc }) => [asc(restaurantReservations.startTime)],
+        orderBy: (res: any, { asc }: any) => [asc(res.startTime)],
       },
       restaurantWaitlist: {
-        orderBy: (restaurantWaitlist, { desc }) => [desc(restaurantWaitlist.createdAt)],
+        orderBy: (wait: any, { desc }: any) => [desc(wait.createdAt)],
       }
     },
   });
@@ -110,7 +110,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
         <h2 className="text-xl font-semibold mb-6">Floor Plan Editor</h2>
         <FloorPlan 
           initialTables={restaurant.tables} 
-          restaurantReservations={restaurant.restaurantReservations.filter(r => r.status === 'confirmed')}
+          restaurantReservations={restaurant.restaurantReservations.filter((r: any) => r.status === 'confirmed')}
           onSave={handleSave} 
           onStatusChange={handleStatusChange}
           onAdd={handleAddTable}
@@ -199,7 +199,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {restaurant.restaurantWaitlist.filter(w => w.status !== 'seated').map((w) => (
+              {restaurant.restaurantWaitlist.filter((w: any) => w.status !== 'seated').map((w: any) => (
                 <tr key={w.id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{w.guestName}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{w.partySize}</td>
@@ -231,7 +231,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
                   </td>
                 </tr>
               ))}
-              {restaurant.restaurantWaitlist.filter(w => w.status !== 'seated').length === 0 && (
+              {restaurant.restaurantWaitlist.filter((w: any) => w.status !== 'seated').length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">Waitlist is currently empty.</td>
                 </tr>
@@ -255,7 +255,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {restaurant.restaurantReservations.map((res) => (
+              {restaurant.restaurantReservations.map((res: any) => (
                 <tr key={res.id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{res.guestName}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{res.partySize}</td>

@@ -45,7 +45,7 @@ export default async function InventoryPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {stockItems.map((item) => (
+              {stockItems.map((item: any) => (
                 <TableRow key={item.id}>
                   <TableCell className="font-medium">{item.product_name}</TableCell>
                   <TableCell>{item.category}</TableCell>
@@ -93,7 +93,7 @@ export default async function InventoryPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {reservationItems.map((res) => (
+              {reservationItems.map((res: any) => (
                 <TableRow key={res.id}>
                   <TableCell>{res.user_email}</TableCell>
                   <TableCell className="font-medium">{res.product_name}</TableCell>

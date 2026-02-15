@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { SecurityProvider } from '@/lib/security';
+
+export const dynamic = 'force-dynamic';
+
+import { SecurityProvider } from '@repo/auth';
 import { 
   GET_LOCAL_VENDORS_TOOL, 
   QUOTE_DELIVERY_TOOL, 
@@ -8,11 +11,10 @@ import {
   TOOL_METADATA 
 } from '@repo/mcp-protocol';
 import { redis } from "@/lib/redis-client";
-import pg from 'pg';
+import { Pool } from '@neondatabase/serverless';
 import { getTableStackApiUrl, getInternalSystemKey } from '@/lib/env';
 import Ably from "ably";
 
-const { Pool } = pg;
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
 });

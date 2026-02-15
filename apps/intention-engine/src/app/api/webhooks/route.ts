@@ -4,7 +4,7 @@ import { generatePlan } from "@/lib/planner";
 import { createAuditLog } from "@/lib/audit";
 import { z } from "zod";
 import { handleTableStackRejection } from "@/lib/listeners/tablestack";
-import { verifySignature } from "@/lib/security";
+import { verifySignature } from "@repo/auth";
 
 export const runtime = "edge";
 

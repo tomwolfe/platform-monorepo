@@ -12,14 +12,12 @@ import {
   TOOL_METADATA
 } from "@repo/mcp-protocol";
 import { redis } from "./lib/redis-client.js";
-import pg from 'pg';
-import { signServiceToken } from "./lib/auth.js";
-import { signPayload } from "./lib/security.js";
+import { Pool } from '@neondatabase/serverless';
+import { signServiceToken, signPayload } from "@repo/auth";
 import Ably from "ably";
 
 const ably = process.env.ABLY_API_KEY ? new Ably.Rest(process.env.ABLY_API_KEY) : null;
 
-const { Pool } = pg;
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
 });

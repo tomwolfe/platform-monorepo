@@ -1,17 +1,5 @@
 import { z } from "zod";
-
-export const EventItemSchema = z.object({
-  title: z.string().min(1).describe("The name or title of the calendar event (e.g., 'Dinner at Nobu')."),
-  start_time: z.string().describe("The start date and time. Use ISO 8601 format (e.g., '2026-02-10T19:00:00Z')."),
-  end_time: z.string().describe("The end date and time. Use ISO 8601 format (e.g., '2026-02-10T21:00:00Z')."),
-  location: z.string().optional().describe("Physical address or venue name for the event."),
-  restaurant_name: z.string().optional().describe("If the event is at a restaurant, its name."),
-  restaurant_address: z.string().optional().describe("If the event is at a restaurant, its full address.")
-});
-
-export const AddCalendarEventSchema = z.object({
-  events: z.array(EventItemSchema).min(1).describe("An array of one or more calendar events to schedule.")
-});
+import { AddCalendarEventSchema, EventItemSchema } from "@repo/mcp-protocol";
 
 export async function add_calendar_event(params: z.infer<typeof AddCalendarEventSchema>) {
   const validated = AddCalendarEventSchema.safeParse(params);

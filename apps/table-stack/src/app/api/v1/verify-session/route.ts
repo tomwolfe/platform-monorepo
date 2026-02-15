@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyBridgeToken } from '@/lib/tokens';
-import { SecurityProvider } from '@/lib/security';
+import { verifyBridgeToken } from '@repo/auth';
+import { SecurityProvider } from '@repo/auth';
 
 export async function POST(req: NextRequest) {
   // 1. Validate internal key
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Verify token
-    const payload = await verifyBridgeToken(token);
+    const payload = await verifyBridgeToken(token) as { clerkUserId: string; role: string };
     if (!payload) {
       return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
     }

@@ -3,8 +3,7 @@ import { db } from "@repo/database";
 import { restaurants } from "@repo/database";
 import { eq } from 'drizzle-orm';
 import { redis } from './redis';
-import { verifyServiceToken } from './shared-auth';
-import { SecurityProvider } from './security';
+import { verifyServiceToken, SecurityProvider } from '@repo/auth';
 
 export interface AuthContext {
   restaurantId?: string;

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ToolDefinition } from "./types";
-import { geocode_location, search_restaurant, GeocodeSchema, SearchRestaurantSchema } from "./location_search";
-import { add_calendar_event, AddCalendarEventSchema } from "./calendar";
+import { geocode_location, search_restaurant } from "./location_search";
+import { add_calendar_event } from "./calendar";
 import { 
   mobility_request, 
   get_route_estimate, 
@@ -28,6 +28,14 @@ import {
 } from "./operational_state";
 import { storefrontTools } from "./storefront";
 import { RestaurantResultSchema } from "../schema";
+import { 
+  GEOCODE_LOCATION_TOOL, 
+  SEARCH_RESTAURANT_TOOL, 
+  ADD_CALENDAR_EVENT_TOOL,
+  GeocodeSchema,
+  SearchRestaurantSchema,
+  AddCalendarEventSchema
+} from "@repo/mcp-protocol";
 
 /**
  * Tool registry with complete ToolDefinition metadata for all tools.
@@ -39,23 +47,8 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
   ["update_product", storefrontTools.update_product],
   ["delete_product", storefrontTools.delete_product],
   ["geocode_location", {
-    name: "geocode_location",
+    ...(GEOCODE_LOCATION_TOOL as any),
     version: "1.0.0",
-    description: "Authorized to perform real-time geocoding of any location. Converts city names, addresses, or place names to precise lat/lon coordinates with full authority.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        location: {
-          type: "string",
-          description: "The city, neighborhood, or specific place name to geocode. Use 'nearby' for the user's current area."
-        },
-        userLocation: {
-          type: "object",
-          description: "The user's current GPS coordinates for biasing search results."
-        }
-      },
-      required: ["location"]
-    },
     return_schema: {
       lat: "number",
       lon: "number"
@@ -70,34 +63,8 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     execute: geocode_location
   }],
   ["search_restaurant", {
-    name: "search_restaurant",
+    ...(SEARCH_RESTAURANT_TOOL as any),
     version: "1.0.0",
-    description: "Authorized to perform real-time restaurant searches. Accesses live dining databases to find highly-rated restaurants with complete authority.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        cuisine: {
-          type: "string",
-          description: "The type of cuisine to search for (e.g., 'Italian', 'Sushi', 'Burgers')."
-        },
-        lat: {
-          type: "number",
-          description: "Latitude for the search center."
-        },
-        lon: {
-          type: "number",
-          description: "Longitude for the search center."
-        },
-        location: {
-          type: "string",
-          description: "A text-based location (e.g., 'Soho, London') to search near if coordinates are not provided."
-        },
-        userLocation: {
-          type: "object",
-          description: "The user's current GPS coordinates for proximity biasing."
-        }
-      }
-    },
     return_schema: {
       results: "array"
     },
@@ -108,19 +75,8 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     execute: search_restaurant
   }],
   ["add_calendar_event", {
-    name: "add_calendar_event",
+    ...(ADD_CALENDAR_EVENT_TOOL as any),
     version: "1.0.0",
-    description: "Authorized to perform real-time calendar event creation. Can schedule single or multiple events with full calendar integration authority.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        events: {
-          type: "array",
-          description: "An array of one or more calendar events to schedule."
-        }
-      },
-      required: ["events"]
-    },
     return_schema: {
       status: "string",
       count: "number",

@@ -30,7 +30,7 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
     );
 
   const occupiedTableIdsResult = await occupiedTableIdsQuery;
-  const occupiedTableIds = occupiedTableIdsResult.map(r => r.tableId).filter(Boolean) as string[];
+  const occupiedTableIds = occupiedTableIdsResult.map((r: { tableId: string | null }) => r.tableId).filter(Boolean) as string[];
 
   // Also check combinedTableIds from restaurantReservations
   const occupiedCombinedTableIdsQuery = await db
@@ -50,7 +50,7 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
       )
     );
 
-  occupiedCombinedTableIdsQuery.forEach(r => {
+  occupiedCombinedTableIdsQuery.forEach((r: { combinedTableIds: string[] | null }) => {
     if (r.combinedTableIds) {
       occupiedTableIds.push(...r.combinedTableIds);
     }
@@ -67,17 +67,17 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
       )
     );
 
-  const availableIndividualTables = allTables.filter(t => 
+  const availableIndividualTables = allTables.filter((t: any) => 
     !occupiedTableIds.includes(t.id) && t.maxCapacity >= partySize
   );
 
   if (availableIndividualTables.length > 0) {
-    return availableIndividualTables.map(t => ({ ...t, isCombined: false }));
+    return availableIndividualTables.map((t: any) => ({ ...t, isCombined: false }));
   }
 
   // If no individual table fits, try joining two tables
   // For simplicity, we only try joining TWO adjacent tables
-  const vacantTables = allTables.filter(t => !occupiedTableIds.includes(t.id));
+  const vacantTables = allTables.filter((t: any) => !occupiedTableIds.includes(t.id));
   const suggestedCombos: any[] = [];
 
   for (let i = 0; i < vacantTables.length; i++) {
@@ -156,7 +156,7 @@ export async function GET(req: NextRequest) {
     const restaurantTime = toZonedTime(requestedDate, timezone);
     
     const dayOfWeek = format(restaurantTime, 'eeee', { timeZone: timezone }).toLowerCase();
-    const openDays = restaurant.daysOpen?.split(',').map(d => d.trim().toLowerCase()) || [];
+    const openDays = restaurant.daysOpen?.split(',').map((d: string) => d.trim().toLowerCase()) || [];
     
     if (!openDays.includes(dayOfWeek)) {
       return NextResponse.json({ message: 'Restaurant is closed on this day', availableTables: [] });

@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyBridgeToken } from '@/lib/tokens';
+import { verifyBridgeToken } from '@repo/auth';
+
+export const dynamic = 'force-dynamic';
+
 import { db, users, stores, storeProducts, stock } from '@repo/database';
 import { eq, sql } from 'drizzle-orm';
 import { getTableStackRestaurant, getTableStackInventory } from '@/lib/tablestack';
@@ -12,7 +15,7 @@ export async function GET(req: NextRequest) {
     return new NextResponse('Missing bridge_token', { status: 400 });
   }
 
-  const payload = await verifyBridgeToken(token);
+  const payload = await verifyBridgeToken(token) as { clerkUserId: string; role: string; restaurantId?: string };
 
   if (!payload || !payload.clerkUserId) {
     return new NextResponse('Invalid or expired bridge_token', { status: 401 });

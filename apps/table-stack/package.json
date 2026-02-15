@@ -19,6 +19,7 @@
     "@hookform/resolvers": "^3.10.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@neondatabase/serverless": "^1.0.2",
+    "@repo/auth": "workspace:*",
     "@repo/database": "workspace:*",
     "@repo/mcp-protocol": "workspace:*",
     "@repo/ui-theme": "workspace:*",

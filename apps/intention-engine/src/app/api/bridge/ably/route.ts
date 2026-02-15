@@ -1,7 +1,7 @@
 import { redis } from "@/lib/redis-client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { verifySignature } from "@/lib/security";
+import { verifySignature } from "@repo/auth";
 
 // Schema for Ably message payloads from TableStack
 const AblyStateSchema = z.object({

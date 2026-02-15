@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { SecurityProvider } from '@/lib/security';
+
+export const dynamic = 'force-dynamic';
+
+import { SecurityProvider } from '@repo/auth';
 import { GET_AVAILABILITY_TOOL, TOOL_METADATA, PARAMETER_ALIASES } from '@/lib/mcp';
 import { z } from 'zod';
 

@@ -1,5 +1,34 @@
 import { Redis } from '@upstash/redis';
 
+/**
+ * Service Namespace Enum
+ * Enforces namespace isolation across all services
+ */
+export enum ServiceNamespace {
+  IE = "ie",      // Intention Engine
+  OD = "od",      // Open Delivery
+  TS = "ts",      // Table Stack
+  SF = "sf",      // Store Front
+  SHARED = "shared",
+}
+
+/**
+ * Get the prefix for a service namespace
+ */
+export function getNamespacePrefix(namespace: ServiceNamespace): string {
+  return `${namespace}:`;
+}
+
+/**
+ * Create a Redis client with namespace isolation
+ * Requires explicit ServiceNamespace to prevent key collisions
+ */
+export function getRedisClient(namespace: ServiceNamespace): Redis {
+  const { url, token } = getRedisConfig(namespace);
+  const baseClient = new Redis({ url, token });
+  return wrapWithPrefix(baseClient, getNamespacePrefix(namespace));
+}
+
 export function wrapWithPrefix(obj: any, prefix: string): any {
   return new Proxy(obj, {
     get(target, prop, receiver) {

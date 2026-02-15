@@ -1,4 +1,7 @@
 export * from './redis';
+export * from './redis/memory';
+export * from './types/execution';
+export * from './normalization';
 export * from './clients';
 export * from './idempotency';
 export * from './tracing';

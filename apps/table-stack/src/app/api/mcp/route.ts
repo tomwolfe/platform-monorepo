@@ -232,8 +232,8 @@ server.tool(
   (TOOLS.tableStack as any).getLiveOperationalState.schema.shape,
   async ({ restaurant_id }: any) => {
     const key = `state:${restaurant_id}:tables`;
-    const { getRedisClient } = await import("@repo/shared");
-    const redis = getRedisClient("table-stack", "ts");
+    const { getRedisClient, ServiceNamespace } = await import("@repo/shared");
+    const redis = getRedisClient(ServiceNamespace.TS);
     
     const liveData = await redis.hgetall(key);
     

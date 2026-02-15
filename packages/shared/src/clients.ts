@@ -1,19 +1,5 @@
-import { Redis } from '@upstash/redis';
 import { Resend } from 'resend';
 import Ably from 'ably';
-import { getRedisConfig, wrapWithPrefix } from './redis';
-
-// Redis Singletons by App
-const redisInstances: Record<string, Redis> = {};
-
-export const getRedisClient = (appName: string, prefix: string): Redis => {
-  if (!redisInstances[appName]) {
-    const config = getRedisConfig(appName);
-    const rawRedis = new Redis(config);
-    redisInstances[appName] = wrapWithPrefix(rawRedis, prefix) as Redis;
-  }
-  return redisInstances[appName];
-};
 
 // Resend Singleton
 let resendInstance: Resend | null = null;

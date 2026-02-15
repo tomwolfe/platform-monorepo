@@ -1,51 +1,21 @@
 import * as zod from "zod";
 const z = zod.z;
 
-/**
- * MCP Tool Definitions for the Nervous System monorepo.
- */
+export * from "./schemas/mobility";
+export * from "./schemas/booking";
+export * from "./schemas/opendelivery";
+export * from "./schemas/storefront";
+export * from "./schemas/communication";
+export * from "./schemas/context";
+export * from "./schemas/operational_state";
 
-// --- TableStack Tools ---
-export const GetAvailabilitySchema = z.object({
-  restaurantId: z.string().describe("The internal ID of the restaurant."),
-  date: z.string().describe("ISO 8601 date (e.g., '2026-02-12')."),
-  partySize: z.number().describe("Number of guests.")
-});
-
-export const BookTableSchema = z.object({
-  restaurantId: z.string().describe("The internal ID of the restaurant."),
-  tableId: z.string().describe("The ID of the table to book."),
-  guestName: z.string().describe("The name for the reservation."),
-  guestEmail: z.string().describe("The email for the reservation."),
-  partySize: z.number().describe("Number of guests."),
-  startTime: z.string().describe("ISO 8601 start time.")
-});
-
-// --- OpenDelivery Tools ---
-export const CalculateQuoteSchema = z.object({
-  pickup_address: z.string().describe("Address where the delivery starts."),
-  delivery_address: z.string().describe("Address where the delivery ends."),
-  items: z.array(z.string()).describe("List of items to be delivered.")
-});
-
-export const GetDriverLocationSchema = z.object({
-  order_id: z.string().describe("The unique identifier of the order.")
-});
-
-// --- StoreFront Tools ---
-export const ListVendorsSchema = z.object({
-  latitude: z.number().describe("Latitude for location-based search."),
-  longitude: z.number().describe("Longitude for location-based search."),
-  radius_km: z.number().optional().default(10).describe("Search radius in kilometers.")
-});
-
-export const GetMenuSchema = z.object({
-  store_id: z.string().describe("The internal ID of the store.")
-});
-
-export const GetLiveOperationalStateSchema = z.object({
-  restaurant_id: z.string().describe("The unique identifier for the restaurant.")
-});
+import { MobilityRequestSchema, RouteEstimateSchema } from "./schemas/mobility";
+import { GetAvailabilitySchema, BookTableSchema, TableReservationSchema } from "./schemas/booking";
+import { CalculateQuoteSchema, GetDriverLocationSchema } from "./schemas/opendelivery";
+import { ListVendorsSchema, GetMenuSchema, FindProductNearbySchema, ReserveStockItemSchema, CreateProductSchema, UpdateProductSchema, DeleteProductSchema } from "./schemas/storefront";
+import { CommunicationSchema } from "./schemas/communication";
+import { WeatherSchema } from "./schemas/context";
+import { GetLiveOperationalStateSchema, LiveStateSchema } from "./schemas/operational_state";
 
 export const ToolCapabilitySchema = z.object({
   name: z.string(),
@@ -103,11 +73,56 @@ export const TOOLS = {
       name: "getMenu",
       description: "Retrieve the menu/product list for a specific store.",
       schema: GetMenuSchema,
+    },
+    findProductNearby: {
+      name: "find_product_nearby",
+      description: "Search for products in nearby stores based on location.",
+      schema: FindProductNearbySchema,
+    },
+    reserveStockItem: {
+      name: "reserve_stock_item",
+      description: "Reserve a product at a specific store. REQUIRES CONFIRMATION.",
+      schema: ReserveStockItemSchema,
+    }
+  },
+  mobility: {
+    requestRide: {
+      name: "request_ride",
+      description: "Authorized to perform real-time ride requests from mobility services.",
+      schema: MobilityRequestSchema,
+    },
+    getRouteEstimate: {
+      name: "get_route_estimate",
+      description: "Authorized to access real-time routing data.",
+      schema: RouteEstimateSchema,
+    }
+  },
+  booking: {
+    reserveRestaurant: {
+      name: "reserve_restaurant",
+      description: "Authorized to perform restaurant reservations.",
+      schema: TableReservationSchema,
+    }
+  },
+  communication: {
+    sendComm: {
+      name: "send_comm",
+      description: "Authorized to perform real-time communications.",
+      schema: CommunicationSchema,
+    }
+  },
+  context: {
+    getWeather: {
+      name: "get_weather_data",
+      description: "Authorized to access real-time weather data.",
+      schema: WeatherSchema,
     }
   }
 } as const;
 
-// Legacy tool definitions and schemas for backward compatibility
+export type McpToolRegistry = typeof TOOLS;
+
+// Legacy tool definitions...
 export const DISPATCH_INTENT_TOOL = {
   name: "dispatch_intent",
   description: "Dispatch a delivery intent to the driver network. REQUIRES CONFIRMATION.",

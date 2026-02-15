@@ -1,6 +1,8 @@
-import { getRedisClient } from '@repo/shared';
+import { getRedisClient, ServiceNamespace } from '@repo/shared';
 
-const PROJECT_PREFIX = 'ie:';
-
-export const redis = getRedisClient('IntentionEngine', PROJECT_PREFIX);
+/**
+ * Shared Redis Client Wrapper with Namespace Isolation for IntentionEngine
+ * Uses ServiceNamespace enum for type-safe namespace isolation
+ */
+export const redis = getRedisClient(ServiceNamespace.IE);
 export default redis;

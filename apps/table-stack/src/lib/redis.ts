@@ -1,9 +1,8 @@
-import { getRedisClient } from '@repo/shared';
+import { getRedisClient, ServiceNamespace } from '@repo/shared';
 
 /**
  * Shared Redis Client Wrapper with Namespace Isolation for TableStack
+ * Uses ServiceNamespace enum for type-safe namespace isolation
  */
-const PROJECT_PREFIX = 'ts:';
-
-export const redis = getRedisClient('TableStack', PROJECT_PREFIX);
+export const redis = getRedisClient(ServiceNamespace.TS);
 export default redis;

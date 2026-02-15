@@ -1,6 +1,8 @@
-import { getRedisClient } from '@repo/shared';
+import { getRedisClient, ServiceNamespace } from '@repo/shared';
 
-const PROJECT_PREFIX = 'od:';
-
-export const redis = getRedisClient('OpenDelivery', PROJECT_PREFIX);
+/**
+ * Shared Redis Client Wrapper with Namespace Isolation for OpenDelivery
+ * Uses ServiceNamespace enum for type-safe namespace isolation
+ */
+export const redis = getRedisClient(ServiceNamespace.OD);
 export default redis;

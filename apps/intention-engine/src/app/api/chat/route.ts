@@ -9,6 +9,8 @@ import { Redis } from "@upstash/redis";
 import { getUserPreferences, updateUserPreferences } from "@/lib/preferences";
 import { redis } from "@/lib/redis-client";
 import { getMcpClients } from "@/lib/mcp-client";
+import { TOOLS, McpToolRegistry, GeocodeSchema, AddCalendarEventSchema } from "@repo/mcp-protocol";
+import { NormalizationService } from "@repo/shared";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -28,20 +30,32 @@ const ChatRequestSchema = z.object({
 
 /**
  * Dynamically fetches tools from all registered MCP servers.
+ * Uses centralized McpToolRegistry schemas for validation.
  */
 async function getTools(auditLogId: string, userLocation?: { lat: number, lng: number }) {
   const clients = await getMcpClients();
   const tools: Record<string, any> = {};
   const { executeToolWithContext } = await import("@/app/actions");
 
+  // Helper to get schema from McpToolRegistry
+  const getSchemaForTool = (toolName: string): z.ZodType<any> | undefined => {
+    // Flatten the TOOLS registry to find matching schema
+    const allTools = Object.values(TOOLS).flatMap(service => Object.values(service));
+    const toolDef = allTools.find(t => t.name === toolName);
+    return toolDef?.schema;
+  };
+
   for (const [serviceName, client] of Object.entries(clients)) {
     try {
       const { tools: mcpTools } = await client.listTools();
       
       for (const mcpTool of mcpTools) {
+        // Use schema from registry if available, fallback to generic
+        const registrySchema = getSchemaForTool(mcpTool.name);
+        
         tools[mcpTool.name] = tool({
           description: mcpTool.description,
-          inputSchema: z.record(z.any()), 
+          inputSchema: registrySchema || z.record(z.any()), 
           execute: async (params) => {
             console.log(`Executing MCP tool ${mcpTool.name} from ${serviceName}`, params);
             
@@ -156,6 +170,26 @@ export async function POST(req: Request) {
       intentInferenceLatency = Date.now() - intentStart;
       intent = inferenceResult.hypotheses.primary;
       rawModelResponse = inferenceResult.rawResponse;
+      
+      // Phase 3: Deterministic Intelligence Guardrails
+      // Validate intent parameters against McpToolRegistry schemas
+      // This overrides LLM "Confidence Inflation" with deterministic Zod failures
+      const normalizationResult = NormalizationService.normalizeIntentParameters(
+        intent.type,
+        intent.parameters || {}
+      );
+      
+      if (!normalizationResult.success) {
+        console.warn("[NormalizationService] Intent parameter validation failed:", {
+          intentType: intent.type,
+          errors: normalizationResult.errors
+        });
+        // Reduce confidence if parameters fail validation
+        intent.confidence = Math.min(intent.confidence * 0.5, 0.3);
+      } else if (normalizationResult.data) {
+        // Replace parameters with normalized/validated version
+        intent.parameters = normalizationResult.data as Record<string, unknown>;
+      }
     } catch (e) {
       console.error("Intent inference failed, falling back to UNKNOWN", e);
       intent = { 
@@ -175,13 +209,12 @@ export async function POST(req: Request) {
     const mcpTools = await getTools(auditLog.id, userLocation || undefined);
     
     // Combine with legacy tools for fallback/transition
+    // Uses centralized schemas from @repo/mcp-protocol
     const allTools = {
       ...mcpTools,
       geocode_location: tool({
         description: "Converts a city or place name to lat/lon coordinates.",
-        inputSchema: z.object({
-          location: z.string().describe("The city or place name to geocode."),
-        }),
+        inputSchema: GeocodeSchema,
         execute: async (params) => {
           const result = await executeToolWithContext("geocode_location", { ...params, userLocation: userLocation || undefined }, {
             audit_log_id: auditLog.id,
@@ -192,14 +225,7 @@ export async function POST(req: Request) {
       }),
       add_calendar_event: tool({
         description: "Add one or more events to the calendar.",
-        inputSchema: z.object({
-          events: z.array(z.object({
-            title: z.string(),
-            start_time: z.string(),
-            end_time: z.string(),
-            location: z.string().optional(),
-          })),
-        }),
+        inputSchema: AddCalendarEventSchema,
         execute: async (params: any) => {
           const result = await executeToolWithContext("add_calendar_event", params, {
             audit_log_id: auditLog.id,

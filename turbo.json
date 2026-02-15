@@ -4,6 +4,11 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
+      "inputs": [
+        "src/**",
+        "package.json",
+        "tsconfig.json"
+      ],
       "outputs": [".next/**", "!.next/cache/**"]
     },
     "lint": {

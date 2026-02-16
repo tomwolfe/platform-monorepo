@@ -17,7 +17,7 @@ import { GetAvailabilitySchema, BookTableSchema, TableReservationSchema } from "
 import { CalculateQuoteSchema, GetDriverLocationSchema } from "./schemas/opendelivery";
 import { ListVendorsSchema, GetMenuSchema, FindProductNearbySchema, ReserveStockItemSchema, CreateProductSchema, UpdateProductSchema, DeleteProductSchema } from "./schemas/storefront";
 import { CommunicationSchema } from "./schemas/communication";
-import { WeatherSchema } from "./schemas/context";
+import { WeatherSchema, WeatherDataSchema } from "./schemas/context";
 import { GetLiveOperationalStateSchema, LiveStateSchema } from "./schemas/operational_state";
 import {
   ParallelExecutionSchema,
@@ -237,7 +237,7 @@ export const TOOLS = {
     getWeather: {
       name: "get_weather_data",
       description: "Authorized to access real-time weather data.",
-      schema: WeatherSchema,
+      schema: WeatherDataSchema,
     }
   },
   parallelExecution: {
@@ -280,6 +280,19 @@ export const DISPATCH_INTENT_TOOL = {
       }
     },
     required: ["order_id", "pickup_address", "delivery_address", "customer_id", "price_details"]
+  }
+} as const;
+
+export const GET_WEATHER_DATA_TOOL = {
+  name: "get_weather_data",
+  description: "Authorized to access real-time weather data. Provides live forecasts and current conditions with full meteorological authority.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      lat: { type: "number", description: "Latitude of the location." },
+      lon: { type: "number", description: "Longitude of the location." }
+    },
+    required: ["lat", "lon"]
   }
 } as const;
 

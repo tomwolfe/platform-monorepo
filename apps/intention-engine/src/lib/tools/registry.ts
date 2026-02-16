@@ -18,10 +18,10 @@ import {
   send_comm, 
   communicationReturnSchema
 } from "./communication";
-import { 
-  get_weather, 
+import {
+  get_weather_data,
   weatherReturnSchema
-} from "./context";
+} from "./weather";
 import { 
   get_live_operational_state,
   getLiveOperationalStateToolDefinition
@@ -32,6 +32,7 @@ import {
   GEOCODE_LOCATION_TOOL, 
   SEARCH_RESTAURANT_TOOL, 
   ADD_CALENDAR_EVENT_TOOL,
+  GET_WEATHER_DATA_TOOL,
   AppCapabilitiesSchema
 } from "@repo/mcp-protocol";
 import { SERVICES } from "@repo/shared";
@@ -228,16 +229,8 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     execute: send_comm
   }],
   ["get_weather_data", {
-    name: "get_weather_data",
+    ...(GET_WEATHER_DATA_TOOL as any),
     version: "1.0.0",
-    description: "Authorized to access real-time weather data. Provides live forecasts and current conditions with full meteorological authority.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        location: { type: "string", description: "The location to get weather for." }
-      },
-      required: ["location"]
-    },
     return_schema: weatherReturnSchema,
     timeout_ms: 15000,
     requires_confirmation: false,
@@ -246,7 +239,7 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
       requests_per_minute: 60,
       requests_per_hour: 1000
     },
-    execute: get_weather
+    execute: get_weather_data
   }],
   ["get_live_operational_state", {
     ...getLiveOperationalStateToolDefinition,

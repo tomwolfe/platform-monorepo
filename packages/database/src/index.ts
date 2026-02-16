@@ -16,5 +16,6 @@ const sql = databaseUrl ? neon(databaseUrl) : null;
 export const db = sql ? drizzle(sql, { schema }) : (null as any);
 
 export type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
+export { eq, and, gt, sql } from 'drizzle-orm';
 export * from './schema/storefront';
 export * from './schema/tablestack';

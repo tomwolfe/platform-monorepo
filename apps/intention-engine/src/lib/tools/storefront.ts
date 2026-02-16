@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { ToolDefinition } from "./types";
-import { db, stores, storeProducts, stock, productReservations, users } from "@repo/database";
-import { eq, and, gt, sql } from "drizzle-orm";
+import { db, stores, storeProducts, stock, productReservations, users, eq, and, gt, sql } from "@repo/database";
 import { IdempotencyService } from "@repo/shared";
 import { redis } from "../redis-client";
 

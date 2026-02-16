@@ -178,9 +178,9 @@ export const FulfillmentStatusResultSchema = z.object({
 // ============================================================================
 
 /**
- * GetDriverLocationSchema - Get real-time driver location
+ * GetFulfillmentDriverLocationSchema - Get real-time driver location
  */
-export const GetDriverLocationSchema = z.object({
+export const GetFulfillmentDriverLocationSchema = z.object({
   fulfillmentId: z.string().uuid().describe("Fulfillment ID"),
 });
 
@@ -274,7 +274,7 @@ export type IntentFulfillment = z.infer<typeof IntentFulfillmentSchema>;
 export type FulfillmentResult = z.infer<typeof FulfillmentResultSchema>;
 export type GetFulfillmentStatus = z.infer<typeof GetFulfillmentStatusSchema>;
 export type FulfillmentStatusResult = z.infer<typeof FulfillmentStatusResultSchema>;
-export type GetDriverLocation = z.infer<typeof GetDriverLocationSchema>;
+export type GetFulfillmentDriverLocation = z.infer<typeof GetFulfillmentDriverLocationSchema>;
 export type DriverLocationResult = z.infer<typeof DriverLocationResultSchema>;
 export type CancelFulfillment = z.infer<typeof CancelFulfillmentSchema>;
 export type UpdateFulfillment = z.infer<typeof UpdateFulfillmentSchema>;

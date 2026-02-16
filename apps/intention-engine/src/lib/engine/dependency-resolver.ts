@@ -89,7 +89,7 @@ export class DependencyResolver {
           visited.add(step.id);
           
           // Reduce in-degree for all dependents
-          for (const dependentId of adjacency.get(step.id) || []) {
+          for (const dependentId of Array.from(adjacency.get(step.id) || new Set<string>())) {
             const currentDegree = inDegree.get(dependentId) || 0;
             inDegree.set(dependentId, currentDegree - 1);
           }

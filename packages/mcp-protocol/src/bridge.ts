@@ -15,7 +15,7 @@ export const ReservationSchema = createSelectSchema(restaurantReservations);
 export const TableSchema = createSelectSchema(restaurantTables);
 
 // Specialized schemas for tool inputs
-export const CreateReservationSchema = createInsertSchema(restaurantReservations).omit({
+export const CreateReservationDBSchema = createInsertSchema(restaurantReservations).omit({
   id: true,
   createdAt: true,
   verificationToken: true,
@@ -35,5 +35,5 @@ export const DB_REFLECTED_SCHEMAS = {
   restaurants: RestaurantSchema,
   reservations: ReservationSchema,
   tables: TableSchema,
-  createReservation: CreateReservationSchema,
+  createReservation: CreateReservationDBSchema,
 };

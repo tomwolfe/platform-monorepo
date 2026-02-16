@@ -391,7 +391,7 @@ async function executeStep(
       } else {
         // ERROR RECOVERY: Check if it's a 4xx/5xx error and attempt normalization
         const errorCode = extractErrorCode(toolResult.error);
-        if (isClientOrServerError(errorCode)) {
+        if (isClientOrServerError(errorCode) && toolResult.error) {
           const recoveryResult = await attemptErrorRecovery(
             step,
             resolvedParameters,

@@ -116,15 +116,48 @@ If you need to update a tool used between services (e.g., `IntentionEngine` call
 
 
 
-### 2. Database Migrations
+### 2. Database Creation and Setup
 
-Migrations are managed centrally in `@repo/database`.
+After setting your `DATABASE_URL`, follow these steps to create and set up your database:
+
+#### Generate and Apply Migrations
+
+Database migrations are managed centrally within the `@repo/database` package.
+
+**Generate Migrations:**
+
+After updating your schema, generate the necessary SQL migration files:
 
 ```bash
-# Generate migrations after schema changes
 pnpm --filter @repo/database drizzle-kit generate
-
 ```
+
+**Apply Migrations:**
+
+Use Drizzle-kit to push these changes to your Neon/Postgres database. Ensure your `DATABASE_URL` is correctly mapped in your environment files:
+
+```bash
+pnpm --filter @repo/database drizzle-kit push
+```
+
+#### Seed the Database (Optional)
+
+If you are working with the TableStack application, a dedicated seeding script is available to populate your database with initial demo data, such as a sample restaurant and its floor plan.
+
+**Run the Seeding Script:**
+
+```bash
+# From the root of the monorepo
+pnpm --filter table-stack tsx seed.ts
+```
+
+This script will create or update a demo restaurant ("The Pesto Place") and generate its associated tables.
+
+#### Core Technologies
+
+- **ORM:** Drizzle ORM
+- **Database Provider:** Neon (Postgres)
+- **Shared Access:** The `@repo/database` package provides unified schemas that are instantly reflected across intention-engine, open-delivery, and table-stack
 
 
 

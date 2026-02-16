@@ -15,7 +15,9 @@
     "OPENDELIVER_MCP_URL",
     "TABLESTACK_API_URL",
     "INTENTION_ENGINE_WEBHOOK_URL",
-    "OPENDELIVER_API_URL"
+    "OPENDELIVER_API_URL",
+    "CRON_SECRET",
+    "LLM_BASE_URL"
   ],
   "tasks": {
     "build": {

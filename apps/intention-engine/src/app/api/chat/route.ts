@@ -8,7 +8,6 @@ import {
   getToolCapabilitiesPrompt, 
   listTools 
 } from "@/lib/tools";
-import { UnifiedLocationSchema } from "@/lib/tools/mobility";
 import { env } from "@/lib/config";
 import { inferIntent } from "@/lib/intent";
 import { Redis } from "@upstash/redis";
@@ -32,7 +31,8 @@ import {
   UpdateProductSchema,
   DeleteProductSchema,
   GetLiveOperationalStateSchema,
-  DB_REFLECTED_SCHEMAS
+  DB_REFLECTED_SCHEMAS,
+  UnifiedLocationSchema
 } from "@repo/mcp-protocol";
 import { NormalizationService } from "@repo/shared";
 

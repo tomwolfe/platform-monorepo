@@ -45,6 +45,18 @@ export const IntentSchema = z.object({
 
 export type Intent = z.infer<typeof IntentSchema>;
 
+export const RestaurantResultSchema = z.object({
+  name: z.string(),
+  address: z.string(),
+  cuisine: z.array(z.string()).optional(),
+  coordinates: z.object({
+    lat: z.number(),
+    lon: z.number(),
+  }),
+});
+
+export type RestaurantResult = z.infer<typeof RestaurantResultSchema>;
+
 export const StepSchema = z.object({
   tool_name: z.string(),
   parameters: z.record(z.string(), z.any()),

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ToolDefinitionMetadata, ToolParameter } from "./types";
-import { UnifiedLocationSchema, normalizeLocation } from "./mobility";
-import { WeatherSchema } from "@repo/mcp-protocol";
+import { normalizeLocation } from "./mobility";
+import { WeatherSchema, UnifiedLocationSchema } from "@repo/mcp-protocol";
 
 export type WeatherParams = z.infer<typeof WeatherSchema>;
 

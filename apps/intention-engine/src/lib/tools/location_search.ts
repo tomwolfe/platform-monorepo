@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { redis } from "../redis-client";
 import { env } from "../config";
+import { RestaurantResultSchema } from "../schema";
 import { GeocodeSchema, SearchRestaurantSchema, DB_REFLECTED_SCHEMAS } from "@repo/mcp-protocol";
 
 export async function geocode_location(params: z.infer<typeof GeocodeSchema>) {

@@ -1,7 +1,13 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { streamText, tool, stepCountIs, convertToModelMessages, generateObject } from "ai";
 import { z } from "zod";
-import { search_restaurant, add_calendar_event, geocode_location, getToolCapabilitiesPrompt, listTools } from "@/lib/tools";
+import { 
+  search_restaurant, 
+  add_calendar_event, 
+  geocode_location, 
+  getToolCapabilitiesPrompt, 
+  listTools 
+} from "@/lib/tools";
 import { UnifiedLocationSchema } from "@/lib/tools/mobility";
 import { env } from "@/lib/config";
 import { inferIntent } from "@/lib/intent";
@@ -9,7 +15,24 @@ import { Redis } from "@upstash/redis";
 import { getUserPreferences, updateUserPreferences } from "@/lib/preferences";
 import { redis } from "@/lib/redis-client";
 import { getMcpClients } from "@/lib/mcp-client";
-import { TOOLS, McpToolRegistry, GeocodeSchema, AddCalendarEventSchema } from "@repo/mcp-protocol";
+import { 
+  TOOLS, 
+  McpToolRegistry, 
+  GeocodeSchema, 
+  AddCalendarEventSchema,
+  SearchRestaurantSchema,
+  WeatherDataSchema,
+  RouteEstimateSchema,
+  MobilityRequestSchema,
+  TableReservationSchema,
+  CommunicationSchema,
+  FindProductNearbySchema,
+  ReserveStockItemSchema,
+  CreateProductSchema,
+  UpdateProductSchema,
+  DeleteProductSchema,
+  GetLiveOperationalStateSchema
+} from "@repo/mcp-protocol";
 import { NormalizationService } from "@repo/shared";
 
 export const runtime = "nodejs";
@@ -35,14 +58,13 @@ const ChatRequestSchema = z.object({
 async function getTools(auditLogId: string, userLocation?: { lat: number, lng: number }) {
   const clients = await getMcpClients();
   const tools: Record<string, any> = {};
-  const { executeToolWithContext } = await import("@/app/actions");
 
   // Helper to get schema from McpToolRegistry
   const getSchemaForTool = (toolName: string): z.ZodType<any> | undefined => {
     // Flatten the TOOLS registry to find matching schema
     const allTools = Object.values(TOOLS).flatMap(service => Object.values(service));
-    const toolDef = allTools.find(t => t.name === toolName);
-    return toolDef?.schema;
+    const toolDef = allTools.find(t => (t as any).name === toolName);
+    return (toolDef as any)?.schema;
   };
 
   for (const [serviceName, client] of Object.entries(clients)) {
@@ -208,33 +230,52 @@ export async function POST(req: Request) {
     // Fetch dynamic tools from MCP servers
     const mcpTools = await getTools(auditLog.id, userLocation || undefined);
     
-    // Combine with legacy tools for fallback/transition
-    // Uses centralized schemas from @repo/mcp-protocol
-    const allTools = {
-      ...mcpTools,
-      geocode_location: tool({
-        description: "Converts a city or place name to lat/lon coordinates.",
-        inputSchema: GeocodeSchema,
-        execute: async (params) => {
-          const result = await executeToolWithContext("geocode_location", { ...params, userLocation: userLocation || undefined }, {
-            audit_log_id: auditLog.id,
-            step_index: auditLog.steps.length
-          });
-          return result;
-        },
-      }),
-      add_calendar_event: tool({
-        description: "Add one or more events to the calendar.",
-        inputSchema: AddCalendarEventSchema,
-        execute: async (params: any) => {
-          const result = await executeToolWithContext("add_calendar_event", params, {
-            audit_log_id: auditLog.id,
-            step_index: auditLog.steps.length
-          });
-          return result;
-        },
-      }),
+    // Build the complete toolset combining MCP and Local tools
+    const localTools = listTools();
+    const allTools: Record<string, any> = { ...mcpTools };
+
+    const schemaMap: Record<string, z.ZodType<any>> = {
+      geocode_location: GeocodeSchema,
+      add_calendar_event: AddCalendarEventSchema,
+      search_restaurant: SearchRestaurantSchema,
+      get_weather_data: WeatherDataSchema,
+      get_route_estimate: RouteEstimateSchema,
+      request_ride: MobilityRequestSchema,
+      book_restaurant_table: TableReservationSchema,
+      reserve_restaurant: TableReservationSchema,
+      send_comm: CommunicationSchema,
+      find_product_nearby: FindProductNearbySchema,
+      reserve_stock_item: ReserveStockItemSchema,
+      create_product: CreateProductSchema,
+      update_product: UpdateProductSchema,
+      delete_product: DeleteProductSchema,
+      get_live_operational_state: GetLiveOperationalStateSchema,
     };
+
+    for (const localTool of localTools) {
+      // Don't override MCP tools with local ones if they already exist
+      if (!allTools[localTool.name]) {
+        allTools[localTool.name] = tool({
+          description: localTool.description,
+          inputSchema: schemaMap[localTool.name] || z.record(z.any()),
+          execute: async (params) => {
+            // Context Injection: Provide user location if schema expects it
+            const enrichedParams = { ...params };
+            const needsLocation = ["geocode_location", "search_restaurant"].includes(localTool.name);
+            
+            if (needsLocation && userLocation && !enrichedParams.userLocation) {
+              enrichedParams.userLocation = userLocation;
+            }
+
+            const result = await executeToolWithContext(localTool.name, enrichedParams, {
+              audit_log_id: auditLog.id,
+              step_index: auditLog.steps.length
+            });
+            return result;
+          },
+        });
+      }
+    }
 
     const locationContext = userLocation 
       ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}.`

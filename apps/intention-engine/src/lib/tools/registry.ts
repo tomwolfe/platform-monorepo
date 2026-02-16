@@ -212,11 +212,12 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     inputSchema: {
       type: "object",
       properties: {
-        to: { type: "string", description: "Recipient identifier." },
-        channel: { type: "string", enum: ["email", "sms"], description: "The communication channel." },
-        message: { type: "string", description: "The message content." }
+        recipient: { type: "string", description: "The email address or phone number of the recipient." },
+        channel: { type: "string", enum: ["email", "sms"], description: "The communication channel to use." },
+        message: { type: "string", description: "The message content." },
+        subject: { type: "string", description: "The subject of the email (ignored for SMS)." }
       },
-      required: ["to", "channel", "message"]
+      required: ["recipient", "channel", "message"]
     },
     return_schema: communicationReturnSchema,
     timeout_ms: 30000,

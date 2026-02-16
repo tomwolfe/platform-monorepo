@@ -4,7 +4,6 @@ const z = zod.z;
 export * from "./schemas/mobility";
 export * from "./schemas/booking";
 export * from "./schemas/opendelivery";
-export * from "./schemas/storefront";
 export * from "./schemas/communication";
 export * from "./schemas/context";
 export * from "./schemas/operational_state";
@@ -15,7 +14,6 @@ export * from "./schemas/delivery_fulfillment";
 import { MobilityRequestSchema, RouteEstimateSchema } from "./schemas/mobility";
 import { GetAvailabilitySchema, BookTableSchema, TableReservationSchema } from "./schemas/booking";
 import { CalculateQuoteSchema, GetDriverLocationSchema } from "./schemas/opendelivery";
-import { ListVendorsSchema, GetMenuSchema, FindProductNearbySchema, ReserveStockItemSchema, CreateProductSchema, UpdateProductSchema, DeleteProductSchema } from "./schemas/storefront";
 import { CommunicationSchema } from "./schemas/communication";
 import { WeatherSchema, WeatherDataSchema } from "./schemas/context";
 import { GetLiveOperationalStateSchema, LiveStateSchema } from "./schemas/operational_state";
@@ -185,28 +183,6 @@ export const TOOLS = {
       schema: ValidateFulfillmentSchema,
     },
   },
-  storeFront: {
-    listVendors: {
-      name: "listVendors",
-      description: "Search for local vendors (stores, restaurants) based on location.",
-      schema: ListVendorsSchema,
-    },
-    getMenu: {
-      name: "getMenu",
-      description: "Retrieve the menu/product list for a specific store.",
-      schema: GetMenuSchema,
-    },
-    findProductNearby: {
-      name: "find_product_nearby",
-      description: "Search for products in nearby stores based on location.",
-      schema: FindProductNearbySchema,
-    },
-    reserveStockItem: {
-      name: "reserve_stock_item",
-      description: "Reserve a product at a specific store. REQUIRES CONFIRMATION.",
-      schema: ReserveStockItemSchema,
-    }
-  },
   mobility: {
     requestRide: {
       name: "request_ride",
@@ -293,35 +269,6 @@ export const GET_WEATHER_DATA_TOOL = {
       lon: { type: "number", description: "Longitude of the location." }
     },
     required: ["lat", "lon"]
-  }
-} as const;
-
-export const FIND_PRODUCT_NEARBY_TOOL = {
-  name: "find_product_nearby",
-  description: "Search for products in nearby stores based on location.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      product_query: { type: "string" },
-      user_lat: { type: "number" },
-      user_lng: { type: "number" },
-      max_radius_miles: { type: "number", default: 10 }
-    },
-    required: ["product_query", "user_lat", "user_lng"]
-  }
-} as const;
-
-export const RESERVE_STOCK_ITEM_TOOL = {
-  name: "reserve_stock_item",
-  description: "Reserve a product at a specific store. REQUIRES CONFIRMATION.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      product_id: { type: "string" },
-      venue_id: { type: "string" },
-      quantity: { type: "number" }
-    },
-    required: ["product_id", "venue_id", "quantity"]
   }
 } as const;
 
@@ -462,8 +409,6 @@ export const TOOL_METADATA = {
   quote_delivery: { requires_confirmation: false },
   check_kitchen_load: { requires_confirmation: false },
   dispatch_intent: { requires_confirmation: true },
-  find_product_nearby: { requires_confirmation: false },
-  reserve_stock_item: { requires_confirmation: true },
   check_availability: { requires_confirmation: false },
   book_tablestack_reservation: { requires_confirmation: true },
   discover_restaurant: { requires_confirmation: false },

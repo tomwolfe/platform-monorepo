@@ -26,7 +26,6 @@ import {
   get_live_operational_state,
   getLiveOperationalStateToolDefinition
 } from "./operational_state";
-import { storefrontTools } from "./storefront";
 import { RestaurantResultSchema } from "../schema";
 import { 
   GEOCODE_LOCATION_TOOL, 
@@ -41,11 +40,6 @@ import { SERVICES } from "@repo/shared";
  * Tool registry with complete ToolDefinition metadata for all tools.
  */
 export const TOOLS: Map<string, ToolDefinition> = new Map([
-  ["find_product_nearby", storefrontTools.find_product_nearby],
-  ["reserve_stock_item", storefrontTools.reserve_stock_item],
-  ["create_product", storefrontTools.create_product],
-  ["update_product", storefrontTools.update_product],
-  ["delete_product", storefrontTools.delete_product],
   ["geocode_location", {
     ...(GEOCODE_LOCATION_TOOL as any),
     version: "1.0.0",

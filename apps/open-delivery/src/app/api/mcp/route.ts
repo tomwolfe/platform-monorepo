@@ -46,10 +46,34 @@ async function calculateDeliveryQuote(
   deliveryAddress: any,
   items: any[],
   priority: string = "standard",
-  traceId: string
+  traceId: string,
+  restaurantId?: string
 ) {
-  console.log(`[Trace:${traceId}] Calculating delivery quote`);
+  console.log(`[Trace:${traceId}] Calculating delivery quote${restaurantId ? ` for restaurant:${restaurantId}` : ""}`);
   
+  // Phase D: Cross-Service "Context Injection"
+  // Automatically pad delivery estimate if TableStack waitlist is long
+  let waitlistPaddingMins = 0;
+  if (restaurantId && process.env.TABLESTACK_API_URL) {
+    try {
+      const waitlistRes = await fetch(`${process.env.TABLESTACK_API_URL}/waitlist?restaurantId=${restaurantId}`, {
+        headers: {
+          'x-trace-id': traceId,
+          'Authorization': `Bearer ${process.env.INTERNAL_SERVICE_TOKEN || ""}`
+        }
+      });
+      if (waitlistRes.ok) {
+        const { waitlistCount } = await waitlistRes.json();
+        if (waitlistCount > 5) {
+          console.log(`[Trace:${traceId}] High kitchen load detected (${waitlistCount} waiting). Padding estimate by 10 mins.`);
+          waitlistPaddingMins = 10;
+        }
+      }
+    } catch (err) {
+      console.warn(`[Trace:${traceId}] Failed to fetch waitlist from TableStack:`, err);
+    }
+  }
+
   // Calculate base price
   const basePrice = 12.50;
   const itemBuffer = items.length * 0.5;
@@ -65,6 +89,8 @@ async function calculateDeliveryQuote(
   const subtotal = (basePrice + itemBuffer + distanceFee + weightFee) * priorityMultiplier;
   const total = Math.round(subtotal * 100) / 100;
   
+  const pickupMins = (priority === "urgent" ? 10 : priority === "express" ? 15 : 20) + waitlistPaddingMins;
+
   return {
     quoteId: randomUUID(),
     validUntil: new Date(Date.now() + 15 * 60 * 1000).toISOString(), // 15 min validity
@@ -77,9 +103,9 @@ async function calculateDeliveryQuote(
       currency: "USD",
     },
     estimatedTime: {
-      pickupMinutes: priority === "urgent" ? 10 : priority === "express" ? 15 : 20,
+      pickupMinutes: pickupMins,
       deliveryMinutes: 25 + (items.length > 2 ? 10 : 0) + (priority === "urgent" ? -5 : 0),
-      totalMinutes: priority === "urgent" ? 30 : priority === "express" ? 40 : 45,
+      totalMinutes: pickupMins + (25 + (items.length > 2 ? 10 : 0) + (priority === "urgent" ? -5 : 0)),
     },
     availableVehicles: items.some((i: any) => (i.weight || 0) > 10) ? ["van", "truck"] : 
                        items.some((i: any) => (i.weight || 0) > 5) ? ["car", "van"] : 
@@ -99,12 +125,16 @@ server.tool(
   async ({ pickup_address, delivery_address, items }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
     
+    // Check if pickup_address has an ID that might be a restaurantId
+    const restaurantId = (pickup_address as any).id || (pickup_address as any).restaurantId;
+
     const quote = await calculateDeliveryQuote(
       pickup_address,
       delivery_address,
       items.map((name: string) => ({ name })),
       "standard",
-      traceId
+      traceId,
+      restaurantId
     );
     
     return createResponse({
@@ -126,8 +156,9 @@ server.tool(
     items: TOOLS.deliveryFulfillment.calculateDeliveryQuote.schema.shape.items,
     priority: TOOLS.deliveryFulfillment.calculateDeliveryQuote.schema.shape.priority,
     scheduledPickupTime: TOOLS.deliveryFulfillment.calculateDeliveryQuote.schema.shape.scheduledPickupTime,
+    restaurantId: TOOLS.deliveryFulfillment.calculateDeliveryQuote.schema.shape.restaurantId,
   },
-  async ({ pickupAddress, deliveryAddress, items, priority, scheduledPickupTime }, _extra: any) => {
+  async ({ pickupAddress, deliveryAddress, items, priority, scheduledPickupTime, restaurantId }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
     
     const quote = await calculateDeliveryQuote(
@@ -135,7 +166,8 @@ server.tool(
       deliveryAddress,
       items,
       priority,
-      traceId
+      traceId,
+      restaurantId
     );
     
     return createResponse(quote, traceId);
@@ -392,18 +424,14 @@ let transport: SSEServerTransport | null = null;
 
 async function validateRequest(request: NextRequest) {
   const authHeader = request.headers.get("Authorization");
-  const token = authHeader?.split(" ")[1] || request.nextUrl.searchParams.get("token");
-  const internalKey = request.nextUrl.searchParams.get("internal_key");
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
   
   if (token) {
     const payload = await SecurityProvider.verifyServiceToken(token);
     if (payload) return true;
   }
 
-  if (internalKey && SecurityProvider.validateInternalKey(internalKey)) {
-    return true;
-  }
-
+  // Fallback to standardized header validation for internal traffic
   return SecurityProvider.validateHeaders(request.headers);
 }
 

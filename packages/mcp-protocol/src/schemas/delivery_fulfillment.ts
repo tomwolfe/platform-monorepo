@@ -50,6 +50,7 @@ export const CalculateDeliveryQuoteSchema = z.object({
   scheduledPickupTime: z.string().datetime().optional().describe("Preferred pickup time"),
   priority: z.enum(["standard", "express", "urgent"]).default("standard").describe("Delivery priority level"),
   vehicleType: z.enum(["bike", "car", "van", "truck"]).optional().describe("Required vehicle type"),
+  restaurantId: z.string().uuid().optional().describe("Internal ID of the restaurant for kitchen load synchronization"),
 });
 
 /**

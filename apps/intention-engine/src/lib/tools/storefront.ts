@@ -4,14 +4,6 @@ import { db, stores, storeProducts, stock, productReservations, users, eq, and, 
 import { IdempotencyService } from "@repo/shared";
 import { redis } from "../redis-client";
 
-const ProductSchema = z.object({
-  id: z.string().uuid(),
-  name: z.string(),
-  description: z.string().optional(),
-  price: z.number(),
-  category: z.string(),
-});
-
 export async function find_product_nearby(args: {
   product_query: string;
   user_lat: number;

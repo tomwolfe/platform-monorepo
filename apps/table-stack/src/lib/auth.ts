@@ -44,19 +44,6 @@ export async function validateRequest(req: NextRequest): Promise<{
     }
   }
 
-  if (!apiKey) {
-    return { error: 'Missing API key or valid Bearer token', status: 401 };
-  }
-
-  // Check for internal API key (legacy)
-  if (process.env.INTERNAL_API_KEY && apiKey === process.env.INTERNAL_API_KEY) {
-    return {
-      context: {
-        isInternal: true,
-      },
-    };
-  }
-
   // 1. Global Rate Limiting (IP-based) using Upstash Redis
   const ip = req.headers.get('x-forwarded-for') || 'anonymous';
   const limit = 100; // 100 requests

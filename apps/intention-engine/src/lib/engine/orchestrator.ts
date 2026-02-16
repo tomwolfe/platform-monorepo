@@ -58,6 +58,7 @@ import { getRegistryManager, RegistryManager } from "./registry";
 import { Tracer } from "./tracing";
 import { getToolRegistry } from "./tools/registry";
 import { generateText, SUMMARIZATION_PROMPT } from "./llm";
+import { generatePlan } from "./planner";
 
 // ============================================================================
 // EXECUTION RESULT
@@ -697,7 +698,7 @@ Respond with ONLY a JSON object containing the corrected parameters.`;
       }
 
       if (anyFailed && failedStepResult && failedStep) {
-        // Reflection Logic
+        // Phase C: Close the Feedback Loop (Self-Refection)
         state = applyStateUpdate(state, { status: "REFLECTING" });
         if (options.persistState !== false) {
           await saveExecutionState(state);
@@ -710,40 +711,53 @@ Respond with ONLY a JSON object containing the corrected parameters.`;
             status: s.status,
             output: s.output,
             error: s.error
-          }));
+          })).slice(-5); // Last 5 steps for context
 
-          const prompt = `Analyze this failure and modify the remaining PLANNED steps to bypass the issue.
-Current Plan Steps: ${JSON.stringify(plan.steps)}
-Execution History: ${JSON.stringify(history)}
-Failed Step: ${failedStep.tool_name}
+          const repairFeedback = `Plan failed at step "${failedStep.tool_name}". 
 Error: ${failedStepResult.error?.message}
+Last 5 steps: ${JSON.stringify(history)}
+How should we modify the remaining steps to still achieve the goal?`;
 
-Respond with only the updated steps for the remaining plan, ensuring dependencies are correct.`;
+          console.log(`[Self-Reflection] Initiating plan repair for ${failedStep.tool_name}...`);
 
-          const reflectionResponse = await generateText({
-            modelType: "planning",
-            prompt,
-            systemPrompt: "You are a resilient execution engine. Your goal is to modify the plan to bypass failures."
+          // Call the planner with repair feedback to get a new plan
+          const repairResult = await generatePlan(state.intent!, {
+            execution_id: state.execution_id,
+            available_tools: getToolRegistry().list(),
+            repairFeedback
           });
 
-          // In a real implementation, we would parse this into PlanStep[]
-          // For now, we'll log it and transition to FAILED as a fallback if parsing fails,
-          // but we'll try to implement the state transition to REFLECTING as requested.
-          
-          console.log("Reflection response:", reflectionResponse.content);
-          
-          // Transition back to EXECUTING or FAILED based on reflection
-          // For this implementation, we will treat reflection as a manual intervention point
-          // or a sophisticated retry. Since we don't have a full replanner here, 
-          // we'll fail if we can't automatically resolve.
-          
-          // Reverting to FAILED if no automatic replanning is implemented
-          const endTime = performance.now();
-          state = applyStateUpdate(state, {
-            status: "FAILED",
-            error: failedStepResult.error,
-            completed_at: new Date().toISOString(),
-          });
+          if (repairResult.plan) {
+            console.log(`[Self-Reflection] Plan repair successful. Resuming with updated plan.`);
+            
+            // Merge the new plan steps into the current execution
+            // We only keep the COMPLETED steps from the current state
+            // and append the new steps from the repair plan.
+            const completedStepIds = new Set(getCompletedSteps(state).map(s => s.step_id));
+            const newSteps = repairResult.plan.steps.filter(s => !completedStepIds.has(s.id));
+            
+            // Update the plan in the state
+            plan.steps = [...plan.steps.filter(s => completedStepIds.has(s.id)), ...newSteps];
+            state = applyStateUpdate(state, { plan, status: "EXECUTING" });
+            
+            // Reset state for new steps
+            for (const step of newSteps) {
+              state = updateStepState(state, step.id, { status: "pending" });
+            }
+            
+            continue; // Retry with the repaired plan
+          }
+        } catch (reflectError) {
+          console.error("Reflection and repair failed:", reflectError);
+        }
+
+        // Reverting to FAILED if no automatic replanning is successful
+        const endTime = performance.now();
+        state = applyStateUpdate(state, {
+          status: "FAILED",
+          error: failedStepResult.error,
+          completed_at: new Date().toISOString(),
+        });
 
           if (options.persistState !== false) {
             await saveExecutionState(state);

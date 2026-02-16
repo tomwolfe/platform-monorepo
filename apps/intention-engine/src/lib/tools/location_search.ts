@@ -1,8 +1,7 @@
 import { z } from "zod";
-import { RestaurantResultSchema } from "../schema";
 import { redis } from "../redis-client";
 import { env } from "../config";
-import { GeocodeSchema, SearchRestaurantSchema } from "@repo/mcp-protocol";
+import { GeocodeSchema, SearchRestaurantSchema, DB_REFLECTED_SCHEMAS } from "@repo/mcp-protocol";
 
 export async function geocode_location(params: z.infer<typeof GeocodeSchema>) {
   const validated = GeocodeSchema.safeParse(params);

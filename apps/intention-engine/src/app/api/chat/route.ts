@@ -31,7 +31,8 @@ import {
   CreateProductSchema,
   UpdateProductSchema,
   DeleteProductSchema,
-  GetLiveOperationalStateSchema
+  GetLiveOperationalStateSchema,
+  DB_REFLECTED_SCHEMAS
 } from "@repo/mcp-protocol";
 import { NormalizationService } from "@repo/shared";
 
@@ -241,8 +242,8 @@ export async function POST(req: Request) {
       get_weather_data: WeatherDataSchema,
       get_route_estimate: RouteEstimateSchema,
       request_ride: MobilityRequestSchema,
-      book_restaurant_table: TableReservationSchema,
-      reserve_restaurant: TableReservationSchema,
+      book_restaurant_table: DB_REFLECTED_SCHEMAS.createReservation,
+      reserve_restaurant: DB_REFLECTED_SCHEMAS.createReservation,
       send_comm: CommunicationSchema,
       find_product_nearby: FindProductNearbySchema,
       reserve_stock_item: ReserveStockItemSchema,

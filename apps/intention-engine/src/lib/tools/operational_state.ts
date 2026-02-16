@@ -1,10 +1,7 @@
 import { z } from "zod";
 import { redis } from "../redis-client";
 import { ToolDefinitionMetadata } from "./types";
-
-export const LiveStateSchema = z.object({
-  restaurant_id: z.string().describe("The unique identifier for the restaurant."),
-});
+import { GetLiveOperationalStateSchema as LiveStateSchema } from "@repo/mcp-protocol";
 
 export type LiveStateParams = z.infer<typeof LiveStateSchema>;
 

@@ -96,7 +96,7 @@ server.tool(
   TOOLS.openDelivery.calculateQuote.name,
   TOOLS.openDelivery.calculateQuote.description,
   TOOLS.openDelivery.calculateQuote.schema.shape,
-  async ({ pickup_address, delivery_address, items }, _extra) => {
+  async ({ pickup_address, delivery_address, items }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
     
     const quote = await calculateDeliveryQuote(
@@ -127,7 +127,7 @@ server.tool(
     priority: TOOLS.deliveryFulfillment.calculateDeliveryQuote.schema.shape.priority,
     scheduledPickupTime: TOOLS.deliveryFulfillment.calculateDeliveryQuote.schema.shape.scheduledPickupTime,
   },
-  async ({ pickupAddress, deliveryAddress, items, priority, scheduledPickupTime }, _extra) => {
+  async ({ pickupAddress, deliveryAddress, items, priority, scheduledPickupTime }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
     
     const quote = await calculateDeliveryQuote(
@@ -152,7 +152,7 @@ server.tool(
     items: TOOLS.deliveryFulfillment.validateFulfillment.schema.shape.items,
     priority: TOOLS.deliveryFulfillment.validateFulfillment.schema.shape.priority,
   },
-  async ({ pickupAddress, deliveryAddress, items, priority }, _extra) => {
+  async ({ pickupAddress, deliveryAddress, items, priority }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
     
     console.log(`[Trace:${traceId}] Validating fulfillment (dry run)`);
@@ -203,7 +203,7 @@ server.tool(
     priority: TOOLS.deliveryFulfillment.fulfillIntent.schema.shape.priority,
     specialInstructions: TOOLS.deliveryFulfillment.fulfillIntent.schema.shape.specialInstructions,
   },
-  async (params, _extra) => {
+  async (params, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
     
     console.log(`[Trace:${traceId}] Dispatching intent fulfillment`);
@@ -214,14 +214,12 @@ server.tool(
     
     // Store in Redis for tracking
     const fulfillmentData = {
+      ...params,
       fulfillmentId,
       orderId,
       status: "searching",
-      customerId: params.customerId,
-      customerName: params.customerName,
       createdAt: new Date().toISOString(),
       traceId,
-      ...params,
     };
     
     await redis.setex(`fulfillment:${fulfillmentId}`, 3600, JSON.stringify(fulfillmentData));
@@ -274,7 +272,7 @@ server.tool(
   {
     fulfillmentId: TOOLS.deliveryFulfillment.getFulfillmentStatus.schema.shape.fulfillmentId,
   },
-  async ({ fulfillmentId }, _extra) => {
+  async ({ fulfillmentId }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
     
     console.log(`[Trace:${traceId}] Getting fulfillment status for ${fulfillmentId}`);
@@ -315,7 +313,7 @@ server.tool(
   TOOLS.openDelivery.getDriverLocation.name,
   TOOLS.openDelivery.getDriverLocation.description,
   TOOLS.openDelivery.getDriverLocation.schema.shape,
-  async ({ order_id }, _extra) => {
+  async ({ order_id }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
     
     console.log(`[Trace:${traceId}] Getting driver location for order ${order_id}`);
@@ -345,7 +343,7 @@ server.tool(
     reason: TOOLS.deliveryFulfillment.cancelFulfillment.schema.shape.reason,
     details: TOOLS.deliveryFulfillment.cancelFulfillment.schema.shape.details,
   },
-  async ({ fulfillmentId, reason, details }, _extra) => {
+  async ({ fulfillmentId, reason, details }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
     
     console.log(`[Trace:${traceId}] Cancelling fulfillment ${fulfillmentId}`);

@@ -138,6 +138,8 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
 
           Available tools:
           ${getToolDefinitions()}
+          
+          If a tool is unavailable, use the most similar available tool or provide a general recommendation based on common knowledge in the 'summary'.
 
           Tool Chaining & Context Injection:
           1. Explicitly map outputs from previous steps to inputs of subsequent steps.
@@ -266,6 +268,8 @@ export async function replan(
 
           Available tools:
           ${getToolDefinitions()}
+          
+          If a tool is unavailable, use the most similar available tool or provide a general recommendation based on common knowledge in the 'summary'.
 
           Return ONLY pure JSON.`
         }

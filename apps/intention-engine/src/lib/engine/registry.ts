@@ -5,6 +5,8 @@ import { Tracer } from "./tracing";
 import { getMemoryClient } from "./memory";
 import { mcpConfig } from "../mcp-config";
 
+import { listTools as listDomainTools } from "../tools/registry";
+
 /**
  * RegistryManager coordinates local and remote tool discovery.
  */
@@ -14,6 +16,21 @@ export class RegistryManager {
 
   constructor() {
     this.localRegistry = getToolRegistry();
+    
+    // Task 2: Register Domain Tools - Ensure tools from tools/registry.ts are registered in the engine's ToolRegistry
+    const domainTools = listDomainTools();
+    for (const tool of domainTools) {
+      if (!this.localRegistry.has(tool.name)) {
+        this.localRegistry.register(tool, async (params, _context) => {
+          const result = await tool.execute(params);
+          return {
+            success: result.success,
+            output: result.result,
+            error: result.error
+          };
+        });
+      }
+    }
     
     // Initialize MCP clients from environment
     if (process.env.GITHUB_MCP_URL) {

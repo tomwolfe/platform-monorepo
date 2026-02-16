@@ -247,6 +247,8 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
   }]
 ]);
 
+console.log(`[Tool Registry] Initialized with ${TOOLS.size} tools: ${Array.from(TOOLS.keys()).join(", ")}`);
+
 export async function discoverDynamicTools() {
   const serviceEndpoints = [
     `${SERVICES.TABLESTACK.URL}/api/mcp/tools`,
@@ -263,6 +265,14 @@ export async function discoverDynamicTools() {
       for (const tool of capabilities.tools) {
         if (!TOOLS.has(tool.name)) {
            console.log(`[MCP Discovery] Discovered new tool: ${tool.name} from ${capabilities.app_name}`);
+           TOOLS.set(tool.name, {
+             ...tool,
+             execute: async (params: any) => {
+               // This is a placeholder for remote execution if called directly from TOOLS
+               console.warn(`Tool ${tool.name} is a discovered remote tool and should be executed via the Engine's MCP client.`);
+               return { success: false, error: "Remote tool execution not implemented in TOOLS registry" };
+             }
+           } as ToolDefinition);
         }
       }
     } catch (e) {

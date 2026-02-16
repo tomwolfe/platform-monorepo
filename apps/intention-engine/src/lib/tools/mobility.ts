@@ -1,16 +1,24 @@
 import { z } from "zod";
 import { ToolDefinitionMetadata, ToolParameter } from "./types";
+import { 
+  MobilityRequestSchema, 
+  RouteEstimateSchema, 
+  UnifiedLocationSchema,
+} from "@repo/mcp-protocol";
+import type { UnifiedLocation } from "@repo/mcp-protocol";
+
 export { 
   MobilityRequestSchema, 
   RouteEstimateSchema, 
   UnifiedLocationSchema,
-  UnifiedLocation 
-} from "@repo/mcp-protocol";
+};
+export type { UnifiedLocation };
 
 /**
  * Helper function to normalize unified location to string format
  */
-export function normalizeLocation(location: UnifiedLocation): string {
+export function normalizeLocation(location: UnifiedLocation | undefined): string {
+  if (!location) return "unknown";
   if (typeof location === "string") {
     return location;
   }
@@ -50,7 +58,8 @@ export async function mobility_request(params: MobilityRequestParams): Promise<{
 
   const { service, pickup_location, destination_location, ride_type } = validated.data;
 
-  const resolveCoords = async (loc: UnifiedLocation) => {
+  const resolveCoords = async (loc: UnifiedLocation | undefined) => {
+    if (!loc) return null;
     // Handle case where loc is a JSON string (e.g., from AI SDK serialization)
     if (typeof loc === "string") {
       try {

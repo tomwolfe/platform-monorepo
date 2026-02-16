@@ -12,6 +12,8 @@ export const UnifiedLocationSchema = z.union([
   }).describe("A coordinate object with lat/lon and optional address")
 ]);
 
+export type UnifiedLocation = z.infer<typeof UnifiedLocationSchema>;
+
 export const MobilityRequestSchema = z.object({
   service: z.enum(["uber", "tesla", "lyft"]).describe("The mobility service to use."),
   pickup_location: UnifiedLocationSchema.describe("The starting point for the ride (string address or coordinate object with lat/lon)."),

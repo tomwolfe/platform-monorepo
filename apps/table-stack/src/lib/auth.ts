@@ -65,6 +65,10 @@ export async function validateRequest(req: NextRequest): Promise<{
 
   // 2. API Key Validation
   // In a real app, we would cache this in Redis for a few minutes
+  if (!apiKey) {
+    return { error: 'Missing API key', status: 401 };
+  }
+
   const restaurant = await db.query.restaurants.findFirst({
     where: eq(restaurants.apiKey, apiKey),
   });

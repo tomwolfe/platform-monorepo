@@ -17,7 +17,8 @@
     "INTENTION_ENGINE_WEBHOOK_URL",
     "OPENDELIVER_API_URL",
     "CRON_SECRET",
-    "LLM_BASE_URL"
+    "LLM_BASE_URL",
+    "TABLESTACK_INTERNAL_API_KEY"
   ],
   "tasks": {
     "build": {

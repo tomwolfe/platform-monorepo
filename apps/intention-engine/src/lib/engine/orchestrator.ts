@@ -759,34 +759,31 @@ How should we modify the remaining steps to still achieve the goal?`;
           completed_at: new Date().toISOString(),
         });
 
-          if (options.persistState !== false) {
-            await saveExecutionState(state);
-          }
-
-          return {
-            state,
-            success: false,
-            completed_steps: getCompletedSteps(state).length,
-            failed_steps: 1,
-            total_steps: plan.steps.length,
-            execution_time_ms: Math.round(endTime - startTime),
-            usage: {
-              prompt_tokens: state.token_usage.prompt_tokens,
-              completion_tokens: state.token_usage.completion_tokens,
-              total_tokens: state.token_usage.total_tokens,
-              cost_usd: state.token_usage.total_tokens * 0.0000001,
-            },
-            error: failedStepResult.error
-              ? {
-                  code: failedStepResult.error.code,
-                  message: failedStepResult.error.message,
-                  step_id: failedStep.id,
-                }
-              : undefined,
-          };
-        } catch (reflectError) {
-          console.error("Reflection failed:", reflectError);
+        if (options.persistState !== false) {
+          await saveExecutionState(state);
         }
+
+        return {
+          state,
+          success: false,
+          completed_steps: getCompletedSteps(state).length,
+          failed_steps: 1,
+          total_steps: plan.steps.length,
+          execution_time_ms: Math.round(endTime - startTime),
+          usage: {
+            prompt_tokens: state.token_usage.prompt_tokens,
+            completion_tokens: state.token_usage.completion_tokens,
+            total_tokens: state.token_usage.total_tokens,
+            cost_usd: state.token_usage.total_tokens * 0.0000001,
+          },
+          error: failedStepResult.error
+            ? {
+                code: failedStepResult.error.code,
+                message: failedStepResult.error.message,
+                step_id: failedStep.id,
+              }
+            : undefined,
+        };
       }
     }
 

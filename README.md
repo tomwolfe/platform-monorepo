@@ -15,11 +15,6 @@ This monorepo consolidates the four core pillars of the ecosystem into a high-pe
 * **table-stack**: Merchant/restaurant OS. Manages reservations, waitlists, and physical site state.
 
 
-* 
-**store-front**: Customer-facing discovery and booking platform.
-
-
-
 ### Shared Packages (`/packages`)
 
 * 

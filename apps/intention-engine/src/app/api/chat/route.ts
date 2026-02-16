@@ -25,11 +25,6 @@ import {
   MobilityRequestSchema,
   TableReservationSchema,
   CommunicationSchema,
-  FindProductNearbySchema,
-  ReserveStockItemSchema,
-  CreateProductSchema,
-  UpdateProductSchema,
-  DeleteProductSchema,
   GetLiveOperationalStateSchema,
   DB_REFLECTED_SCHEMAS,
   UnifiedLocationSchema
@@ -245,11 +240,6 @@ export async function POST(req: Request) {
       book_restaurant_table: DB_REFLECTED_SCHEMAS.createReservation,
       reserve_restaurant: DB_REFLECTED_SCHEMAS.createReservation,
       send_comm: CommunicationSchema,
-      find_product_nearby: FindProductNearbySchema,
-      reserve_stock_item: ReserveStockItemSchema,
-      create_product: CreateProductSchema,
-      update_product: UpdateProductSchema,
-      delete_product: DeleteProductSchema,
       get_live_operational_state: GetLiveOperationalStateSchema,
     };
 

@@ -184,7 +184,22 @@ export async function POST(req: Request) {
     try {
       const intentStart = Date.now();
       const { avoidTools } = await getPlanWithAvoidance(userText, userIp);
-      const inferenceResult = await inferIntent(userText, avoidTools);
+      
+      // Contextual Memory: Retrieve last interaction context from Postgres
+      // This enables pronoun resolution ("it", "there", "that restaurant")
+      const lastInteractionContext = await (async () => {
+        if (userIp !== "anonymous") {
+          try {
+            const { getLastInteractionContext } = await import("@/lib/intent");
+            return await getLastInteractionContext(userIp);
+          } catch (err) {
+            console.warn("Failed to retrieve last interaction context:", err);
+          }
+        }
+        return null;
+      })();
+      
+      const inferenceResult = await inferIntent(userText, avoidTools, [], lastInteractionContext || undefined);
       intentInferenceLatency = Date.now() - intentStart;
       intent = inferenceResult.hypotheses.primary;
       rawModelResponse = inferenceResult.rawResponse;
@@ -312,6 +327,12 @@ export async function POST(req: Request) {
               total: totalLatency,
             }
           });
+          
+          // Contextual Memory: Save the interaction context for future pronoun resolution
+          if (userIp !== "anonymous") {
+            const { saveInteractionContext } = await import("@/lib/intent");
+            await saveInteractionContext(userIp, intent, auditLog.id);
+          }
         } catch (err) {
           console.error("Failed to update final audit log:", err);
         }

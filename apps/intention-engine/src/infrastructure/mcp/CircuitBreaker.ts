@@ -103,6 +103,20 @@ export class CircuitBreaker {
   }
 
   /**
+   * Get service name for observability
+   */
+  getServiceName(): string {
+    return this.config.serviceName;
+  }
+
+  /**
+   * Manually record a failure (for external timeout handling)
+   */
+  recordFailure(): void {
+    this.onFailure(new Error("External failure recorded"));
+  }
+
+  /**
    * Get detailed circuit status for observability
    */
   getStatus() {
@@ -121,14 +135,15 @@ export class CircuitBreaker {
   }
 
   /**
-   * Execute a function with circuit breaker protection
+   * Execute a function with circuit breaker protection.
+   * Supports AbortSignal for cancellation propagation.
    */
-  async execute<T>(fn: () => Promise<T>): Promise<T> {
+  async execute<T>(fn: (signal?: AbortSignal) => Promise<T>): Promise<T> {
     const currentState = this.getState();
 
     if (currentState === CircuitState.OPEN) {
       const retryAfter = this.config.recoveryTimeoutMs - (Date.now() - (this.lastFailureTime || 0));
-      
+
       await this.publishCircuitBreakerEvent("CircuitBreakerOpened", {
         reason: "Circuit is OPEN - failing fast",
         retryAfterMs: Math.max(0, retryAfter),

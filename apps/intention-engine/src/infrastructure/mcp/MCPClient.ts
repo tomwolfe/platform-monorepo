@@ -7,18 +7,22 @@ import { mapJsonSchemaToZod } from "../../lib/engine/schema-utils";
 import { mcpConfig } from "../../lib/mcp-config";
 import { PARAMETER_ALIASES as shared_aliases, ToolInput, ToolOutput } from "@repo/mcp-protocol";
 import { CircuitBreaker, CircuitBreakerError, CircuitState } from "./CircuitBreaker";
+import { RealtimeService } from "@repo/shared";
 
 /**
  * MCPClient connects to remote MCP servers and maps their tools
  * to the engine's internal ToolDefinition format.
- * 
+ *
  * Phase 4: Includes circuit breaker protection for resilience.
+ * Vercel Hobby Tier: Implements AbortController timeout protection (8s limit).
  */
 export class MCPClient {
   private client: Client;
   private transport: SSEClientTransport;
   private serverUrl: string;
   private circuitBreaker: CircuitBreaker;
+  private abortController: AbortController | null = null;
+  private toolTimeoutMs: number = 8000; // 8 seconds for Vercel Hobby Tier
 
   constructor(serverUrl: string, circuitBreakerConfig?: { serviceName?: string }) {
     this.serverUrl = serverUrl;
@@ -32,7 +36,7 @@ export class MCPClient {
         capabilities: {},
       }
     );
-    
+
     // Initialize circuit breaker for this server
     this.circuitBreaker = new CircuitBreaker({
       serviceName: circuitBreakerConfig?.serviceName || "mcp-server",
@@ -79,35 +83,116 @@ export class MCPClient {
   /**
    * Calls a tool on the remote MCP server with circuit breaker protection and exponential backoff retry.
    * Phase 4: Circuit breaker fails fast when downstream service degrades.
+   * Vercel Hobby Tier: Implements AbortController timeout protection (8s limit).
    */
   async callTool(name: string, args: ToolInput, signal?: AbortSignal): Promise<ToolOutput> {
     return this.circuitBreaker.execute(async () => {
-      return this.withRetry(async () => {
-        const result = await this.client.callTool({
-          name,
-          arguments: args,
-        });
-        return result as ToolOutput;
+      return this.withRetry(async (attemptAbortSignal: AbortSignal) => {
+        // Create AbortController for this tool call with timeout
+        this.abortController = new AbortController();
+        const timeoutId = setTimeout(() => {
+          this.abortController?.abort();
+        }, this.toolTimeoutMs);
+
+        try {
+          // Combine external signal with internal timeout
+          const combinedSignal = this.createCombinedSignal([
+            signal,
+            this.abortController.signal,
+            attemptAbortSignal
+          ].filter(Boolean) as AbortSignal[]);
+
+          // Note: MCP SDK callTool doesn't directly support AbortSignal
+          // We use Promise.race to implement timeout-based cancellation
+          const result = await Promise.race([
+            this.client.callTool({
+              name,
+              arguments: args,
+            }),
+            new Promise<ToolOutput>((_, reject) => {
+              combinedSignal.addEventListener('abort', () => {
+                reject(new Error('AbortError: Tool call cancelled'));
+              });
+            })
+          ]);
+          
+          clearTimeout(timeoutId);
+          return result as ToolOutput;
+        } catch (error: any) {
+          clearTimeout(timeoutId);
+          
+          // Handle timeout/abort as "Service Degraded"
+          if (error.message.includes('AbortError') || error.message.includes('cancelled') || this.abortController?.signal.aborted) {
+            console.warn(`[MCPClient] Tool ${name} timed out after ${this.toolTimeoutMs}ms - Service Degraded`);
+            
+            // Publish "Service Degraded" event to Ably for observability
+            await RealtimeService.publishNervousSystemEvent('ServiceDegraded', {
+              serviceName: this.circuitBreaker.getServiceName(),
+              toolName: name,
+              reason: 'timeout',
+              timeoutMs: this.toolTimeoutMs,
+              timestamp: new Date().toISOString(),
+            }).catch(err => console.error('Failed to publish ServiceDegraded event:', err));
+            
+            // Trigger circuit breaker to open
+            this.circuitBreaker.recordFailure();
+            
+            throw new CircuitBreakerError(`Service Degraded: ${name} timed out`, CircuitState.CLOSED);
+          }
+          
+          throw error;
+        } finally {
+          this.abortController = null;
+        }
       });
     });
   }
 
   /**
+   * Combines multiple AbortSignals into one.
+   */
+  private createCombinedSignal(signals: AbortSignal[]): AbortSignal {
+    if (signals.length === 0) {
+      return new AbortController().signal;
+    }
+    if (signals.length === 1) {
+      return signals[0];
+    }
+
+    const controller = new AbortController();
+    for (const signal of signals) {
+      if (signal.aborted) {
+        controller.abort();
+        return controller.signal;
+      }
+      signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+    return controller.signal;
+  }
+
+  /**
    * Exponential backoff with jitter retry strategy.
+   * Supports AbortSignal for cancellation propagation.
    */
   private async withRetry<T>(
-    fn: () => Promise<T>,
+    fn: (signal: AbortSignal) => Promise<T>,
     maxAttempts: number = 3,
     baseDelay: number = 1000
   ): Promise<T> {
     let lastError: any;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const attemptController = new AbortController();
       try {
-        return await fn();
-      } catch (error) {
+        return await fn(attemptController.signal);
+      } catch (error: any) {
         lastError = error;
         if (attempt === maxAttempts) break;
         
+        // Don't retry if aborted
+        if (error.name === 'AbortError' || attemptController.signal.aborted) {
+          throw error;
+        }
+
         // Exponential backoff: baseDelay * 2^(attempt-1) + jitter
         const delay = baseDelay * Math.pow(2, attempt - 1) + Math.random() * 1000;
         await new Promise((resolve) => setTimeout(resolve, delay));

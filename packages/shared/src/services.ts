@@ -5,12 +5,12 @@ export const getServiceUrl = (serviceName: string, defaultPort: number) => {
   if (process.env[envVarName]) {
     return process.env[envVarName]!;
   }
-  
+
   if (CLUSTER_ENV) {
     // Internal K8s/Docker DNS: http://service-name:port
     return `http://${serviceName.toLowerCase().replace('_', '-')}:${defaultPort}`;
   }
-  
+
   return `http://localhost:${defaultPort}`;
 };
 
@@ -18,10 +18,6 @@ export const SERVICES = {
   INTENTION_ENGINE: {
     get URL() { return getServiceUrl('INTENTION_ENGINE', 3000); },
     get API_URL() { return `${this.URL}/api`; },
-  },
-  STOREFRONT: {
-    get URL() { return getServiceUrl('STOREFRONT', 3003); },
-    get MCP_URL() { return `${this.URL}/api/mcp`; },
   },
   TABLESTACK: {
     get URL() { return getServiceUrl('TABLESTACK', 3005); },

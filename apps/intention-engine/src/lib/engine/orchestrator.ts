@@ -36,6 +36,7 @@ import {
   attemptErrorRecovery,
   logExecutionResults,
 } from "./execution-helpers";
+import { RealtimeService } from "@repo/shared";
 
 // ============================================================================
 // SCORE OUTCOME
@@ -210,6 +211,7 @@ function resolveStepParameters(
 // ============================================================================
 // EXECUTE SINGLE STEP
 // Execute one step with timeout and error handling
+// Vercel Hobby Tier: Pre-emptive checkpointing before tool calls, streaming updates
 // ============================================================================
 
 async function executeStep(
@@ -219,6 +221,7 @@ async function executeStep(
   const stepStartTime = performance.now();
   const timestamp = new Date().toISOString();
   const stepIndex = state.step_states.findIndex(s => s.step_id === step.id) ?? 0;
+  const totalSteps = state.step_states.length;
 
   return await Tracer.startActiveSpan(`execute_step:${step.tool_name}`, async (span) => {
     const toolDef = getToolRegistry().getDefinition(step.tool_name);
@@ -236,6 +239,19 @@ async function executeStep(
         if (isDuplicate) {
           console.log(`[Idempotency] Step ${step.tool_name} (${step.id}) already executed, skipping`);
           span.setAttributes({ idempotency_skip: true });
+          
+          // Publish skip event to Ably
+          await RealtimeService.publishStreamingStatusUpdate({
+            executionId: state.execution_id,
+            stepIndex,
+            totalSteps,
+            stepName: step.tool_name,
+            status: 'completed',
+            message: 'Skipped (idempotent)',
+            timestamp: new Date().toISOString(),
+            traceId: span?.spanContext()?.traceId,
+          });
+          
           return {
             step_id: step.id,
             status: "completed",
@@ -271,10 +287,10 @@ async function executeStep(
       }
 
       // Task 3: Semantic Guardrail Layer - Verify parameters match qualitative constraints
-      const isActionStep = step.tool_name.toLowerCase().includes("book") || 
-                           step.tool_name.toLowerCase().includes("reserve") || 
+      const isActionStep = step.tool_name.toLowerCase().includes("book") ||
+                           step.tool_name.toLowerCase().includes("reserve") ||
                            step.tool_name.toLowerCase().includes("schedule");
-      
+
       if (isActionStep && state.intent?.parameters) {
         // Extract qualitative constraints from intent (e.g., "romantic", "cheap")
         const qualitativeConstraints: string[] = [];
@@ -334,6 +350,22 @@ async function executeStep(
         };
       }
 
+      // Vercel Hobby Tier: PRE-EMPTIVE CHECKPOINTING
+      // Save state BEFORE tool call so we can resume if Vercel kills the lambda
+      await saveExecutionState(stepState);
+
+      // Vercel Hobby Tier: STREAMING STATUS UPDATE - Step Start
+      await RealtimeService.publishStreamingStatusUpdate({
+        executionId: state.execution_id,
+        stepIndex,
+        totalSteps,
+        stepName: step.tool_name,
+        status: 'in_progress',
+        message: `Starting ${step.description || step.tool_name}...`,
+        timestamp: new Date().toISOString(),
+        traceId: span?.spanContext()?.traceId,
+      });
+
       const toolResult = await toolExecutor.execute(
         step.tool_name,
         resolvedParameters,
@@ -381,6 +413,18 @@ async function executeStep(
           }
         }
 
+        // Vercel Hobby Tier: STREAMING STATUS UPDATE - Step Completed
+        await RealtimeService.publishStreamingStatusUpdate({
+          executionId: state.execution_id,
+          stepIndex,
+          totalSteps,
+          stepName: step.tool_name,
+          status: 'completed',
+          message: `Completed ${step.description || step.tool_name}`,
+          timestamp: new Date().toISOString(),
+          traceId: span?.spanContext()?.traceId,
+        });
+
         return {
           step_id: step.id,
           status: "completed",
@@ -399,7 +443,7 @@ async function executeStep(
             toolResult.error,
             errorCode
           );
-          
+
           if (recoveryResult.recovered && recoveryResult.correctedParameters) {
             // Retry with corrected parameters
             const retryResult = await toolExecutor.execute(
@@ -407,8 +451,20 @@ async function executeStep(
               recoveryResult.correctedParameters,
               step.timeout_ms
             );
-            
+
             if (retryResult.success) {
+              // Vercel Hobby Tier: STREAMING STATUS UPDATE - Step Completed (after retry)
+              await RealtimeService.publishStreamingStatusUpdate({
+                executionId: state.execution_id,
+                stepIndex,
+                totalSteps,
+                stepName: step.tool_name,
+                status: 'completed',
+                message: `Completed ${step.description || step.tool_name} (after retry)`,
+                timestamp: new Date().toISOString(),
+                traceId: span?.spanContext()?.traceId,
+              });
+
               return {
                 step_id: step.id,
                 status: "completed",
@@ -420,6 +476,18 @@ async function executeStep(
             }
           }
         }
+
+        // Vercel Hobby Tier: STREAMING STATUS UPDATE - Step Failed
+        await RealtimeService.publishStreamingStatusUpdate({
+          executionId: state.execution_id,
+          stepIndex,
+          totalSteps,
+          stepName: step.tool_name,
+          status: 'failed',
+          message: `Failed: ${toolResult.error?.message || 'Unknown error'}`,
+          timestamp: new Date().toISOString(),
+          traceId: span?.spanContext()?.traceId,
+        });
 
         const isValidationError = toolResult.error?.toLowerCase().includes("invalid parameters");
         return {
@@ -452,6 +520,18 @@ async function executeStep(
           latency_ms: latencyMs,
         });
       }
+
+      // Vercel Hobby Tier: STREAMING STATUS UPDATE - Step Failed (exception)
+      await RealtimeService.publishStreamingStatusUpdate({
+        executionId: state.execution_id,
+        stepIndex,
+        totalSteps,
+        stepName: step.tool_name,
+        status: 'failed',
+        message: `Error: ${errorMessage}`,
+        timestamp: new Date().toISOString(),
+        traceId: span?.spanContext()?.traceId,
+      });
 
       return {
         step_id: step.id,

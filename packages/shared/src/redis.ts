@@ -8,7 +8,6 @@ export enum ServiceNamespace {
   IE = "ie",      // Intention Engine
   OD = "od",      // Open Delivery
   TS = "ts",      // Table Stack
-  SF = "sf",      // Store Front
   SHARED = "shared",
 }
 

@@ -22,7 +22,7 @@ export class MCPClient {
   private serverUrl: string;
   private circuitBreaker: CircuitBreaker;
   private abortController: AbortController | null = null;
-  private toolTimeoutMs: number = 8000; // 8 seconds for Vercel Hobby Tier
+  private toolTimeoutMs: number = 7000; // 7 seconds for Vercel Hobby Tier (10s limit)
 
   constructor(serverUrl: string, circuitBreakerConfig?: { serviceName?: string }) {
     this.serverUrl = serverUrl;

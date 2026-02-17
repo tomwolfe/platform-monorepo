@@ -2,10 +2,21 @@
 
 import { useState, useEffect } from "react";
 import { useChat } from "@ai-sdk/react";
-import { Trash2, Calendar, MapPin, Loader2, Activity } from "lucide-react";
+import { Trash2, Calendar, MapPin, Loader2, Activity, CheckCircle2, XCircle, Clock } from "lucide-react";
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls, isToolUIPart, getToolName } from "ai";
 import { AuditLogViewer } from "@/components/AuditLogViewer";
 import { useMesh } from "@/hooks/useMesh";
+
+interface StreamingStepUpdate {
+  executionId: string;
+  stepIndex: number;
+  totalSteps: number;
+  stepName: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  message: string;
+  timestamp: string;
+  traceId?: string;
+}
 
 export default function Home() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -14,12 +25,36 @@ export default function Home() {
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [showAudit, setShowAudit] = useState(false);
   const [meshEvents, setMeshEvents] = useState<any[]>([]);
+  const [streamingUpdates, setStreamingUpdates] = useState<StreamingStepUpdate[]>([]);
+  const [currentExecutionId, setCurrentExecutionId] = useState<string | null>(null);
 
   useMesh((name, data) => {
-    setMeshEvents(prev => [{ name, data, timestamp: new Date().toISOString() }, ...prev].slice(0, 5));
-    // Optionally trigger proactive inference if it's a high-value guest
-    if (name === 'high_value_guest_reservation') {
-      console.log('High value guest detected on mesh, UI could proactively suggest actions.');
+    // Handle ExecutionStepUpdate events for real-time progress
+    if (name === 'ExecutionStepUpdate') {
+      const update = data.data || data;
+      if (update.executionId) {
+        setCurrentExecutionId(update.executionId);
+        setStreamingUpdates(prev => {
+          // Find if we already have this step
+          const existingIndex = prev.findIndex(u => u.stepIndex === update.stepIndex && u.executionId === update.executionId);
+          if (existingIndex >= 0) {
+            // Update existing step
+            const newUpdates = [...prev];
+            newUpdates[existingIndex] = update;
+            return newUpdates;
+          } else {
+            // Add new step
+            return [...prev, update].sort((a, b) => a.stepIndex - b.stepIndex);
+          }
+        });
+      }
+    } else {
+      // Handle other mesh events
+      setMeshEvents(prev => [{ name, data, timestamp: new Date().toISOString() }, ...prev].slice(0, 5));
+      // Optionally trigger proactive inference if it's a high-value guest
+      if (name === 'high_value_guest_reservation') {
+        console.log('High value guest detected on mesh, UI could proactively suggest actions.');
+      }
     }
   });
 
@@ -75,6 +110,9 @@ export default function Home() {
     if (!input.trim()) return;
 
     setError(null);
+    // Clear previous streaming updates for new execution
+    setStreamingUpdates([]);
+    setCurrentExecutionId(null);
     try {
       await sendMessage({ text: input }, { body: { userLocation } });
       setInput("");
@@ -166,6 +204,73 @@ export default function Home() {
                 <span className="opacity-50">{new Date(ev.timestamp).toLocaleTimeString()}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Real-time Progress Stepper - Vercel Hobby Tier Optimization */}
+      {streamingUpdates.length > 0 && (
+        <div className="mb-8 bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+          <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Loader2 size={16} className={`animate-spin text-blue-600 ${!isLoading ? 'hidden' : ''}`} />
+              <h3 className="font-semibold text-slate-700">Execution Progress</h3>
+            </div>
+            {currentExecutionId && (
+              <span className="text-xs text-slate-500 font-mono">
+                {currentExecutionId.slice(0, 8)}...
+              </span>
+            )}
+          </div>
+          <div className="p-4 space-y-3">
+            {streamingUpdates.map((update, index) => {
+              const isLast = index === streamingUpdates.length - 1;
+              const statusConfig = {
+                pending: { icon: Clock, color: 'text-slate-400', bg: 'bg-slate-100' },
+                in_progress: { icon: Loader2, color: 'text-blue-600', bg: 'bg-blue-50' },
+                completed: { icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50' },
+                failed: { icon: XCircle, color: 'text-red-600', bg: 'bg-red-50' },
+              };
+              const config = statusConfig[update.status];
+              const Icon = config.icon;
+
+              return (
+                <div
+                  key={`${update.executionId}-${update.stepIndex}`}
+                  className={`flex items-start gap-3 p-3 rounded-lg transition-all ${
+                    isLast ? 'ring-2 ring-blue-200' : ''
+                  }`}
+                >
+                  <div className={`p-2 rounded-full ${config.bg} ${config.color}`}>
+                    <Icon size={16} className={update.status === 'in_progress' ? 'animate-spin' : ''} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-500 uppercase">
+                        Step {update.stepIndex + 1} / {update.totalSteps}
+                      </span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        update.status === 'completed' ? 'bg-green-100 text-green-700' :
+                        update.status === 'failed' ? 'bg-red-100 text-red-700' :
+                        update.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
+                        'bg-slate-100 text-slate-600'
+                      }`}>
+                        {update.status.replace('_', ' ')}
+                      </span>
+                    </div>
+                    <p className="text-sm font-medium text-slate-800 mt-1">
+                      {update.stepName.replace(/_/g, ' ')}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {update.message}
+                    </p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {new Date(update.timestamp).toLocaleTimeString()}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

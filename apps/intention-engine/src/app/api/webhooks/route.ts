@@ -4,9 +4,10 @@ import { generatePlan } from "@/lib/planner";
 import { createAuditLog } from "@/lib/audit";
 import { z } from "zod";
 import { handleTableStackRejection } from "@/lib/listeners/tablestack";
-import { verifySignature } from "@repo/auth";
+import { verifySignature, signServiceToken } from "@repo/auth";
 import { IdempotencyService, IDEMPOTENCY_KEY_HEADER } from "@repo/shared";
 import { redis } from "@/lib/redis-client";
+import { getAblyClient } from "@repo/shared";
 
 export const runtime = "edge";
 
@@ -30,6 +31,8 @@ const WebhookEventSchema = z.object({
   restaurantName: z.string().optional(),
   startTime: z.string().optional(),
   partySize: z.number().optional(),
+  visitCount: z.number().optional(),
+  preferences: z.record(z.unknown()).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -63,15 +66,41 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: "Event received but schema mismatch" }, { status: 200 });
     }
 
-    const { event, guest, reservation, guestEmail, restaurantName, startTime, partySize } = validatedBody.data;
+    const { event, guest, reservation, guestEmail, restaurantName, startTime, partySize, visitCount, preferences } = validatedBody.data;
 
     if (event === 'reservation_rejected') {
-      const result = await handleTableStackRejection({
+      const failoverPayload = {
         guestEmail: guestEmail || "",
         restaurantName: restaurantName || "",
         startTime: startTime || "",
         partySize: partySize || 0,
-      });
+        visitCount: visitCount || 0,
+        preferences: preferences || {},
+      };
+
+      const result = await handleTableStackRejection(failoverPayload);
+
+      // Push the alternative to the user's frontend via Ably
+      const ably = getAblyClient();
+      if (ably && result.plan) {
+        try {
+          const token = await signServiceToken({ purpose: 'failover_update' });
+          const channel = ably.channels.get('nervous-system:updates');
+          await channel.publish('FailoverAlternative', {
+            token,
+            data: {
+              guestEmail: failoverPayload.guestEmail,
+              originalRestaurant: failoverPayload.restaurantName,
+              alternativePlan: result.plan,
+              hypotheses: result.hypotheses,
+              timestamp: new Date().toISOString(),
+            },
+          });
+          console.log(`[Failover Orchestrator] Alternative pushed to Ably for ${failoverPayload.guestEmail}`);
+        } catch (err) {
+          console.error('[Failover Orchestrator] Ably publish failed:', err);
+        }
+      }
 
       return NextResponse.json({
         message: "Failover initiated",

@@ -50,27 +50,48 @@ async function calculateDeliveryQuote(
   restaurantId?: string
 ) {
   console.log(`[Trace:${traceId}] Calculating delivery quote${restaurantId ? ` for restaurant:${restaurantId}` : ""}`);
-  
+
   // Phase D: Cross-Service "Context Injection"
   // Automatically pad delivery estimate if TableStack waitlist is long
   let waitlistPaddingMins = 0;
+  let kitchenLoadLevel: 'low' | 'medium' | 'high' = 'low';
+  
   if (restaurantId && process.env.TABLESTACK_API_URL) {
     try {
+      // Vercel Hobby Tier Optimization: 8-second timeout with AbortController
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      
       const waitlistRes = await fetch(`${process.env.TABLESTACK_API_URL}/waitlist?restaurantId=${restaurantId}`, {
         headers: {
           'x-trace-id': traceId,
           'Authorization': `Bearer ${process.env.INTERNAL_SERVICE_TOKEN || ""}`
-        }
+        },
+        signal: controller.signal
       });
+      
+      clearTimeout(timeoutId);
+      
       if (waitlistRes.ok) {
         const { waitlistCount } = await waitlistRes.json();
-        if (waitlistCount > 5) {
-          console.log(`[Trace:${traceId}] High kitchen load detected (${waitlistCount} waiting). Padding estimate by 10 mins.`);
+        
+        // Deterministic Kitchen Load Buffer Logic:
+        // - 0-5 parties: Normal operations (no buffer)
+        // - 6-10 parties: Medium load (+10 min buffer)
+        // - 11+ parties: High load (+20 min buffer)
+        if (waitlistCount > 10) {
+          waitlistPaddingMins = 20;
+          kitchenLoadLevel = 'high';
+          console.log(`[Trace:${traceId}] HIGH kitchen load detected (${waitlistCount} waiting). Padding estimate by 20 mins.`);
+        } else if (waitlistCount > 5) {
           waitlistPaddingMins = 10;
+          kitchenLoadLevel = 'medium';
+          console.log(`[Trace:${traceId}] MEDIUM kitchen load detected (${waitlistCount} waiting). Padding estimate by 10 mins.`);
         }
       }
     } catch (err) {
-      console.warn(`[Trace:${traceId}] Failed to fetch waitlist from TableStack:`, err);
+      console.warn(`[Trace:${traceId}] Failed to fetch waitlist from TableStack (timeout or error):`, err);
+      // Graceful degradation - continue without kitchen load data
     }
   }
 
@@ -78,18 +99,19 @@ async function calculateDeliveryQuote(
   const basePrice = 12.50;
   const itemBuffer = items.length * 0.5;
   const priorityMultiplier = priority === "express" ? 1.5 : priority === "urgent" ? 2.0 : 1.0;
-  
+
   // Calculate distance-based fee (simplified - in real app use actual distance API)
   const distanceFee = 2.0; // Base distance fee
-  
+
   // Calculate weight-based fee
   const totalWeight = items.reduce((sum, item) => sum + (item.weight || 0.5), 0);
   const weightFee = totalWeight * 0.3;
-  
+
   const subtotal = (basePrice + itemBuffer + distanceFee + weightFee) * priorityMultiplier;
   const total = Math.round(subtotal * 100) / 100;
-  
-  const pickupMins = (priority === "urgent" ? 10 : priority === "express" ? 15 : 20) + waitlistPaddingMins;
+
+  const basePickupMins = priority === "urgent" ? 10 : priority === "express" ? 15 : 20;
+  const pickupMins = basePickupMins + waitlistPaddingMins;
 
   return {
     quoteId: randomUUID(),
@@ -107,12 +129,17 @@ async function calculateDeliveryQuote(
       deliveryMinutes: 25 + (items.length > 2 ? 10 : 0) + (priority === "urgent" ? -5 : 0),
       totalMinutes: pickupMins + (25 + (items.length > 2 ? 10 : 0) + (priority === "urgent" ? -5 : 0)),
     },
-    availableVehicles: items.some((i: any) => (i.weight || 0) > 10) ? ["van", "truck"] : 
-                       items.some((i: any) => (i.weight || 0) > 5) ? ["car", "van"] : 
+    availableVehicles: items.some((i: any) => (i.weight || 0) > 10) ? ["van", "truck"] :
+                       items.some((i: any) => (i.weight || 0) > 5) ? ["car", "van"] :
                        ["bike", "car", "van"],
     route: {
       distanceKm: 3.5, // Simplified
       estimatedDurationMinutes: 15,
+    },
+    kitchenLoad: {
+      level: kitchenLoadLevel,
+      waitlistCount: kitchenLoadLevel !== 'low' ? undefined : undefined, // Only included if relevant
+      appliedBufferMinutes: waitlistPaddingMins > 0 ? waitlistPaddingMins : undefined,
     },
   };
 }

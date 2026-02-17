@@ -30,10 +30,43 @@ export class NotifyService {
 
     // 2. Nervous System Event
     const { RealtimeService } = await import('@repo/shared');
-    await RealtimeService.publishNervousSystemEvent('reservation_rejected', {
+    await RealtimeService.publishNervousSystemEvent('ReservationRejected', {
       ...data,
       restaurantId
     }).catch(err => console.error('Nervous System Event failed:', err));
+
+    // 3. Trigger Failover Webhook to Intention Engine (Saga Pattern)
+    // This ensures the system proactively finds alternatives without user intervention
+    const intentionEngineUrl = process.env.INTENTION_ENGINE_API_URL;
+    if (intentionEngineUrl) {
+      const { signServiceToken } = await import('@repo/auth');
+      const token = await signServiceToken({ purpose: 'reservation_failover' });
+      
+      const webhookPayload = {
+        event: 'reservation_rejected',
+        guestEmail: data.guestEmail,
+        restaurantName: data.restaurantName,
+        startTime: data.startTime instanceof Date ? data.startTime.toISOString() : data.startTime,
+        partySize: data.partySize,
+        visitCount: data.visitCount || 0,
+        preferences: data.preferences || {},
+      };
+
+      try {
+        await fetch(`${intentionEngineUrl}/api/webhooks`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
+          },
+          body: JSON.stringify(webhookPayload),
+        });
+        console.log(`[Saga Pattern] Failover webhook triggered for ${data.guestEmail}`);
+      } catch (err) {
+        console.error('[Saga Pattern] Failover webhook failed:', err);
+      }
+    }
   }
 
   static async sendNotification({ to, subject, html }: NotifyOptions) {

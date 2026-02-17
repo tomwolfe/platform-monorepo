@@ -3,6 +3,7 @@ import { z } from "zod";
 import { randomUUID } from "crypto";
 import { withNervousSystemTracing } from "@repo/shared";
 import { startTrace } from "@/lib/observability";
+import { saveUserInteractionContext } from "@/lib/context-persistence";
 
 // Engine imports
 import {
@@ -183,7 +184,7 @@ async function orchestrateExecution(
 
       // Validate intent confidence and type
       const validation = validateIntentConfidence(parseResult.intent);
-      
+
       if (!validation.valid) {
         tracer.addSystemEntry("intent_rejected", {
           reason: validation.reason,
@@ -209,6 +210,19 @@ async function orchestrateExecution(
             total_ms: Math.round(performance.now() - startTime),
           },
         };
+      }
+
+      // Save interaction context for conversational continuity (Objective 5)
+      // Extract user ID from context if available
+      const userId = context.user_context?.userId as string | undefined;
+      if (userId) {
+        await saveUserInteractionContext(userId, {
+          intentType: parseResult.intent.type,
+          rawText: parseResult.intent.rawText,
+          parameters: parseResult.intent.parameters as Record<string, unknown>,
+          timestamp: new Date().toISOString(),
+          executionId,
+        });
       }
 
       // Check if intent requires clarification

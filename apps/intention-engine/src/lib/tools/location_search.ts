@@ -2,9 +2,34 @@ import { z } from "zod";
 import { redis } from "../redis-client";
 import { env } from "../config";
 import { RestaurantResultSchema } from "../schema";
-import { GeocodeSchema, SearchRestaurantSchema, DB_REFLECTED_SCHEMAS } from "@repo/mcp-protocol";
+import { GeocodeSchema, SearchRestaurantSchema, DB_REFLECTED_SCHEMAS, UnifiedLocationSchema } from "@repo/mcp-protocol";
 
-export async function geocode_location(params: z.infer<typeof GeocodeSchema>) {
+/**
+ * PhotonLocation - Standardized location response from Photon API
+ */
+export interface PhotonLocation {
+  lat: number;
+  lon: number;
+  name?: string;
+  street?: string;
+  city?: string;
+  postcode?: string;
+  country?: string;
+  state?: string;
+  county?: string;
+  suburb?: string;
+  housenumber?: string;
+  type?: string;
+  osm_id?: number;
+  osm_type?: string;
+  extent?: [number, number, number, number];
+}
+
+/**
+ * Geocode using Photon API (Komoot) - Primary geocoding service
+ * Falls back to Nominatim if Photon fails
+ */
+export async function geocode_location_photon(params: z.infer<typeof GeocodeSchema>): Promise<{ success: boolean; result?: { lat: number; lon: number; displayName?: string }; error?: string }> {
   const validated = GeocodeSchema.safeParse(params);
   if (!validated.success) return { success: false, error: "Invalid parameters" };
   const { location, userLocation } = validated.data;
@@ -22,30 +47,112 @@ export async function geocode_location(params: z.infer<typeof GeocodeSchema>) {
     };
   }
 
-  console.log(`Geocoding location: ${location}...`);
+  console.log(`[Photon] Geocoding location: ${location}...`);
+  
   try {
-    // Bias the search with userLocation if available using viewbox or context
-    let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`;
-    
+    // Photon API with location bias
+    let url = `https://photon.komoot.io/api/?q=${encodeURIComponent(location)}&limit=1`;
+
     if (userLocation) {
-      // Use a viewbox around the user's location (approx 0.5 degrees ~ 50km) for biasing
-      const boxSize = 0.5;
-      const viewbox = `${userLocation.lng - boxSize},${userLocation.lat + boxSize},${userLocation.lng + boxSize},${userLocation.lat - boxSize}`;
-      url += `&viewbox=${viewbox}&bounded=0`; // bounded=0 means bias, bounded=1 means strict limit
+      // Bias results toward user location using lat/lon parameters
+      url += `&lat=${userLocation.lat}&lon=${userLocation.lng}`;
     }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
 
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'IntentionEngine/1.0'
-      }
+      },
+      signal: controller.signal
     });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Photon API error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    
+    if (data.features && data.features.length > 0) {
+      const feature = data.features[0];
+      const coords = feature.geometry.coordinates;
+      const props = feature.properties;
+      
+      return {
+        success: true,
+        result: {
+          lat: coords[1],
+          lon: coords[0],
+          displayName: props.name || props.street || props.city || location
+        }
+      };
+    }
+
+    // Fallback to Nominatim if Photon returns no results
+    console.log(`[Photon] No results, falling back to Nominatim...`);
+    return await geocode_location_nominatim(params);
+    
+  } catch (error: any) {
+    console.warn(`[Photon] Geocoding failed: ${error.message}, falling back to Nominatim`);
+    // Fallback to Nominatim on error
+    return await geocode_location_nominatim(params);
+  }
+}
+
+/**
+ * Geocode using Nominatim (OpenStreetMap) - Fallback service
+ */
+export async function geocode_location_nominatim(params: z.infer<typeof GeocodeSchema>): Promise<{ success: boolean; result?: { lat: number; lon: number; displayName?: string }; error?: string }> {
+  const validated = GeocodeSchema.safeParse(params);
+  if (!validated.success) return { success: false, error: "Invalid parameters" };
+  const { location, userLocation } = validated.data;
+
+  // Vague location handling
+  const vagueTerms = ["nearby", "near me", "around here", "here", "current location"];
+  if (vagueTerms.includes(location.toLowerCase()) && userLocation) {
+    console.log("Vague location detected, using userLocation bias.");
+    return {
+      success: true,
+      result: {
+        lat: userLocation.lat,
+        lon: userLocation.lng
+      }
+    };
+  }
+
+  console.log(`[Nominatim] Geocoding location: ${location}...`);
+  try {
+    let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`;
+
+    if (userLocation) {
+      const boxSize = 0.5;
+      const viewbox = `${userLocation.lng - boxSize},${userLocation.lat + boxSize},${userLocation.lng + boxSize},${userLocation.lat - boxSize}`;
+      url += `&viewbox=${viewbox}&bounded=0`;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'IntentionEngine/1.0'
+      },
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
     const data = await response.json();
     if (data && data.length > 0) {
       return {
         success: true,
         result: {
           lat: parseFloat(data[0].lat),
-          lon: parseFloat(data[0].lon)
+          lon: parseFloat(data[0].lon),
+          displayName: data[0].display_name
         }
       };
     }
@@ -53,6 +160,13 @@ export async function geocode_location(params: z.infer<typeof GeocodeSchema>) {
   } catch (error: any) {
     return { success: false, error: error.message };
   }
+}
+
+/**
+ * Primary geocode_location function - uses Photon first, then Nominatim
+ */
+export async function geocode_location(params: z.infer<typeof GeocodeSchema>) {
+  return await geocode_location_photon(params);
 }
 
 export async function search_restaurant(params: z.infer<typeof SearchRestaurantSchema>) {

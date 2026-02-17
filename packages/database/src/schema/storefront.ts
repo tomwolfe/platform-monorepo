@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, doublePrecision, integer, timestamp, uniqueIndex, pgEnum } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, doublePrecision, integer, timestamp, uniqueIndex, pgEnum, jsonb } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 export const userRoleEnum = pgEnum('user_role', ['shopper', 'merchant']);
@@ -45,6 +45,14 @@ export const users = pgTable('user', {
   image: text('image'),
   role: userRoleEnum('role').notNull().default('shopper'),
   managedStoreId: uuid('managed_store_id').references(() => stores.id),
+  // Contextual continuity: Store last inferred intent for conversation context
+  lastInteractionContext: jsonb('last_interaction_context').$type<{
+    intentType?: string;
+    rawText?: string;
+    parameters?: Record<string, unknown>;
+    timestamp?: string;
+    executionId?: string;
+  }>(),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 });

@@ -75,18 +75,18 @@ export const CreateGuestProfileSchema = createInsertSchema(guestProfiles).omit({
 });
 
 // Update schemas (partial - all fields optional)
-export const UpdateReservationSchema = createInsertSchema(restaurantReservations).partial().omit({
+export const UpdateReservationDBSchema = createInsertSchema(restaurantReservations).partial().omit({
   id: true,
   createdAt: true,
 });
 
-export const UpdateTableSchema = createInsertSchema(restaurantTables).partial().omit({
+export const UpdateTableDBSchema = createInsertSchema(restaurantTables).partial().omit({
   id: true,
   restaurantId: true,
   updatedAt: true,
 });
 
-export const UpdateWaitlistSchema = createInsertSchema(restaurantWaitlist).partial().omit({
+export const UpdateWaitlistDBSchema = createInsertSchema(restaurantWaitlist).partial().omit({
   id: true,
   createdAt: true,
   updatedAt: true,
@@ -123,9 +123,9 @@ export const DB_REFLECTED_SCHEMAS = {
   createGuest: CreateGuestProfileSchema,
 
   // Update operations
-  updateReservation: UpdateReservationSchema,
-  updateTable: UpdateTableSchema,
-  updateWaitlist: UpdateWaitlistSchema,
+  updateReservation: UpdateReservationDBSchema,
+  updateTable: UpdateTableDBSchema,
+  updateWaitlist: UpdateWaitlistDBSchema,
 };
 
 /**

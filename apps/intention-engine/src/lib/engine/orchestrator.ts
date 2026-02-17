@@ -484,7 +484,7 @@ async function executeStep(
           totalSteps,
           stepName: step.tool_name,
           status: 'failed',
-          message: `Failed: ${toolResult.error?.message || 'Unknown error'}`,
+          message: `Failed: ${typeof toolResult.error === 'string' ? toolResult.error : 'Unknown error'}`,
           timestamp: new Date().toISOString(),
           traceId: span?.spanContext()?.traceId,
         });

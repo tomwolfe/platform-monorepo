@@ -2,6 +2,31 @@ import { pgTable, uuid, text, integer, timestamp, boolean, uniqueIndex, index, j
 import { relations } from 'drizzle-orm';
 
 export const waitlistStatusEnum = pgEnum('waitlist_status', ['waiting', 'notified', 'seated']);
+export const userRoleEnum = pgEnum('user_role', ['shopper', 'merchant']);
+
+export const users = pgTable('user', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  clerkId: text('clerk_id').unique().notNull(),
+  name: text('name'),
+  email: text('email').notNull().unique(),
+  image: text('image'),
+  role: userRoleEnum('role').notNull().default('shopper'),
+  // Contextual continuity: Store last inferred intent for conversation context
+  lastInteractionContext: jsonb('last_interaction_context').$type<{
+    intentType?: string;
+    rawText?: string;
+    parameters?: Record<string, unknown>;
+    timestamp?: string;
+    executionId?: string;
+  }>(),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, (table) => {
+  return {
+    clerkIdIdx: uniqueIndex('clerk_id_idx').on(table.clerkId),
+    emailIdx: uniqueIndex('email_idx').on(table.email),
+  };
+});
 
 export const restaurants = pgTable('restaurants', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -164,4 +189,9 @@ export const guestProfilesRelations = relations(guestProfiles, ({ one }) => ({
     fields: [guestProfiles.restaurantId],
     references: [restaurants.id],
   }),
+}));
+
+export const usersRelations = relations(users, ({ many }) => ({
+  // Add relations if needed in the future
+  // For now, users is a standalone table for contextual memory
 }));

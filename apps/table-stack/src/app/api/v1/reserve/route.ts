@@ -209,22 +209,39 @@ export async function POST(req: NextRequest) {
     // High-Value Guest Hook: Trigger logistics if guest is frequent
     if ((profile.visitCount ?? 0) >= 5) {
       const { RealtimeService } = await import('@repo/shared');
-      
-      // Publish to Nervous System mesh
-      await RealtimeService.publishNervousSystemEvent('high_value_guest_reservation', {
-        guest: {
-          name: profile.name,
-          email: profile.email,
-          visitCount: profile.visitCount,
-          defaultDeliveryAddress: profile.defaultDeliveryAddress
+      const mcpProtocol = await import('@repo/mcp-protocol');
+
+      // Extract trace ID from request headers if available
+      const traceId = req.headers.get('x-trace-id') || undefined;
+
+      // Phase 2: Use structured SystemEvent schema
+      const event = mcpProtocol.createTypedSystemEvent(
+        'HighValueGuestReservation',
+        {
+          guest: {
+            name: profile.name,
+            email: profile.email,
+            visitCount: profile.visitCount,
+            defaultDeliveryAddress: profile.defaultDeliveryAddress,
+            preferences: profile.preferences || {},
+          },
+          reservation: {
+            id: newReservation.id,
+            restaurantName: restaurant.name,
+            startTime: newReservation.startTime.toISOString(),
+            partySize: newReservation.partySize,
+          },
         },
-        reservation: {
-          id: newReservation.id,
-          restaurantName: restaurant.name,
-          startTime: newReservation.startTime,
-          partySize: newReservation.partySize
-        }
-      }).catch(err => console.error('Nervous System Event failed:', err));
+        'table-stack',
+        { traceId }
+      );
+
+      // Publish to Nervous System mesh with trace ID propagation (Phase 5)
+      await RealtimeService.publishNervousSystemEvent(
+        event.type,
+        event.payload,
+        event.traceId
+      ).catch(err => console.error('Nervous System Event failed:', err));
     }
 
     if (isShadow) {

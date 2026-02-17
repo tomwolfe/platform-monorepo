@@ -11,6 +11,12 @@ export * from "./schemas/parallel_execution";
 export * from "./schemas/table_management";
 export * from "./schemas/delivery_fulfillment";
 
+// Phase 2: Event Backbone
+export * from "./schemas/events";
+
+// Phase 3: Saga Patterns
+export * from "./schemas/compensations";
+
 import { MobilityRequestSchema, RouteEstimateSchema } from "./schemas/mobility";
 import { GetAvailabilitySchema, BookTableSchema, TableReservationSchema } from "./schemas/booking";
 import { CalculateQuoteSchema, GetDriverLocationSchema } from "./schemas/opendelivery";

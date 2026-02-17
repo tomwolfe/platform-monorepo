@@ -6,17 +6,21 @@ import { z } from "zod";
 import { mapJsonSchemaToZod } from "../../lib/engine/schema-utils";
 import { mcpConfig } from "../../lib/mcp-config";
 import { PARAMETER_ALIASES as shared_aliases, ToolInput, ToolOutput } from "@repo/mcp-protocol";
+import { CircuitBreaker, CircuitBreakerError, CircuitState } from "./CircuitBreaker";
 
 /**
- * MCPClient connects to remote MCP servers and maps their tools 
+ * MCPClient connects to remote MCP servers and maps their tools
  * to the engine's internal ToolDefinition format.
+ * 
+ * Phase 4: Includes circuit breaker protection for resilience.
  */
 export class MCPClient {
   private client: Client;
   private transport: SSEClientTransport;
   private serverUrl: string;
+  private circuitBreaker: CircuitBreaker;
 
-  constructor(serverUrl: string) {
+  constructor(serverUrl: string, circuitBreakerConfig?: { serviceName?: string }) {
     this.serverUrl = serverUrl;
     this.transport = new SSEClientTransport(new URL(serverUrl));
     this.client = new Client(
@@ -28,6 +32,12 @@ export class MCPClient {
         capabilities: {},
       }
     );
+    
+    // Initialize circuit breaker for this server
+    this.circuitBreaker = new CircuitBreaker({
+      serviceName: circuitBreakerConfig?.serviceName || "mcp-server",
+      serverUrl,
+    });
   }
 
   /**
@@ -45,6 +55,20 @@ export class MCPClient {
   }
 
   /**
+   * Get circuit breaker status for observability
+   */
+  getCircuitBreakerStatus() {
+    return this.circuitBreaker.getStatus();
+  }
+
+  /**
+   * Set trace ID for distributed tracing correlation
+   */
+  setTraceId(traceId: string) {
+    this.circuitBreaker.setTraceId(traceId);
+  }
+
+  /**
    * Lists tools from the remote MCP server and converts them to Engine ToolDefinitions.
    */
   async listTools(): Promise<ToolDefinition[]> {
@@ -53,15 +77,18 @@ export class MCPClient {
   }
 
   /**
-   * Calls a tool on the remote MCP server with exponential backoff retry.
+   * Calls a tool on the remote MCP server with circuit breaker protection and exponential backoff retry.
+   * Phase 4: Circuit breaker fails fast when downstream service degrades.
    */
   async callTool(name: string, args: ToolInput, signal?: AbortSignal): Promise<ToolOutput> {
-    return this.withRetry(async () => {
-      const result = await this.client.callTool({
-        name,
-        arguments: args,
+    return this.circuitBreaker.execute(async () => {
+      return this.withRetry(async () => {
+        const result = await this.client.callTool({
+          name,
+          arguments: args,
+        });
+        return result as ToolOutput;
       });
-      return result as ToolOutput;
     });
   }
 

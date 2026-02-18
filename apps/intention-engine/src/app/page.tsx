@@ -1,483 +1,256 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useChat } from "@ai-sdk/react";
-import { Trash2, Calendar, MapPin, Loader2, Activity, CheckCircle2, XCircle, Clock } from "lucide-react";
-import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls, isToolUIPart, getToolName } from "ai";
-import { AuditLogViewer } from "@/components/AuditLogViewer";
+import { Trash2, MapPin, Loader2, Mic, SendHorizontal } from "lucide-react";
+import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from "ai";
+import { MessageBubble } from "@/components/chat/MessageBubble";
+import { ActionChips, ActionChip } from "@/components/chat/ActionChips";
+import { Restaurant } from "@/components/chat/RestaurantCard";
 import { useMesh } from "@/hooks/useMesh";
 
-interface StreamingStepUpdate {
-  executionId: string;
-  stepIndex: number;
-  totalSteps: number;
-  stepName: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed';
-  message: string;
-  timestamp: string;
-  traceId?: string;
-}
+const ROTATING_PLACEHOLDERS = [
+  "Book a table for dinner...",
+  "Find a ride to the airport...",
+  "Check the weather this weekend...",
+  "Schedule a meeting...",
+  "Plan a dinner and add to calendar...",
+];
 
 export default function Home() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [input, setInput] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [auditLogs, setAuditLogs] = useState<any[]>([]);
-  const [showAudit, setShowAudit] = useState(false);
-  const [meshEvents, setMeshEvents] = useState<any[]>([]);
-  const [streamingUpdates, setStreamingUpdates] = useState<StreamingStepUpdate[]>([]);
-  const [currentExecutionId, setCurrentExecutionId] = useState<string | null>(null);
+  const [selectedRestaurant, setSelectedRestaurant] = useState<Restaurant | null>(null);
+  const [placeholderIndex, setPlaceholderIndex] = useState(0);
+  
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  useMesh((name, data) => {
-    // Handle ExecutionStepUpdate events for real-time progress
-    if (name === 'ExecutionStepUpdate') {
-      const update = data.data || data;
-      if (update.executionId) {
-        setCurrentExecutionId(update.executionId);
-        setStreamingUpdates(prev => {
-          // Find if we already have this step
-          const existingIndex = prev.findIndex(u => u.stepIndex === update.stepIndex && u.executionId === update.executionId);
-          if (existingIndex >= 0) {
-            // Update existing step
-            const newUpdates = [...prev];
-            newUpdates[existingIndex] = update;
-            return newUpdates;
-          } else {
-            // Add new step
-            return [...prev, update].sort((a, b) => a.stepIndex - b.stepIndex);
-          }
-        });
-      }
-    } else {
-      // Handle other mesh events
-      setMeshEvents(prev => [{ name, data, timestamp: new Date().toISOString() }, ...prev].slice(0, 5));
-      // Optionally trigger proactive inference if it's a high-value guest
-      if (name === 'high_value_guest_reservation') {
-        console.log('High value guest detected on mesh, UI could proactively suggest actions.');
-      }
-    }
-  });
-
-  useEffect(() => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        position => { setUserLocation({ lat: position.coords.latitude, lng: position.coords.longitude }) },
-        error => { console.error("Error getting location", error); }
-      );
-    }
-    fetchAuditLogs();
-  }, []);
-
-  const fetchAuditLogs = async () => {
-    try {
-      const res = await fetch('/api/audit');
-      const data = await res.json();
-      if (data.logs) {
-        setAuditLogs(data.logs);
-      }
-    } catch (err) {
-      console.error("Failed to fetch audit logs:", err);
-    }
-  };
-
-  const { messages, setMessages, status, sendMessage, addToolOutput } = useChat({
+  const { messages, setMessages, status, sendMessage } = useChat({
     transport: new DefaultChatTransport({
       api: "/api/chat",
     }),
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-    onFinish() {
-      fetchAuditLogs();
-    },
     onError(err) {
       console.error("Chat error:", err);
-      setError(err.message || "An unexpected error occurred. Please try again.");
-    },
-    async onToolCall({ toolCall }) {
-      // Server-side execution is handled in route.ts
+      // Errors are now shown conversationally in the chat stream
     },
   });
 
   const isLoading = status === "streaming" || status === "submitted";
 
+  // Rotate placeholder every 5 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setPlaceholderIndex((prev) => (prev + 1) % ROTATING_PLACEHOLDERS.length);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // Minimal mesh listener for core functionality (no UI exposure)
+  useMesh((name, data) => {
+    // Silent background processing - no UI updates
+    if (name === "high_value_guest_reservation") {
+      console.log("High value guest detected - could personalize experience");
+    }
+  });
+
+  // Get user location on mount
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setUserLocation({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          });
+        },
+        (error) => {
+          console.error("Error getting location", error);
+        }
+      );
+    }
+  }, []);
+
   const handleClearChat = () => {
     setMessages([]);
-    setError(null);
-    localStorage.removeItem("chat_history");
+    setSelectedRestaurant(null);
+  };
+
+  const handleSendMessage = async (text: string) => {
+    if (!text.trim()) return;
+    
+    try {
+      await sendMessage({ text }, { body: { userLocation } });
+    } catch (err: any) {
+      console.error("Failed to send message:", err);
+    }
   };
 
   const onFormSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!input.trim()) return;
 
-    setError(null);
-    // Clear previous streaming updates for new execution
-    setStreamingUpdates([]);
-    setCurrentExecutionId(null);
-    try {
-      await sendMessage({ text: input }, { body: { userLocation } });
-      setInput("");
-    } catch (err: any) {
-      setError(err.message || "Failed to send message");
-    }
+    const message = input.trim();
+    setInput("");
+    await handleSendMessage(message);
   };
 
-  const handleRetry = () => {
-    if (messages.length > 0) {
-      const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
-      if (lastUserMessage) {
-        setError(null);
-        sendMessage({ text: (lastUserMessage.parts.find(p => p.type === 'text') as any)?.text || "" }, {
-          body: { userLocation }
-        });
-      }
+  const handleRestaurantSelect = (restaurant: Restaurant) => {
+    setSelectedRestaurant(restaurant);
+    const time = "7 PM";
+    handleSendMessage(
+      `I've selected ${restaurant.name} at ${restaurant.address}. Please add this to my calendar for tonight at ${time}.`
+    );
+  };
+
+  const handleActionChipSelect = (value: string) => {
+    handleSendMessage(value);
+  };
+
+  // Parse assistant messages for action chips (failover suggestions)
+  const parseActionChips = (message: any): ActionChip[] | null => {
+    // Look for structured failover suggestions in the message
+    // This would be enhanced when FailoverPolicyEngine returns structured data
+    const textParts = message.parts.filter((p: any) => p.type === "text");
+    const fullText = textParts.map((p: any) => p.text).join("\n");
+
+    // Simple pattern matching for alternatives (can be enhanced)
+    const timePattern = /(\d+:\d+\s*(?:AM|PM))/gi;
+    const times = fullText.match(timePattern);
+
+    if (times && times.length > 0) {
+      return times.slice(0, 3).map((time: string) => ({
+        label: time,
+        value: `Try ${time}`,
+      }));
     }
+
+    return null;
   };
 
   return (
-    <main className="max-w-4xl mx-auto p-8">
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold">Intention Engine</h1>
-        {messages.length > 0 && (
-          <button
-            onClick={handleClearChat}
-            className="flex items-center gap-2 text-red-500 hover:text-red-700 text-sm font-medium transition-colors"
-          >
-            <Trash2 size={16} />
-            Clear Chat
-          </button>
-        )}
-      </div>
-      
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-8 flex justify-between items-center">
-          <p className="text-sm">{error}</p>
-          <button 
-            onClick={handleRetry}
-            className="text-xs bg-red-100 hover:bg-red-200 px-3 py-1 rounded font-bold transition-colors"
-          >
-            Retry
-          </button>
-        </div>
-      )}
-      
-      <div className="bg-white p-6 rounded-lg shadow-sm border mb-8">
-        <form onSubmit={onFormSubmit} className="space-y-4">
-          <label className="block text-sm font-medium mb-2">What is your intent?</label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              className="flex-1 p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none"
-              placeholder="e.g. plan a dinner and add to calendar"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              disabled={isLoading}
-            />
+    <main className="min-h-screen bg-white">
+      {/* Header */}
+      <header className="sticky top-0 z-10 bg-white/80 backdrop-blur-md border-b border-slate-100">
+        <div className="max-w-3xl mx-auto px-6 py-4 flex justify-between items-center">
+          <div>
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight">
+              Intention Engine
+            </h1>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Your intelligent concierge
+            </p>
+          </div>
+          {messages.length > 0 && (
             <button
-              type="submit"
-              disabled={isLoading || !input}
-              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+              onClick={handleClearChat}
+              className="flex items-center gap-1.5 text-slate-400 hover:text-red-500 transition-colors text-sm font-medium"
             >
-              {isLoading ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" />
-                  Thinking...
-                </>
-              ) : (
-                "Send"
-              )}
+              <Trash2 size={16} />
+              <span className="hidden sm:inline">Clear</span>
             </button>
-          </div>
-          {userLocation && (<p className="text-xs text-slate-500 flex items-center gap-1"><MapPin size={12} />Location: {userLocation.lat.toFixed(4)}, {userLocation.lng.toFixed(4)}</p>)}
-        </form>
-      </div>
-
-      {meshEvents.length > 0 && (
-        <div className="mb-8 p-4 bg-amber-50 border border-amber-200 rounded-lg animate-pulse">
-          <div className="flex items-center gap-2 text-amber-800 font-bold text-sm mb-2">
-            <Activity size={16} />
-            Real-time Mesh Events Heard
-          </div>
-          <div className="space-y-1">
-            {meshEvents.map((ev, i) => (
-              <div key={i} className="text-xs text-amber-700 flex justify-between">
-                <span>{ev.name}</span>
-                <span className="opacity-50">{new Date(ev.timestamp).toLocaleTimeString()}</span>
-              </div>
-            ))}
-          </div>
+          )}
         </div>
-      )}
+      </header>
 
-      {/* Real-time Progress Stepper - Vercel Hobby Tier Optimization */}
-      {streamingUpdates.length > 0 && (
-        <div className="mb-8 bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
-          <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Loader2 size={16} className={`animate-spin text-blue-600 ${!isLoading ? 'hidden' : ''}`} />
-              <h3 className="font-semibold text-slate-700">Execution Progress</h3>
+      {/* Chat Stream */}
+      <div className="max-w-3xl mx-auto px-6 py-8 pb-48">
+        {messages.length === 0 ? (
+          <div className="text-center py-20">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-50 mb-6">
+              <MapPin className="w-8 h-8 text-slate-300" />
             </div>
-            {currentExecutionId && (
-              <span className="text-xs text-slate-500 font-mono">
-                {currentExecutionId.slice(0, 8)}...
-              </span>
-            )}
+            <h2 className="text-2xl font-bold text-slate-900 mb-2">
+              What can I help you with today?
+            </h2>
+            <p className="text-slate-500 max-w-md mx-auto">
+              I can book tables, schedule events, find rides, and more. Just tell
+              me what you need.
+            </p>
           </div>
-          <div className="p-4 space-y-3">
-            {streamingUpdates.map((update, index) => {
-              const isLast = index === streamingUpdates.length - 1;
-              const statusConfig = {
-                pending: { icon: Clock, color: 'text-slate-400', bg: 'bg-slate-100' },
-                in_progress: { icon: Loader2, color: 'text-blue-600', bg: 'bg-blue-50' },
-                completed: { icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50' },
-                failed: { icon: XCircle, color: 'text-red-600', bg: 'bg-red-50' },
-              };
-              const config = statusConfig[update.status];
-              const Icon = config.icon;
+        ) : (
+          <div className="space-y-2">
+            {messages.map((message, index) => {
+              const isLast = index === messages.length - 1;
+              const isAssistant = message.role === "assistant";
+              const actionChips = isAssistant ? parseActionChips(message) : null;
 
               return (
-                <div
-                  key={`${update.executionId}-${update.stepIndex}`}
-                  className={`flex items-start gap-3 p-3 rounded-lg transition-all ${
-                    isLast ? 'ring-2 ring-blue-200' : ''
-                  }`}
-                >
-                  <div className={`p-2 rounded-full ${config.bg} ${config.color}`}>
-                    <Icon size={16} className={update.status === 'in_progress' ? 'animate-spin' : ''} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-500 uppercase">
-                        Step {update.stepIndex + 1} / {update.totalSteps}
-                      </span>
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        update.status === 'completed' ? 'bg-green-100 text-green-700' :
-                        update.status === 'failed' ? 'bg-red-100 text-red-700' :
-                        update.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
-                        'bg-slate-100 text-slate-600'
-                      }`}>
-                        {update.status.replace('_', ' ')}
-                      </span>
+                <div key={message.id}>
+                  <MessageBubble
+                    message={message}
+                    isLast={isLast}
+                    isStreaming={isLoading && isLast}
+                  />
+                  {actionChips && (
+                    <div className="ml-4 sm:ml-6">
+                      <ActionChips
+                        chips={actionChips}
+                        onSelect={handleActionChipSelect}
+                        disabled={isLoading}
+                      />
                     </div>
-                    <p className="text-sm font-medium text-slate-800 mt-1">
-                      {update.stepName.replace(/_/g, ' ')}
-                    </p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      {update.message}
-                    </p>
-                    <p className="text-xs text-slate-400 mt-1">
-                      {new Date(update.timestamp).toLocaleTimeString()}
-                    </p>
-                  </div>
+                  )}
                 </div>
               );
             })}
-          </div>
-        </div>
-      )}
-
-      <div className="space-y-6">
-        {messages.map((m) => (
-          <div key={m.id} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-            <div className={`max-w-[80%] p-4 rounded-lg border shadow-sm ${
-              m.role === 'user' ? 'bg-blue-50 border-blue-100' : 'bg-white border-slate-200'
-            }`}>
-              {m.parts.map((part, partIndex) => {
-                if (part.type === 'text') {
-                  return <p key={partIndex} className="text-sm whitespace-pre-wrap">{part.text}</p>;
-                }
-                
-                if (isToolUIPart(part)) {
-                  const toolInvocation = part;
-                  const toolName = getToolName(toolInvocation);
-                  
-                  return (
-                    <div key={partIndex} className="mt-4 border-t pt-4">
-                      <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase mb-2">
-                        {toolName === 'search_restaurant' ? <MapPin size={12} /> : 
-                         toolName === 'geocode_location' ? <MapPin size={12} /> :
-                         <Calendar size={12} />}
-                        {toolName.replace(/_/g, ' ')}
-                      </div>
-                      
-                      {toolInvocation.state === 'output-available' ? (
-                        <div className="space-y-2">
-                          {(() => {
-                            const output = toolInvocation.output as any;
-                            
-                            if (toolName === 'geocode_location' && output.success) {
-                              return (
-                                <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 flex items-center gap-4">
-                                  <div className="bg-blue-100 p-3 rounded-full text-blue-600">
-                                    <MapPin size={24} />
-                                  </div>
-                                  <div>
-                                    <p className="text-sm font-bold">Coordinates Found</p>
-                                    <p className="text-xs text-slate-500">Lat: {output.result.lat.toFixed(4)}, Lon: {output.result.lon.toFixed(4)}</p>
-                                  </div>
-                                </div>
-                              );
-                            }
-
-                            if (toolName === 'search_restaurant' && output.success && Array.isArray(output.result)) {
-                              return (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                  {output.result.length === 0 ? (
-                                    <p className="text-sm text-slate-500 col-span-2 italic">No restaurants found.</p>
-                                  ) : output.result.map((r: any, i: number) => (
-                                    <div key={i} className="group relative flex flex-col p-3 border rounded-lg bg-white hover:border-blue-300 hover:shadow-md transition-all">
-                                      <div className="flex justify-between items-start mb-2">
-                                        <h4 className="font-bold text-sm leading-tight pr-4">{r.name}</h4>
-                                        <div className="flex items-center text-amber-500">
-                                          <span className="text-xs font-bold mr-1">{r.rating || (4 + Math.random()).toFixed(1)}</span>
-                                          <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
-                                        </div>
-                                      </div>
-                                      <p className="text-xs text-slate-500 mb-4 flex-1">{r.address}</p>
-                                      <button
-                                        onClick={() => {
-                                          const time = "7 PM";
-                                          sendMessage({ text: `I've selected ${r.name} at ${r.address}. Please add this to my calendar for tonight at ${time}.` }, {
-                                            body: { userLocation }
-                                          });
-                                        }}
-                                        className="w-full py-1.5 bg-blue-50 text-blue-600 rounded text-xs font-bold group-hover:bg-blue-600 group-hover:text-white transition-colors"
-                                      >
-                                        Select Restaurant
-                                      </button>
-                                    </div>
-                                  ))}
-                                </div>
-                              );
-                            }
-
-                            if (toolName === 'add_calendar_event' && output.success && output.result?.download_url) {
-                              const details = output.result.event_details;
-                              return (
-                                <div className="bg-green-50 p-4 rounded-lg border border-green-100">
-                                  <div className="flex items-start gap-3 mb-4">
-                                    <div className="bg-white p-2 rounded border border-green-200 text-green-600">
-                                      <Calendar size={20} />
-                                    </div>
-                                    <div>
-                                      <p className="text-sm font-bold text-green-800">Ready to Schedule</p>
-                                      <p className="text-xs text-green-700">A calendar invite has been generated.</p>
-                                    </div>
-                                  </div>
-                                  
-                                  {details && (
-                                    <div className="bg-white/50 p-3 rounded border border-green-200 mb-4 space-y-2">
-                                      <p className="text-sm font-bold text-slate-800">{details.title}</p>
-                                      <div className="flex flex-col gap-1">
-                                        <p className="text-xs text-slate-600 flex items-center gap-1">
-                                          <Calendar size={12} /> {new Date(details.start_time).toLocaleString()}
-                                        </p>
-                                        {details.location && (
-                                          <p className="text-xs text-slate-600 flex items-center gap-1">
-                                            <MapPin size={12} /> {details.location}
-                                          </p>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )}
-                                  
-                                  <a 
-                                    href={output.result.download_url}
-                                    className="w-full flex justify-center items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition-colors text-sm shadow-sm"
-                                  >
-                                    <Calendar size={16} />
-                                    Download (.ics)
-                                  </a>
-                                </div>
-                              );
-                            }
-
-                            return (
-                              <pre className="text-xs bg-slate-50 p-2 rounded overflow-auto max-h-40">
-                                {JSON.stringify(output, null, 2)}
-                              </pre>
-                            );
-                          })()}
-                        </div>
-                      ) : toolInvocation.state === 'output-error' ? (
-                        <div className="bg-red-50 border border-red-100 p-4 rounded-lg space-y-3">
-                          <div className="text-sm text-red-700 font-medium flex items-center gap-2">
-                            <span>Tool Execution Failed</span>
-                          </div>
-                          <p className="text-xs text-red-600 font-mono bg-white p-2 border border-red-50 rounded">
-                            {toolInvocation.errorText}
-                          </p>
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => {
-                                sendMessage({ 
-                                  text: `The tool "${toolName}" failed with error: "${toolInvocation.errorText}". Please retry the operation with appropriate adjustments or more specific parameters.` 
-                                }, {
-                                  body: { userLocation }
-                                });
-                              }}
-                              className="text-xs bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors font-bold shadow-sm"
-                            >
-                              Retry
-                            </button>
-                            <button
-                              onClick={() => {
-                                sendMessage({ 
-                                  text: `Analyze and fix the failure for tool "${toolName}" with parameters ${JSON.stringify(toolInvocation.input)}. Error: "${toolInvocation.errorText}". Propose a corrected set of parameters or an alternative approach.` 
-                                }, {
-                                  body: { userLocation }
-                                });
-                              }}
-                              className="text-xs bg-slate-800 text-white px-4 py-2 rounded hover:bg-slate-900 transition-colors font-bold shadow-sm"
-                            >
-                              Analyze & Fix
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 text-sm text-slate-500 animate-pulse">
-                          <Loader2 size={14} className="animate-spin" />
-                          Running {toolName.replace(/_/g, ' ')}...
-                        </div>
-                      )}
-                    </div>
-                  );
-                }
-                
-                return null;
-              })}
-            </div>
-          </div>
-        ))}
-        {isLoading && messages[messages.length - 1]?.role === 'user' && (
-          <div className="flex items-center gap-2 text-sm text-slate-500">
-            <Loader2 size={16} className="animate-spin" />
-            Thinking...
+            <div ref={messagesEndRef} />
           </div>
         )}
-            </div>
-      
-            <div className="mt-12 border-t pt-8">
-              <div className="flex justify-between items-center mb-6">
-                <button 
-                  onClick={() => setShowAudit(!showAudit)}
-                  className="flex items-center gap-2 text-slate-500 hover:text-blue-600 transition-colors font-medium"
-                >
-                  <Activity size={18} />
-                  {showAudit ? "Hide Execution Audit" : "Show Execution Audit"}
-                </button>
-                {showAudit && (
-                  <button 
-                    onClick={fetchAuditLogs}
-                    className="text-xs bg-slate-100 hover:bg-slate-200 px-3 py-1 rounded text-slate-600 transition-colors"
-                  >
-                    Refresh Logs
-                  </button>
+      </div>
+
+      {/* Floating Input Bar */}
+      <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-white via-white to-transparent pt-20 pb-6">
+        <div className="max-w-3xl mx-auto px-6">
+          <form onSubmit={onFormSubmit} className="relative">
+            <div className="relative flex items-center gap-2 bg-white border border-slate-200 rounded-2xl shadow-lg shadow-slate-200/50 focus-within:border-slate-300 focus-within:shadow-xl transition-all">
+              <input
+                ref={inputRef}
+                type="text"
+                className="flex-1 px-5 py-4 bg-transparent outline-none text-slate-900 placeholder:text-slate-400 text-[15px]"
+                placeholder={ROTATING_PLACEHOLDERS[placeholderIndex]}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                disabled={isLoading}
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                className="p-2.5 text-slate-400 hover:text-slate-600 transition-colors rounded-full hover:bg-slate-50"
+                aria-label="Voice input"
+              >
+                <Mic size={20} />
+              </button>
+              <button
+                type="submit"
+                disabled={isLoading || !input.trim()}
+                className="p-2.5 bg-black text-white rounded-full hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                aria-label="Send message"
+              >
+                {isLoading ? (
+                  <Loader2 size={20} className="animate-spin" />
+                ) : (
+                  <SendHorizontal size={20} />
                 )}
-              </div>
-              
-              {showAudit && <AuditLogViewer logs={auditLogs} />}
+              </button>
             </div>
-          </main>
-        );
-      }
-      
+            {userLocation && (
+              <div className="flex items-center justify-center gap-1 mt-3 text-[11px] text-slate-400">
+                <MapPin size={10} />
+                <span>
+                  {userLocation.lat.toFixed(2)}, {userLocation.lng.toFixed(2)}
+                </span>
+              </div>
+            )}
+          </form>
+        </div>
+      </div>
+    </main>
+  );
+}

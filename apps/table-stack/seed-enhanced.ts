@@ -84,6 +84,12 @@ async function seed() {
     });
   }
 
+  // Query created tables to get their IDs
+  const createdTables = await db.query.restaurantTables.findMany({
+    where: eq(restaurantTables.restaurantId, restaurant.id),
+    orderBy: (tables, { asc }) => [asc(tables.tableNumber)],
+  });
+
   console.log(`   ✅ Created ${tables.length} tables at ${restaurant.name}`);
 
   // ==========================================================================
@@ -232,7 +238,7 @@ async function seed() {
   const reservations = [
     {
       restaurantId: restaurant.id,
-      tableId: tables[1].id, // Table 2
+      tableId: createdTables[1].id, // Table 2
       guestName: 'Bob Martinez',
       guestEmail: 'bob@example.com',
       partySize: 2,
@@ -243,7 +249,7 @@ async function seed() {
     },
     {
       restaurantId: restaurant.id,
-      tableId: tables[4].id, // Table 5
+      tableId: createdTables[4].id, // Table 5
       guestName: 'David Kim',
       guestEmail: 'david@example.com',
       partySize: 2,

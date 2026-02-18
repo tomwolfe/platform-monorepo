@@ -11,8 +11,8 @@
  * 4. Distributed Tracing: Correlation IDs propagated across all steps
  *
  * Architecture:
- * - Every step checks performance.now() against CHECKPOINT_THRESHOLD_MS
- * - If elapsed > 7500ms, atomically saves state to Redis and yields
+ * - Every step checks performance.now() against CHECKPOINT_THRESHOLD_MS (6000ms)
+ * - If elapsed > 6000ms, atomically saves state to Redis and yields
  * - Emits WORKFLOW_RESUME event via Ably for continuation
  * - On resume, loads state from Redis and continues from next step
  */
@@ -67,7 +67,7 @@ import { verifyPlan, DEFAULT_SAFETY_POLICY, SafetyPolicy } from "./verifier";
 // ============================================================================
 
 const VERCEL_TIMEOUT_MS = 10000; // Vercel kills lambdas at 10s
-const CHECKPOINT_THRESHOLD_MS = 7500; // Save state at 7.5s to allow 2.5s buffer
+const CHECKPOINT_THRESHOLD_MS = 6000; // Save state at 6s to allow 4s buffer (optimized for free tier)
 const SEGMENT_TIMEOUT_MS = 8500; // Abort individual steps at 8.5s
 const SAGA_TIMEOUT_MS = 120000; // 2 minutes for entire saga
 

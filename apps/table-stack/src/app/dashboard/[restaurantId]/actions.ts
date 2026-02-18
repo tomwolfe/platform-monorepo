@@ -167,7 +167,7 @@ export async function updateTableStatus(
     // 2. Delivery Hotspot Hook: Notify OpenDeliver when a table is vacant
     const openDeliverWebhookUrl = process.env.OPEN_DELIVER_WEBHOOK_URL || 'http://localhost:3001/api/webhooks';
     const webhookSecret = process.env.INTERNAL_SYSTEM_KEY || 'fallback_secret';
-    
+
     if (status === 'vacant' && openDeliverWebhookUrl) {
       const restaurant = await db.query.restaurants.findFirst({
         where: eq(restaurants.id, restaurantId),
@@ -193,13 +193,51 @@ export async function updateTableStatus(
         // Fire and forget webhook to OpenDeliver
         fetch(openDeliverWebhookUrl, {
           method: 'POST',
-          headers: { 
+          headers: {
             'Content-Type': 'application/json',
             'x-signature': signature,
             'x-timestamp': timestamp.toString()
           },
           body: payload
         }).catch(err => console.error('Hotspot webhook failed:', err));
+      }
+    }
+
+    // 3. Intention Engine: Notify when table is vacated for proactive re-engagement
+    const intentionEngineUrl = process.env.INTENTION_ENGINE_API_URL;
+    if (status === 'vacant' && intentionEngineUrl) {
+      const restaurant = await db.query.restaurants.findFirst({
+        where: eq(restaurants.id, restaurantId),
+      });
+
+      if (restaurant) {
+        const { signServiceToken } = await import('@repo/auth');
+        const token = await signServiceToken({ 
+          purpose: 'table_vacated',
+          tableId: table.id,
+          restaurantId 
+        });
+
+        const tableVacatedPayload = {
+          event: 'table_vacated',
+          tableId: table.id,
+          restaurantId: restaurant.id,
+          restaurantName: restaurant.name,
+          restaurantSlug: restaurant.slug,
+          capacity: table.maxCapacity,
+          timestamp: new Date().toISOString(),
+        };
+
+        // Fire and forget webhook to Intention Engine for proactive re-engagement
+        fetch(`${intentionEngineUrl}/api/webhooks`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
+          },
+          body: JSON.stringify(tableVacatedPayload),
+        }).catch(err => console.error('Table vacated webhook failed:', err));
       }
     }
 

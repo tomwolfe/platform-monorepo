@@ -1,16 +1,16 @@
 /**
- * SagaOrchestrator Wrapper - Phase 3 Integration
- * 
- * Wraps the existing executePlan with Saga pattern for automatic compensation.
- * Uses SagaManager for multi-step state-modifying plans, falls back to
- * standard execution for single-step or read-only plans.
+ * SagaOrchestrator Wrapper - Phase 3 Integration (Consolidated on WorkflowMachine)
+ *
+ * Wrapper around WorkflowMachine for saga-pattern execution with automatic compensation.
+ * All execution logic is consolidated in WorkflowMachine - this is a compatibility layer.
  */
 
-import { executePlan, ToolExecutor, ExecutionResult } from "./orchestrator";
-import { SagaManager, createSagaStep, SagaStatus, CompensationMappers } from "./saga";
+import { WorkflowMachine, executeWorkflow, type WorkflowResult } from "./workflow-machine";
+import { ToolExecutor as WorkflowToolExecutor } from "./workflow-machine";
 import { Plan, ExecutionState } from "./types";
 import { getCompensation, needsCompensation, IDEMPOTENT_TOOLS } from "@repo/mcp-protocol";
 import { Tracer } from "./tracing";
+import { createInitialState } from "./state-machine";
 
 export interface SagaOrchestratorOptions {
   executionId?: string;
@@ -42,15 +42,16 @@ function isMultiStepPlan(plan: Plan): boolean {
 
 /**
  * SagaOrchestrator provides automatic compensation for multi-step plans.
- * 
+ * Uses WorkflowMachine for unified execution with saga compensation.
+ *
  * Decision tree:
- * - Multi-step + compensatable → Use SagaManager
- * - Single-step or read-only → Use standard executePlan
- * - forceSaga=true → Always use SagaManager
+ * - Multi-step + compensatable → Use WorkflowMachine with saga
+ * - Single-step or read-only → Use WorkflowMachine (standard)
+ * - forceSaga=true → Always use WorkflowMachine with saga
  */
 export async function executePlanWithSaga(
   plan: Plan,
-  toolExecutor: ToolExecutor,
+  toolExecutor: WorkflowToolExecutor,
   options: SagaOrchestratorOptions = {}
 ): Promise<ExecutionResult> {
   const {
@@ -60,178 +61,82 @@ export async function executePlanWithSaga(
     ...baseOptions
   } = options;
 
-  const shouldUseSaga = enableSaga && (
-    forceSaga ||
-    (isMultiStepPlan(plan) && hasCompensatableSteps(plan))
+  const executionId = baseOptions.executionId || crypto.randomUUID();
+
+  console.log(
+    `[SagaOrchestrator] Using WorkflowMachine for plan with ${plan.steps.length} steps` +
+    (hasCompensatableSteps(plan) ? " (compensatable)" : "")
   );
 
-  if (!shouldUseSaga) {
-    // Fall back to standard execution
-    console.log(`[SagaOrchestrator] Using standard execution for plan with ${plan.steps.length} steps`);
-    return executePlan(plan, toolExecutor, baseOptions);
-  }
-
-  console.log(`[SagaOrchestrator] Using Saga pattern for plan with ${plan.steps.length} compensatable steps`);
-
   return Tracer.startActiveSpan("saga_execution", async (span) => {
-    const executionId = baseOptions.executionId || crypto.randomUUID();
     const traceId = span.spanContext()?.traceId;
 
-    // Create saga manager
-    const sagaManager = new SagaManager(toolExecutor);
-
-    // Convert plan steps to saga steps
-    const sagaSteps = plan.steps.map((step, index) => {
-      const compensation = getCompensation(step.tool_name);
-      
-      let parameterMapper: any = undefined;
-      if (compensation) {
-        // Map compensation type to mapper function
-        switch (compensation.parameterMapper) {
-          case "use_booking_id":
-            parameterMapper = CompensationMappers.useResultId("booking_id");
-            break;
-          case "use_order_id":
-            parameterMapper = CompensationMappers.useResultId("order_id");
-            break;
-          case "use_reservation_id":
-            parameterMapper = CompensationMappers.useResultId("reservation_id");
-            break;
-          case "use_fulfillment_id":
-            parameterMapper = CompensationMappers.useResultId("fulfillmentId");
-            break;
-          case "identity":
-          default:
-            parameterMapper = () => ({});
-        }
-      }
-
-      return createSagaStep(
-        step.id,
-        step.tool_name,
-        step.parameters,
-        compensation?.toolName
-          ? {
-              toolName: compensation.toolName,
-              parameterMapper,
-            }
-          : undefined
-      );
+    // Create WorkflowMachine with initialState if provided
+    const machine = new WorkflowMachine(executionId, toolExecutor, {
+      initialState: baseOptions.initialState,
+      intentId: baseOptions.initialState?.intent?.id,
+      traceId,
+      idempotencyService: baseOptions.idempotencyService,
     });
 
-    try {
-      const sagaResult = await sagaManager.execute({
-        context: {
-          sagaId: crypto.randomUUID(),
-          executionId,
-          intentId: baseOptions.initialState?.intent?.id,
-          traceId,
-          userId: baseOptions.initialState?.context?.userId as string | undefined,
-          metadata: {
-            planSummary: plan.summary,
-            originalStepCount: plan.steps.length,
-          },
-        },
-        steps: sagaSteps,
-        timeoutMs: sagaTimeoutMs,
-      });
+    // Set the plan
+    machine.setPlan(plan);
 
-      // Convert saga result to execution result
-      const success = sagaResult.status === SagaStatus.COMPLETED;
-      const wasCompensated = sagaResult.status === SagaStatus.COMPENSATED;
+    // Execute workflow (WorkflowMachine handles saga compensation automatically)
+    const workflowResult = await machine.execute();
 
-      span.setAttributes({
-        saga_status: sagaResult.status,
-        saga_compensated: wasCompensated,
-        saga_completed_steps: sagaResult.completedSteps,
-        saga_compensated_steps: sagaResult.compensatedSteps,
-      });
+    // Convert workflow result to execution result
+    const success = workflowResult.success;
+    const wasCompensated = workflowResult.wasCompensated;
 
-      if (wasCompensated) {
-        console.log(
-          `[SagaOrchestrator] Plan failed after ${sagaResult.completedSteps} steps, ` +
-          `successfully compensated ${sagaResult.compensatedSteps} steps`
-        );
-      }
+    span.setAttributes({
+      workflow_success: success,
+      workflow_compensated: wasCompensated,
+      workflow_completed_steps: workflowResult.completedSteps,
+      workflow_compensated_steps: workflowResult.compensatedSteps,
+    });
 
-      return {
-        state: sagaResultToExecutionState(sagaResult, baseOptions.initialState || createInitialState(executionId)),
-        success,
-        completed_steps: sagaResult.completedSteps,
-        failed_steps: sagaResult.failedSteps,
-        total_steps: plan.steps.length,
-        execution_time_ms: sagaResult.completedAt
-          ? new Date(sagaResult.completedAt).getTime() - new Date(sagaResult.startedAt).getTime()
-          : 0,
-        summary: success
-          ? `Saga completed successfully with ${sagaResult.completedSteps} steps`
-          : wasCompensated
-          ? `Saga failed after step ${sagaResult.failedSteps + 1}, compensated ${sagaResult.compensatedSteps} steps`
-          : `Saga failed: ${sagaResult.error?.message}`,
-        error: sagaResult.error
-          ? {
-              code: sagaResult.error.code,
-              message: sagaResult.error.message,
-              step_id: sagaResult.error.failedStepId,
-            }
-          : undefined,
-      };
-    } catch (error) {
-      span.recordException(error instanceof Error ? error : new Error(String(error)));
-      throw error;
+    if (wasCompensated) {
+      console.log(
+        `[SagaOrchestrator] Plan failed after ${workflowResult.completedSteps} steps, ` +
+        `successfully compensated ${workflowResult.compensatedSteps} steps`
+      );
     }
+
+    return {
+      state: workflowResult.state,
+      success,
+      completed_steps: workflowResult.completedSteps,
+      failed_steps: workflowResult.failedSteps,
+      total_steps: workflowResult.totalSteps,
+      execution_time_ms: workflowResult.executionTimeMs,
+      summary: workflowResult.summary,
+      error: workflowResult.error
+        ? {
+            code: workflowResult.error.code,
+            message: workflowResult.error.message,
+            step_id: workflowResult.error.stepId,
+          }
+        : undefined,
+    };
   });
 }
 
 /**
- * Convert saga result to execution state
+ * Execution Result interface for compatibility
  */
-function sagaResultToExecutionState(
-  sagaResult: any,
-  initialState: ExecutionState
-): ExecutionState {
-  // This is a simplified conversion - in production you'd want
-  // to properly map saga results to the execution state machine
-  return {
-    ...initialState,
-    status: sagaResult.status === "COMPLETED" ? "COMPLETED" : "FAILED",
-    step_states: sagaResult.steps.map((step: any, index: number) => ({
-      step_id: step.id,
-      status: step.status === "completed" ? "completed" :
-              step.status === "compensated" ? "compensated" :
-              step.status === "failed" ? "failed" : "pending",
-      input: step.parameters,
-      output: step.result,
-      error: step.error,
-      completed_at: step.completedAt,
-      started_at: step.startedAt,
-      attempts: 1,
-    })),
-    completed_at: sagaResult.completedAt,
-    error: sagaResult.error,
-  };
-}
-
-/**
- * Create initial execution state (minimal implementation)
- */
-function createInitialState(executionId: string): ExecutionState {
-  return {
-    execution_id: executionId,
-    status: "PLANNED",
-    step_states: [],
-    intent: undefined,
-    plan: undefined,
-    context: {},
-    current_step_index: 0,
-    latency_ms: 0,
-    token_usage: {
-      prompt_tokens: 0,
-      completion_tokens: 0,
-      total_tokens: 0,
-    },
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+export interface ExecutionResult {
+  state: ExecutionState;
+  success: boolean;
+  completed_steps: number;
+  failed_steps: number;
+  total_steps: number;
+  execution_time_ms: number;
+  summary?: string;
+  error?: {
+    code: string;
+    message: string;
+    step_id?: string;
   };
 }
 
@@ -239,3 +144,7 @@ function createInitialState(executionId: string): ExecutionState {
  * Export enhanced executePlan that uses saga by default
  */
 export { executePlanWithSaga as executePlan };
+
+// Re-export WorkflowMachine for direct access
+export { WorkflowMachine, executeWorkflow };
+export type { WorkflowToolExecutor as ToolExecutor };

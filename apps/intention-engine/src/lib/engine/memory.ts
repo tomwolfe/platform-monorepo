@@ -33,10 +33,10 @@ export const MEMORY_CONFIG = {
   default_ttl_seconds: 3600, // 1 hour
   max_ttl_seconds: 86400 * 7, // 7 days
   key_separator: ":",
-  
-  // TTL by entry type
+
+  // TTL by entry type (Vercel Hobby Tier Optimization - 24h for execution states)
   ttl_by_type: {
-    execution_state: 3600,      // 1 hour
+    execution_state: 86400,     // 24 hours (Free Tier storage optimization)
     execution_trace: 86400,     // 24 hours
     intent_history: 86400 * 3,  // 3 days
     plan_cache: 3600,           // 1 hour

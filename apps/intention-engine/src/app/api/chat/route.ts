@@ -52,7 +52,7 @@ const ChatRequestSchema = z.object({
  * Uses centralized McpToolRegistry schemas for validation.
  */
 async function getTools(auditLogId: string, userLocation?: { lat: number, lng: number }) {
-  const clients = await getMcpClients();
+  const { manager } = await getMcpClients();
   const tools: Record<string, any> = {};
 
   // Helper to get schema from McpToolRegistry
@@ -63,37 +63,35 @@ async function getTools(auditLogId: string, userLocation?: { lat: number, lng: n
     return (toolDef as any)?.schema;
   };
 
-  for (const [serviceName, client] of Object.entries(clients)) {
+  // Get discovered tools from the dynamic manager
+  const toolRegistry = manager.getToolRegistry();
+  
+  for (const [toolName, toolDef] of toolRegistry.entries()) {
     try {
-      const { tools: mcpTools } = await client.listTools();
-      
-      for (const mcpTool of mcpTools) {
-        // Use schema from registry if available, fallback to generic
-        const registrySchema = getSchemaForTool(mcpTool.name);
-        
-        tools[mcpTool.name] = tool({
-          description: mcpTool.description,
-          inputSchema: registrySchema || z.record(z.any()), 
-          execute: async (params) => {
-            console.log(`Executing MCP tool ${mcpTool.name} from ${serviceName}`, params);
-            
-            const result = await client.callTool({
-              name: mcpTool.name,
-              arguments: {
-                ...params,
-                userLocation // Inject context if needed
-              }
-            });
-            
-            return result;
-          },
-        });
-      }
+      // Use schema from registry if available, fallback to generic
+      const registrySchema = getSchemaForTool(toolName);
+
+      tools[toolName] = tool({
+        description: (toolDef as any).description || toolDef.name,
+        inputSchema: registrySchema || z.record(z.any()),
+        execute: async (params) => {
+          console.log(`Executing MCP tool ${toolName}`, params);
+
+          // Use the manager's executeTool method with parameter aliasing
+          const result = await manager.executeTool(toolName, params);
+
+          if (result.success) {
+            return result.output;
+          } else {
+            throw new Error(result.error || 'Tool execution failed');
+          }
+        },
+      });
     } catch (error) {
-      console.error(`Error listing tools for ${serviceName}:`, error);
+      console.error(`Error registering tool ${toolName}:`, error);
     }
   }
-  
+
   return tools;
 }
 

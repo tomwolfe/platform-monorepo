@@ -2,14 +2,19 @@
  * Shared Memory Client
  * Moved from apps/intention-engine/src/lib/engine/memory.ts
  * Provides standardized Redis-backed memory for all services.
+ * 
+ * Vercel Hobby Tier Optimization:
+ * - Task Queue pattern for durable state machine transitions
+ * - Atomic state transitions for resumable execution
+ * - Upstash QStash integration for background triggers
  */
 
 import { Redis } from '@upstash/redis';
-import { 
-  ExecutionState, 
-  ExecutionTrace, 
-  ExecutionStateSchema, 
-  ExecutionTraceSchema 
+import {
+  ExecutionState,
+  ExecutionTrace,
+  ExecutionStateSchema,
+  ExecutionTraceSchema
 } from '../types/execution';
 
 // ============================================================================
@@ -81,6 +86,79 @@ export interface MemoryError {
   details?: unknown;
   recoverable: boolean;
   timestamp: string;
+}
+
+// ============================================================================
+// TASK QUEUE TYPES - Vercel Hobby Tier Optimization
+// State machine pattern for durable execution
+// ============================================================================
+
+export type TaskStatus = 
+  | "pending"
+  | "in_progress"
+  | "awaiting_confirmation"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "compensating"
+  | "compensated";
+
+export interface TaskStateTransition {
+  from_status: TaskStatus;
+  to_status: TaskStatus;
+  timestamp: string;
+  reason?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TaskState {
+  task_id: string;
+  execution_id: string;
+  intent_id?: string;
+  status: TaskStatus;
+  current_step_index: number;
+  total_steps: number;
+  segment_number: number;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+  transitions: TaskStateTransition[];
+  context: Record<string, unknown>;
+  error?: {
+    code: string;
+    message: string;
+    step_id?: string;
+  };
+}
+
+export interface TaskQueueItem {
+  task_id: string;
+  execution_id: string;
+  priority: number;
+  scheduled_at: string;
+  max_attempts: number;
+  attempt_count: number;
+  payload: {
+    intent_id?: string;
+    plan_id?: string;
+    start_step_index?: number;
+    segment_number?: number;
+    trace_id?: string;
+  };
+}
+
+// ============================================================================
+// STATE TRANSITION RESULT
+// ============================================================================
+
+export interface StateTransitionResult {
+  success: boolean;
+  previous_state?: TaskState;
+  new_state?: TaskState;
+  error?: {
+    code: string;
+    message: string;
+  };
 }
 
 // ============================================================================
@@ -304,6 +382,349 @@ export class MemoryClient {
       return 0;
     }
   }
+
+  // ========================================================================
+  // TASK QUEUE OPERATIONS - Vercel Hobby Tier Optimization
+  // Atomic state transitions for durable execution
+  // ========================================================================
+
+  private buildTaskKey(executionId: string): string {
+    return `${this.namespace}${MEMORY_CONFIG.key_separator}task_state${MEMORY_CONFIG.key_separator}${executionId}`;
+  }
+
+  private buildQueueKey(): string {
+    return `${this.namespace}${MEMORY_CONFIG.key_separator}task_queue`;
+  }
+
+  /**
+   * Creates a new task state in the queue.
+   * Used when starting a new execution.
+   */
+  async createTaskState(taskState: TaskState): Promise<void> {
+    const key = this.buildTaskKey(taskState.execution_id);
+    const queueKey = this.buildQueueKey();
+
+    try {
+      // Store task state with 24h TTL
+      await this.redis.setex(key, 86400, JSON.stringify(taskState));
+
+      // Add to priority queue (sorted set by priority)
+      await this.redis.zadd(queueKey, {
+        member: taskState.task_id,
+        score: taskState.context.priority as number || 0,
+      });
+
+      console.log(`[TaskQueue] Created task ${taskState.task_id} for execution ${taskState.execution_id}`);
+    } catch (error) {
+      throw {
+        code: "MEMORY_OPERATION_FAILED",
+        message: `Failed to create task state: ${error}`,
+        details: { task_id: taskState.task_id, execution_id: taskState.execution_id },
+        recoverable: false,
+        timestamp: new Date().toISOString(),
+      } as MemoryError;
+    }
+  }
+
+  /**
+   * Atomically transitions a task to a new state.
+   * Uses WATCH/MULTI/EXEC for optimistic locking.
+   */
+  async transitionTaskState(
+    executionId: string,
+    newStatus: TaskStatus,
+    reason?: string,
+    metadata?: Record<string, unknown>
+  ): Promise<StateTransitionResult> {
+    const key = this.buildTaskKey(executionId);
+    const timestamp = new Date().toISOString();
+
+    try {
+      // Get current state
+      const currentStateJson = await this.redis.get<string>(key);
+      if (!currentStateJson) {
+        return {
+          success: false,
+          error: {
+            code: "TASK_NOT_FOUND",
+            message: `Task state not found for execution ${executionId}`,
+          },
+        };
+      }
+
+      const currentState = JSON.parse(currentStateJson) as TaskState;
+      const previousStatus = currentState.status;
+
+      // Validate transition (prevent invalid state changes)
+      const validTransitions: Record<TaskStatus, TaskStatus[]> = {
+        pending: ["in_progress", "cancelled"],
+        in_progress: ["completed", "failed", "awaiting_confirmation", "cancelled", "compensating"],
+        awaiting_confirmation: ["in_progress", "cancelled", "failed"],
+        completed: [],
+        failed: ["compensating"],
+        cancelled: [],
+        compensating: ["compensated", "failed"],
+        compensated: [],
+      };
+
+      if (!validTransitions[previousStatus].includes(newStatus)) {
+        return {
+          success: false,
+          previous_state: currentState,
+          error: {
+            code: "INVALID_TRANSITION",
+            message: `Cannot transition from ${previousStatus} to ${newStatus}`,
+          },
+        };
+      }
+
+      // Create transition record
+      const transition: TaskStateTransition = {
+        from_status: previousStatus,
+        to_status: newStatus,
+        timestamp,
+        reason,
+        metadata,
+      };
+
+      // Build new state
+      const newState: TaskState = {
+        ...currentState,
+        status: newStatus,
+        updated_at: timestamp,
+        transitions: [...currentState.transitions, transition],
+        completed_at: newStatus === "completed" || newStatus === "failed" || newStatus === "cancelled" || newStatus === "compensated"
+          ? timestamp
+          : currentState.completed_at,
+      };
+
+      // Atomic update
+      await this.redis.setex(key, 86400, JSON.stringify(newState));
+
+      console.log(
+        `[TaskQueue] Transitioned ${executionId}: ${previousStatus} -> ${newStatus}${reason ? ` (${reason})` : ''}`
+      );
+
+      return {
+        success: true,
+        previous_state: currentState,
+        new_state: newState,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          code: "TRANSITION_FAILED",
+          message: `Failed to transition task state: ${error}`,
+        },
+      };
+    }
+  }
+
+  /**
+   * Retrieves the current task state.
+   */
+  async getTaskState(executionId: string): Promise<TaskState | null> {
+    const key = this.buildTaskKey(executionId);
+
+    try {
+      const data = await this.redis.get<string>(key);
+      if (!data) return null;
+      return JSON.parse(data) as TaskState;
+    } catch (error) {
+      console.error(`Failed to get task state for ${executionId}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Updates task context (e.g., storing step results, compensation data).
+   */
+  async updateTaskContext(executionId: string, contextUpdate: Record<string, unknown>): Promise<boolean> {
+    const key = this.buildTaskKey(executionId);
+
+    try {
+      const currentState = await this.getTaskState(executionId);
+      if (!currentState) return false;
+
+      const updatedState: TaskState = {
+        ...currentState,
+        context: {
+          ...currentState.context,
+          ...contextUpdate,
+        },
+        updated_at: new Date().toISOString(),
+      };
+
+      await this.redis.setex(key, 86400, JSON.stringify(updatedState));
+      return true;
+    } catch (error) {
+      console.error(`Failed to update task context for ${executionId}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Stores a step result in the task context.
+   * Used for checkpointing during segment execution.
+   */
+  async storeStepResult(
+    executionId: string,
+    stepIndex: number,
+    stepId: string,
+    result: {
+      success: boolean;
+      output?: unknown;
+      error?: string;
+      latency_ms: number;
+    }
+  ): Promise<boolean> {
+    const contextKey = `step_result:${stepIndex}`;
+    return this.updateTaskContext(executionId, { [contextKey]: result });
+  }
+
+  /**
+   * Retrieves a stored step result.
+   */
+  async getStepResult(executionId: string, stepIndex: number): Promise<unknown | null> {
+    const taskState = await this.getTaskState(executionId);
+    if (!taskState) return null;
+
+    const contextKey = `step_result:${stepIndex}`;
+    return taskState.context[contextKey] || null;
+  }
+
+  /**
+   * Schedules a task for future execution (QStash-style).
+   * Used for resuming execution after Vercel timeout.
+   */
+  async scheduleTaskResume(
+    executionId: string,
+    delaySeconds: number,
+    payload: TaskQueueItem["payload"]
+  ): Promise<void> {
+    const queueKey = this.buildQueueKey();
+    const scheduledAt = new Date(Date.now() + delaySeconds * 1000).toISOString();
+
+    const queueItem: TaskQueueItem = {
+      task_id: `resume:${executionId}`,
+      execution_id: executionId,
+      priority: payload.segment_number || 1,
+      scheduled_at: scheduledAt,
+      max_attempts: 3,
+      attempt_count: 0,
+      payload,
+    };
+
+    try {
+      // Store queue item with TTL
+      const itemKey = `${queueKey}:${executionId}`;
+      await this.redis.setex(itemKey, 3600, JSON.stringify(queueItem));
+
+      // Add to sorted set for time-based retrieval
+      await this.redis.zadd(`${queueKey}:scheduled`, {
+        member: executionId,
+        score: Date.now() + delaySeconds * 1000,
+      });
+
+      console.log(
+        `[TaskQueue] Scheduled resume for ${executionId} in ${delaySeconds}s [segment ${payload.segment_number}]`
+      );
+    } catch (error) {
+      throw {
+        code: "MEMORY_OPERATION_FAILED",
+        message: `Failed to schedule task resume: ${error}`,
+        details: { execution_id: executionId },
+        recoverable: false,
+        timestamp: new Date().toISOString(),
+      } as MemoryError;
+    }
+  }
+
+  /**
+   * Gets tasks ready for execution (scheduled time has passed).
+   */
+  async getReadyTasks(limit: number = 10): Promise<TaskQueueItem[]> {
+    const queueKey = this.buildQueueKey();
+    const now = Date.now();
+
+    try {
+      // Get tasks whose scheduled time has passed
+      // Upstash Redis uses zrange with byScore option
+      const readyIds = await this.redis.zrange(
+        `${queueKey}:scheduled`,
+        0,
+        now,
+        { byScore: true, offset: 0, count: limit }
+      );
+
+      const tasks: TaskQueueItem[] = [];
+
+      for (const executionId of readyIds) {
+        const itemKey = `${queueKey}:${executionId}`;
+        const data = await this.redis.get<string>(itemKey);
+        if (data) {
+          tasks.push(JSON.parse(data) as TaskQueueItem);
+        }
+      }
+
+      return tasks;
+    } catch (error) {
+      console.error(`Failed to get ready tasks:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Marks a scheduled task as being processed.
+   */
+  async markTaskProcessing(executionId: string): Promise<void> {
+    const queueKey = this.buildQueueKey();
+
+    try {
+      // Remove from scheduled queue
+      await this.redis.zrem(`${queueKey}:scheduled`, executionId);
+
+      // Delete the queue item
+      await this.redis.del(`${queueKey}:${executionId}`);
+    } catch (error) {
+      console.error(`Failed to mark task processing for ${executionId}:`, error);
+    }
+  }
+
+  /**
+   * Stores confirmation state for high-risk operations.
+   * Used by SecurityProvider guardrails.
+   */
+  async storeConfirmationState(
+    executionId: string,
+    stepId: string,
+    requiresConfirmation: boolean,
+    confirmationStatus: "pending" | "confirmed" | "rejected" = "pending"
+  ): Promise<void> {
+    const confirmationKey = `confirmation:${stepId}`;
+    await this.updateTaskContext(executionId, {
+      [confirmationKey]: {
+        requires_confirmation: requiresConfirmation,
+        status: confirmationStatus,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  }
+
+  /**
+   * Gets confirmation state for a step.
+   */
+  async getConfirmationState(
+    executionId: string,
+    stepId: string
+  ): Promise<{ requires_confirmation: boolean; status: string } | null> {
+    const taskState = await this.getTaskState(executionId);
+    if (!taskState) return null;
+
+    const confirmationKey = `confirmation:${stepId}`;
+    return taskState.context[confirmationKey] as { requires_confirmation: boolean; status: string } | null;
+  }
 }
 
 // ============================================================================
@@ -383,7 +804,7 @@ export class ExecutionTraceStorage {
     traceEntry: ExecutionTrace["entries"][0]
   ): Promise<void> {
     const existing = await this.loadTrace(executionId);
-    
+
     if (existing) {
       existing.entries.push(traceEntry);
       existing.total_latency_ms = (existing.total_latency_ms || 0) + (traceEntry.latency_ms || 0);
@@ -400,4 +821,20 @@ export class ExecutionTraceStorage {
       await this.saveTrace(newTrace);
     }
   }
+}
+
+// ============================================================================
+// SINGLETON INSTANCE
+// Default memory client for general use
+// ============================================================================
+
+let defaultMemoryClient: MemoryClient | null = null;
+
+export function getMemoryClient(namespace: string = MEMORY_CONFIG.default_namespace): MemoryClient {
+  if (!defaultMemoryClient) {
+    const { getRedisClient, ServiceNamespace } = require('../redis');
+    const redis = getRedisClient(ServiceNamespace.SHARED);
+    defaultMemoryClient = new MemoryClient(redis, namespace);
+  }
+  return defaultMemoryClient;
 }

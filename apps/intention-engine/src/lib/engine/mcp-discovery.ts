@@ -69,59 +69,46 @@ export async function discoverMcpTools(
     };
   }
 
-  const mcpClients = await getMcpClients();
+  const { manager } = await getMcpClients();
   const discoveredTools: ToolDefinition[] = [];
   const errors: string[] = [];
 
-  // Discover tools from each MCP server
-  const discoveryPromises = Object.entries(mcpClients).map(
-    async ([serviceName, client]) => {
-      try {
-        const response: any = await Promise.race([
-          client.listTools(),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("MCP discovery timeout")), timeoutMs)
-          ),
-        ]);
-        
-        const tools = response.tools || [];
+  // Get discovered tools from manager
+  const toolRegistry = manager.getToolRegistry();
 
-        for (const tool of tools) {
-          // Skip if already in local registry
-          if (TOOLS.has(tool.name)) {
-            continue;
-          }
-
-          // Convert MCP tool to ToolDefinition
-          const toolDef: ToolDefinition = {
-            name: tool.name,
-            version: "1.0.0",
-            description: tool.description || `Remote tool from ${serviceName}`,
-            inputSchema: tool.inputSchema as any,
-            return_schema: (tool as any).outputSchema || {},
-            parameter_aliases: {},
-            timeout_ms: 30000,
-            requires_confirmation: tool.name.toLowerCase().includes("book") ||
-                                   tool.name.toLowerCase().includes("reserve") ||
-                                   tool.name.toLowerCase().includes("pay"),
-            category: "external",
-            origin: serviceName,
-          };
-
-          discoveredTools.push(toolDef);
-          console.log(
-            `[MCP Discovery] Discovered ${tool.name} from ${serviceName}`
-          );
-        }
-      } catch (error: any) {
-        const errorMsg = `Failed to discover tools from ${serviceName}: ${error.message}`;
-        console.error(`[MCP Discovery] ${errorMsg}`);
-        errors.push(errorMsg);
-      }
+  for (const [toolName, toolDef] of toolRegistry.entries()) {
+    // Skip if already in local registry
+    if (TOOLS.has(toolName)) {
+      continue;
     }
-  );
 
-  await Promise.allSettled(discoveryPromises);
+    try {
+      // Convert to ToolDefinition
+      const newToolDef: ToolDefinition = {
+        name: toolName,
+        version: "1.0.0",
+        description: (toolDef as any).description || `Remote tool`,
+        inputSchema: (toolDef as any).inputSchema || {},
+        return_schema: (toolDef as any).outputSchema || {},
+        parameter_aliases: {},
+        timeout_ms: 30000,
+        requires_confirmation: toolName.toLowerCase().includes("book") ||
+                               toolName.toLowerCase().includes("reserve") ||
+                               toolName.toLowerCase().includes("pay"),
+        category: "external",
+        origin: (toolDef as any).origin || "mcp",
+      };
+
+      discoveredTools.push(newToolDef);
+      console.log(
+        `[MCP Discovery] Discovered ${toolName} from ${newToolDef.origin}`
+      );
+    } catch (error: any) {
+      const errorMsg = `Failed to process tool ${toolName}: ${error.message}`;
+      console.error(`[MCP Discovery] ${errorMsg}`);
+      errors.push(errorMsg);
+    }
+  }
 
   // Update cache
   DISCOVERY_CACHE.tools = new Map(discoveredTools.map(t => [t.name, t]));

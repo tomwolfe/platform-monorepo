@@ -17,6 +17,9 @@ export * from "./schemas/events";
 // Phase 3: Saga Patterns
 export * from "./schemas/compensations";
 
+// Phase 4: State Machine & Safety (Vercel Hobby Tier Optimization)
+export * from "./schemas/state-machine";
+
 import { MobilityRequestSchema, RouteEstimateSchema } from "./schemas/mobility";
 import { GetAvailabilitySchema, BookTableSchema, TableReservationSchema } from "./schemas/booking";
 import { CalculateQuoteSchema, GetDriverLocationSchema } from "./schemas/opendelivery";

@@ -1,15 +1,19 @@
 /**
- * DurableExecutionManager - Segmented Execution with Checkpointing
- * 
- * Implements durable serverless sagas optimized for Vercel's 10s timeout.
- * Breaks long-running plans into segments that can be chained via Ably events.
- * 
+ * DurableExecutionManager - State-Machine Execution with Checkpointing
+ *
+ * Vercel Hobby Tier Optimization:
+ * - State-Machine Task Queue pattern for durable execution
+ * - Atomic state transitions stored in Upstash Redis
+ * - QStash-style scheduled triggers for execution resumption
+ * - Ably webhook callbacks for continuation signaling
+ *
  * Architecture:
  * 1. Executes steps until ~7 seconds elapsed
- * 2. Saves checkpoint to Redis with remaining step indices
- * 3. Publishes CONTINUE_EXECUTION event to Ably
- * 4. Returns partial response to client
- * 5. /api/mesh/resume picks up execution from checkpoint
+ * 2. Saves state transition to Redis (TaskState)
+ * 3. Schedules resume via scheduleTaskResume (QStash pattern)
+ * 4. Publishes CONTINUE_EXECUTION event to Ably for webhook trigger
+ * 5. Returns partial response to client
+ * 6. /api/mesh/resume picks up execution from TaskState
  */
 
 import {
@@ -30,9 +34,9 @@ import {
   getCompletedSteps,
   getPendingSteps,
 } from "./state-machine";
-import { saveExecutionState, loadExecutionState, getMemoryClient } from "./memory";
-import { RealtimeService } from "@repo/shared";
-import { getAblyClient } from "@repo/shared";
+import { saveExecutionState, loadExecutionState } from "./memory";
+import { RealtimeService, MemoryClient, getMemoryClient as getSharedMemoryClient } from "@repo/shared";
+import { getAblyClient, TaskState, TaskStatus } from "@repo/shared";
 import { Tracer } from "./tracing";
 import { getToolRegistry } from "./tools/registry";
 import { generateText } from "./llm";
@@ -152,23 +156,65 @@ interface StepExecutionContext {
 // ============================================================================
 // CHECKPOINT MANAGER
 // Handles Redis persistence and Ably signaling
+// Vercel Hobby Tier Optimization: Uses Task Queue pattern
 // ============================================================================
 
 export class CheckpointManager {
-  private static CHECKPOINT_PREFIX = "execution:checkpoint";
+  private static memoryClient: MemoryClient | null = null;
 
+  private static getMemoryClient(): MemoryClient {
+    if (!this.memoryClient) {
+      this.memoryClient = getSharedMemoryClient();
+    }
+    return this.memoryClient!;
+  }
+
+  /**
+   * Saves execution state as a TaskState transition.
+   * Vercel Hobby Tier Optimization: Atomic state machine pattern.
+   */
   static async saveCheckpoint(checkpoint: ExecutionCheckpoint): Promise<void> {
-    const redis = getAblyClient(); // Using shared redis client
-    const key = `${this.CHECKPOINT_PREFIX}:${checkpoint.executionId}`;
-    
+    const memory = this.getMemoryClient();
+
     try {
-      // Store checkpoint in Redis with 24h TTL
-      await (globalThis as any).redis.set(key, JSON.stringify(checkpoint), { 
-        ex: 86400 // 24 hours
+      // Create or update TaskState
+      const taskState: TaskState = {
+        task_id: checkpoint.executionId,
+        execution_id: checkpoint.executionId,
+        intent_id: checkpoint.intentId,
+        status: "in_progress",
+        current_step_index: checkpoint.nextStepIndex,
+        total_steps: checkpoint.state.plan?.steps.length || 0,
+        segment_number: checkpoint.segmentNumber,
+        created_at: checkpoint.checkpointAt,
+        updated_at: checkpoint.checkpointAt,
+        transitions: [{
+          from_status: "in_progress",
+          to_status: "in_progress",
+          timestamp: checkpoint.checkpointAt,
+          reason: checkpoint.reason,
+          metadata: {
+            segmentNumber: checkpoint.segmentNumber,
+            nextStepIndex: checkpoint.nextStepIndex,
+            completedInSegment: checkpoint.completedInSegment,
+          },
+        }],
+        context: {
+          execution_state: checkpoint.state,
+          priority: checkpoint.segmentNumber,
+        },
+      };
+
+      // Store task state (creates or updates)
+      await memory.updateTaskContext(checkpoint.executionId, {
+        execution_state: checkpoint.state,
+        last_checkpoint_at: checkpoint.checkpointAt,
+        segment_number: checkpoint.segmentNumber,
+        next_step_index: checkpoint.nextStepIndex,
       });
-      
+
       console.log(
-        `[DurableExecution] Checkpoint saved for ${checkpoint.executionId} ` +
+        `[DurableExecution] TaskState updated for ${checkpoint.executionId} ` +
         `[segment ${checkpoint.segmentNumber}, next step: ${checkpoint.nextStepIndex}]`
       );
     } catch (error) {
@@ -177,14 +223,61 @@ export class CheckpointManager {
     }
   }
 
-  static async loadCheckpoint(executionId: string): Promise<ExecutionCheckpoint | null> {
-    const redis = getAblyClient();
-    const key = `${this.CHECKPOINT_PREFIX}:${executionId}`;
-    
+  /**
+   * Schedules execution resume using QStash-style pattern.
+   * Vercel Hobby Tier Optimization: Time-based trigger.
+   */
+  static async scheduleResume(
+    executionId: string,
+    checkpoint: ExecutionCheckpoint
+  ): Promise<void> {
+    const memory = this.getMemoryClient();
+
     try {
-      const data = await (globalThis as any).redis.get(key);
-      if (!data) return null;
-      return JSON.parse(data as string) as ExecutionCheckpoint;
+      // Schedule resume in 2 seconds (gives time for webhook to trigger)
+      await memory.scheduleTaskResume(executionId, 2, {
+        intent_id: checkpoint.intentId,
+        plan_id: checkpoint.planId,
+        start_step_index: checkpoint.nextStepIndex,
+        segment_number: checkpoint.segmentNumber,
+        trace_id: checkpoint.traceId,
+      });
+
+      console.log(
+        `[DurableExecution] Scheduled resume for ${executionId} ` +
+        `[segment ${checkpoint.segmentNumber}]`
+      );
+    } catch (error) {
+      console.error("[DurableExecution] Failed to schedule resume:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Loads execution state from TaskState.
+   */
+  static async loadCheckpoint(executionId: string): Promise<ExecutionCheckpoint | null> {
+    const memory = this.getMemoryClient();
+
+    try {
+      const taskState = await memory.getTaskState(executionId);
+      if (!taskState) return null;
+
+      const executionState = taskState.context.execution_state as ExecutionState;
+      if (!executionState) return null;
+
+      return {
+        executionId,
+        intentId: taskState.intent_id,
+        planId: executionState.plan?.id,
+        state: executionState,
+        nextStepIndex: taskState.current_step_index,
+        completedInSegment: 0,
+        segmentNumber: taskState.segment_number,
+        checkpointAt: taskState.updated_at,
+        traceId: undefined,
+        reason: "TIMEOUT_APPROACHING",
+      };
     } catch (error) {
       console.error("[DurableExecution] Failed to load checkpoint:", error);
       return null;
@@ -192,15 +285,8 @@ export class CheckpointManager {
   }
 
   static async deleteCheckpoint(executionId: string): Promise<void> {
-    const redis = getAblyClient();
-    const key = `${this.CHECKPOINT_PREFIX}:${executionId}`;
-    
-    try {
-      await (globalThis as any).redis.del(key);
-      console.log(`[DurableExecution] Checkpoint deleted for ${executionId}`);
-    } catch (error) {
-      console.error("[DurableExecution] Failed to delete checkpoint:", error);
-    }
+    // TaskState will auto-expire after 24h
+    console.log(`[DurableExecution] Checkpoint marked for cleanup: ${executionId}`);
   }
 
   static async publishContinuationEvent(
@@ -221,7 +307,7 @@ export class CheckpointManager {
         },
         checkpoint.traceId
       );
-      
+
       console.log(
         `[DurableExecution] Published CONTINUE_EXECUTION for ${executionId} ` +
         `[trace: ${checkpoint.traceId}]`
@@ -629,6 +715,7 @@ function isStepReady(step: PlanStep, state: ExecutionState): boolean {
 // ============================================================================
 // EXECUTE SEGMENT
 // Execute steps until timeout threshold or all steps complete
+// Vercel Hobby Tier Optimization: Task Queue state machine
 // ============================================================================
 
 export async function executeSegment(
@@ -650,8 +737,40 @@ export async function executeSegment(
   const startStepIndex = options.startStepIndex || 0;
   const segmentNumber = options.segmentNumber || 1;
   const traceId = options.traceId;
+  const memory = getSharedMemoryClient()!;
 
-  // Load or create initial state
+  // Initialize TaskState if not exists
+  const existingTaskState = await memory.getTaskState(executionId);
+  
+  if (!existingTaskState) {
+    // Create new TaskState
+    const initialTaskState: TaskState = {
+      task_id: executionId,
+      execution_id: executionId,
+      intent_id: options.initialState?.intent?.id,
+      status: "pending",
+      current_step_index: startStepIndex,
+      total_steps: plan.steps.length,
+      segment_number: segmentNumber,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      transitions: [{
+        from_status: "pending",
+        to_status: "pending",
+        timestamp: new Date().toISOString(),
+        reason: "EXECUTION_STARTED",
+      }],
+      context: {
+        priority: segmentNumber,
+      },
+    };
+    await memory.createTaskState(initialTaskState);
+  }
+
+  // Transition to in_progress
+  await memory.transitionTaskState(executionId, "in_progress", `Segment ${segmentNumber} starting`);
+
+  // Load or create initial execution state
   let state: ExecutionState;
   if (options.initialState) {
     state = options.initialState;
@@ -696,7 +815,7 @@ export async function executeSegment(
           `creating checkpoint after ${completedInSegment} steps`
         );
 
-        // Save checkpoint
+        // Save checkpoint using Task Queue pattern
         const checkpoint: ExecutionCheckpoint = {
           executionId,
           intentId: state.intent?.id,
@@ -711,6 +830,7 @@ export async function executeSegment(
         };
 
         await CheckpointManager.saveCheckpoint(checkpoint);
+        await CheckpointManager.scheduleResume(executionId, checkpoint);
         await CheckpointManager.publishContinuationEvent(executionId, checkpoint);
 
         return {
@@ -821,11 +941,12 @@ export async function executeSegment(
       currentStepIndex = maxStepIndex + 1;
 
       if (anyFailed) {
-        // Handle failure - could trigger saga compensation
+        // Handle failure - transition TaskState to failed
+        await memory.transitionTaskState(executionId, "failed", "Step execution failed");
+        
         state = applyStateUpdate(state, { status: "REFLECTING" });
         await saveExecutionState(state);
-        
-        // For now, return failed result - saga logic will be added in Task 3
+
         return {
           state,
           success: false,
@@ -851,6 +972,9 @@ export async function executeSegment(
 
     await saveExecutionState(state);
     await CheckpointManager.deleteCheckpoint(executionId);
+    
+    // Transition TaskState to completed
+    await memory.transitionTaskState(executionId, "completed", "All steps completed successfully");
 
     return {
       state,
@@ -875,6 +999,9 @@ export async function executeSegment(
     });
 
     await saveExecutionState(state);
+    
+    // Transition TaskState to failed
+    await memory.transitionTaskState(executionId, "failed", `Execution error: ${errorMessage}`);
 
     return {
       state,

@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyServiceToken } from "@repo/auth";
 import { executeSegment, resumeFromCheckpoint, ToolExecutor as DurableToolExecutor } from "@/lib/engine/durable-execution";
 import { loadExecutionState } from "@/lib/engine/memory";
-import { getMcpClients } from "@/lib/mcp-client";
+import { getMcpClients, ToolCallResult } from "@/lib/mcp-client";
 import { RealtimeService } from "@repo/shared";
 import { Tracer } from "@/lib/engine/tracing";
 import { getToolRegistry } from "@/lib/engine/tools/registry";
@@ -203,7 +203,7 @@ export async function POST(req: NextRequest) {
 // ============================================================================
 
 async function buildToolExecutor(traceId?: string): Promise<DurableToolExecutor> {
-  const mcpClients = await getMcpClients();
+  const { manager } = await getMcpClients();
   const toolRegistry = getToolRegistry();
 
   return {
@@ -211,42 +211,26 @@ async function buildToolExecutor(traceId?: string): Promise<DurableToolExecutor>
       const startTime = Date.now();
 
       try {
-        // Try MCP clients first
-        for (const [serviceName, client] of Object.entries(mcpClients)) {
-          try {
-            const response = await client.listTools();
-            const tools = response.tools || [];
-            const mcpTool = tools.find((t: any) => t.name === toolName);
+        // Try MCP manager first with parameter aliasing
+        const result = await Promise.race([
+          manager.executeTool(toolName, parameters),
+          new Promise<ToolCallResult>((_, reject) => {
+            signal?.addEventListener('abort', () => {
+              reject(new Error('AbortError: Tool call cancelled'));
+            });
+            setTimeout(() => reject(new Error('Tool timeout')), timeoutMs);
+          })
+        ]);
 
-            if (mcpTool) {
-              console.log(`[MeshResume] Executing MCP tool ${toolName} from ${serviceName}`);
-
-              const result = await Promise.race([
-                client.callTool({
-                  name: toolName,
-                  arguments: parameters,
-                }),
-                new Promise((_, reject) => {
-                  signal?.addEventListener('abort', () => {
-                    reject(new Error('AbortError: Tool call cancelled'));
-                  });
-                  setTimeout(() => reject(new Error('Tool timeout')), timeoutMs);
-                })
-              ]);
-              
-              return {
-                success: true,
-                output: result,
-                latency_ms: Date.now() - startTime,
-              };
-            }
-          } catch (err) {
-            // Try next client
-            continue;
-          }
+        if (result && 'success' in result && result.success) {
+          return {
+            success: true,
+            output: result.output,
+            latency_ms: Date.now() - startTime,
+          };
         }
-        
-        // Fall back to local tools
+
+        // Fall back to local tools if MCP fails
         const localTool = toolRegistry.getDefinition(toolName);
         if (!localTool) {
           return {

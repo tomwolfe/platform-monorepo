@@ -9,5 +9,6 @@ export * from "./components/ui/toast";
 export * from "./components/ui/toaster";
 export * from "./components/MerchantCard";
 export * from "./components/ProductList";
+export * from "./components/StreamingProgressStepper";
 export * from "./hooks/use-toast";
 export * from "./lib/utils";

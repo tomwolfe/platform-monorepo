@@ -1,26 +1,28 @@
 /**
- * Execute Step API - Recursive Self-Trigger Pattern
- * 
+ * Execute Step API - Recursive Self-Trigger Pattern with WorkflowMachine
+ *
  * Vercel Hobby Tier Optimization for Infinite-Duration Sagas:
- * - Executes ONE step per lambda invocation
+ * - Executes ONE step per lambda invocation using WorkflowMachine
  * - Uses Redis locking to prevent double execution
- * - Triggers next step via non-blocking fetch with 200ms delay
+ * - Triggers next step via QStash for reliable delivery
  * - Publishes progress to Ably for real-time UX
- * 
+ * - Handles saga compensations automatically via WorkflowMachine
+ *
  * Architecture:
  * 1. Receives executionId from previous step or initial trigger
  * 2. Acquires Redis lock (SETNX exec:{id}:lock)
  * 3. Loads execution state from Redis
- * 4. Finds next pending step (not in completedSteps array)
- * 5. Executes step using ToolRegistry
- * 6. Updates Redis state (adds to completedSteps)
- * 7. Publishes ExecutionStepUpdate to Ably
- * 8. If steps remain: spawns background fetch to self with 200ms delay
- * 9. Releases lock
- * 
+ * 4. Creates WorkflowMachine with current state
+ * 5. Executes single step via WorkflowMachine.executeSingleStep()
+ * 6. WorkflowMachine handles validation, execution, and compensation
+ * 7. Saves updated state to Redis
+ * 8. Publishes ExecutionStepUpdate to Ably
+ * 9. If steps remain: triggers QStash to invoke next step
+ * 10. Releases lock
+ *
  * Security:
  * - Requires x-internal-system-key header for recursive calls
- * - Bypasses normal auth checks for internal system calls only
+ * - QStash webhook verification for production deployments
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -29,27 +31,54 @@ import { redis } from "@/lib/redis-client";
 import { getToolRegistry } from "@/lib/engine/tools/registry";
 import { loadExecutionState, saveExecutionState } from "@/lib/engine/memory";
 import { RealtimeService } from "@repo/shared";
-import { signServiceToken } from "@repo/auth";
 import {
   ExecutionState,
-  StepExecutionState,
-  PlanStep,
 } from "@/lib/engine/types";
 import {
-  getStepState,
-  updateStepState,
   getCompletedSteps,
-  getPendingSteps,
 } from "@/lib/engine/state-machine";
-import {
-  validateBeforeExecution,
-  extractErrorCode,
-  isClientOrServerError,
-  attemptErrorRecovery,
-} from "@/lib/engine/execution-helpers";
-import { needsCompensation } from "@repo/mcp-protocol";
-import { NormalizationService, QStashService, verifyQStashWebhook, getQStashWebhookHeaders } from "@repo/shared";
+import { QStashService, verifyQStashWebhook } from "@repo/shared";
 import { NervousSystemObserver } from "@/lib/listeners/nervous-system-observer";
+import { WorkflowMachine } from "@/lib/engine/workflow-machine";
+import type { ToolExecutor as WorkflowToolExecutor } from "@/lib/engine/workflow-machine";
+
+// ============================================================================
+// TOOL EXECUTOR ADAPTER
+// Adapts ToolRegistry to WorkflowMachine's ToolExecutor interface
+// ============================================================================
+
+function createToolExecutor(executionId: string): WorkflowToolExecutor {
+  const registry = getToolRegistry();
+
+  return {
+    async execute(toolName, parameters, timeoutMs, signal) {
+      const startTime = performance.now();
+
+      try {
+        const result = await registry.execute(toolName, parameters, {
+          executionId,
+          stepId: `step-${toolName}-${Date.now()}`,
+          timeoutMs,
+          startTime,
+          abortSignal: signal,
+        });
+
+        return {
+          success: result.success,
+          output: result.output,
+          error: result.error,
+          latency_ms: Math.round(performance.now() - startTime),
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+          latency_ms: Math.round(performance.now() - startTime),
+        };
+      }
+    },
+  };
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 10; // Vercel Hobby limit
@@ -116,322 +145,6 @@ async function isLockHeld(executionId: string): Promise<boolean> {
 }
 
 // ============================================================================
-// STEP EXECUTION
-// Single step execution with validation and error handling
-// ============================================================================
-
-interface StepExecutionResult {
-  success: boolean;
-  stepState: StepExecutionState;
-  compensation?: {
-    toolName: string;
-    parameters?: Record<string, unknown>;
-  };
-}
-
-async function executeSingleStep(
-  executionId: string,
-  state: ExecutionState,
-  step: PlanStep
-): Promise<StepExecutionResult> {
-  const stepStartTime = performance.now();
-  const timestamp = new Date().toISOString();
-  const stepIndex = state.step_states.findIndex(s => s.step_id === step.id);
-  const totalSteps = state.step_states.length;
-
-  try {
-    // IDEMPOTENCY CHECK - Never re-execute a step in completedSteps
-    const completedStepIds = getCompletedSteps(state).map(s => s.step_id);
-    if (completedStepIds.includes(step.id)) {
-      console.log(`[ExecuteStep] Step ${step.id} already completed, skipping (idempotent)`);
-      return {
-        success: true,
-        stepState: {
-          step_id: step.id,
-          status: "completed",
-          output: { skipped: true, reason: "Already executed (idempotent)" },
-          completed_at: timestamp,
-          latency_ms: 0,
-          attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-        },
-      };
-    }
-
-    // Update step state to in_progress
-    let newState = updateStepState(state, step.id, {
-      status: "in_progress",
-      started_at: timestamp,
-      attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-    });
-
-    // Resolve parameter references from previous step outputs
-    const resolvedParameters = resolveStepParameters(step, newState);
-
-    // Validation before execution using DB_REFLECTED_SCHEMAS
-    const validationResult = await validateBeforeExecution(step, resolvedParameters);
-    if (!validationResult.valid) {
-      return {
-        success: false,
-        stepState: {
-          step_id: step.id,
-          status: "failed",
-          error: {
-            code: "VALIDATION_FAILED",
-            message: validationResult.error || "Pre-execution validation failed",
-          },
-          completed_at: timestamp,
-          latency_ms: 0,
-          attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-        },
-      };
-    }
-
-    // Save state with step in progress
-    await saveExecutionState(newState);
-
-    // Publish step start to Ably
-    await RealtimeService.publishStreamingStatusUpdate({
-      executionId,
-      stepIndex: stepIndex >= 0 ? stepIndex : 0,
-      totalSteps,
-      stepName: step.tool_name,
-      status: "in_progress",
-      message: `Starting ${step.description || step.tool_name}...`,
-      timestamp,
-    });
-
-    // Get tool registry and execute
-    const registry = getToolRegistry();
-    const toolDef = registry.getDefinition(step.tool_name);
-
-    // ABORT CONTROLLER WITH TIMEOUT
-    const abortController = new AbortController();
-    const timeoutId = setTimeout(() => {
-      console.warn(`[ExecuteStep] Step ${step.tool_name} approaching timeout, aborting...`);
-      abortController.abort();
-    }, STEP_TIMEOUT_MS);
-
-    let toolResult: Awaited<ReturnType<typeof registry.execute>>;
-    try {
-      toolResult = await registry.execute(
-        step.tool_name,
-        resolvedParameters,
-        {
-          executionId,
-          stepId: step.id,
-          timeoutMs: step.timeout_ms || 30000,
-          startTime: performance.now(),
-          abortSignal: abortController.signal,
-        }
-      );
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    const stepEndTime = performance.now();
-    const latencyMs = Math.round(stepEndTime - stepStartTime);
-
-    if (toolResult.success) {
-      // Publish step completion to Ably
-      await RealtimeService.publishStreamingStatusUpdate({
-        executionId,
-        stepIndex: stepIndex >= 0 ? stepIndex : 0,
-        totalSteps,
-        stepName: step.tool_name,
-        status: "completed",
-        message: `Completed ${step.description || step.tool_name}`,
-        timestamp: new Date().toISOString(),
-      });
-
-      // Auto-register compensation if needed
-      let compensation: { toolName: string; parameters?: Record<string, unknown> } | undefined;
-      if (needsCompensation(step.tool_name)) {
-        const { getCompensation, mapCompensationParameters } = await import("@repo/mcp-protocol");
-        const compDef = getCompensation(step.tool_name);
-        if (compDef && compDef.toolName) {
-          const mappedParams = mapCompensationParameters(
-            step.tool_name,
-            resolvedParameters,
-            toolResult.output
-          );
-          compensation = {
-            toolName: compDef.toolName,
-            parameters: mappedParams,
-          };
-          console.log(
-            `[ExecuteStep] Registered compensation for ${step.tool_name}: ${compDef.toolName}`
-          );
-        }
-      }
-
-      return {
-        success: true,
-        stepState: {
-          step_id: step.id,
-          status: "completed",
-          output: toolResult.output,
-          completed_at: new Date().toISOString(),
-          latency_ms: latencyMs,
-          attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-        },
-        compensation,
-      };
-    } else {
-      // Error recovery
-      const errorCode = extractErrorCode(toolResult.error);
-      if (isClientOrServerError(errorCode) && toolResult.error) {
-        const recoveryResult = await attemptErrorRecovery(
-          step,
-          resolvedParameters,
-          toolResult.error,
-          errorCode
-        );
-
-        if (recoveryResult.recovered && recoveryResult.correctedParameters) {
-          const retryResult = await registry.execute(
-            step.tool_name,
-            recoveryResult.correctedParameters,
-            {
-              executionId,
-              stepId: step.id,
-              timeoutMs: step.timeout_ms || 30000,
-              startTime: performance.now(),
-            }
-          );
-
-          if (retryResult.success) {
-            await RealtimeService.publishStreamingStatusUpdate({
-              executionId,
-              stepIndex: stepIndex >= 0 ? stepIndex : 0,
-              totalSteps,
-              stepName: step.tool_name,
-              status: "completed",
-              message: `Completed ${step.description || step.tool_name} (after retry)`,
-              timestamp: new Date().toISOString(),
-            });
-
-            return {
-              success: true,
-              stepState: {
-                step_id: step.id,
-                status: "completed",
-                output: retryResult.output,
-                completed_at: new Date().toISOString(),
-                latency_ms: latencyMs,
-                attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-              },
-            };
-          }
-        }
-      }
-
-      // Step failed
-      await RealtimeService.publishStreamingStatusUpdate({
-        executionId,
-        stepIndex: stepIndex >= 0 ? stepIndex : 0,
-        totalSteps,
-        stepName: step.tool_name,
-        status: "failed",
-        message: `Failed: ${typeof toolResult.error === "string" ? toolResult.error : "Unknown error"}`,
-        timestamp: new Date().toISOString(),
-      });
-
-      const isValidationError = toolResult.error?.toLowerCase().includes("invalid parameters");
-      return {
-        success: false,
-        stepState: {
-          step_id: step.id,
-          status: "failed",
-          error: {
-            code: isValidationError ? "TOOL_VALIDATION_FAILED" : "TOOL_EXECUTION_FAILED",
-            message: toolResult.error || "Unknown tool execution error",
-          },
-          completed_at: new Date().toISOString(),
-          latency_ms: latencyMs,
-          attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-        },
-      };
-    }
-  } catch (error) {
-    const stepEndTime = performance.now();
-    const latencyMs = Math.round(stepEndTime - stepStartTime);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-
-    await RealtimeService.publishStreamingStatusUpdate({
-      executionId,
-      stepIndex: stepIndex >= 0 ? stepIndex : 0,
-      totalSteps,
-      stepName: step.tool_name,
-      status: "failed",
-      message: `Error: ${errorMessage}`,
-      timestamp: new Date().toISOString(),
-    });
-
-    return {
-      success: false,
-      stepState: {
-        step_id: step.id,
-        status: "failed",
-        error: {
-          code: "STEP_EXECUTION_FAILED",
-          message: errorMessage,
-        },
-        completed_at: new Date().toISOString(),
-        latency_ms: latencyMs,
-        attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-      },
-    };
-  }
-}
-
-// ============================================================================
-// PARAMETER RESOLUTION
-// Resolve $stepId.field references from previous step outputs
-// ============================================================================
-
-function resolveStepParameters(
-  step: PlanStep,
-  state: ExecutionState
-): Record<string, unknown> {
-  const resolved: Record<string, unknown> = {};
-
-  for (const [key, value] of Object.entries(step.parameters)) {
-    if (
-      typeof value === "string" &&
-      value.startsWith("$") &&
-      value.includes(".")
-    ) {
-      const ref = value.substring(1);
-      const [stepId, ...fieldPath] = ref.split(".");
-
-      const depState = getStepState(state, stepId);
-      if (depState && depState.output) {
-        let fieldValue: unknown = depState.output;
-        for (const field of fieldPath) {
-          if (
-            fieldValue &&
-            typeof fieldValue === "object" &&
-            field in fieldValue
-          ) {
-            fieldValue = (fieldValue as Record<string, unknown>)[field];
-          } else {
-            fieldValue = undefined;
-            break;
-          }
-        }
-        resolved[key] = fieldValue ?? value;
-      } else {
-        resolved[key] = value;
-      }
-    } else {
-      resolved[key] = value;
-    }
-  }
-
-  return resolved;
-}
-
-// ============================================================================
 // RECURSIVE TRIGGER
 // QStash-based queue trigger for reliable saga execution
 // Replaces unreliable fetch(self) with guaranteed delivery
@@ -458,7 +171,7 @@ async function triggerNextStep(executionId: string, currentStepIndex: number): P
 
 /**
  * Execute Step Handler - Core business logic
- * Separated for QStash webhook support
+ * Uses WorkflowMachine for unified saga execution with compensation support
  */
 async function executeStepHandler(
   request: NextRequest,
@@ -517,7 +230,7 @@ async function executeStepHandler(
         );
       }
 
-      // Filter to steps starting from startStepIndex
+      // Validate plan exists
       const plan = state.plan;
       if (!plan) {
         return NextResponse.json(
@@ -532,17 +245,12 @@ async function executeStepHandler(
         );
       }
 
-      // Find next step to execute
+      // Check if all steps are already complete
       const completedStepIds = getCompletedSteps(state).map(s => s.step_id);
-      const nextStep = plan.steps.find((step, index) =>
-        index >= startStepIndex && !completedStepIds.includes(step.id)
-      );
+      const allStepsComplete = plan.steps.every(step => completedStepIds.includes(step.id));
 
-      if (!nextStep) {
-        // No more steps - execution complete
+      if (allStepsComplete) {
         const completedCount = getCompletedSteps(state).length;
-
-        // Check if any steps failed
         const hasFailedSteps = state.step_states.some(s => s.status === "failed");
 
         return NextResponse.json(
@@ -559,62 +267,66 @@ async function executeStepHandler(
         );
       }
 
-      const stepIndex = plan.steps.indexOf(nextStep);
+      // Use WorkflowMachine for unified step execution with saga compensation
+      const toolExecutor = createToolExecutor(executionId);
+      const machine = new WorkflowMachine(executionId, toolExecutor, {
+        initialState: state,
+      });
 
       console.log(
-        `[ExecuteStep] Executing step ${stepIndex + 1}/${plan.steps.length}: ${nextStep.tool_name} (${nextStep.id})`
+        `[ExecuteStep] Using WorkflowMachine to execute step ${startStepIndex + 1}/${plan.steps.length}`
       );
 
-      // Execute the step
-      const result = await executeSingleStep(executionId, state, nextStep);
+      // Execute single step via WorkflowMachine (handles saga compensations)
+      const result = await machine.executeSingleStep(startStepIndex);
 
-      // Update state with step result
-      const updatedState = updateStepState(state, nextStep.id, result.stepState);
+      // Get updated state from machine
+      const updatedState = machine.getState();
 
       // Save updated state to Redis
       await saveExecutionState(updatedState);
 
       // TRACK FAILED BOOKINGS - Store in Redis for proactive re-engagement
-      if (!result.success && (nextStep.tool_name.includes("book") || nextStep.tool_name.includes("reserve"))) {
-        // Extract restaurant ID from step parameters
-        const restaurantId = nextStep.parameters?.restaurantId as string | undefined;
-        if (restaurantId) {
-          // Get user context from execution state
-          const userId = (state.context?.userId as string) || undefined;
-          const clerkId = (state.context?.clerkId as string) || undefined;
-          const userEmail = (state.context?.userEmail as string) || undefined;
+      if (!result.success && result.stepState.status === "failed") {
+        const executedStep = plan.steps.find(step => step.id === result.stepId);
+        if (executedStep && (executedStep.tool_name.includes("book") || executedStep.tool_name.includes("reserve"))) {
+          const restaurantId = executedStep.parameters?.restaurantId as string | undefined;
+          if (restaurantId) {
+            const userId = (state.context?.userId as string) || undefined;
+            const clerkId = (state.context?.clerkId as string) || undefined;
+            const userEmail = (state.context?.userEmail as string) || undefined;
 
-          await NervousSystemObserver.trackFailedBooking(restaurantId, {
-            userId,
-            clerkId,
-            userEmail,
-            intentType: state.intent?.type,
-            parameters: nextStep.parameters,
-            reason: result.stepState.error?.message || "Booking failed",
-            executionId,
-          });
+            await NervousSystemObserver.trackFailedBooking(restaurantId, {
+              userId,
+              clerkId,
+              userEmail,
+              intentType: state.intent?.type,
+              parameters: executedStep.parameters,
+              reason: result.stepState.error?.message || "Booking failed",
+              executionId,
+            });
+          }
         }
       }
 
       // Determine if we should trigger next step
-      const willTriggerNext = result.success && (stepIndex < plan.steps.length - 1);
+      const willTriggerNext = result.success && !result.isComplete;
 
       // If step succeeded and more steps remain, trigger next step recursively
       if (willTriggerNext) {
-        await triggerNextStep(executionId, stepIndex);
+        const nextStepIndex = result.completedSteps;
+        await triggerNextStep(executionId, nextStepIndex);
       }
-
-      const completedCount = getCompletedSteps(updatedState).length;
 
       return NextResponse.json(
         ExecuteStepResponseSchema.parse({
           success: result.success,
           executionId,
-          stepExecuted: nextStep.id,
+          stepExecuted: result.stepId,
           stepStatus: result.stepState.status,
-          completedSteps: completedCount,
-          totalSteps: plan.steps.length,
-          isComplete: completedCount === plan.steps.length,
+          completedSteps: result.completedSteps,
+          totalSteps: result.totalSteps,
+          isComplete: result.isComplete,
           nextStepTriggered: willTriggerNext,
         })
       );
@@ -643,7 +355,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   try {
     // QSTASH WEBHOOK VERIFICATION
-    // If request comes from QStash, verify the signature
+    // In production, all requests should come from QStash and must be verified
     const headers = request.headers;
     const upstashSignature = headers.get("upstash-signature");
     const upstashKeyId = headers.get("upstash-key-id");
@@ -651,35 +363,36 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Check if this is a QStash webhook call
     const isQStashWebhook = upstashSignature !== null;
 
+    // PRODUCTION SECURITY: Require webhook verification in production
+    const isProduction = process.env.NODE_ENV === "production";
+    const hasSigningKey = !!process.env.QSTASH_CURRENT_SIGNING_KEY;
+
     if (isQStashWebhook) {
-      // In development without signing keys, skip verification
-      if (
-        process.env.NODE_ENV === "development" &&
-        !process.env.QSTASH_CURRENT_SIGNING_KEY
-      ) {
-        console.warn("[ExecuteStep] QStash webhook verification skipped in dev mode");
-      } else {
-        // Read raw body for verification (need to re-parse after)
-        const rawBody = await request.text();
-        const isValid = await verifyQStashWebhook(rawBody, upstashSignature, upstashKeyId);
-
-        if (!isValid) {
-          console.warn("[ExecuteStep] QStash webhook signature verification failed");
-          return NextResponse.json(
-            {
-              success: false,
-              error: {
-                code: "UNAUTHORIZED",
-                message: "Invalid QStash signature",
-              },
+      // Webhook signature present - verify it
+      if (isProduction && !hasSigningKey) {
+        console.warn(
+          "[ExecuteStep] QStash webhook received but QSTASH_CURRENT_SIGNING_KEY not configured. " +
+          "This is a security risk in production."
+        );
+        // In production without signing key, reject the request for security
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: "WEBHOOK_NOT_CONFIGURED",
+              message: "Webhook verification not configured. Set QSTASH_CURRENT_SIGNING_KEY.",
             },
-            { status: 401 }
-          );
-        }
+          },
+          { status: 500 }
+        );
+      }
 
-        console.log("[ExecuteStep] QStash webhook verified, parsing body...");
-        // Parse the body we already read
-        const validatedBody = ExecuteStepRequestSchema.safeParse(JSON.parse(rawBody));
+      // In development without signing keys, skip verification
+      if (!isProduction || !hasSigningKey) {
+        console.warn("[ExecuteStep] QStash webhook verification skipped (dev mode or no key)");
+        // Parse body normally
+        const rawBody = await request.json();
+        const validatedBody = ExecuteStepRequestSchema.safeParse(rawBody);
 
         if (!validatedBody.success) {
           return NextResponse.json(
@@ -697,6 +410,53 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const { executionId, startStepIndex = 0 } = validatedBody.data;
         return await executeStepHandler(request, executionId, startStepIndex, startTime);
       }
+
+      // Production with signing key - verify signature
+      const rawBody = await request.text();
+      const isValid = await verifyQStashWebhook(rawBody, upstashSignature, upstashKeyId);
+
+      if (!isValid) {
+        console.warn("[ExecuteStep] QStash webhook signature verification failed");
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: "UNAUTHORIZED",
+              message: "Invalid QStash signature",
+            },
+          },
+          { status: 401 }
+        );
+      }
+
+      console.log("[ExecuteStep] QStash webhook verified, parsing body...");
+      // Parse the body we already read
+      const validatedBody = ExecuteStepRequestSchema.safeParse(JSON.parse(rawBody));
+
+      if (!validatedBody.success) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: `Invalid request: ${validatedBody.error.message}`,
+            },
+          },
+          { status: 400 }
+        );
+      }
+
+      const { executionId, startStepIndex = 0 } = validatedBody.data;
+      return await executeStepHandler(request, executionId, startStepIndex, startTime);
+    }
+
+    // No webhook signature - direct API call
+    // In production, this should only happen for initial trigger from /api/execute or /api/chat
+    if (isProduction && hasSigningKey) {
+      console.warn(
+        "[ExecuteStep] Direct API call received in production with webhook configured. " +
+        "Ensure this is intentional (e.g., initial trigger from trusted source)."
+      );
     }
 
     // Non-QStash call (direct API call) - use normal flow

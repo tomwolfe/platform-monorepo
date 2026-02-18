@@ -103,6 +103,15 @@ export class QStashService {
     if (!this.config) {
       this.initialize();
     }
+
+    // PRODUCTION HARDENING: Force QStash in production; no unreliable fetch fallbacks
+    if (process.env.NODE_ENV === "production" && !this.config?.enabled) {
+      throw new Error(
+        "QStash must be configured for production saga reliability. " +
+        "Set QSTASH_TOKEN or UPSTASH_QSTASH_TOKEN environment variable."
+      );
+    }
+
     return this.config?.enabled ? this.client : null;
   }
 
@@ -115,9 +124,16 @@ export class QStashService {
   static async triggerNextStep(options: QStashTriggerOptions): Promise<string | null> {
     const client = this.getClient();
 
-    // Fallback to direct fetch if QStash not configured
+    // PRODUCTION HARDENING: No fallback in production - QStash is required
     if (!client || !this.config?.enabled) {
-      console.warn("[QStashService] QStash not configured, using fallback fetch");
+      if (process.env.NODE_ENV === "production") {
+        throw new Error(
+          "QStash is required for production reliability. " +
+          "Fallback to fetch(self) is disabled in production."
+        );
+      }
+      // Development only: allow fallback to fetch
+      console.warn("[QStashService] QStash not configured, using fallback fetch (dev only)");
       await this.fallbackFetch(options);
       return null;
     }
@@ -153,7 +169,11 @@ export class QStashService {
       return messageId || null;
     } catch (error) {
       console.error("[QStashService] Failed to trigger next step:", error);
-      // Fallback to direct fetch on error
+      // PRODUCTION HARDENING: No fallback on error in production
+      if (process.env.NODE_ENV === "production") {
+        throw error; // Re-throw to let QStash retry
+      }
+      // Development only: allow fallback to fetch
       await this.fallbackFetch(options);
       return null;
     }

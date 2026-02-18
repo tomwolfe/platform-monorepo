@@ -26,7 +26,7 @@ interface DiscoveredToolCache {
 const DISCOVERY_CACHE: DiscoveredToolCache = {
   tools: new Map(),
   discoveredAt: 0,
-  ttlMs: 5 * 60 * 1000, // 5 minutes cache
+  ttlMs: 24 * 60 * 60 * 1000, // 24 hours cache - tools don't change unless code is deployed
 };
 
 // ============================================================================

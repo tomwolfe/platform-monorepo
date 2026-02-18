@@ -3,6 +3,7 @@ import { redis } from "../redis-client";
 import { env } from "../config";
 import { RestaurantResultSchema } from "../schema";
 import { GeocodeSchema, SearchRestaurantSchema, DB_REFLECTED_SCHEMAS, UnifiedLocationSchema } from "@repo/mcp-protocol";
+import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared";
 
 /**
  * PhotonLocation - Standardized location response from Photon API
@@ -61,40 +62,43 @@ export async function geocode_location_photon(params: z.infer<typeof GeocodeSche
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'IntentionEngine/1.0'
-      },
-      signal: controller.signal
+    return await withNervousSystemTracing(async ({ correlationId }) => {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'IntentionEngine/1.0',
+          ...injectTracingHeaders({}, correlationId),
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`Photon API error: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (data.features && data.features.length > 0) {
+        const feature = data.features[0];
+        const coords = feature.geometry.coordinates;
+        const props = feature.properties;
+
+        return {
+          success: true,
+          result: {
+            lat: coords[1],
+            lon: coords[0],
+            displayName: props.name || props.street || props.city || location
+          }
+        };
+      }
+
+      // Fallback to Nominatim if Photon returns no results
+      console.log(`[Photon] No results, falling back to Nominatim...`);
+      return await geocode_location_nominatim(params);
     });
 
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error(`Photon API error: ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    
-    if (data.features && data.features.length > 0) {
-      const feature = data.features[0];
-      const coords = feature.geometry.coordinates;
-      const props = feature.properties;
-      
-      return {
-        success: true,
-        result: {
-          lat: coords[1],
-          lon: coords[0],
-          displayName: props.name || props.street || props.city || location
-        }
-      };
-    }
-
-    // Fallback to Nominatim if Photon returns no results
-    console.log(`[Photon] No results, falling back to Nominatim...`);
-    return await geocode_location_nominatim(params);
-    
   } catch (error: any) {
     console.warn(`[Photon] Geocoding failed: ${error.message}, falling back to Nominatim`);
     // Fallback to Nominatim on error
@@ -136,27 +140,30 @@ export async function geocode_location_nominatim(params: z.infer<typeof GeocodeS
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'IntentionEngine/1.0'
-      },
-      signal: controller.signal
+    return await withNervousSystemTracing(async ({ correlationId }) => {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'IntentionEngine/1.0',
+          ...injectTracingHeaders({}, correlationId),
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      const data = await response.json();
+      if (data && data.length > 0) {
+        return {
+          success: true,
+          result: {
+            lat: parseFloat(data[0].lat),
+            lon: parseFloat(data[0].lon),
+            displayName: data[0].display_name
+          }
+        };
+      }
+      return { success: false, error: "Location not found" };
     });
-
-    clearTimeout(timeoutId);
-
-    const data = await response.json();
-    if (data && data.length > 0) {
-      return {
-        success: true,
-        result: {
-          lat: parseFloat(data[0].lat),
-          lon: parseFloat(data[0].lon),
-          displayName: data[0].display_name
-        }
-      };
-    }
-    return { success: false, error: "Location not found" };
   } catch (error: any) {
     return { success: false, error: error.message };
   }
@@ -230,68 +237,74 @@ export async function search_restaurant(params: z.infer<typeof SearchRestaurantS
       `;
 
     const overpassUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-    
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-    const overpassRes = await fetch(overpassUrl, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    
-    if (!overpassRes.ok) {
-      throw new Error(`Overpass API error: ${overpassRes.statusText}`);
-    }
-
-    const overpassData = await overpassRes.json();
-    let elements = overpassData.elements || [];
-
-    // Mandatory strict-match filter for the cuisine parameter
-    if (cuisine) {
-      const regex = new RegExp(cuisine, 'i');
-      elements = elements.filter((el: any) => {
-        const elCuisine = el.tags?.cuisine || '';
-        // Check if any of the cuisines match (cuisine tag can be a semi-colon separated list)
-        return elCuisine.split(';').some((c: string) => regex.test(c.trim()));
+    return await withNervousSystemTracing(async ({ correlationId }) => {
+      const overpassRes = await fetch(overpassUrl, {
+        headers: injectTracingHeaders({}, correlationId),
+        signal: controller.signal
       });
-    }
+      
+      clearTimeout(timeoutId);
 
-    const results = elements.map((el: any) => {
-      const name = el.tags.name || "Unknown Restaurant";
-      const addr = [
-        el.tags["addr:housenumber"],
-        el.tags["addr:street"],
-        el.tags["addr:city"]
-      ].filter(Boolean).join(" ") || "Address not available";
-
-      const elCuisine = el.tags?.cuisine 
-        ? el.tags.cuisine.split(';').map((c: string) => c.trim())
-        : [];
-
-      const rawResult = {
-        name,
-        address: addr,
-        cuisine: elCuisine,
-        coordinates: {
-          lat: parseFloat(el.lat || el.center?.lat),
-          lon: parseFloat(el.lon || el.center?.lon)
-        }
-      };
-
-      const validated = RestaurantResultSchema.safeParse(rawResult);
-      return validated.success ? validated.data : null;
-    }).filter(Boolean).slice(0, 5); // Limit to top 5
-
-    if (redis && results.length > 0) {
-      try {
-        await redis.setex(cacheKey, 3600, results);
-      } catch (err) {
-        console.warn("Redis cache write failed:", err);
+      if (!overpassRes.ok) {
+        throw new Error(`Overpass API error: ${overpassRes.statusText}`);
       }
-    }
 
-    return {
-      success: true,
-      result: results
-    };
+      const overpassData = await overpassRes.json();
+      let elements = overpassData.elements || [];
+
+      // Mandatory strict-match filter for the cuisine parameter
+      if (cuisine) {
+        const regex = new RegExp(cuisine, 'i');
+        elements = elements.filter((el: any) => {
+          const elCuisine = el.tags?.cuisine || '';
+          // Check if any of the cuisines match (cuisine tag can be a semi-colon separated list)
+          return elCuisine.split(';').some((c: string) => regex.test(c.trim()));
+        });
+      }
+
+      const results = elements.map((el: any) => {
+        const name = el.tags.name || "Unknown Restaurant";
+        const addr = [
+          el.tags["addr:housenumber"],
+          el.tags["addr:street"],
+          el.tags["addr:city"]
+        ].filter(Boolean).join(" ") || "Address not available";
+
+        const elCuisine = el.tags?.cuisine
+          ? el.tags.cuisine.split(';').map((c: string) => c.trim())
+          : [];
+
+        const rawResult = {
+          name,
+          address: addr,
+          cuisine: elCuisine,
+          coordinates: {
+            lat: parseFloat(el.lat || el.center?.lat),
+            lon: parseFloat(el.lon || el.center?.lon)
+          }
+        };
+
+        const validated = RestaurantResultSchema.safeParse(rawResult);
+        return validated.success ? validated.data : null;
+      }).filter(Boolean).slice(0, 5); // Limit to top 5
+
+      if (redis && results.length > 0) {
+        try {
+          await redis.setex(cacheKey, 3600, results);
+        } catch (err) {
+          console.warn("Redis cache write failed:", err);
+        }
+      }
+
+      return {
+        success: true,
+        result: results
+      };
+    });
   } catch (error: any) {
     console.error("Error in search_restaurant:", error);
     return { success: false, error: error.message };
@@ -302,22 +315,26 @@ export async function search_web(query: string): Promise<{ success: boolean; res
   console.log(`Searching web for: ${query}...`);
   try {
     // Using DuckDuckGo's free "Instant Answer" API as a fallback for discovery
-    const response = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1`);
-    const data = await response.json();
-    
-    // Simple heuristic for demo: extract email if found in abstract or related topics
-    // In a real production app, we would use a more robust search + scraping or a professional API
-    const abstract = data.AbstractText || "";
-    const emailMatch = abstract.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-    
-    return {
-      success: true,
-      result: {
-        text: abstract,
-        email: emailMatch ? emailMatch[0] : null,
-        source: "DuckDuckGo"
-      }
-    };
+    return await withNervousSystemTracing(async ({ correlationId }) => {
+      const response = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1`, {
+        headers: injectTracingHeaders({}, correlationId),
+      });
+      const data = await response.json();
+
+      // Simple heuristic for demo: extract email if found in abstract or related topics
+      // In a real production app, we would use a more robust search + scraping or a professional API
+      const abstract = data.AbstractText || "";
+      const emailMatch = abstract.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+
+      return {
+        success: true,
+        result: {
+          text: abstract,
+          email: emailMatch ? emailMatch[0] : null,
+          source: "DuckDuckGo"
+        }
+      };
+    });
   } catch (error: any) {
     return { success: false, error: error.message };
   }

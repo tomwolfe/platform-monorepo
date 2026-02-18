@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ToolDefinitionMetadata, ToolParameter } from "./types";
 import { normalizeLocation } from "./mobility";
 import { WeatherSchema, UnifiedLocationSchema } from "@repo/mcp-protocol";
+import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared";
 
 export type WeatherParams = z.infer<typeof WeatherSchema>;
 
@@ -40,29 +41,34 @@ export async function get_weather(params: WeatherParams): Promise<{ success: boo
 
   const normalizedLocation = normalizeLocation(location);
   console.log(`Getting functional weather for ${normalizedLocation} (${lat}, ${lon})...`);
-  
+
   try {
-    const response = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=temperature_2m,relativehumidity_2m,windspeed_10m`
-    );
-    
-    if (!response.ok) {
-      throw new Error(`Weather API error: ${response.statusText}`);
-    }
+    return await withNervousSystemTracing(async ({ correlationId }) => {
+      const response = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=temperature_2m,relativehumidity_2m,windspeed_10m`,
+        {
+          headers: injectTracingHeaders({}, correlationId),
+        }
+      );
 
-    const data = await response.json();
-    const current = data.current_weather;
-
-    return {
-      success: true,
-      result: {
-        location: normalizedLocation,
-        temperature_c: current.temperature,
-        condition: getWeatherCondition(current.weathercode),
-        humidity: data.hourly.relativehumidity_2m[0],
-        wind_speed_kmh: current.windspeed
+      if (!response.ok) {
+        throw new Error(`Weather API error: ${response.statusText}`);
       }
-    };
+
+      const data = await response.json();
+      const current = data.current_weather;
+
+      return {
+        success: true,
+        result: {
+          location: normalizedLocation,
+          temperature_c: current.temperature,
+          condition: getWeatherCondition(current.weathercode),
+          humidity: data.hourly.relativehumidity_2m[0],
+          wind_speed_kmh: current.windspeed
+        }
+      };
+    });
   } catch (error: any) {
     return { success: false, error: error.message };
   }

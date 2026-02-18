@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { ToolDefinitionMetadata, ToolParameter } from "./types";
-import { 
-  MobilityRequestSchema, 
-  RouteEstimateSchema, 
+import {
+  MobilityRequestSchema,
+  RouteEstimateSchema,
   UnifiedLocationSchema,
 } from "@repo/mcp-protocol";
 import type { UnifiedLocation } from "@repo/mcp-protocol";
+import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared";
 
 export { 
   MobilityRequestSchema, 
@@ -149,40 +150,45 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
     console.log(`Getting functional route estimate from ${normalizedOrigin} to ${normalizedDestination} via ${travel_mode}...`);
 
     // OSRM handles driving, walking, cycling
-    const osrmMode = travel_mode === "bicycling" ? "bicycle" : 
+    const osrmMode = travel_mode === "bicycling" ? "bicycle" :
                     travel_mode === "walking" ? "foot" : "car";
-    
-    // Note: Public OSRM demo server only supports 'driving' (car) reliably. 
+
+    // Note: Public OSRM demo server only supports 'driving' (car) reliably.
     // We'll use 'driving' as base and adjust for other modes if car is the only available profile.
     const url = `https://router.project-osrm.org/route/v1/driving/${originCoords.lon},${originCoords.lat};${destCoords.lon},${destCoords.lat}?overview=false`;
-    
-    const response = await fetch(url);
-    if (!response.ok) throw new Error("Routing API error");
-    
-    const data = await response.json();
-    if (!data.routes || data.routes.length === 0) throw new Error("No route found");
-    
-    const route = data.routes[0];
-    let distanceKm = route.distance / 1000;
-    let durationMins = route.duration / 60;
 
-    // Adjust for non-driving modes since we use the driving profile
-    if (travel_mode === "walking") {
-      durationMins = (distanceKm / 5) * 60; // 5 km/h
-    } else if (travel_mode === "bicycling") {
-      durationMins = (distanceKm / 15) * 60; // 15 km/h
-    }
+    return await withNervousSystemTracing(async ({ correlationId }) => {
+      const response = await fetch(url, {
+        headers: injectTracingHeaders({}, correlationId),
+      });
+      
+      if (!response.ok) throw new Error("Routing API error");
 
-    return {
-      success: true,
-      result: {
-        origin: normalizedOrigin,
-        destination: normalizedDestination,
-        distance_km: parseFloat(distanceKm.toFixed(1)),
-        duration_minutes: Math.round(durationMins),
-        traffic_status: travel_mode === "driving" ? "moderate" : "n/a"
+      const data = await response.json();
+      if (!data.routes || data.routes.length === 0) throw new Error("No route found");
+
+      const route = data.routes[0];
+      let distanceKm = route.distance / 1000;
+      let durationMins = route.duration / 60;
+
+      // Adjust for non-driving modes since we use the driving profile
+      if (travel_mode === "walking") {
+        durationMins = (distanceKm / 5) * 60; // 5 km/h
+      } else if (travel_mode === "bicycling") {
+        durationMins = (distanceKm / 15) * 60; // 15 km/h
       }
-    };
+
+      return {
+        success: true,
+        result: {
+          origin: normalizedOrigin,
+          destination: normalizedDestination,
+          distance_km: parseFloat(distanceKm.toFixed(1)),
+          duration_minutes: Math.round(durationMins),
+          traffic_status: travel_mode === "driving" ? "moderate" : "n/a"
+        }
+      };
+    });
   } catch (error: any) {
     return { success: false, error: error.message };
   }

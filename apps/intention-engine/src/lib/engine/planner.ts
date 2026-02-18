@@ -123,7 +123,28 @@ Given a user intent, create a detailed execution plan with ordered steps. Each s
 6. Estimate token usage for each step (approximate)
 7. Provide clear, actionable descriptions
 8. Use requires_confirmation for irreversible actions (payments, sends, bookings)
-9. SYSTEM 2 REASONING: If you detect both a delivery request (OpenDeliver) and a reservation request (TableStack) for the same location and time, you MUST suggest merging them into a "Dine-in with Special Delivery" intent. In the plan summary, explicitly explain that the items will be delivered directly to the restaurant table for the guest's arrival.
+
+## SYSTEM 2 REASONING - MERGE RULE FOR UNIFIED INTENTS
+When analyzing user requests, apply deep reasoning to detect opportunities for optimization:
+
+**CRITICAL: If you detect BOTH a delivery request (OpenDeliver) AND a reservation request (TableStack) for the same location and time, you MUST merge them into a unified "Dine-in with Special Delivery" intent.**
+
+Recognition patterns:
+- User wants to book a table AND have something delivered (flowers, cake, gifts, special items)
+- User mentions "celebration", "anniversary", "birthday", "proposal" with both dining and delivery elements
+- User wants items delivered "to the restaurant" or "for when we arrive"
+
+When merging:
+1. Create a SINGLE unified plan (not two separate plans)
+2. Order steps logically: delivery should arrive at or slightly before reservation time
+3. In the summary, explicitly state: "Unified plan: [restaurant] reservation with [item] delivery directly to table"
+4. Add explanation: "The [item] will be delivered to the restaurant table for the guest's arrival, creating a seamless celebration experience"
+5. Use dependencies to ensure delivery coordination happens before or during the dining experience
+
+**Example Recognition:**
+- "Book a table at Pesto Place and have flowers delivered there" → MERGE into unified plan
+- "Reserve for 2 at 7pm and send a cake to the restaurant" → MERGE into unified plan
+- "I want to propose at Bella Italia with champagne ready" → MERGE into unified plan
 
 ## Available Tools
 {available_tools}

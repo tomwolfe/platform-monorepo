@@ -41,6 +41,7 @@ import { QStashService, verifyQStashWebhook } from "@repo/shared";
 import { NervousSystemObserver } from "@/lib/listeners/nervous-system-observer";
 import { WorkflowMachine } from "@/lib/engine/workflow-machine";
 import type { ToolExecutor as WorkflowToolExecutor } from "@/lib/engine/workflow-machine";
+import { FailoverPolicyEngine, type PolicyEvaluationContext } from "@repo/shared";
 
 // ============================================================================
 // TOOL EXECUTOR ADAPTER
@@ -82,6 +83,40 @@ function createToolExecutor(executionId: string): WorkflowToolExecutor {
 
 export const runtime = "nodejs";
 export const maxDuration = 8; // Vercel Hobby limit - 8s buffer before 10s hard limit
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+/**
+ * Map error messages to standardized failure reasons for policy evaluation
+ */
+function mapFailureReason(errorMessage?: string): PolicyEvaluationContext["failure_reason"] {
+  if (!errorMessage) return "SERVICE_ERROR";
+
+  const errorLower = errorMessage.toLowerCase();
+
+  if (errorLower.includes("full") || errorLower.includes("no tables") || errorLower.includes("unavailable")) {
+    return "RESTAURANT_FULL";
+  }
+  if (errorLower.includes("party size") || errorLower.includes("too large")) {
+    return "PARTY_SIZE_TOO_LARGE";
+  }
+  if (errorLower.includes("payment") || errorLower.includes("card")) {
+    return "PAYMENT_FAILED";
+  }
+  if (errorLower.includes("timeout") || errorLower.includes("timed out")) {
+    return "TIMEOUT";
+  }
+  if (errorLower.includes("validation") || errorLower.includes("invalid")) {
+    return "VALIDATION_FAILED";
+  }
+  if (errorLower.includes("delivery")) {
+    return "DELIVERY_UNAVAILABLE";
+  }
+
+  return "SERVICE_ERROR";
+}
 
 // ============================================================================
 // CONFIGURATION
@@ -362,9 +397,17 @@ async function executeStepHandler(
       // Save updated state to Redis
       await saveExecutionState(updatedState);
 
-      // TRACK FAILED BOOKINGS - Store in Redis for proactive re-engagement
+      // ========================================================================
+      // FAILOVER POLICY ENGINE - Autonomous Failover Handling
+      // ========================================================================
+      // When a step fails, evaluate against failover policies and potentially
+      // trigger automatic replanning with alternative suggestions.
+      // ========================================================================
+      
       if (!result.success && result.stepState.status === "failed") {
         const executedStep = plan.steps.find(step => step.id === result.stepId);
+        
+        // Track failed bookings for proactive re-engagement (Step B)
         if (executedStep && (executedStep.tool_name.includes("book") || executedStep.tool_name.includes("reserve"))) {
           const restaurantId = executedStep.parameters?.restaurantId as string | undefined;
           if (restaurantId) {
@@ -381,6 +424,63 @@ async function executeStepHandler(
               reason: result.stepState.error?.message || "Booking failed",
               executionId,
             });
+          }
+        }
+
+        // STEP A: Evaluate failover policy and trigger automatic replan
+        const failoverContext: PolicyEvaluationContext = {
+          intent_type: (state.intent?.type as any) || "BOOKING",
+          failure_reason: mapFailureReason(result.stepState.error?.message),
+          confidence: state.intent?.confidence || 0.8,
+          attempt_count: state.step_states.filter(s => s.status === "failed").length,
+          party_size: (executedStep?.parameters?.partySize as number) || undefined,
+          requested_time: (executedStep?.parameters?.time as string) || undefined,
+          metadata: {
+            executionId,
+            stepId: result.stepId,
+            restaurantId: (executedStep?.parameters?.restaurantId as string) || undefined,
+          },
+        };
+
+        const failoverEngine = new FailoverPolicyEngine();
+        const failoverResult = failoverEngine.evaluate(failoverContext);
+
+        if (failoverResult.matched && failoverResult.recommended_action) {
+          console.log(
+            `[FailoverPolicyEngine] Matched policy "${failoverResult.policy?.name}" for failed step ${result.stepId}`
+          );
+
+          // Store failover state in Redis for the next planning iteration
+          const failoverKey = `exec:${executionId}:failover`;
+          await redis.setex(
+            failoverKey,
+            3600, // 1 hour TTL
+            JSON.stringify({
+              matched: true,
+              policyId: failoverResult.policy?.id,
+              policyName: failoverResult.policy?.name,
+              recommendedAction: failoverResult.recommended_action,
+              suggestions: failoverEngine.getAlternativeSuggestions(failoverContext, failoverResult),
+              evaluatedAt: new Date().toISOString(),
+            })
+          );
+
+          // Publish failover event to Ably for real-time UI updates
+          try {
+            await RealtimeService.publish(
+              "nervous-system:updates",
+              "FailoverPolicyTriggered",
+              {
+                executionId,
+                policyName: failoverResult.policy?.name,
+                actionType: failoverResult.recommended_action.type,
+                message: failoverResult.recommended_action.message_template,
+                timestamp: new Date().toISOString(),
+              },
+              {}
+            );
+          } catch (err) {
+            console.warn("[FailoverPolicyEngine] Failed to publish to Ably:", err);
           }
         }
       }

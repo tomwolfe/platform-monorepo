@@ -29,7 +29,7 @@ import {
   DB_REFLECTED_SCHEMAS,
   UnifiedLocationSchema
 } from "@repo/mcp-protocol";
-import { NormalizationService } from "@repo/shared";
+import { NormalizationService, FailoverPolicyEngine, type PolicyEvaluationContext } from "@repo/shared";
 import { getNervousSystemObserver } from "@/lib/listeners/nervous-system-observer";
 
 export const runtime = "nodejs";
@@ -52,16 +52,27 @@ const ChatRequestSchema = z.object({
  * Fetch Live Operational State from Redis cache
  * Zero-Latency Context: Pre-inject table availability into system prompt
  * so LLM can "see" state without explicit tool calls
- * 
+ *
  * Pre-Flight State Injection:
  * - Checks restaurant_state:{id} for table availability
  * - Checks failed_bookings:{restaurantId} for recent failures
  * - If restaurant is "full" or has recent failures, LLM will suggest alternatives
  * - This saves an entire round-trip tool call by preventing invalid plans
+ *
+ * Hard Constraints:
+ * - Restaurants marked as "full" are excluded from planning
+ * - Recent failures trigger failover policy evaluation
+ * - Delivery alternatives are pre-computed and injected
  */
 async function fetchLiveOperationalState(
   messages: any[],
-  userLocation?: { lat: number; lng: number }
+  userLocation?: { lat: number; lng: number },
+  intentContext?: {
+    intentType?: string;
+    partySize?: number;
+    requestedTime?: string;
+    restaurantId?: string;
+  }
 ): Promise<{
   restaurantStates?: Array<{
     id: string;
@@ -78,6 +89,13 @@ async function fetchLiveOperationalState(
     failedAt: string;
   }>;
   rawText?: string;
+  hardConstraints?: string[];
+  failoverSuggestions?: Array<{
+    type: string;
+    value: unknown;
+    confidence: number;
+    message?: string;
+  }>;
 }> {
   try {
     // Extract restaurant mentions from conversation history
@@ -212,7 +230,125 @@ async function fetchLiveOperationalState(
       }
     }
 
-    return { restaurantStates, failedBookings: failedBookings.length > 0 ? failedBookings : undefined };
+    // Generate hard constraints for the LLM
+    const hardConstraints: string[] = [];
+    const failoverSuggestions: Array<{
+      type: string;
+      value: unknown;
+      confidence: number;
+      message?: string;
+    }> = [];
+
+    // Hard constraint: Block full restaurants from planning
+    const fullRestaurants = restaurantStates.filter(r => r.tableAvailability === "full");
+    if (fullRestaurants.length > 0) {
+      hardConstraints.push(
+        `CRITICAL: DO NOT attempt to book at these restaurants (they are full): ${fullRestaurants.map(r => r.name).join(", ")}. ` +
+        `Instead, suggest: (1) alternative times, (2) joining waitlist, or (3) delivery options.`
+      );
+    }
+
+    // Hard constraint: Block restaurants with recent failures
+    if (failedBookings && failedBookings.length > 0) {
+      const failedRestaurantNames = failedBookings
+        .map(f => f.restaurantName || f.restaurantId)
+        .filter((name, idx, arr) => arr.indexOf(name) === idx); // Unique
+      
+      hardConstraints.push(
+        `CRITICAL: These restaurants have recent booking failures - DO NOT attempt booking: ${failedRestaurantNames.join(", ")}. ` +
+        `Explain the issue to the user and offer alternatives immediately.`
+      );
+    }
+
+    // Evaluate failover policies if we have failures and intent context
+    if ((failedBookings?.length || fullRestaurants.length) && intentContext) {
+      try {
+        const policyEngine = new FailoverPolicyEngine();
+        
+        // Map intent type to policy format
+        const policyIntentType = intentContext.intentType?.includes("BOOKING") || intentContext.intentType?.includes("RESERVATION")
+          ? "BOOKING"
+          : intentContext.intentType?.includes("DELIVERY")
+            ? "DELIVERY"
+            : "BOOKING";
+
+        const evalContext: PolicyEvaluationContext = {
+          intent_type: policyIntentType,
+          failure_reason: fullRestaurants.length > 0 ? "RESTAURANT_FULL" : "VALIDATION_FAILED",
+          confidence: 0.8,
+          party_size: intentContext.partySize,
+          requested_time: intentContext.requestedTime,
+          restaurant_tags: intentContext.restaurantId ? [intentContext.restaurantId] : undefined,
+        };
+
+        const result = policyEngine.evaluate(evalContext);
+        
+        if (result.matched && result.recommended_action) {
+          failoverSuggestions.push({
+            type: result.recommended_action.type,
+            value: result.recommended_action.parameters,
+            confidence: result.confidence,
+            message: result.recommended_action.message_template,
+          });
+
+          // Add specific suggestions based on action type
+          if (result.recommended_action.type === "SUGGEST_ALTERNATIVE_TIME" && intentContext.requestedTime) {
+            const offsets = (result.recommended_action.parameters?.time_offset_minutes as number[]) || [-30, 30];
+            const baseMinutes = parseInt(intentContext.requestedTime.replace(":", "")) as number;
+            const [hours, mins] = intentContext.requestedTime.split(":").map(Number);
+            const baseTotalMins = hours * 60 + mins;
+            
+            offsets.slice(0, 2).forEach((offset, idx) => {
+              const newTotal = baseTotalMins + offset;
+              if (newTotal >= 0 && newTotal < 24 * 60) {
+                const newHours = Math.floor(newTotal / 60);
+                const newMins = newTotal % 60;
+                failoverSuggestions.push({
+                  type: "alternative_time",
+                  value: `${newHours.toString().padStart(2, "0")}:${newMins.toString().padStart(2, "0")}`,
+                  confidence: 0.9 - (idx * 0.1),
+                  message: `How about ${newHours.toString().padStart(2, "0")}:${newMins.toString().padStart(2, "0")} instead?`,
+                });
+              }
+            });
+          }
+
+          if (result.recommended_action.type === "TRIGGER_DELIVERY") {
+            failoverSuggestions.push({
+              type: "delivery_alternative",
+              value: {
+                estimated_time: "30-45 minutes",
+                min_order: result.recommended_action.parameters?.min_order_amount as number || 1500,
+              },
+              confidence: 0.85,
+              message: "Delivery is available from this restaurant in 30-45 minutes.",
+            });
+          }
+
+          if (result.recommended_action.type === "TRIGGER_WAITLIST") {
+            failoverSuggestions.push({
+              type: "waitlist_alternative",
+              value: {
+                estimated_wait: "15-30 minutes",
+                notification_method: "sms",
+              },
+              confidence: 0.75,
+              message: "You can join the waitlist - current wait is approximately 15-30 minutes.",
+            });
+          }
+        }
+      } catch (policyError) {
+        console.warn("[FailoverPolicy] Failed to evaluate policies:", policyError);
+        // Continue without failover suggestions
+      }
+    }
+
+    return { 
+      restaurantStates, 
+      failedBookings: failedBookings?.length ? failedBookings : undefined,
+      hardConstraints: hardConstraints.length > 0 ? hardConstraints : undefined,
+      failoverSuggestions: failoverSuggestions.length > 0 ? failoverSuggestions : undefined,
+    };
   } catch (error) {
     console.error("[LiveOperationalState] Failed to fetch operational state:", error);
     return { rawText: "Unable to fetch live restaurant states" };
@@ -420,11 +556,17 @@ export async function POST(req: Request) {
 
     // Zero-Latency Context: Fetch live operational state BEFORE calling LLM
     // This allows the LLM to "see" table availability without explicit tool calls
-    const liveOperationalState = await fetchLiveOperationalState(coreMessages, userLocation || undefined);
+    // Pre-Flight State Injection with Hard Constraints and Failover Policy
+    const liveOperationalState = await fetchLiveOperationalState(coreMessages, userLocation || undefined, {
+      intentType: intent.type,
+      partySize: intent.parameters?.partySize as number | undefined,
+      requestedTime: intent.parameters?.time as string | undefined,
+      restaurantId: intent.parameters?.restaurantId as string | undefined,
+    });
 
     // Build live state context with failed bookings awareness
     const liveStateContextParts: string[] = [];
-    
+
     if (liveOperationalState.restaurantStates) {
       liveStateContextParts.push(
         `\n### LIVE RESTAURANT STATE (Real-time from Redis/DB):\n${liveOperationalState.restaurantStates
@@ -432,7 +574,7 @@ export async function POST(req: Request) {
           .join("\n")}\n\n**IMPORTANT**: Use this live state to avoid suggesting restaurants that are full. If a restaurant shows "full", suggest alternatives or recommend joining the waitlist.`
       );
     }
-    
+
     if (liveOperationalState.failedBookings && liveOperationalState.failedBookings.length > 0) {
       liveStateContextParts.push(
         `\n### ⚠️ RECENT BOOKING FAILURES (Avoid These):\n${liveOperationalState.failedBookings
@@ -440,8 +582,26 @@ export async function POST(req: Request) {
           .join("\n")}\n\n**CRITICAL**: These restaurants have recent booking failures. DO NOT attempt to book these unless the user explicitly insists. Instead, suggest alternative restaurants or explain the issue to the user.`
       );
     }
-    
-    const liveStateContext = liveStateContextParts.length > 0 
+
+    // HARD CONSTRAINTS - Block invalid plans before generation
+    if (liveOperationalState.hardConstraints && liveOperationalState.hardConstraints.length > 0) {
+      liveStateContextParts.push(
+        `\n### 🚫 HARD CONSTRAINTS (MUST FOLLOW):\n${liveOperationalState.hardConstraints
+          .map(c => `- ${c}`)
+          .join("\n")}\n\n**WARNING**: Violating these constraints will result in immediate plan rejection.`
+      );
+    }
+
+    // FAILOVER SUGGESTIONS - Pre-computed alternatives
+    if (liveOperationalState.failoverSuggestions && liveOperationalState.failoverSuggestions.length > 0) {
+      liveStateContextParts.push(
+        `\n### 💡 RECOMMENDED ALTERNATIVES (Pre-computed):\n${liveOperationalState.failoverSuggestions
+          .map(s => `- [${s.type.toUpperCase()}] ${s.message || JSON.stringify(s.value)} (Confidence: ${(s.confidence * 100).toFixed(0)}%)`)
+          .join("\n")}\n\n**TIP**: These alternatives have been pre-validated and are ready to offer.`
+      );
+    }
+
+    const liveStateContext = liveStateContextParts.length > 0
       ? liveStateContextParts.join("\n\n")
       : `\n### LIVE STATE: ${liveOperationalState.rawText || "No live state available"}\n`;
 

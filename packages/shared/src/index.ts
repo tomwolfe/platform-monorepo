@@ -8,3 +8,6 @@ export * from './tracing';
 export * from './services';
 export * from './realtime';
 export * from './state-machine';
+export * from './policies/failover-policy';
+export * from './services/semantic-memory';
+export * from './services/schema-evolution';

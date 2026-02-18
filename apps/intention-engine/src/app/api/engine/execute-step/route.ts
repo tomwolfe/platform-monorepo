@@ -48,7 +48,7 @@ import {
   attemptErrorRecovery,
 } from "@/lib/engine/execution-helpers";
 import { needsCompensation } from "@repo/mcp-protocol";
-import { NormalizationService, QStashService } from "@repo/shared";
+import { NormalizationService, QStashService, verifyQStashWebhook, getQStashWebhookHeaders } from "@repo/shared";
 import { NervousSystemObserver } from "@/lib/listeners/nervous-system-observer";
 
 export const runtime = "nodejs";
@@ -456,34 +456,22 @@ async function triggerNextStep(executionId: string, currentStepIndex: number): P
 // API HANDLER
 // ============================================================================
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
-  const startTime = performance.now();
-
+/**
+ * Execute Step Handler - Core business logic
+ * Separated for QStash webhook support
+ */
+async function executeStepHandler(
+  request: NextRequest,
+  executionId: string,
+  startStepIndex: number,
+  startTime: number
+): Promise<NextResponse> {
   try {
-    // Parse request
-    const rawBody = await request.json();
-    const validatedBody = ExecuteStepRequestSchema.safeParse(rawBody);
-
-    if (!validatedBody.success) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: "VALIDATION_ERROR",
-            message: `Invalid request: ${validatedBody.error.message}`,
-          },
-        },
-        { status: 400 }
-      );
-    }
-
-    const { executionId, startStepIndex = 0 } = validatedBody.data;
-
     // SECURITY: Check internal system key for recursive calls
     // Allow first call without key (from /api/execute or /api/chat)
     const internalKey = request.headers.get("x-internal-system-key");
     const isRecursiveCall = internalKey !== null;
-    
+
     if (isRecursiveCall && internalKey !== INTERNAL_SYSTEM_KEY) {
       return NextResponse.json(
         {
@@ -529,9 +517,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
-      // Get pending steps
-      const pendingSteps = getPendingSteps(state);
-      
       // Filter to steps starting from startStepIndex
       const plan = state.plan;
       if (!plan) {
@@ -549,17 +534,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       // Find next step to execute
       const completedStepIds = getCompletedSteps(state).map(s => s.step_id);
-      const nextStep = plan.steps.find((step, index) => 
+      const nextStep = plan.steps.find((step, index) =>
         index >= startStepIndex && !completedStepIds.includes(step.id)
       );
 
       if (!nextStep) {
         // No more steps - execution complete
         const completedCount = getCompletedSteps(state).length;
-        
+
         // Check if any steps failed
         const hasFailedSteps = state.step_states.some(s => s.status === "failed");
-        
+
         return NextResponse.json(
           ExecuteStepResponseSchema.parse({
             success: !hasFailedSteps,
@@ -638,8 +623,104 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       await releaseLock(executionId);
     }
   } catch (error) {
+    console.error("[ExecuteStep] Handler error:", error);
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: "INTERNAL_ERROR",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  const startTime = performance.now();
+
+  try {
+    // QSTASH WEBHOOK VERIFICATION
+    // If request comes from QStash, verify the signature
+    const headers = request.headers;
+    const upstashSignature = headers.get("upstash-signature");
+    const upstashKeyId = headers.get("upstash-key-id");
+
+    // Check if this is a QStash webhook call
+    const isQStashWebhook = upstashSignature !== null;
+
+    if (isQStashWebhook) {
+      // In development without signing keys, skip verification
+      if (
+        process.env.NODE_ENV === "development" &&
+        !process.env.QSTASH_CURRENT_SIGNING_KEY
+      ) {
+        console.warn("[ExecuteStep] QStash webhook verification skipped in dev mode");
+      } else {
+        // Read raw body for verification (need to re-parse after)
+        const rawBody = await request.text();
+        const isValid = await verifyQStashWebhook(rawBody, upstashSignature, upstashKeyId);
+
+        if (!isValid) {
+          console.warn("[ExecuteStep] QStash webhook signature verification failed");
+          return NextResponse.json(
+            {
+              success: false,
+              error: {
+                code: "UNAUTHORIZED",
+                message: "Invalid QStash signature",
+              },
+            },
+            { status: 401 }
+          );
+        }
+
+        console.log("[ExecuteStep] QStash webhook verified, parsing body...");
+        // Parse the body we already read
+        const validatedBody = ExecuteStepRequestSchema.safeParse(JSON.parse(rawBody));
+
+        if (!validatedBody.success) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: {
+                code: "VALIDATION_ERROR",
+                message: `Invalid request: ${validatedBody.error.message}`,
+              },
+            },
+            { status: 400 }
+          );
+        }
+
+        const { executionId, startStepIndex = 0 } = validatedBody.data;
+        return await executeStepHandler(request, executionId, startStepIndex, startTime);
+      }
+    }
+
+    // Non-QStash call (direct API call) - use normal flow
+    const rawBody = await request.json();
+    const validatedBody = ExecuteStepRequestSchema.safeParse(rawBody);
+
+    if (!validatedBody.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: "VALIDATION_ERROR",
+            message: `Invalid request: ${validatedBody.error.message}`,
+          },
+        },
+        { status: 400 }
+      );
+    }
+
+    const { executionId, startStepIndex = 0 } = validatedBody.data;
+    return await executeStepHandler(request, executionId, startStepIndex, startTime);
+  } catch (error) {
     console.error("[ExecuteStep] Unhandled error:", error);
-    
+
     return NextResponse.json(
       {
         success: false,

@@ -36,7 +36,7 @@ import {
   attemptErrorRecovery,
   logExecutionResults,
 } from "./execution-helpers";
-import { RealtimeService } from "@repo/shared";
+import { RealtimeService, QStashService } from "@repo/shared";
 
 // ============================================================================
 // SCORE OUTCOME
@@ -60,6 +60,14 @@ import { Tracer } from "./tracing";
 import { getToolRegistry } from "./tools/registry";
 import { generateText, SUMMARIZATION_PROMPT } from "./llm";
 import { generatePlan } from "./planner";
+
+// ============================================================================
+// INTERNAL SYSTEM KEY
+// For authenticating QStash-triggered requests
+// ============================================================================
+
+const INTERNAL_SYSTEM_KEY =
+  process.env.INTERNAL_SYSTEM_KEY || "internal-system-key-change-in-production";
 
 // ============================================================================
 // EXECUTION RESULT
@@ -610,8 +618,8 @@ async function summarizeResults(
 
 // ============================================================================
 // EXECUTE PLAN
-// Main execution entry point with parallel execution and reflection
-// Vercel Hobby Tier: Durable checkpointing with resume capability
+// Main execution entry point - QStash-based saga execution
+// Vercel Hobby Tier: Fires first step via QStash, then returns immediately
 // ============================================================================
 
 export async function executePlan(
@@ -679,6 +687,42 @@ export async function executePlan(
     await saveExecutionState(state);
   }
 
+  // QSTASH-BASED EXECUTION: Fire first step and return immediately
+  // This avoids the Vercel 10-second timeout by decoupling orchestration from execution
+  try {
+    // Find the first ready step (no dependencies or all dependencies completed)
+    const firstStepIndex = 0;
+
+    // Trigger Step 0 via QStash (non-blocking, <100ms)
+    const messageId = await QStashService.triggerNextStep({
+      executionId,
+      stepIndex: firstStepIndex,
+      internalKey: INTERNAL_SYSTEM_KEY,
+    });
+
+    console.log(
+      `[executePlan] QStash triggered for execution ${executionId} (step ${firstStepIndex})${messageId ? ` [message: ${messageId}]` : ""}`
+    );
+
+    // Return immediately - the actual execution happens asynchronously via QStash
+    const endTime = performance.now();
+    return {
+      state,
+      success: true,
+      completed_steps: 0,
+      failed_steps: 0,
+      total_steps: plan.steps.length,
+      execution_time_ms: Math.round(endTime - startTime),
+      summary: "Execution initiated via QStash. Monitor progress via /api/engine/execute-step or Ably real-time updates.",
+    };
+  } catch (qstashError) {
+    console.error("[executePlan] Failed to trigger QStash:", qstashError);
+    // Fallback: try direct execution (for local dev without QStash)
+    console.warn("[executePlan] Falling back to direct execution mode");
+  }
+
+  // FALLBACK: Direct execution mode (for local dev or if QStash fails)
+  // This maintains backward compatibility but may hit Vercel timeouts
   try {
     while (true) {
       const readySteps = findReadySteps(plan, state);

@@ -497,7 +497,7 @@ export async function POST(req: Request) {
     const validatedBody = ChatRequestSchema.safeParse(rawBody);
 
     if (!validatedBody.success) {
-      return new Response(JSON.stringify({ error: "Invalid request parameters", details: validatedBody.error.format() }), { 
+      return new Response(JSON.stringify({ error: "Invalid request parameters", details: validatedBody.error.format() }), {
         status: 400,
         headers: { "Content-Type": "application/json" }
       });
@@ -557,7 +557,7 @@ export async function POST(req: Request) {
             if (step.status === "failed") {
               const inputStr = JSON.stringify(step.input).toLowerCase();
               const hasOverlap = keywords.some(k => inputStr.includes(k));
-              
+
               if (hasOverlap) {
                 let specificWarning = `Previous attempt at ${step.tool_name} with parameters ${JSON.stringify(step.input)} failed with error: "${step.error}".`;
                 failures.push(specificWarning);
@@ -580,7 +580,7 @@ export async function POST(req: Request) {
     try {
       const intentStart = Date.now();
       const { avoidTools } = await getPlanWithAvoidance(userText, userIp);
-      
+
       // Contextual Memory: Retrieve last interaction context from Postgres
       // This enables pronoun resolution ("it", "there", "that restaurant")
       const lastInteractionContext = await (async () => {
@@ -602,12 +602,12 @@ export async function POST(req: Request) {
         }
         return null;
       })();
-      
+
       const inferenceResult = await inferIntent(userText, avoidTools, [], lastInteractionContext || undefined);
       intentInferenceLatency = Date.now() - intentStart;
       intent = inferenceResult.hypotheses.primary;
       rawModelResponse = inferenceResult.rawResponse;
-      
+
       // Phase 3: Deterministic Intelligence Guardrails
       // Validate intent parameters against McpToolRegistry schemas
       // This overrides LLM "Confidence Inflation" with deterministic Zod failures
@@ -615,7 +615,7 @@ export async function POST(req: Request) {
         intent.type,
         intent.parameters || {}
       );
-      
+
       if (!normalizationResult.success) {
         console.warn("[NormalizationService] Intent parameter validation failed:", {
           intentType: intent.type,
@@ -629,11 +629,11 @@ export async function POST(req: Request) {
       }
     } catch (e) {
       console.error("Intent inference failed, falling back to UNKNOWN", e);
-      intent = { 
+      intent = {
         id: crypto.randomUUID(),
-        type: "UNKNOWN", 
-        confidence: 0, 
-        parameters: {}, 
+        type: "UNKNOWN",
+        confidence: 0,
+        parameters: {},
         rawText: userText,
         metadata: { version: "1.0.0", timestamp: new Date().toISOString(), source: "error_fallback" }
       } as any;
@@ -641,6 +641,47 @@ export async function POST(req: Request) {
 
     // Initialize Audit Log
     const auditLog = await createAuditLog(intent, undefined, userLocation || undefined, userIp);
+
+    // ========================================================================
+    // SAGA PATTERN: Immediate Handoff for Multi-Step Operations
+    // ========================================================================
+    // If this is a complex multi-step operation, trigger async execution
+    // and return immediately to avoid Vercel 10s timeout
+    if (requiresSagaExecution(intent.type)) {
+      try {
+        // Trigger async execution via QStash
+        const executionId = await triggerAsyncExecution(
+          intent,
+          {
+            userId: userId as string | undefined,
+            clerkId: clerkId || undefined,
+            userEmail: undefined,
+          },
+          auditLog.id
+        );
+
+        // Return immediately to client (<500ms response time)
+        return new Response(JSON.stringify({
+          success: true,
+          executionId,
+          message: "I've started working on that. Track progress in real-time.",
+          status: "STARTED",
+          intentType: intent.type,
+        }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      } catch (error) {
+        console.error("[Chat] Failed to trigger async execution:", error);
+        // Fallback: If QStash fails in prod, error out - do NOT fallback to sync
+        return new Response(
+          JSON.stringify({
+            error: "System busy, please try again",
+            code: "SAGA_TRIGGER_FAILED",
+          }),
+          { status: 503, headers: { "Content-Type": "application/json" } }
+        );
+      }
+    }
 
     // Zero-Latency Context: Fetch live operational state BEFORE calling LLM
     // This allows the LLM to "see" table availability without explicit tool calls

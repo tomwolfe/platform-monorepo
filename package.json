@@ -6,7 +6,8 @@
     "dev": "turbo dev",
     "lint": "turbo lint",
     "qstash:setup": "tsx scripts/setup-qstash.ts",
-    "qstash:test": "tsx scripts/test-qstash.ts"
+    "qstash:test": "tsx scripts/test-qstash.ts",
+    "test:saga": "tsx scripts/test-saga-pattern.ts"
   },
   "engines": {
     "node": "24.x"

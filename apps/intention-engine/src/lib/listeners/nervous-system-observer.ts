@@ -1,22 +1,27 @@
 /**
- * Nervous System Observer
- * 
+ * Nervous System Observer - Enhanced Proactive Observer
+ *
  * Vercel Hobby Tier Optimization:
  * - Listens for SystemEvents from the event mesh (Ably)
  * - Proactively notifies users based on last_interaction_context
  * - Implements "Infinite Memory" feel using Postgres user context
- * 
+ * - Uses LLM to generate proactive intents for re-engagement
+ *
  * Architecture:
  * 1. Subscribes to 'nervous-system:updates' channel
  * 2. Filters for TableVacated events
  * 3. Queries users.last_interaction_context for matching restaurant searches
- * 4. Sends proactive notification via Ably to user's channel
+ * 4. Uses LLM to generate "Proactive Intent" (e.g., "The table you wanted at Pesto Place is now free")
+ * 5. Sends proactive notification via Ably to user's channel
+ * 6. Tracks all proactive notifications for audit and learning
  */
 
-import { getAblyClient, RealtimeService } from "@repo/shared";
-import { db, eq, users, restaurants } from "@repo/database";
+import { getAblyClient, RealtimeService, MemoryClient, getMemoryClient as getSharedMemoryClient } from "@repo/shared";
+import { db, eq, users, restaurants, restaurantReservations } from "@repo/database";
 import { createSystemEvent, SystemEvent, createTypedSystemEvent } from "@repo/mcp-protocol";
 import { signServiceToken } from "@repo/auth";
+import { generateText } from "../engine/llm";
+import { Redis } from "@upstash/redis";
 
 // ============================================================================
 // OBSERVER CONFIGURATION
@@ -72,9 +77,26 @@ export interface UserContextMatch {
     restaurantId?: string;
     restaurantSlug?: string;
     restaurantName?: string;
+    status?: "FAILED" | "TIMEOUT" | "CANCELLED" | "COMPLETED";
   };
   matchReason: string;
   confidence: number;
+}
+
+// ============================================================================
+// PROACTIVE NOTIFICATION RESULT
+// ============================================================================
+
+export interface ProactiveNotificationResult {
+  success: boolean;
+  notificationId?: string;
+  message?: string;
+  error?: string;
+  usersNotified: number;
+  llmGeneratedContent?: {
+    proactiveIntent: string;
+    suggestedAction: string;
+  };
 }
 
 // ============================================================================
@@ -107,31 +129,42 @@ export class NervousSystemObserver {
   /**
    * Handle TableVacated event
    * Queries users with matching last_interaction_context
+   * Specifically targets users whose last interaction FAILED
    */
   async handleTableVacated(eventData: {
     event: TableVacatedEvent;
     token: string;
-  }): Promise<void> {
+  }): Promise<ProactiveNotificationResult> {
     const { event, token } = eventData;
 
     console.log(
       `[NervousSystemObserver] Processing TableVacated: ${event.tableId} at ${event.restaurantId}`
     );
 
+    const usersNotified = 0;
+    let llmContent: { proactiveIntent: string; suggestedAction: string } | undefined;
+
     try {
       // Verify the event token
       const verified = await this.verifyEventToken(token);
       if (!verified) {
         console.warn("[NervousSystemObserver] Invalid event token, skipping");
-        return;
+        return {
+          success: false,
+          error: "Invalid event token",
+          usersNotified: 0,
+        };
       }
 
-      // Find matching users
+      // Find matching users - specifically those with FAILED status
       const matchedUsers = await this.findMatchingUsers(event);
 
       if (matchedUsers.length === 0) {
         console.log("[NervousSystemObserver] No matching users found");
-        return;
+        return {
+          success: true,
+          usersNotified: 0,
+        };
       }
 
       console.log(
@@ -139,16 +172,44 @@ export class NervousSystemObserver {
       );
 
       // Send proactive notifications
+      let successCount = 0;
       for (const match of matchedUsers) {
-        await this.sendProactiveNotification(match, event);
+        const result = await this.sendProactiveNotification(match, event);
+        if (result.success) {
+          successCount++;
+          if (!llmContent && match.lastInteractionContext) {
+            // Capture LLM-generated content from first notification
+            const content = await this.buildNotificationMessage(match, event);
+            llmContent = {
+              proactiveIntent: content.proactiveIntent,
+              suggestedAction: content.suggestedAction,
+            };
+          }
+        }
       }
+
+      console.log(
+        `[NervousSystemObserver] Successfully notified ${successCount}/${matchedUsers.length} users`
+      );
+
+      return {
+        success: true,
+        usersNotified: successCount,
+        llmGeneratedContent: llmContent,
+      };
     } catch (error) {
       console.error("[NervousSystemObserver] Error handling TableVacated:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        usersNotified: 0,
+      };
     }
   }
 
   /**
    * Find users with matching last_interaction_context
+   * Specifically targets users whose last interaction FAILED for this restaurant
    */
   async findMatchingUsers(event: TableVacatedEvent): Promise<UserContextMatch[]> {
     try {
@@ -162,7 +223,7 @@ export class NervousSystemObserver {
       }
 
       // Query users with relevant last_interaction_context
-      // Note: In production, use more sophisticated querying or a search index
+      // Focus on users whose last interaction FAILED
       const allUsers = await db.query.users.findMany({
         where: eq(users.role, "shopper"),
       });
@@ -185,7 +246,28 @@ export class NervousSystemObserver {
           }
         }
 
-        // Check for matching restaurant
+        // PRIORITY 1: Users who FAILED to book this restaurant
+        if (context.status === "FAILED" || context.status === "TIMEOUT" || context.status === "CANCELLED") {
+          const matchResult = this.checkRestaurantMatch(
+            context,
+            restaurant,
+            event
+          );
+
+          if (matchResult.confidence >= this.config.matchConfidenceThreshold) {
+            matchedUsers.push({
+              userId: user.id,
+              userEmail: user.email,
+              clerkId: user.clerkId || undefined,
+              lastInteractionContext: context,
+              matchReason: `FAILED booking: ${matchResult.reason}`,
+              confidence: matchResult.confidence + 0.2, // Boost confidence for failed users
+            });
+            continue; // Found a match, move to next user
+          }
+        }
+
+        // PRIORITY 2: Users who searched for this restaurant (even if completed)
         const matchResult = this.checkRestaurantMatch(
           context,
           restaurant,
@@ -204,7 +286,10 @@ export class NervousSystemObserver {
         }
       }
 
-      return matchedUsers;
+      // Sort by confidence (FAILED users first)
+      matchedUsers.sort((a, b) => b.confidence - a.confidence);
+
+      return matchedUsers.slice(0, 5); // Limit to top 5 matches
     } catch (error) {
       console.error("[NervousSystemObserver] Error finding matching users:", error);
       return [];
@@ -267,15 +352,18 @@ export class NervousSystemObserver {
   async sendProactiveNotification(
     user: UserContextMatch,
     event: TableVacatedEvent
-  ): Promise<void> {
+  ): Promise<{ success: boolean; notificationId?: string; error?: string }> {
     try {
       const userChannel = `user:${user.clerkId || user.userId}`;
+
+      // Generate LLM-powered notification content
+      const notificationContent = await this.buildNotificationMessage(user, event);
 
       // Build proactive message
       const notification = {
         type: "proactive_table_availability",
-        title: "Table Available!",
-        message: this.buildNotificationMessage(user, event),
+        title: notificationContent.title,
+        message: notificationContent.message,
         data: {
           tableId: event.tableId,
           restaurantId: event.restaurantId,
@@ -284,7 +372,10 @@ export class NervousSystemObserver {
           timestamp: event.timestamp,
           matchReason: user.matchReason,
           confidence: user.confidence,
-          suggestedAction: "Book this table now",
+          suggestedAction: notificationContent.suggestedAction,
+          proactiveIntent: notificationContent.proactiveIntent,
+          // Deep link to book
+          actionUrl: `/restaurants/${event.restaurantId}/book?table=${event.tableId}&source=proactive`,
         },
         timestamp: new Date().toISOString(),
       };
@@ -309,41 +400,109 @@ export class NervousSystemObserver {
           tableId: event.tableId,
           restaurantId: event.restaurantId,
           notifiedUsers: [user.userId],
+          proactiveNotification: true,
+          matchReason: user.matchReason,
+          confidence: user.confidence,
         } as any,
         "intention-engine",
         {
           traceId: event.traceId,
           metadata: {
             proactiveNotification: true,
+            llmGenerated: true,
             userEmail: user.userEmail,
           },
         }
       );
 
-      // Log the event (could be stored in audit table)
+      // Store notification in Redis for analytics (optional)
+      // Note: This would require direct Redis access or a new MemoryClient method
+      // For now, the SystemEvent serves as the audit trail
       console.log(
-        `[NervousSystemObserver] Created SystemEvent: ${systemEvent.id}`
+        `[NervousSystemObserver] Notification audit trail created: ${systemEvent.id}`
       );
+
+      return {
+        success: true,
+        notificationId: systemEvent.id,
+      };
     } catch (error) {
       console.error(
         "[NervousSystemObserver] Error sending notification:",
         error
       );
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 
   /**
-   * Build human-readable notification message
+   * Build human-readable notification message using LLM
    */
-  private buildNotificationMessage(
+  private async buildNotificationMessage(
     user: UserContextMatch,
     event: TableVacatedEvent
-  ): string {
+  ): Promise<{
+    title: string;
+    message: string;
+    proactiveIntent: string;
+    suggestedAction: string;
+  }> {
     const restaurantName = event.restaurantName || "the restaurant";
     const capacity = event.capacity ? ` (seats ${event.capacity})` : "";
+    
+    // Use LLM to generate personalized proactive intent
+    try {
+      const prompt = `You are a proactive assistant helping users who previously failed to book a restaurant table.
+      
+Context:
+- User previously searched for or tried to book: ${user.lastInteractionContext.rawText || JSON.stringify(user.lastInteractionContext.parameters)}
+- The restaurant they wanted: ${restaurantName}
+- A table${capacity} just became available
+- User's last interaction status: ${user.lastInteractionContext.status || "unknown"}
 
-    return `Good news! A table${capacity} just became available at ${restaurantName}. ` +
-      `You recently searched for this restaurant - would you like to book it now?`;
+Generate a concise, compelling notification that:
+1. Acknowledges their previous attempt
+2. Announces the availability
+3. Suggests immediate action
+
+Respond with ONLY a JSON object in this format:
+{
+  "title": "Short catchy title (max 5 words)",
+  "message": "1-2 sentence notification message",
+  "proactiveIntent": "Natural language intent like 'The table you wanted at Pesto Place is now free. Should I book it?'",
+  "suggestedAction": "Call-to-action button text like 'Book Now' or 'Reserve Table'"
+}`;
+
+      const response = await generateText({
+        modelType: "planning",
+        prompt,
+        systemPrompt: "You are a helpful, concise notification generator. Output ONLY valid JSON.",
+        temperature: 0.7,
+      });
+
+      const parsed = JSON.parse(response.content.trim());
+      
+      return {
+        title: parsed.title || "Table Available!",
+        message: parsed.message || `Good news! A table${capacity} just became available at ${restaurantName}.`,
+        proactiveIntent: parsed.proactiveIntent || `The table you wanted at ${restaurantName} is now available.`,
+        suggestedAction: parsed.suggestedAction || "Book Now",
+      };
+    } catch (error) {
+      console.error("[NervousSystemObserver] LLM message generation failed, using fallback:", error);
+      
+      // Fallback to static message
+      return {
+        title: "Table Available!",
+        message: `Good news! A table${capacity} just became available at ${restaurantName}. ` +
+          `You recently searched for this restaurant - would you like to book it now?`,
+        proactiveIntent: `The table you wanted at ${restaurantName} is now free. Should I book it?`,
+        suggestedAction: "Book Now",
+      };
+    }
   }
 
   /**

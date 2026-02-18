@@ -1,12 +1,12 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { streamText, tool, stepCountIs, convertToModelMessages, generateObject } from "ai";
 import { z } from "zod";
-import { 
-  search_restaurant, 
-  add_calendar_event, 
-  geocode_location, 
-  getToolCapabilitiesPrompt, 
-  listTools 
+import {
+  search_restaurant,
+  add_calendar_event,
+  geocode_location,
+  getToolCapabilitiesPrompt,
+  listTools
 } from "@/lib/tools";
 import { env } from "@/lib/config";
 import { inferIntent } from "@/lib/intent";
@@ -14,10 +14,10 @@ import { Redis } from "@upstash/redis";
 import { getUserPreferences, updateUserPreferences } from "@/lib/preferences";
 import { redis } from "@/lib/redis-client";
 import { getMcpClients } from "@/lib/mcp-client";
-import { 
-  TOOLS, 
-  McpToolRegistry, 
-  GeocodeSchema, 
+import {
+  TOOLS,
+  McpToolRegistry,
+  GeocodeSchema,
   AddCalendarEventSchema,
   SearchRestaurantSchema,
   WeatherDataSchema,
@@ -30,6 +30,7 @@ import {
   UnifiedLocationSchema
 } from "@repo/mcp-protocol";
 import { NormalizationService } from "@repo/shared";
+import { getNervousSystemObserver } from "@/lib/listeners/nervous-system-observer";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -46,6 +47,125 @@ const ChatRequestSchema = z.object({
     lng: z.number().min(-180).max(180),
   }).nullable().optional(),
 });
+
+/**
+ * Fetch Live Operational State from Redis cache
+ * Zero-Latency Context: Pre-inject table availability into system prompt
+ * so LLM can "see" state without explicit tool calls
+ */
+async function fetchLiveOperationalState(
+  messages: any[],
+  userLocation?: { lat: number; lng: number }
+): Promise<{
+  restaurantStates?: Array<{
+    id: string;
+    name: string;
+    tableAvailability: "available" | "limited" | "full";
+    waitlistCount?: number;
+    nextAvailableSlot?: string;
+  }>;
+  rawText?: string;
+}> {
+  try {
+    // Extract restaurant mentions from conversation history
+    const restaurantMentions = new Set<string>();
+    
+    for (const msg of messages) {
+      const content = typeof msg.content === "string" 
+        ? msg.content 
+        : Array.isArray(msg.content)
+          ? msg.content.filter((p: any) => p.type === "text").map((p: any) => p.text).join(" ")
+          : "";
+      
+      if (!content) continue;
+      
+      // Look for restaurant IDs, names, or slugs in the conversation
+      // Pattern 1: Direct restaurant ID references
+      const idMatches = content.match(/restaurant[:\s]+([a-zA-Z0-9-_]+)/gi);
+      if (idMatches) {
+        idMatches.forEach((m: string) => {
+          const id = m.split(/[:\s]+/)[1];
+          if (id) restaurantMentions.add(id);
+        });
+      }
+      
+      // Pattern 2: Common restaurant names (would need NLP in production)
+      // For now, look for capitalized multi-word phrases that might be restaurant names
+      const nameMatches = content.match(/at\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/g);
+      if (nameMatches) {
+        nameMatches.forEach((m: string) => {
+          const name = m.replace(/^at\s+/, "");
+          if (name) restaurantMentions.add(name);
+        });
+      }
+    }
+    
+    if (restaurantMentions.size === 0) {
+      return { rawText: "No specific restaurants mentioned in conversation" };
+    }
+    
+    console.log(`[LiveOperationalState] Fetching state for restaurants: ${Array.from(restaurantMentions).join(", ")}`);
+    
+    // Fetch state from Redis cache (populated by TableStack events)
+    const restaurantStates: Array<{
+      id: string;
+      name: string;
+      tableAvailability: "available" | "limited" | "full";
+      waitlistCount?: number;
+      nextAvailableSlot?: string;
+    }> = [];
+    
+    for (const restaurantRef of restaurantMentions) {
+      // Try to fetch from Redis cache
+      // Key pattern: restaurant_state:{id|slug}
+      const stateKey = `restaurant_state:${restaurantRef}`;
+      const cachedState = await redis?.get<any>(stateKey);
+      
+      if (cachedState) {
+        restaurantStates.push({
+          id: cachedState.id || restaurantRef,
+          name: cachedState.name || restaurantRef,
+          tableAvailability: cachedState.tableAvailability || "unknown",
+          waitlistCount: cachedState.waitlistCount,
+          nextAvailableSlot: cachedState.nextAvailableSlot,
+        });
+      } else {
+        // Fallback: Try to fetch from database directly
+        try {
+          const { db, eq, restaurants: restaurantsTable, restaurantTables } = await import("@repo/database");
+          const restaurant = await db.query.restaurants.findFirst({
+            where: eq(restaurantsTable.slug, restaurantRef),
+          });
+          
+          if (restaurant) {
+            // Fetch table availability
+            const tables = await db.query.restaurantTables.findMany({
+              where: eq(restaurantTables.restaurantId, restaurant.id),
+            });
+            
+            const availableTables = tables.filter((t: any) => t.status === "available").length;
+            const totalTables = tables.length;
+            
+            restaurantStates.push({
+              id: restaurant.id,
+              name: restaurant.name,
+              tableAvailability: availableTables === 0 ? "full" : 
+                                 availableTables < totalTables / 2 ? "limited" : "available",
+              nextAvailableSlot: availableTables === 0 ? "Unknown - try waitlist" : undefined,
+            });
+          }
+        } catch (dbError) {
+          console.warn(`[LiveOperationalState] Failed to fetch restaurant ${restaurantRef}:`, dbError);
+        }
+      }
+    }
+    
+    return { restaurantStates };
+  } catch (error) {
+    console.error("[LiveOperationalState] Failed to fetch operational state:", error);
+    return { rawText: "Unable to fetch live restaurant states" };
+  }
+}
 
 /**
  * Dynamically fetches tools from all registered MCP servers.
@@ -245,7 +365,17 @@ export async function POST(req: Request) {
 
     // Initialize Audit Log
     const auditLog = await createAuditLog(intent, undefined, userLocation || undefined, userIp);
+
+    // Zero-Latency Context: Fetch live operational state BEFORE calling LLM
+    // This allows the LLM to "see" table availability without explicit tool calls
+    const liveOperationalState = await fetchLiveOperationalState(coreMessages, userLocation || undefined);
     
+    const liveStateContext = liveOperationalState.restaurantStates
+      ? `\n### LIVE RESTAURANT STATE (Real-time from Redis/DB):\n${liveOperationalState.restaurantStates
+          .map(r => `- ${r.name}: ${r.tableAvailability.toUpperCase()}${r.waitlistCount ? ` (${r.waitlistCount} on waitlist)` : ""}${r.nextAvailableSlot ? ` - Next: ${r.nextAvailableSlot}` : ""}`)
+          .join("\n")}\n\n**IMPORTANT**: Use this live state to avoid suggesting restaurants that are full. If a restaurant shows "full", suggest alternatives or recommend joining the waitlist.`
+      : `\n### LIVE STATE: ${liveOperationalState.rawText || "No live state available"}\n`;
+
     // Fetch dynamic tools from MCP servers
     const mcpTools = await getTools(auditLog.id, userLocation || undefined);
     
@@ -291,25 +421,26 @@ export async function POST(req: Request) {
       }
     }
 
-    const locationContext = userLocation 
+    const locationContext = userLocation
       ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}.`
       : "The user's location is unknown.";
 
-    const memoryContext = recentLogs.length > 0 
+    const memoryContext = recentLogs.length > 0
       ? `Recent interaction history:\n${recentLogs.map(l => `- Intent: ${l.intent}, Outcome: ${l.final_outcome || 'N/A'}`).join('\n')}`
       : "";
 
     const toolCapabilitiesPrompt = getToolCapabilitiesPrompt();
-    
+
     let systemPrompt = `You are an Intention Engine.
     Today's date is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.
     The user's inferred intent is: ${intent.type} (Confidence: ${intent.confidence})
-    
+
     ${locationContext}
     ${memoryContext}
+    ${liveStateContext}
     ${failureWarnings}
 
-    If a tool returns success: false, you MUST acknowledge the error and attempt to REPLAN. 
+    If a tool returns success: false, you MUST acknowledge the error and attempt to REPLAN.
 
     ${toolCapabilitiesPrompt}
     `;

@@ -87,7 +87,7 @@ async function seed() {
   // Query created tables to get their IDs
   const createdTables = await db.query.restaurantTables.findMany({
     where: eq(restaurantTables.restaurantId, restaurant.id),
-    orderBy: (tables, { asc }) => [asc(tables.tableNumber)],
+    orderBy: restaurantTables.tableNumber,
   });
 
   console.log(`   ✅ Created ${tables.length} tables at ${restaurant.name}`);

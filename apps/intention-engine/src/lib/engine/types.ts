@@ -16,6 +16,7 @@ export const ExecutionStatusSchema = z.enum([
   "PARSED",        // Intent successfully parsed and validated
   "PLANNING",      // Generating execution plan
   "PLANNED",       // Plan generated and validated
+  "STARTED",       // Async execution triggered (Vercel Hobby pattern)
   "EXECUTING",     // Actively executing plan steps
   "AWAITING_CONFIRMATION", // Paused for user approval of a step
   "REFLECTING",    // Analyzing failure and replanning
@@ -330,7 +331,8 @@ export const ValidStateTransitions: Record<ExecutionStatus, ExecutionStatus[]> =
   PARSING: ["PARSED", "REJECTED", "TIMEOUT", "FAILED"],
   PARSED: ["PLANNING", "CANCELLED"],
   PLANNING: ["PLANNED", "REJECTED", "TIMEOUT", "FAILED"],
-  PLANNED: ["EXECUTING", "CANCELLED"],
+  PLANNED: ["STARTED", "EXECUTING", "CANCELLED"],
+  STARTED: ["EXECUTING", "FAILED", "TIMEOUT", "CANCELLED"],
   EXECUTING: ["COMPLETED", "FAILED", "TIMEOUT", "CANCELLED", "REFLECTING", "AWAITING_CONFIRMATION"],
   AWAITING_CONFIRMATION: ["EXECUTING", "CANCELLED", "FAILED"],
   REFLECTING: ["EXECUTING", "FAILED", "CANCELLED"],

@@ -1,12 +1,12 @@
-import { 
-  Checkpoint, 
-  CheckpointStatus, 
-  ToolDefinition, 
-  Intent 
+import {
+  Checkpoint,
+  CheckpointStatus,
+  ToolDefinition,
+  Intent
 } from "./types";
 import { IPersistenceProvider } from "../../infrastructure/PersistenceProvider";
 import { ObservationProvider } from "../../infrastructure/ObservationProvider";
-import { ToolExecutor } from "./orchestrator";
+import { ToolExecutor } from "./saga-orchestrator";
 
 export interface EngineOptions {
   persistence: IPersistenceProvider;

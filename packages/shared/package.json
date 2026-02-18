@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@upstash/redis": "^1.36.2",
+    "@upstash/qstash": "^2.1.0",
     "resend": "^4.1.1",
     "ably": "^2.17.1",
     "zod": "^3.24.1",

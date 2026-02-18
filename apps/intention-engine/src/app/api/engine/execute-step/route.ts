@@ -48,7 +48,8 @@ import {
   attemptErrorRecovery,
 } from "@/lib/engine/execution-helpers";
 import { needsCompensation } from "@repo/mcp-protocol";
-import { NormalizationService } from "@repo/shared";
+import { NormalizationService, QStashService } from "@repo/shared";
+import { NervousSystemObserver } from "@/lib/listeners/nervous-system-observer";
 
 export const runtime = "nodejs";
 export const maxDuration = 10; // Vercel Hobby limit
@@ -432,42 +433,23 @@ function resolveStepParameters(
 
 // ============================================================================
 // RECURSIVE TRIGGER
-// Non-blocking fetch to self to trigger next step
+// QStash-based queue trigger for reliable saga execution
+// Replaces unreliable fetch(self) with guaranteed delivery
 // ============================================================================
 
 async function triggerNextStep(executionId: string, currentStepIndex: number): Promise<void> {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  const url = `${appUrl}/api/engine/execute-step`;
+  // Use QStash for reliable queue-based execution
+  const messageId = await QStashService.triggerNextStep({
+    executionId,
+    stepIndex: currentStepIndex + 1,
+    internalKey: INTERNAL_SYSTEM_KEY,
+  });
 
-  // Spawn background task with delay
-  setTimeout(async () => {
-    try {
-      console.log(`[ExecuteStep] Triggering next step for ${executionId} (step ${currentStepIndex + 1})`);
-      
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-internal-system-key": INTERNAL_SYSTEM_KEY,
-        },
-        body: JSON.stringify({
-          executionId,
-          startStepIndex: currentStepIndex + 1,
-        }),
-        // Important: Don't wait for response
-      });
-
-      if (!response.ok) {
-        console.error(
-          `[ExecuteStep] Failed to trigger next step: ${response.status} ${response.statusText}`
-        );
-      } else {
-        console.log(`[ExecuteStep] Next step triggered successfully`);
-      }
-    } catch (error) {
-      console.error(`[ExecuteStep] Error triggering next step:`, error);
-    }
-  }, RECURSIVE_DELAY_MS);
+  if (messageId) {
+    console.log(`[ExecuteStep] QStash message sent for next step [message: ${messageId}]`);
+  } else {
+    console.log(`[ExecuteStep] QStash not configured, using fallback fetch(self)`);
+  }
 }
 
 // ============================================================================
@@ -603,9 +585,31 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       // Update state with step result
       const updatedState = updateStepState(state, nextStep.id, result.stepState);
-      
+
       // Save updated state to Redis
       await saveExecutionState(updatedState);
+
+      // TRACK FAILED BOOKINGS - Store in Redis for proactive re-engagement
+      if (!result.success && (nextStep.tool_name.includes("book") || nextStep.tool_name.includes("reserve"))) {
+        // Extract restaurant ID from step parameters
+        const restaurantId = nextStep.parameters?.restaurantId as string | undefined;
+        if (restaurantId) {
+          // Get user context from execution state
+          const userId = (state.context?.userId as string) || undefined;
+          const clerkId = (state.context?.clerkId as string) || undefined;
+          const userEmail = (state.context?.userEmail as string) || undefined;
+
+          await NervousSystemObserver.trackFailedBooking(restaurantId, {
+            userId,
+            clerkId,
+            userEmail,
+            intentType: state.intent?.type,
+            parameters: nextStep.parameters,
+            reason: result.stepState.error?.message || "Booking failed",
+            executionId,
+          });
+        }
+      }
 
       // Determine if we should trigger next step
       const willTriggerNext = result.success && (stepIndex < plan.steps.length - 1);

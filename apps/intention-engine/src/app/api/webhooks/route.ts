@@ -5,9 +5,10 @@ import { createAuditLog } from "@/lib/audit";
 import { z } from "zod";
 import { handleTableStackRejection } from "@/lib/listeners/tablestack";
 import { verifySignature, signServiceToken } from "@repo/auth";
-import { IdempotencyService, IDEMPOTENCY_KEY_HEADER } from "@repo/shared";
+import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, RealtimeService } from "@repo/shared";
 import { redis } from "@/lib/redis-client";
 import { getAblyClient } from "@repo/shared";
+import { NervousSystemObserver, type TableVacatedEvent } from "@/lib/listeners/nervous-system-observer";
 
 export const runtime = "edge";
 
@@ -28,11 +29,18 @@ const WebhookEventSchema = z.object({
   }).optional(),
   // Fields for reservation_rejected (can overlap)
   guestEmail: z.string().optional(),
-  restaurantName: z.string().optional(),
   startTime: z.string().optional(),
   partySize: z.number().optional(),
   visitCount: z.number().optional(),
   preferences: z.record(z.unknown()).optional(),
+  // Fields for table_vacated (from TableStack)
+  tableId: z.string().optional(),
+  restaurantId: z.string().optional(),
+  restaurantName: z.string().optional(),
+  restaurantSlug: z.string().optional(),
+  capacity: z.number().optional(),
+  timestamp: z.string().optional(),
+  traceId: z.string().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -110,11 +118,11 @@ export async function POST(req: NextRequest) {
     }
 
     if (event === 'high_value_guest_reservation' && guest && reservation) {
-      // Strategic Synergy: High-value guest detected. 
+      // Strategic Synergy: High-value guest detected.
       // Proactively suggest a delivery or transport workflow if they have a saved address.
-      
+
       let proactiveText = `Guest ${guest.name} (High Value, ${guest.visitCount} visits) just booked at ${reservation.restaurantName}.`;
-      
+
       if (guest.defaultDeliveryAddress) {
         proactiveText += ` Suggest a delivery quote from ${reservation.restaurantName} to ${guest.defaultDeliveryAddress} for after their reservation.`;
       } else {
@@ -128,13 +136,80 @@ export async function POST(req: NextRequest) {
       const { hypotheses } = await inferIntent(proactiveText, []);
       const intent = hypotheses.primary;
       const plan = await generatePlan(proactiveText);
-      
+
       await createAuditLog(intent, plan, undefined, `webhook:${guest.email}`);
 
-      return NextResponse.json({ 
+      return NextResponse.json({
         message: "High-value guest event processed",
         proactive_action: guest.defaultDeliveryAddress ? "delivery_quote_suggested" : "welcome_offer_prepared"
       });
+    }
+
+    // ========================================================================
+    // TABLE VACATED EVENT - Proactive Re-engagement
+    // ========================================================================
+    // Triggered when TableStack releases a table back to available status.
+    // The Nervous System Observer will:
+    // 1. Query Redis for users who failed to book this restaurant
+    // 2. Generate personalized re-engagement messages via LLM
+    // 3. Push notifications to user channels via Ably
+    //
+    // Architecture:
+    // - TableStack → Ably Webhook → /api/webhooks → NervousSystemObserver → Ably User Channel
+    //
+    if (event === 'table_vacated') {
+      const { tableId, restaurantId, restaurantName, restaurantSlug, capacity, timestamp, traceId } = validatedBody.data;
+
+      if (!tableId || !restaurantId) {
+        console.warn("[TableVacated] Missing required fields (tableId or restaurantId)");
+        return NextResponse.json({ message: "Event received but missing required fields" }, { status: 200 });
+      }
+
+      console.log(`[TableVacated] Table ${tableId} at ${restaurantName || restaurantId} is now available`);
+
+      // Create TableVacated event payload
+      const tableVacatedEvent: TableVacatedEvent = {
+        tableId,
+        restaurantId,
+        restaurantName: restaurantName || undefined,
+        restaurantSlug: restaurantSlug || undefined,
+        capacity: capacity || undefined,
+        timestamp: timestamp || new Date().toISOString(),
+        traceId: traceId || undefined,
+      };
+
+      // Use Nervous System Observer to handle proactive re-engagement
+      const observer = new NervousSystemObserver();
+      const token = await signServiceToken({
+        event: 'TableVacated',
+        data: tableVacatedEvent,
+        timestamp: Date.now(),
+      });
+
+      const result = await observer.handleTableVacated({
+        event: tableVacatedEvent,
+        token,
+      });
+
+      if (result.success) {
+        console.log(
+          `[TableVacated] Proactive re-engagement complete: ${result.usersNotified} users notified${result.llmGeneratedContent ? ` [intent: ${result.llmGeneratedContent.proactiveIntent}]` : ''}`
+        );
+
+        return NextResponse.json({
+          message: "Table vacated event processed",
+          usersNotified: result.usersNotified,
+          llmGenerated: !!result.llmGeneratedContent,
+          proactiveIntent: result.llmGeneratedContent?.proactiveIntent,
+          suggestedAction: result.llmGeneratedContent?.suggestedAction,
+        });
+      } else {
+        console.warn("[TableVacated] Re-engagement failed:", result.error);
+        return NextResponse.json({
+          message: "Table vacated event received but re-engagement failed",
+          error: result.error,
+        }, { status: 200 });
+      }
     }
 
     return NextResponse.json({ message: "Event ignored" });

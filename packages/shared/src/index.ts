@@ -11,3 +11,4 @@ export * from './state-machine';
 export * from './policies/failover-policy';
 export * from './services/semantic-memory';
 export * from './services/schema-evolution';
+export * from './services/qstash';

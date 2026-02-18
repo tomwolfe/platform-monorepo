@@ -119,7 +119,9 @@ export async function POST(req: Request) {
 
     // Stateful Memory: Retrieve user preferences from Redis
     const userIp = req.headers.get("x-forwarded-for") || "anonymous";
-    const userPrefsKey = `prefs:${userIp}`;
+    const clerkId = req.headers.get("x-clerk-id") || undefined;
+    const userId = clerkId || userIp; // Prefer clerkId, fallback to IP for anonymous
+    const userPrefsKey = `prefs:${userId}`;
     let userPreferences = null;
     let recentLogs: any[] = [];
 
@@ -129,8 +131,8 @@ export async function POST(req: Request) {
     if (redis) {
       try {
         [userPreferences, recentLogs] = await Promise.all([
-          getUserPreferences(userIp),
-          getUserAuditLogs(userIp, 10)
+          getUserPreferences(userId),
+          getUserAuditLogs(userId, 10)
         ]);
       } catch (err) {
         console.warn("Failed to retrieve user data from Redis:", err);
@@ -188,7 +190,15 @@ export async function POST(req: Request) {
       // Contextual Memory: Retrieve last interaction context from Postgres
       // This enables pronoun resolution ("it", "there", "that restaurant")
       const lastInteractionContext = await (async () => {
-        if (userIp !== "anonymous") {
+        if (clerkId) {
+          try {
+            const { getLastInteractionContextByClerkId } = await import("@/lib/intent");
+            return await getLastInteractionContextByClerkId(clerkId);
+          } catch (err) {
+            console.warn("Failed to retrieve last interaction context by clerkId:", err);
+          }
+        } else if (userIp !== "anonymous") {
+          // Fallback to email-based lookup for anonymous users (legacy)
           try {
             const { getLastInteractionContext } = await import("@/lib/intent");
             return await getLastInteractionContext(userIp);
@@ -327,11 +337,15 @@ export async function POST(req: Request) {
               total: totalLatency,
             }
           });
-          
+
           // Contextual Memory: Save the interaction context for future pronoun resolution
-          if (userIp !== "anonymous") {
-            const { saveInteractionContext } = await import("@/lib/intent");
-            await saveInteractionContext(userIp, intent, auditLog.id);
+          if (userId) {
+            const { saveInteractionContextByClerkId, saveInteractionContext } = await import("@/lib/intent");
+            if (clerkId) {
+              await saveInteractionContextByClerkId(clerkId, intent, auditLog.id);
+            } else if (userIp !== "anonymous") {
+              await saveInteractionContext(userIp, intent, auditLog.id);
+            }
           }
         } catch (err) {
           console.error("Failed to update final audit log:", err);

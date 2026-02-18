@@ -381,6 +381,7 @@ function validatePlanConstraints(
 // ============================================================================
 // GENERATE PLAN
 // Main entry point: generates validated plan from intent
+// LIVE STATE GATE: Checks operational state before planning for BOOKING intents
 // ============================================================================
 
 export async function generatePlan(
@@ -400,6 +401,32 @@ export async function generatePlan(
         recoverable: false,
         timestamp,
       });
+    }
+
+    // LIVE STATE GATE: Check operational state before planning for BOOKING intents
+    // If target restaurant table status is 'occupied' or 'dirty', suggest delivery alternative
+    let liveStateConstraint = "";
+    if (intent.type === "ACTION" || intent.type === "SCHEDULE") {
+      const intentParams = intent.parameters as Record<string, any>;
+      const restaurantId = intentParams.restaurant_id || intentParams.restaurantId;
+      
+      if (restaurantId) {
+        try {
+          const { get_live_operational_state } = await import("../tools/operational_state");
+          const liveState = await get_live_operational_state({ restaurant_id: restaurantId });
+          
+          if (liveState && typeof liveState === 'object') {
+            const tableStatus = (liveState as any).table_status || (liveState as any).status;
+            if (tableStatus === 'occupied' || tableStatus === 'dirty' || tableStatus === 'full') {
+              liveStateConstraint = "Constraint: Target table is currently unavailable (occupied/dirty/full). Proactively suggest a delivery alternative via OpenDelivery instead of a booking. Do not attempt table reservation.";
+              console.log(`[Live State Gate] Restaurant ${restaurantId} has table status '${tableStatus}'. Adding delivery constraint.`);
+            }
+          }
+        } catch (err) {
+          console.warn("[Live State Gate] Failed to check operational state:", err);
+          // Continue without the constraint - don't block planning
+        }
+      }
     }
 
     // Merge constraints with defaults
@@ -426,14 +453,20 @@ export async function generatePlan(
       recent_successful_history: contextHistory,
     });
 
-    const prompt = context.repairFeedback 
+    const prompt = context.repairFeedback
       ? `REPAIR INSTRUCTION: ${context.repairFeedback}\n\nORIGINAL INTENT: ${basePrompt}`
       : basePrompt;
+
+    // Build system prompt with live state constraint if applicable
+    const baseSystemPrompt = buildPlanningPrompt(context);
+    const systemPrompt = liveStateConstraint
+      ? `${baseSystemPrompt}\n\n${liveStateConstraint}`
+      : baseSystemPrompt;
 
     const generationResult: GenerateStructuredResult<RawPlan> = await generateStructured({
       modelType: "planning",
       prompt,
-      systemPrompt: buildPlanningPrompt(context),
+      systemPrompt,
       schema: RawPlanSchema,
       temperature: context.repairFeedback ? 0.2 : 0.1, // Slightly higher temp for repair
       timeoutMs: 30000, // 30 second timeout for planning

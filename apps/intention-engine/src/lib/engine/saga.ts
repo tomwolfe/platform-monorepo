@@ -1,10 +1,10 @@
 /**
  * SagaManager - Phase 3: Implement Saga Patterns for Workflows
- * 
+ *
  * Manages distributed sagas for cross-service transactions with automatic
  * compensating transactions on failure. Ensures eventual consistency without
  * distributed locks.
- * 
+ *
  * Pattern:
  * 1. Execute steps sequentially or in parallel
  * 2. On failure, execute compensations in reverse order
@@ -15,6 +15,14 @@ import { RealtimeService } from "@repo/shared";
 import { ToolExecutor } from "./orchestrator";
 import { StepExecutionState } from "./types";
 import { createTypedSystemEvent, type SagaEventPayload } from "@repo/mcp-protocol";
+import { 
+  COMPENSATIONS, 
+  IDEMPOTENT_TOOLS,
+  COMPENSATABLE_TOOLS,
+  needsCompensation,
+  getCompensation,
+  mapCompensationParameters 
+} from "@repo/mcp-protocol";
 
 export enum SagaStatus {
   STARTED = "STARTED",
@@ -149,7 +157,7 @@ export class SagaManager {
       // Execute steps
       for (let i = 0; i < steps.length; i++) {
         const step = steps[i];
-        
+
         // Check timeout
         if (timeoutMs) {
           const elapsed = Date.now() - new Date(result.startedAt).getTime();
@@ -169,21 +177,26 @@ export class SagaManager {
         try {
           const stepResult = await this.executeStep(step, result.steps.slice(0, i).map(s => s.result));
           result.steps[i].status = SagaStepStatus.COMPLETED;
-          result.steps[i].result = stepResult;
+          result.steps[i].result = stepResult.output;
           result.steps[i].completedAt = new Date().toISOString();
           result.completedSteps++;
 
-          // Build parameter map for compensation
+          // Auto-attach compensation if discovered during execution
+          if (stepResult.compensation && !result.steps[i].compensation) {
+            result.steps[i].compensation = stepResult.compensation;
+          }
+
+          // Build parameter map for compensation (legacy support for custom mappers)
           if (step.compensation?.parameterMapper) {
             const allResults = result.steps.reduce((acc, s, idx) => {
               acc[s.id] = s.result;
               return acc;
             }, {} as Record<string, unknown>);
-            step.compensation.parameters = step.compensation.parameterMapper(stepResult, allResults);
+            step.compensation.parameters = step.compensation.parameterMapper(stepResult.output, allResults);
           }
         } catch (error) {
           result.steps[i].status = SagaStepStatus.FAILED;
-          result.steps[i].error = error instanceof Error 
+          result.steps[i].error = error instanceof Error
             ? { code: "STEP_FAILED", message: error.message }
             : { code: "UNKNOWN", message: String(error) };
           result.steps[i].completedAt = new Date().toISOString();
@@ -252,11 +265,12 @@ export class SagaManager {
 
   /**
    * Execute a single step with the tool executor
+   * Automatically builds compensation data from COMPENSATIONS registry
    */
   private async executeStep(
     step: SagaStep,
     previousResults: unknown[]
-  ): Promise<unknown> {
+  ): Promise<{ output: unknown; compensation?: SagaStep["compensation"] }> {
     const result = await this.toolExecutor.execute(
       step.toolName,
       step.parameters,
@@ -267,7 +281,25 @@ export class SagaManager {
       throw new Error(result.error || "Tool execution failed");
     }
 
-    return result.output;
+    // AUTO-COMPENSATION: Build compensation data from registry
+    let compensation: SagaStep["compensation"] | undefined;
+    if (needsCompensation(step.toolName)) {
+      const compDef = getCompensation(step.toolName);
+      if (compDef && compDef.toolName) {
+        const mappedParams = mapCompensationParameters(
+          step.toolName,
+          step.parameters,
+          result.output
+        );
+        compensation = {
+          toolName: compDef.toolName,
+          parameters: mappedParams,
+        };
+        console.log(`[Saga] Registered compensation for ${step.toolName}: ${compDef.toolName}`);
+      }
+    }
+
+    return { output: result.output, compensation };
   }
 
   /**

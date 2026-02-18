@@ -84,6 +84,7 @@ export class MCPClient {
    * Calls a tool on the remote MCP server with circuit breaker protection and exponential backoff retry.
    * Phase 4: Circuit breaker fails fast when downstream service degrades.
    * Vercel Hobby Tier: Implements AbortController timeout protection (8s limit).
+   * Parameter Mapping: Applies PARAMETER_ALIASES to bridge LLM hallucinations.
    */
   async callTool(name: string, args: ToolInput, signal?: AbortSignal): Promise<ToolOutput> {
     return this.circuitBreaker.execute(async () => {
@@ -95,6 +96,9 @@ export class MCPClient {
         }, this.toolTimeoutMs);
 
         try {
+          // PARAMETER MAPPING: Apply aliases to bridge LLM naming to tool requirements
+          const mappedArgs = this.applyParameterAliases(name, args);
+
           // Combine external signal with internal timeout
           const combinedSignal = this.createCombinedSignal([
             signal,
@@ -107,7 +111,7 @@ export class MCPClient {
           const result = await Promise.race([
             this.client.callTool({
               name,
-              arguments: args,
+              arguments: mappedArgs,
             }),
             new Promise<ToolOutput>((_, reject) => {
               combinedSignal.addEventListener('abort', () => {
@@ -115,16 +119,16 @@ export class MCPClient {
               });
             })
           ]);
-          
+
           clearTimeout(timeoutId);
           return result as ToolOutput;
         } catch (error: any) {
           clearTimeout(timeoutId);
-          
+
           // Handle timeout/abort as "Service Degraded"
           if (error.message.includes('AbortError') || error.message.includes('cancelled') || this.abortController?.signal.aborted) {
             console.warn(`[MCPClient] Tool ${name} timed out after ${this.toolTimeoutMs}ms - Service Degraded`);
-            
+
             // Publish "Service Degraded" event to Ably for observability
             await RealtimeService.publishNervousSystemEvent('ServiceDegraded', {
               serviceName: this.circuitBreaker.getServiceName(),
@@ -133,19 +137,62 @@ export class MCPClient {
               timeoutMs: this.toolTimeoutMs,
               timestamp: new Date().toISOString(),
             }).catch(err => console.error('Failed to publish ServiceDegraded event:', err));
-            
+
             // Trigger circuit breaker to open
             this.circuitBreaker.recordFailure();
-            
+
             throw new CircuitBreakerError(`Service Degraded: ${name} timed out`, CircuitState.CLOSED);
           }
-          
+
           throw error;
         } finally {
           this.abortController = null;
         }
       });
     });
+  }
+
+  /**
+   * Applies parameter aliases to bridge LLM naming conventions to tool-specific requirements.
+   * Uses both shared aliases from @repo/mcp-protocol and tool-specific mappings.
+   */
+  private applyParameterAliases(name: string, args: ToolInput): ToolInput {
+    // Tool-specific aliases (could be extended per-tool if needed)
+    const toolSpecificAliases: Record<string, string> = {
+      "reservation_time": "time",
+      "booking_time": "time",
+      "party_size": "guests",
+      "number_of_people": "guests",
+      "location_name": "query",
+      "search_query": "query",
+      "contact_name": "name",
+      "customer_name": "name",
+      "order_summary": "items",
+      "phone_number": "phone",
+      "email_address": "email",
+      "guestEmail": "email",
+      "target_destination": "delivery_address",
+      "source_location": "pickup_address",
+      "user_id": "customer_id",
+      "product_id": "item_id"
+    };
+
+    // Combine with shared aliases
+    const allAliases = {
+      ...shared_aliases,
+      ...toolSpecificAliases,
+    };
+
+    const mappedArgs: ToolInput = { ...args };
+
+    for (const [alias, primary] of Object.entries(allAliases)) {
+      if (mappedArgs[alias] !== undefined && mappedArgs[primary] === undefined) {
+        mappedArgs[primary] = mappedArgs[alias];
+        console.log(`[MCPClient] Mapped parameter '${alias}' -> '${primary}' for tool ${name}`);
+      }
+    }
+
+    return mappedArgs;
   }
 
   /**

@@ -23,7 +23,7 @@ import {
   getCompletedSteps,
   getPendingSteps,
 } from "./state-machine";
-import { saveExecutionState, getMemoryClient } from "./memory";
+import { saveExecutionState, loadExecutionState, getMemoryClient } from "./memory";
 import { MCPClient } from "../../infrastructure/mcp/MCPClient";
 import { validateOutputAgainstConstraints } from "./intent";
 import { IdempotencyService } from "@repo/shared";
@@ -91,13 +91,15 @@ export interface ExecutionResult {
 // ============================================================================
 // TOOL EXECUTOR INTERFACE
 // Abstraction for tool execution
+// Vercel Hobby Tier: Supports AbortSignal for timeout protection
 // ============================================================================
 
 export interface ToolExecutor {
   execute(
     toolName: string,
     parameters: Record<string, unknown>,
-    timeoutMs: number
+    timeoutMs: number,
+    signal?: AbortSignal
   ): Promise<{
     success: boolean;
     output?: unknown;
@@ -212,6 +214,7 @@ function resolveStepParameters(
 // EXECUTE SINGLE STEP
 // Execute one step with timeout and error handling
 // Vercel Hobby Tier: Pre-emptive checkpointing before tool calls, streaming updates
+// Vercel Hobby Tier: AbortController with 8500ms timeout to survive lambda kills
 // ============================================================================
 
 async function executeStep(
@@ -239,7 +242,7 @@ async function executeStep(
         if (isDuplicate) {
           console.log(`[Idempotency] Step ${step.tool_name} (${step.id}) already executed, skipping`);
           span.setAttributes({ idempotency_skip: true });
-          
+
           // Publish skip event to Ably
           await RealtimeService.publishStreamingStatusUpdate({
             executionId: state.execution_id,
@@ -251,7 +254,7 @@ async function executeStep(
             timestamp: new Date().toISOString(),
             traceId: span?.spanContext()?.traceId,
           });
-          
+
           return {
             step_id: step.id,
             status: "completed",
@@ -366,11 +369,25 @@ async function executeStep(
         traceId: span?.spanContext()?.traceId,
       });
 
-      const toolResult = await toolExecutor.execute(
-        step.tool_name,
-        resolvedParameters,
-        step.timeout_ms
-      );
+      // Vercel Hobby Tier: ABORT CONTROLLER WITH 8500MS TIMEOUT
+      // Ensures we have time to save a "Timeout" state before Vercel kills the lambda (10s limit)
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => {
+        console.warn(`[Durable Execution] Step ${step.tool_name} approaching Vercel timeout, aborting...`);
+        abortController.abort();
+      }, 8500);
+
+      let toolResult: Awaited<ReturnType<ToolExecutor["execute"]>>;
+      try {
+        toolResult = await toolExecutor.execute(
+          step.tool_name,
+          resolvedParameters,
+          step.timeout_ms,
+          abortController.signal
+        );
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       const stepEndTime = performance.now();
       const latencyMs = Math.round(stepEndTime - stepStartTime);
@@ -594,6 +611,7 @@ async function summarizeResults(
 // ============================================================================
 // EXECUTE PLAN
 // Main execution entry point with parallel execution and reflection
+// Vercel Hobby Tier: Durable checkpointing with resume capability
 // ============================================================================
 
 export async function executePlan(
@@ -610,8 +628,31 @@ export async function executePlan(
   const startTime = performance.now();
   const executionId = options.executionId || crypto.randomUUID();
 
-  let state = options.initialState || createInitialState(executionId);
-  state = applyStateUpdate(state, { plan, status: "PLANNED" });
+  // RESUME CHECK: Load existing state if executionId is provided
+  let state: ExecutionState;
+  if (options.executionId && !options.initialState) {
+    const existingState = await loadExecutionState(executionId);
+    if (existingState) {
+      console.log(`[Durable Execution] Resuming execution ${executionId} from checkpoint`);
+      state = existingState;
+      // Skip already completed steps by filtering the plan
+      const completedStepIds = new Set(
+        state.step_states.filter(s => s.status === "completed").map(s => s.step_id)
+      );
+      // Mark remaining steps as pending
+      for (const step of plan.steps) {
+        if (!completedStepIds.has(step.id) && !getStepState(state, step.id)) {
+          state = updateStepState(state, step.id, { status: "pending" });
+        }
+      }
+    } else {
+      state = options.initialState || createInitialState(executionId);
+      state = applyStateUpdate(state, { plan, status: "PLANNED" });
+    }
+  } else {
+    state = options.initialState || createInitialState(executionId);
+    state = applyStateUpdate(state, { plan, status: "PLANNED" });
+  }
 
   try {
     state = transitionState(state, "EXECUTING");

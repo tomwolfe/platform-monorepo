@@ -81,7 +81,7 @@ function createToolExecutor(executionId: string): WorkflowToolExecutor {
 }
 
 export const runtime = "nodejs";
-export const maxDuration = 10; // Vercel Hobby limit
+export const maxDuration = 8; // Vercel Hobby limit - 8s buffer before 10s hard limit
 
 // ============================================================================
 // CONFIGURATION
@@ -121,27 +121,63 @@ const ExecuteStepResponseSchema = z.object({
 // Prevents double execution when recursive fetch fires twice
 // ============================================================================
 
+/**
+ * Acquire execution lock using SETNX
+ * @param executionId - Execution ID to lock
+ * @param ttlSeconds - Lock TTL (default 30s)
+ * @returns true if lock acquired, false if already held
+ */
 async function acquireLock(executionId: string, ttlSeconds: number = 30): Promise<boolean> {
   const lockKey = `exec:${executionId}:lock`;
-  
+
   // SETNX - Set if Not eXists
   const acquired = await redis.set(lockKey, "locked", {
     nx: true,
     ex: ttlSeconds,
   });
-  
+
   return acquired === "OK";
 }
 
+/**
+ * Release execution lock
+ */
 async function releaseLock(executionId: string): Promise<void> {
   const lockKey = `exec:${executionId}:lock`;
   await redis.del(lockKey);
 }
 
+/**
+ * Check if lock is currently held
+ */
 async function isLockHeld(executionId: string): Promise<boolean> {
   const lockKey = `exec:${executionId}:lock`;
   const exists = await redis.exists(lockKey);
   return exists === 1;
+}
+
+/**
+ * IDEMPOTENCY CHECK - Step-level locking
+ * Prevents double execution of the same step when QStash retries
+ * @param executionId - Execution ID
+ * @param stepIndex - Step index
+ * @param ttlSeconds - Lock TTL (default 1 hour)
+ * @returns true if this is the first execution, false if duplicate
+ */
+async function acquireStepIdempotencyLock(
+  executionId: string,
+  stepIndex: number,
+  ttlSeconds: number = 3600
+): Promise<boolean> {
+  const idempotencyKey = `exec:${executionId}:step:${stepIndex}:lock`;
+
+  // SETNX - Set if Not eXists
+  const acquired = await redis.set(idempotencyKey, "locked", {
+    nx: true,
+    ex: ttlSeconds,
+  });
+
+  return acquired === "OK";
 }
 
 // ============================================================================
@@ -186,6 +222,7 @@ async function executeStepHandler(
     const isRecursiveCall = internalKey !== null;
 
     if (isRecursiveCall && internalKey !== INTERNAL_SYSTEM_KEY) {
+      console.warn(`[ExecuteStep] Invalid internal key for ${executionId}`);
       return NextResponse.json(
         {
           success: false,
@@ -195,6 +232,45 @@ async function executeStepHandler(
           },
         },
         { status: 401 }
+      );
+    }
+
+    // IDEMPOTENCY CHECK - Prevent double execution of same step
+    // This is critical for QStash retries
+    const stepIdempotencyLock = await acquireStepIdempotencyLock(executionId, startStepIndex);
+    if (!stepIdempotencyLock) {
+      console.warn(`[ExecuteStep] Step ${startStepIndex} already executed for ${executionId}, skipping (idempotent)`);
+      
+      // Load state to check if step was completed
+      const state = await loadExecutionState(executionId);
+      if (state) {
+        const completedCount = getCompletedSteps(state).length;
+        const plan = state.plan;
+        const isComplete = plan ? completedCount === plan.steps.length : false;
+        
+        return NextResponse.json(
+          ExecuteStepResponseSchema.parse({
+            success: true,
+            executionId,
+            stepExecuted: undefined,
+            stepStatus: "completed",
+            completedSteps: completedCount,
+            totalSteps: plan?.steps.length || 0,
+            isComplete,
+            nextStepTriggered: false,
+          })
+        );
+      }
+      
+      return NextResponse.json(
+        {
+          success: true,
+          error: {
+            code: "ALREADY_EXECUTED",
+            message: "Step already executed (idempotent skip)",
+          },
+        },
+        { status: 200 }
       );
     }
 

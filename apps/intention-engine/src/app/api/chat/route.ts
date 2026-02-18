@@ -1,6 +1,7 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { streamText, tool, stepCountIs, convertToModelMessages, generateObject } from "ai";
 import { z } from "zod";
+import { randomUUID } from "crypto";
 import {
   search_restaurant,
   add_calendar_event,
@@ -14,6 +15,7 @@ import { Redis } from "@upstash/redis";
 import { getUserPreferences, updateUserPreferences } from "@/lib/preferences";
 import { redis } from "@/lib/redis-client";
 import { getMcpClients } from "@/lib/mcp-client";
+import { QStashService } from "@repo/shared";
 import {
   TOOLS,
   McpToolRegistry,
@@ -31,6 +33,15 @@ import {
 } from "@repo/mcp-protocol";
 import { NormalizationService, FailoverPolicyEngine, type PolicyEvaluationContext } from "@repo/shared";
 import { getNervousSystemObserver } from "@/lib/listeners/nervous-system-observer";
+import { saveExecutionState, loadExecutionState } from "@/lib/engine/memory";
+import { createInitialState, setIntent, setPlan } from "@/lib/engine/state-machine";
+import { parseIntent as engineParseIntent } from "@/lib/engine/intent";
+import { generatePlan as engineGeneratePlan } from "@/lib/engine/planner";
+import { getRegistryManager } from "@/lib/engine/registry";
+import { verifyPlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/verifier";
+
+// Internal system key for QStash-triggered requests
+const INTERNAL_SYSTEM_KEY = process.env.INTERNAL_SYSTEM_KEY || "internal-system-key-change-in-production";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -47,6 +58,83 @@ const ChatRequestSchema = z.object({
     lng: z.number().min(-180).max(180),
   }).nullable().optional(),
 });
+
+/**
+ * Trigger async execution for saga-type operations
+ * 
+ * This function creates an execution state and triggers QStash to run the plan
+ * asynchronously using the recursive self-trigger pattern.
+ * 
+ * @param intent - The parsed intent
+ * @param userContext - User context (userId, clerkId, etc.)
+ * @param auditLogId - Audit log ID for tracing
+ * @returns Execution ID for tracking
+ */
+async function triggerAsyncExecution(
+  intent: any,
+  userContext: { userId?: string; clerkId?: string; userEmail?: string },
+  auditLogId: string
+): Promise<string> {
+  const executionId = randomUUID();
+  
+  try {
+    // Create initial state
+    let state = createInitialState(executionId);
+    state = setIntent(state, intent);
+    
+    // Generate plan
+    const registryManager = getRegistryManager();
+    const planResult = await engineGeneratePlan(intent, {
+      execution_id: executionId,
+      available_tools: registryManager.listAllTools(),
+    });
+    
+    // Verify plan
+    const verification = verifyPlan(planResult.plan, DEFAULT_SAFETY_POLICY);
+    if (!verification.valid) {
+      throw new Error(verification.reason || "Plan verification failed");
+    }
+    
+    state = setPlan(state, planResult.plan);
+    await saveExecutionState(state);
+    
+    // Trigger first step via QStash
+    await QStashService.triggerNextStep({
+      executionId,
+      stepIndex: 0,
+      internalKey: INTERNAL_SYSTEM_KEY,
+    });
+    
+    console.log(`[Chat] Triggered async execution ${executionId} for intent ${intent.type}`);
+    
+    return executionId;
+  } catch (error) {
+    console.error("[Chat] Failed to trigger async execution:", error);
+    throw error;
+  }
+}
+
+/**
+ * Check if an intent requires saga-style async execution
+ * 
+ * Saga operations are multi-step, state-modifying operations that benefit from
+ * the recursive self-trigger pattern (e.g., booking, reservation, complex workflows)
+ */
+function requiresSagaExecution(intentType: string): boolean {
+  const sagaIntentTypes = [
+    "BOOKING",
+    "RESERVATION",
+    "CREATE_RESERVATION",
+    "BOOK_RESTAURANT",
+    "RESERVE_RESTAURANT",
+    "CREATE_ORDER",
+    "PLACE_ORDER",
+    "CHECKOUT",
+    "PURCHASE",
+  ];
+  
+  return sagaIntentTypes.some(type => intentType.includes(type) || intentType === type);
+}
 
 /**
  * Fetch Live Operational State from Redis cache
@@ -635,11 +723,52 @@ export async function POST(req: Request) {
             // Context Injection: Provide user location if schema expects it
             const enrichedParams = { ...params };
             const needsLocation = ["geocode_location", "search_restaurant"].includes(localTool.name);
-            
+
             if (needsLocation && userLocation && !enrichedParams.userLocation) {
               enrichedParams.userLocation = userLocation;
             }
 
+            // SAGA DETECTION - Check if this tool requires async execution
+            // For saga-type operations (booking, reservation, etc.), trigger async execution
+            // instead of executing inline to avoid Vercel timeout
+            if (requiresSagaExecution(localTool.name) || requiresSagaExecution(intent.type)) {
+              try {
+                console.log(`[Chat] Detected saga operation (${localTool.name}), triggering async execution`);
+                
+                // Create a synthetic intent for this specific tool execution
+                const sagaIntent = {
+                  id: crypto.randomUUID(),
+                  type: localTool.name.toUpperCase(),
+                  confidence: 0.9,
+                  parameters: enrichedParams,
+                  rawText: userText,
+                  metadata: { version: "1.0.0", timestamp: new Date().toISOString(), source: "chat_saga" }
+                };
+                
+                // Trigger async execution via QStash
+                const executionId = await triggerAsyncExecution(sagaIntent, {
+                  userId: userId as string | undefined,
+                  clerkId: clerkId || undefined,
+                  userEmail: undefined,
+                }, auditLog.id);
+                
+                // Return immediately with execution ID for tracking
+                return {
+                  success: true,
+                  executionId,
+                  message: `Started ${localTool.name} execution. Track progress via execution ID: ${executionId}`,
+                  status: "STARTED",
+                };
+              } catch (error) {
+                console.error(`[Chat] Failed to trigger async execution for ${localTool.name}:`, error);
+                return {
+                  success: false,
+                  error: error instanceof Error ? error.message : String(error),
+                };
+              }
+            }
+
+            // Normal inline execution for non-saga operations
             const result = await executeToolWithContext(localTool.name, enrichedParams, {
               audit_log_id: auditLog.id,
               step_index: auditLog.steps.length

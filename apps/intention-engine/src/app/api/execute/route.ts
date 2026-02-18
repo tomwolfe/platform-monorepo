@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 import { withNervousSystemTracing } from "@repo/shared";
 import { startTrace } from "@/lib/observability";
 import { saveUserInteractionContext } from "@/lib/context-persistence";
+import { QStashService } from "@repo/shared";
 
 // Engine imports
 import {
@@ -36,6 +37,9 @@ import {
 } from "@/lib/engine/tools/registry";
 import { getRegistryManager } from "@/lib/engine/registry";
 import { verifyPlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/verifier";
+
+// Internal system key for QStash-triggered requests
+const INTERNAL_SYSTEM_KEY = process.env.INTERNAL_SYSTEM_KEY || "internal-system-key-change-in-production";
 
 export const runtime = "nodejs";
 
@@ -317,77 +321,32 @@ async function orchestrateExecution(
         await saveExecutionState(state);
       }
 
-      // Step 4: Execute plan
+      // Step 4: TRIGGER ASYNC EXECUTION VIA QSTASH (Vercel Hobby Pattern)
+      // Instead of executing synchronously, we trigger Step 0 via QStash and return immediately
       if (plan) {
-        tracer.addSystemEntry("executing_plan", {
+        tracer.addSystemEntry("triggering_async_execution", {
           step_count: plan.steps.length,
         });
 
-        const toolExecutor = createToolExecutorForExecution(executionId);
-        const orchestrator = new ExecutionOrchestrator(toolExecutor, {
-          traceCallback: (entry) => {
-            // Forward trace entries to our tracer
-            if (entry.step_id) {
-              tracer.addExecutionEntry(
-                entry.step_id,
-                entry.event as any,
-                entry.input,
-                entry.output,
-                entry.error as string,
-                entry.latency_ms
-              );
-            }
-          },
+        // Trigger the FIRST step via QStash
+        // This starts the recursive self-trigger chain
+        await QStashService.triggerNextStep({
+          executionId,
+          stepIndex: 0,
+          internalKey: INTERNAL_SYSTEM_KEY,
         });
-
-        const executionResult: ExecutionResult = await orchestrator.execute(
-          plan,
-          executionId
-        );
-
-        // Add completion trace entry
-        tracer.addSystemEntry("execution_completed", {
-          success: executionResult.success,
-          completed_steps: executionResult.completed_steps,
-          failed_steps: executionResult.failed_steps,
-        });
-
-        // Session Summary Generation
-        try {
-          const sessionSummaryPrompt = `Generate a 1-sentence summary of the user's progress based on this execution:
-    Intent: ${parseResult.intent.rawText}
-    Result: ${executionResult.summary || "In progress"}
-    Status: ${executionResult.state.status}`;
-
-          const sessionSummaryResponse = await generateText({
-            modelType: "summarization",
-            prompt: sessionSummaryPrompt,
-            systemPrompt: "You are a concise progress tracker. Summarize in exactly one sentence."
-          });
-
-          const memory = getMemoryClient();
-          await memory.store({
-            type: "user_context",
-            namespace: executionId,
-            data: { summary: sessionSummaryResponse.content },
-            version: 1,
-          });
-        } catch (summaryError) {
-          console.error("Failed to generate session summary:", summaryError);
-        }
 
         // Finalize trace
         const traceResult = tracer.finalize();
         span.end();
 
+        // Return immediately - execution will happen asynchronously
         return {
-          success: executionResult.success,
+          success: true,
           execution_id: executionId,
-          status: executionResult.state.status,
+          status: "STARTED",
           intent: parseResult.intent,
           plan,
-          execution_result: executionResult,
-          error: executionResult.error,
           trace: traceResult.trace,
           metadata: {
             duration_ms: Math.round(performance.now() - startTime),

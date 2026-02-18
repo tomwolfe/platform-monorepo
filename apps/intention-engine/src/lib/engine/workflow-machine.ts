@@ -511,6 +511,101 @@ export class WorkflowMachine {
   }
 
   /**
+   * Execute a single step - Serverless Recursive Pattern
+   * 
+   * Vercel Hobby Tier Optimization:
+   * - Executes ONE step and returns immediately
+   * - Does NOT loop or recurse internally
+   * - Caller is responsible for triggering next step via recursive fetch
+   * - Used by /api/engine/execute-step for infinite-duration sagas
+   * 
+   * @param stepIndex - Optional index of step to execute (defaults to next pending)
+   * @returns Result of single step execution
+   */
+  async executeSingleStep(stepIndex?: number): Promise<{
+    success: boolean;
+    stepId?: string;
+    stepToolName?: string;
+    stepState: StepExecutionState;
+    compensation?: {
+      toolName: string;
+      parameters?: Record<string, unknown>;
+    };
+    isComplete: boolean;
+    completedSteps: number;
+    totalSteps: number;
+  }> {
+    if (!this.plan) {
+      throw new Error("No plan set");
+    }
+
+    const timestamp = new Date().toISOString();
+
+    // Find the step to execute
+    const completedStepIds = getCompletedSteps(this.state).map(s => s.step_id);
+    const targetStep = this.plan.steps.find((step, idx) => 
+      idx >= (stepIndex || 0) && !completedStepIds.includes(step.id)
+    );
+
+    if (!targetStep) {
+      // No more steps - execution complete
+      return {
+        success: true,
+        isComplete: true,
+        completedSteps: getCompletedSteps(this.state).length,
+        totalSteps: this.plan.steps.length,
+        stepState: {
+          step_id: "complete",
+          status: "completed",
+          output: { message: "All steps completed" },
+          completed_at: timestamp,
+          latency_ms: 0,
+          attempts: 0,
+        },
+      };
+    }
+
+    const actualStepIndex = this.plan.steps.indexOf(targetStep);
+
+    // Execute the step using existing executeStep logic
+    const result = await this.executeStep({
+      state: this.state,
+      step: targetStep,
+      toolExecutor: this.toolExecutor,
+      segmentStartTime: this.segmentStartTime,
+      traceId: this.traceId,
+      correlationId: this.correlationId,
+      idempotencyService: this.idempotencyService,
+    });
+
+    // Update state
+    this.state = updateStepState(this.state, targetStep.id, result.stepState);
+
+    // Register compensation if provided
+    if (result.compensation) {
+      this.compensationsRegistered.push({
+        stepId: targetStep.id,
+        compensationTool: result.compensation.toolName,
+        parameters: result.compensation.parameters || {},
+      });
+    }
+
+    const completedCount = getCompletedSteps(this.state).length;
+    const isComplete = completedCount === this.plan.steps.length;
+
+    return {
+      success: result.stepState.status === "completed",
+      stepId: targetStep.id,
+      stepToolName: targetStep.tool_name,
+      stepState: result.stepState,
+      compensation: result.compensation,
+      isComplete,
+      completedSteps: completedCount,
+      totalSteps: this.plan.steps.length,
+    };
+  }
+
+  /**
    * Execute a single step with checkpointing
    */
   private async executeStep(

@@ -52,6 +52,12 @@ const ChatRequestSchema = z.object({
  * Fetch Live Operational State from Redis cache
  * Zero-Latency Context: Pre-inject table availability into system prompt
  * so LLM can "see" state without explicit tool calls
+ * 
+ * Pre-Flight State Injection:
+ * - Checks restaurant_state:{id} for table availability
+ * - Checks failed_bookings:{restaurantId} for recent failures
+ * - If restaurant is "full" or has recent failures, LLM will suggest alternatives
+ * - This saves an entire round-trip tool call by preventing invalid plans
  */
 async function fetchLiveOperationalState(
   messages: any[],
@@ -63,22 +69,29 @@ async function fetchLiveOperationalState(
     tableAvailability: "available" | "limited" | "full";
     waitlistCount?: number;
     nextAvailableSlot?: string;
+    hasRecentFailures?: boolean;
+  }>;
+  failedBookings?: Array<{
+    restaurantId: string;
+    restaurantName?: string;
+    failureReason: string;
+    failedAt: string;
   }>;
   rawText?: string;
 }> {
   try {
     // Extract restaurant mentions from conversation history
     const restaurantMentions = new Set<string>();
-    
+
     for (const msg of messages) {
-      const content = typeof msg.content === "string" 
-        ? msg.content 
+      const content = typeof msg.content === "string"
+        ? msg.content
         : Array.isArray(msg.content)
           ? msg.content.filter((p: any) => p.type === "text").map((p: any) => p.text).join(" ")
           : "";
-      
+
       if (!content) continue;
-      
+
       // Look for restaurant IDs, names, or slugs in the conversation
       // Pattern 1: Direct restaurant ID references
       const idMatches = content.match(/restaurant[:\s]+([a-zA-Z0-9-_]+)/gi);
@@ -88,7 +101,7 @@ async function fetchLiveOperationalState(
           if (id) restaurantMentions.add(id);
         });
       }
-      
+
       // Pattern 2: Common restaurant names (would need NLP in production)
       // For now, look for capitalized multi-word phrases that might be restaurant names
       const nameMatches = content.match(/at\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/g);
@@ -99,13 +112,13 @@ async function fetchLiveOperationalState(
         });
       }
     }
-    
+
     if (restaurantMentions.size === 0) {
       return { rawText: "No specific restaurants mentioned in conversation" };
     }
-    
+
     console.log(`[LiveOperationalState] Fetching state for restaurants: ${Array.from(restaurantMentions).join(", ")}`);
-    
+
     // Fetch state from Redis cache (populated by TableStack events)
     const restaurantStates: Array<{
       id: string;
@@ -113,14 +126,28 @@ async function fetchLiveOperationalState(
       tableAvailability: "available" | "limited" | "full";
       waitlistCount?: number;
       nextAvailableSlot?: string;
+      hasRecentFailures?: boolean;
     }> = [];
     
+    const failedBookings: Array<{
+      restaurantId: string;
+      restaurantName?: string;
+      failureReason: string;
+      failedAt: string;
+    }> = [];
+
     for (const restaurantRef of restaurantMentions) {
       // Try to fetch from Redis cache
       // Key pattern: restaurant_state:{id|slug}
       const stateKey = `restaurant_state:${restaurantRef}`;
       const cachedState = await redis?.get<any>(stateKey);
-      
+
+      // Also check for failed bookings
+      // Key pattern: failed_bookings:{restaurantId} - Redis Set with recent failures
+      const failedBookingsKey = `failed_bookings:${restaurantRef}`;
+      const recentFailures = await redis?.get<any[]>(failedBookingsKey);
+      const hasRecentFailures = recentFailures !== null && recentFailures !== undefined && recentFailures.length > 0;
+
       if (cachedState) {
         restaurantStates.push({
           id: cachedState.id || restaurantRef,
@@ -128,6 +155,7 @@ async function fetchLiveOperationalState(
           tableAvailability: cachedState.tableAvailability || "unknown",
           waitlistCount: cachedState.waitlistCount,
           nextAvailableSlot: cachedState.nextAvailableSlot,
+          hasRecentFailures,
         });
       } else {
         // Fallback: Try to fetch from database directly
@@ -136,31 +164,55 @@ async function fetchLiveOperationalState(
           const restaurant = await db.query.restaurants.findFirst({
             where: eq(restaurantsTable.slug, restaurantRef),
           });
-          
+
           if (restaurant) {
             // Fetch table availability
             const tables = await db.query.restaurantTables.findMany({
               where: eq(restaurantTables.restaurantId, restaurant.id),
             });
-            
+
             const availableTables = tables.filter((t: any) => t.status === "available").length;
             const totalTables = tables.length;
-            
+
             restaurantStates.push({
               id: restaurant.id,
               name: restaurant.name,
-              tableAvailability: availableTables === 0 ? "full" : 
+              tableAvailability: availableTables === 0 ? "full" :
                                  availableTables < totalTables / 2 ? "limited" : "available",
               nextAvailableSlot: availableTables === 0 ? "Unknown - try waitlist" : undefined,
+              hasRecentFailures,
             });
+
+            // Also add to failed bookings if present
+            if (hasRecentFailures && recentFailures) {
+              for (const failure of recentFailures.slice(0, 3)) {
+                failedBookings.push({
+                  restaurantId: restaurant.id,
+                  restaurantName: restaurant.name,
+                  failureReason: failure.reason || "Booking failed",
+                  failedAt: failure.timestamp || new Date().toISOString(),
+                });
+              }
+            }
           }
         } catch (dbError) {
           console.warn(`[LiveOperationalState] Failed to fetch restaurant ${restaurantRef}:`, dbError);
         }
       }
+
+      // Add failed bookings to result even if restaurant state not found
+      if (hasRecentFailures && recentFailures) {
+        for (const failure of recentFailures.slice(0, 3)) {
+          failedBookings.push({
+            restaurantId: restaurantRef,
+            failureReason: failure.reason || "Booking failed",
+            failedAt: failure.timestamp || new Date().toISOString(),
+          });
+        }
+      }
     }
-    
-    return { restaurantStates };
+
+    return { restaurantStates, failedBookings: failedBookings.length > 0 ? failedBookings : undefined };
   } catch (error) {
     console.error("[LiveOperationalState] Failed to fetch operational state:", error);
     return { rawText: "Unable to fetch live restaurant states" };
@@ -369,11 +421,28 @@ export async function POST(req: Request) {
     // Zero-Latency Context: Fetch live operational state BEFORE calling LLM
     // This allows the LLM to "see" table availability without explicit tool calls
     const liveOperationalState = await fetchLiveOperationalState(coreMessages, userLocation || undefined);
+
+    // Build live state context with failed bookings awareness
+    const liveStateContextParts: string[] = [];
     
-    const liveStateContext = liveOperationalState.restaurantStates
-      ? `\n### LIVE RESTAURANT STATE (Real-time from Redis/DB):\n${liveOperationalState.restaurantStates
-          .map(r => `- ${r.name}: ${r.tableAvailability.toUpperCase()}${r.waitlistCount ? ` (${r.waitlistCount} on waitlist)` : ""}${r.nextAvailableSlot ? ` - Next: ${r.nextAvailableSlot}` : ""}`)
+    if (liveOperationalState.restaurantStates) {
+      liveStateContextParts.push(
+        `\n### LIVE RESTAURANT STATE (Real-time from Redis/DB):\n${liveOperationalState.restaurantStates
+          .map(r => `- ${r.name}: ${r.tableAvailability.toUpperCase()}${r.waitlistCount ? ` (${r.waitlistCount} on waitlist)` : ""}${r.nextAvailableSlot ? ` - Next: ${r.nextAvailableSlot}` : ""}${r.hasRecentFailures ? " ⚠️ RECENT FAILURES" : ""}`)
           .join("\n")}\n\n**IMPORTANT**: Use this live state to avoid suggesting restaurants that are full. If a restaurant shows "full", suggest alternatives or recommend joining the waitlist.`
+      );
+    }
+    
+    if (liveOperationalState.failedBookings && liveOperationalState.failedBookings.length > 0) {
+      liveStateContextParts.push(
+        `\n### ⚠️ RECENT BOOKING FAILURES (Avoid These):\n${liveOperationalState.failedBookings
+          .map(f => `- ${f.restaurantName || f.restaurantId}: ${f.failureReason} (at ${new Date(f.failedAt).toLocaleTimeString()})`)
+          .join("\n")}\n\n**CRITICAL**: These restaurants have recent booking failures. DO NOT attempt to book these unless the user explicitly insists. Instead, suggest alternative restaurants or explain the issue to the user.`
+      );
+    }
+    
+    const liveStateContext = liveStateContextParts.length > 0 
+      ? liveStateContextParts.join("\n\n")
       : `\n### LIVE STATE: ${liveOperationalState.rawText || "No live state available"}\n`;
 
     // Fetch dynamic tools from MCP servers

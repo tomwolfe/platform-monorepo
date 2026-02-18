@@ -6,6 +6,7 @@
  * - Proactively notifies users based on last_interaction_context
  * - Implements "Infinite Memory" feel using Postgres user context
  * - Uses LLM to generate proactive intents for re-engagement
+ * - Tracks failed bookings in Redis for proactive re-engagement
  *
  * Architecture:
  * 1. Subscribes to 'nervous-system:updates' channel
@@ -14,14 +15,20 @@
  * 4. Uses LLM to generate "Proactive Intent" (e.g., "The table you wanted at Pesto Place is now free")
  * 5. Sends proactive notification via Ably to user's channel
  * 6. Tracks all proactive notifications for audit and learning
+ * 
+ * Proactive Re-engagement:
+ * - When TableVacated arrives, queries Redis key failed_bookings:{restaurantId}
+ * - If match found: Generates "Re-engagement Intent" locally
+ * - Pushes to Ably channel user:{userId} with personalized message
  */
 
 import { getAblyClient, RealtimeService, MemoryClient, getMemoryClient as getSharedMemoryClient } from "@repo/shared";
 import { db, eq, users, restaurants, restaurantReservations } from "@repo/database";
-import { createSystemEvent, SystemEvent, createTypedSystemEvent } from "@repo/mcp-protocol";
+import { createSystemEvent, SystemEvent, createTypedSystemEvent, SystemEventType } from "@repo/mcp-protocol";
 import { signServiceToken } from "@repo/auth";
 import { generateText } from "../engine/llm";
 import { Redis } from "@upstash/redis";
+import { redis } from "../redis-client";
 
 // ============================================================================
 // OBSERVER CONFIGURATION
@@ -130,6 +137,11 @@ export class NervousSystemObserver {
    * Handle TableVacated event
    * Queries users with matching last_interaction_context
    * Specifically targets users whose last interaction FAILED
+   * 
+   * Proactive Re-engagement Enhancement:
+   * - Queries Redis key failed_bookings:{restaurantId} for users who failed
+   * - Generates "Re-engagement Intent" locally for each matched user
+   * - Pushes personalized notification to Ably channel user:{userId}
    */
   async handleTableVacated(eventData: {
     event: TableVacatedEvent;
@@ -156,6 +168,30 @@ export class NervousSystemObserver {
         };
       }
 
+      // PROACTIVE RE-ENGAGEMENT: Check Redis for failed bookings first
+      const failedBookingsKey = `failed_bookings:${event.restaurantId}`;
+      const failedBookings = await redis?.get<any[]>(failedBookingsKey) || [];
+      
+      let reEngagementUsersNotified = 0;
+      
+      if (failedBookings.length > 0) {
+        console.log(
+          `[NervousSystemObserver] Found ${failedBookings.length} failed bookings for restaurant ${event.restaurantId}, triggering re-engagement`
+        );
+        
+        // Trigger re-engagement for each failed booking
+        for (const failure of failedBookings.slice(0, 5)) { // Limit to 5 to avoid timeout
+          const result = await this.triggerReEngagement(failure, event);
+          if (result.success) {
+            reEngagementUsersNotified++;
+          }
+        }
+        
+        console.log(
+          `[NervousSystemObserver] Re-engagement complete: ${reEngagementUsersNotified}/${failedBookings.length} users notified`
+        );
+      }
+
       // Find matching users - specifically those with FAILED status
       const matchedUsers = await this.findMatchingUsers(event);
 
@@ -163,7 +199,7 @@ export class NervousSystemObserver {
         console.log("[NervousSystemObserver] No matching users found");
         return {
           success: true,
-          usersNotified: 0,
+          usersNotified: reEngagementUsersNotified,
         };
       }
 
@@ -435,6 +471,258 @@ export class NervousSystemObserver {
         success: false,
         error: error instanceof Error ? error.message : String(error),
       };
+    }
+  }
+
+  /**
+   * Trigger Re-engagement for Failed Booking
+   * 
+   * Called when a table becomes available at a restaurant where a user previously failed.
+   * Generates a personalized "Re-engagement Intent" and pushes to user's Ably channel.
+   * 
+   * @param failure - Failed booking record from Redis
+   * @param event - TableVacated event
+   */
+  async triggerReEngagement(
+    failure: {
+      userId?: string;
+      clerkId?: string;
+      userEmail?: string;
+      intentType?: string;
+      parameters?: Record<string, unknown>;
+      timestamp: string;
+      reason?: string;
+    },
+    event: TableVacatedEvent
+  ): Promise<{ success: boolean; notificationId?: string; error?: string }> {
+    try {
+      const userId = failure.clerkId || failure.userId;
+      if (!userId) {
+        console.warn("[NervousSystemObserver] No userId in failed booking, skipping re-engagement");
+        return { success: false, error: "No userId in failed booking" };
+      }
+
+      const userChannel = `user:${userId}`;
+      const restaurantName = event.restaurantName || "the restaurant";
+      const capacity = event.capacity ? ` (seats ${event.capacity})` : "";
+
+      // Generate LLM-powered re-engagement message
+      let notificationContent: {
+        title: string;
+        message: string;
+        proactiveIntent: string;
+        suggestedAction: string;
+      };
+
+      try {
+        const prompt = `You are a proactive assistant helping a user who previously failed to book a restaurant.
+
+Context:
+- User previously tried to book: ${failure.intentType || "a reservation"} at ${restaurantName}
+- Previous failure reason: ${failure.reason || "Unknown error"}
+- A table${capacity} just became available
+- Previous attempt was at: ${new Date(failure.timestamp).toLocaleString()}
+
+Generate a concise, compelling re-engagement message that:
+1. Acknowledges their previous failed attempt empathetically
+2. Announces the new availability as a second chance
+3. Encourages immediate action with confidence
+
+Respond with ONLY a JSON object in this format:
+{
+  "title": "Short catchy title (max 5 words)",
+  "message": "1-2 sentence re-engagement message",
+  "proactiveIntent": "Natural language intent like 'Your chance to book ${restaurantName} is back!'",
+  "suggestedAction": "Call-to-action button text like 'Try Again' or 'Book Now'"
+}`;
+
+        const response = await generateText({
+          modelType: "planning",
+          prompt,
+          systemPrompt: "You are a helpful, empathetic re-engagement assistant. Output ONLY valid JSON.",
+          temperature: 0.7,
+        });
+
+        const parsed = JSON.parse(response.content.trim());
+        notificationContent = {
+          title: parsed.title || "Second Chance!",
+          message: parsed.message || `Good news! A table${capacity} is now available at ${restaurantName}. Your previous booking failed, but now's your chance to try again!`,
+          proactiveIntent: parsed.proactiveIntent || `Your chance to book ${restaurantName} is back!`,
+          suggestedAction: parsed.suggestedAction || "Try Again",
+        };
+      } catch (llmError) {
+        console.warn("[NervousSystemObserver] LLM re-engagement generation failed, using fallback:", llmError);
+        // Fallback to static message
+        notificationContent = {
+          title: "Second Chance!",
+          message: `Good news! A table${capacity} is now available at ${restaurantName}. Your previous booking failed, but now's your chance to try again!`,
+          proactiveIntent: `Your chance to book ${restaurantName} is back!`,
+          suggestedAction: "Try Again",
+        };
+      }
+
+      // Build re-engagement notification
+      const notification = {
+        type: "re_engagement",
+        title: notificationContent.title,
+        message: notificationContent.message,
+        data: {
+          tableId: event.tableId,
+          restaurantId: event.restaurantId,
+          restaurantName: event.restaurantName,
+          capacity: event.capacity,
+          timestamp: event.timestamp,
+          previousFailure: {
+            reason: failure.reason,
+            timestamp: failure.timestamp,
+            intentType: failure.intentType,
+          },
+          suggestedAction: notificationContent.suggestedAction,
+          proactiveIntent: notificationContent.proactiveIntent,
+          // Deep link to book
+          actionUrl: `/restaurants/${event.restaurantId}/book?table=${event.tableId}&source=re_engagement`,
+        },
+        timestamp: new Date().toISOString(),
+      };
+
+      // Publish to user's channel
+      await RealtimeService.publish(
+        this.config.notificationChannel,
+        "ReEngagementNotification",
+        notification,
+        { traceId: event.traceId }
+      );
+
+      console.log(
+        `[NervousSystemObserver] Re-engagement sent to ${failure.userEmail || userId}: ${notification.message}`
+      );
+
+      // Create SystemEvent for audit trail using generic createSystemEvent
+      const systemEvent = createSystemEvent(
+        "SagaStarted" as SystemEventType,
+        {
+          sagaId: crypto.randomUUID(),
+          executionId: event.tableId,
+          intentId: userId,
+          steps: [],
+          metadata: {
+            type: "re_engagement",
+            restaurantId: event.restaurantId,
+            previousFailureReason: failure.reason,
+          },
+        },
+        "intention-engine",
+        {
+          traceId: event.traceId,
+          metadata: {
+            reEngagement: true,
+            llmGenerated: true,
+            userEmail: failure.userEmail,
+          },
+        }
+      );
+
+      return {
+        success: true,
+        notificationId: systemEvent.id,
+      };
+    } catch (error) {
+      console.error("[NervousSystemObserver] Error in re-engagement:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * Track Failed Booking in Redis
+   * 
+   * Called when a booking step fails during execution.
+   * Stores the failure in Redis for later re-engagement when tables become available.
+   * 
+   * @param restaurantId - Restaurant ID where booking failed
+   * @param failure - Failure details
+   */
+  static async trackFailedBooking(
+    restaurantId: string,
+    failure: {
+      userId?: string;
+      clerkId?: string;
+      userEmail?: string;
+      intentType?: string;
+      parameters?: Record<string, unknown>;
+      reason?: string;
+      executionId?: string;
+    }
+  ): Promise<void> {
+    try {
+      const failedBookingsKey = `failed_bookings:${restaurantId}`;
+      
+      const failureRecord = {
+        userId: failure.userId,
+        clerkId: failure.clerkId,
+        userEmail: failure.userEmail,
+        intentType: failure.intentType,
+        parameters: failure.parameters,
+        reason: failure.reason || "Booking failed",
+        executionId: failure.executionId,
+        timestamp: new Date().toISOString(),
+      };
+
+      // Get existing failures
+      const existingFailures = await redis?.get<any[]>(failedBookingsKey) || [];
+      
+      // Add new failure (keep only last 10 to avoid bloat)
+      const updatedFailures = [failureRecord, ...existingFailures].slice(0, 10);
+      
+      // Store with 1 hour TTL (failures are only relevant for immediate re-engagement)
+      await redis?.setex(failedBookingsKey, 3600, JSON.stringify(updatedFailures));
+      
+      console.log(
+        `[NervousSystemObserver] Tracked failed booking for restaurant ${restaurantId} (total: ${updatedFailures.length})`
+      );
+    } catch (error) {
+      console.error("[NervousSystemObserver] Failed to track booking failure:", error);
+    }
+  }
+
+  /**
+   * Clear Failed Bookings for Restaurant
+   * 
+   * Called after successful re-engagement or after TTL expires.
+   * 
+   * @param restaurantId - Restaurant ID
+   * @param userId - Optional user ID to clear specific failure
+   */
+  static async clearFailedBookings(
+    restaurantId: string,
+    userId?: string
+  ): Promise<void> {
+    try {
+      const failedBookingsKey = `failed_bookings:${restaurantId}`;
+      
+      if (!userId) {
+        // Clear all failures for restaurant
+        await redis?.del(failedBookingsKey);
+        console.log(`[NervousSystemObserver] Cleared all failed bookings for restaurant ${restaurantId}`);
+      } else {
+        // Remove specific user's failure
+        const existingFailures = await redis?.get<any[]>(failedBookingsKey) || [];
+        const updatedFailures = existingFailures.filter(f => f.userId !== userId && f.clerkId !== userId);
+        
+        if (updatedFailures.length === 0) {
+          await redis?.del(failedBookingsKey);
+        } else {
+          await redis?.setex(failedBookingsKey, 3600, JSON.stringify(updatedFailures));
+        }
+        
+        console.log(
+          `[NervousSystemObserver] Cleared failed booking for user ${userId} at restaurant ${restaurantId}`
+        );
+      }
+    } catch (error) {
+      console.error("[NervousSystemObserver] Failed to clear failed bookings:", error);
     }
   }
 

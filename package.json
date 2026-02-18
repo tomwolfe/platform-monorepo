@@ -4,7 +4,9 @@
   "scripts": {
     "build": "turbo build",
     "dev": "turbo dev",
-    "lint": "turbo lint"
+    "lint": "turbo lint",
+    "qstash:setup": "tsx scripts/setup-qstash.ts",
+    "qstash:test": "tsx scripts/test-qstash.ts"
   },
   "engines": {
     "node": "24.x"
@@ -17,7 +19,8 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
     "postcss": "^8.5.1",
-    "turbo": "^2.3.3"
+    "turbo": "^2.3.3",
+    "tsx": "^4.19.3"
   },
   "packageManager": "pnpm@8.15.9"
 }

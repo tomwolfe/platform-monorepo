@@ -11,7 +11,7 @@
     "zod-to-json-schema": "^3.25.1",
     "@repo/database": "workspace:*",
     "drizzle-orm": "^0.38.4",
-    "drizzle-zod": "^0.7.0"
+    "drizzle-zod": "^0.5.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",

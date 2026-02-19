@@ -60,25 +60,33 @@ export async function placeRealOrder(vendorId: string, itemTotal: number) {
   }
 
   const orderId = randomUUID();
-  const userId = user.id;
 
   try {
-    await db
-      .insert(users)
-      .values({
-        id: userId as any,
-        clerkId: userId,
-        email: user.emailAddresses[0].emailAddress,
-        name: `${user.firstName || "User"} ${user.lastName || ""}`,
-        role: "shopper",
-      })
-      .onConflictDoNothing();
+    let userRecord = await db
+      .select()
+      .from(users)
+      .where(sql`${users.clerkId} = ${user.id}`)
+      .limit(1)
+      .then(rows => rows[0]);
+
+    if (!userRecord) {
+      const [newUser] = await db
+        .insert(users)
+        .values({
+          clerkId: user.id,
+          email: user.emailAddresses[0].emailAddress,
+          name: `${user.firstName || "User"} ${user.lastName || ""}`,
+          role: "shopper",
+        })
+        .returning();
+      userRecord = newUser;
+    }
 
     const [newOrder] = await db
       .insert(orders)
       .values({
         id: orderId,
-        userId: userId as any,
+        userId: userRecord?.id,
         storeId: vendorId as any,
         status: "pending",
         total: itemTotal,

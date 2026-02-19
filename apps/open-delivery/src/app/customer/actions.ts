@@ -67,7 +67,7 @@ export async function placeRealOrder(vendorId: string, itemTotal: number) {
       .from(users)
       .where(sql`${users.clerkId} = ${user.id}`)
       .limit(1)
-      .then(rows => rows[0]);
+      .then((rows: typeof users.$inferSelect[]) => rows[0]);
 
     if (!userRecord) {
       const [newUser] = await db

@@ -5,6 +5,7 @@ import Ably from 'ably';
 import useSWR from 'swr';
 import { Truck, MapPin, DollarSign, Star, Bell, Navigation, Package } from 'lucide-react';
 import { acceptDelivery } from './actions';
+import Link from 'next/link';
 
 interface OrderIntent {
   id?: string; // For API compatibility
@@ -17,6 +18,14 @@ interface OrderIntent {
   items?: Array<{ name: string; quantity: number; price: number }>;
   timestamp: string;
   traceId?: string;
+}
+
+interface DriverProfile {
+  id: string;
+  fullName: string;
+  email: string;
+  trustScore: number;
+  isActive: boolean;
 }
 
 interface DriverStats {
@@ -36,10 +45,39 @@ const fetchPendingOrders = async (): Promise<OrderIntent[]> => {
   return data.orders || [];
 };
 
+const checkDriverProfile = async (): Promise<{ hasProfile: boolean; profile?: DriverProfile; error?: string }> => {
+  try {
+    const res = await fetch('/api/driver/profile');
+    if (res.status === 404) {
+      return { hasProfile: false };
+    }
+    if (!res.ok) {
+      const error = await res.json();
+      return { hasProfile: false, error: error.error || 'Failed to check profile' };
+    }
+    const profile = await res.json();
+    return { hasProfile: true, profile };
+  } catch (err) {
+    return { hasProfile: false, error: err instanceof Error ? err.message : 'Failed to check profile' };
+  }
+};
+
 export default function DriverDashboard() {
   const [isOnline, setIsOnline] = useState(false);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [ablyError, setAblyError] = useState<string | null>(null);
+  const [driverProfile, setDriverProfile] = useState<DriverProfile | null>(null);
+  const [profileChecked, setProfileChecked] = useState(false);
+
+  // Check driver profile on mount
+  useEffect(() => {
+    checkDriverProfile().then((result) => {
+      if (result.hasProfile && result.profile) {
+        setDriverProfile(result.profile);
+      }
+      setProfileChecked(true);
+    });
+  }, []);
   
   // SWR for pending orders - only fetch when online
   const { 
@@ -194,14 +232,19 @@ export default function DriverDashboard() {
   }, [confirmingId, mutate]);
 
   const handleGoOnline = useCallback(async () => {
+    if (!driverProfile) {
+      // No profile - user needs to register first
+      return;
+    }
+    
     const newState = !isOnline;
     setIsOnline(newState);
-    
+
     if (newState) {
       // Could trigger haptic feedback or sound here
       console.log('Driver went online');
     }
-  }, [isOnline]);
+  }, [isOnline, driverProfile]);
 
   return (
     <div className="min-h-screen bg-slate-900 text-white p-6">
@@ -215,28 +258,55 @@ export default function DriverDashboard() {
         </div>
 
         <div className="flex items-center gap-6">
-          <div className="text-right hidden md:block">
-            <div className="flex items-center gap-1 justify-end text-emerald-400">
-              <Star size={14} fill="currentColor" />
-              <span className="font-bold">{stats.trustScore}</span>
+          {driverProfile && (
+            <div className="text-right hidden md:block">
+              <div className="flex items-center gap-1 justify-end text-emerald-400">
+                <Star size={14} fill="currentColor" />
+                <span className="font-bold">{driverProfile.trustScore}</span>
+              </div>
+              <p className="text-slate-500 text-xs">Trust Score</p>
             </div>
-            <p className="text-slate-500 text-xs">Trust Score</p>
-          </div>
+          )}
 
           <button
             onClick={handleGoOnline}
+            disabled={!profileChecked || !driverProfile}
             className={`px-6 py-2 rounded-full font-bold transition-all ${
               isOnline
                 ? 'bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]'
+                : !driverProfile
+                ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
                 : 'bg-slate-700 text-slate-400'
             }`}
           >
-            {isOnline ? 'ONLINE' : 'GO ONLINE'}
+            {!profileChecked ? 'Loading...' : !driverProfile ? 'Register First' : isOnline ? 'ONLINE' : 'GO ONLINE'}
           </button>
         </div>
       </header>
 
-      <main className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+      {!profileChecked ? (
+        <div className="flex items-center justify-center py-20">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-emerald-500"></div>
+        </div>
+      ) : !driverProfile ? (
+        <div className="max-w-md mx-auto">
+          <div className="bg-slate-800 p-8 rounded-2xl border border-slate-700 text-center">
+            <Truck className="w-16 h-16 text-slate-600 mx-auto mb-4" />
+            <h2 className="text-xl font-bold mb-2">No Driver Profile Found</h2>
+            <p className="text-slate-400 mb-6">
+              You need to register as a driver before you can start accepting deliveries.
+            </p>
+            <Link
+              href="/driver/register"
+              className="inline-block bg-emerald-500 text-white px-6 py-3 rounded-xl font-bold hover:bg-emerald-400 transition-colors"
+            >
+              Register as Driver
+            </Link>
+          </div>
+        </div>
+      ) : (
+        <>
+          <main className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Stats Grid */}
         <div className="lg:col-span-1 space-y-4">
           <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700">
@@ -389,6 +459,8 @@ export default function DriverDashboard() {
           )}
         </div>
       </main>
+        </>
+      )}
     </div>
   );
 }

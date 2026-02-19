@@ -3,6 +3,7 @@
 -- Drivers Table
 CREATE TABLE drivers (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  clerk_id TEXT UNIQUE NOT NULL,
   full_name TEXT NOT NULL,
   email TEXT UNIQUE NOT NULL,
   trust_score INTEGER DEFAULT 80 CHECK (trust_score >= 0 AND trust_score <= 100),

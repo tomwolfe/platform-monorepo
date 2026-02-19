@@ -45,12 +45,12 @@ export async function GET(request: NextRequest) {
     const statsResult = await db.execute(
       sql`
         SELECT
-          COUNT(*) FILTER (WHERE status = 'completed') as deliveries_count,
-          COALESCE(SUM(payout_amount) FILTER (WHERE status = 'completed'), 0) as total_earnings,
+          COUNT(*) FILTER (WHERE status = 'delivered') as deliveries_count,
+          COALESCE(SUM(payout_amount) FILTER (WHERE status = 'delivered'), 0) as total_earnings,
           COALESCE(
             AVG(
               EXTRACT(EPOCH FROM (updated_at - created_at)) / 60
-            ) FILTER (WHERE status = 'completed'),
+            ) FILTER (WHERE status = 'delivered'),
             0
           ) as avg_minutes_per_delivery
         FROM orders

@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
       sql`
         SELECT
           COUNT(*) FILTER (WHERE status = 'delivered') as deliveries_count,
-          COALESCE(SUM(payout_amount) FILTER (WHERE status = 'delivered'), 0) as total_earnings,
+          COALESCE(SUM(total) FILTER (WHERE status = 'delivered'), 0) as total_earnings,
           COALESCE(
             AVG(
               EXTRACT(EPOCH FROM (updated_at - created_at)) / 60

@@ -14,6 +14,7 @@
     "mcp": "tsx src/mcp-server.ts"
   },
   "dependencies": {
+    "@clerk/nextjs": "^6.10.6",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@neondatabase/serverless": "^1.0.2",
     "@repo/auth": "workspace:*",

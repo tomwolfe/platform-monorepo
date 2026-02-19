@@ -147,6 +147,9 @@ importers:
 
   apps/open-delivery:
     dependencies:
+      '@clerk/nextjs':
+        specifier: ^6.10.6
+        version: 6.37.4(next@15.2.9)(react-dom@19.0.3)(react@19.0.3)
       '@modelcontextprotocol/sdk':
         specifier: ^1.26.0
         version: 1.26.0(zod@3.25.76)

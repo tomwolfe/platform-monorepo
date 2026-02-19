@@ -48,6 +48,18 @@ export async function redirectToStoreFront(restaurantId?: string) {
   redirect(`${storesUrl}/api/auth/bridge?bridge_token=${token}`);
 }
 
+export async function goToDelivery() {
+  const user = await currentUser();
+  if (!user) throw new Error('Unauthorized');
+
+  const token = await signBridgeToken({
+    clerkUserId: user.id,
+  });
+
+  const satelliteUrl = process.env.OPEN_DELIVERY_URL || 'http://localhost:3001';
+  redirect(`${satelliteUrl}/api/auth/bridge?token=${token}`);
+}
+
 export async function deleteReservation(reservationId: string, restaurantId: string) {
   await verifyOwnership(restaurantId);
   try {

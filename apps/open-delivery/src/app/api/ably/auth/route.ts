@@ -3,31 +3,48 @@ import Ably from "ably";
 import { currentUser } from "@clerk/nextjs/server";
 import { db, drivers } from "@repo/database";
 import { sql } from "drizzle-orm";
+import { verifyInternalToken } from "@repo/auth";
 
 /**
  * Ably Authentication API Route
- * 
+ *
  * Provides token requests for authenticated drivers to subscribe to
  * the nervous-system:updates channel.
- * 
+ *
  * Security: Only active drivers with valid Clerk sessions can get tokens.
  */
 export async function GET(request: NextRequest) {
   try {
-    // 1. Verify Clerk authentication
+    let userId: string | undefined;
+
+    // 1. Try Clerk Session
     const user = await currentUser();
-    
-    if (!user) {
+    if (user) {
+      userId = user.id;
+    } else {
+      // 2. Fallback: Try Auth Bridge Cookie
+      const bridgeCookie = request.cookies.get('edge_session_bridge')?.value;
+      if (bridgeCookie) {
+        const payload = await verifyInternalToken(bridgeCookie);
+        if (payload) {
+          userId = payload.clerkUserId as string;
+        }
+      }
+    }
+
+    if (!userId) {
       return NextResponse.json(
         { error: "Unauthorized - please log in" },
         { status: 401 }
       );
     }
 
+    // Use userId for driver lookup
+
     // 2. Verify user is an active driver
     // Using raw SQL query to avoid type issues with drizzle-orm version conflicts
     const driverResult = await db.execute(
-      sql`SELECT * FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`
+      sql`SELECT * FROM drivers WHERE clerk_id = ${userId} LIMIT 1`
     );
     
     const driver = driverResult.rows[0] as any | undefined;

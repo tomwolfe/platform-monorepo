@@ -201,7 +201,7 @@ export async function POST(req: NextRequest) {
       target: [guestProfiles.restaurantId, guestProfiles.email],
       set: {
         name: guestName, // Update name if it changed
-        visitCount: sql`${guestProfiles.visitCount} + 1`,
+        visitCount: sql.raw(`${guestProfiles.visitCount} + 1`),
         updatedAt: new Date(),
       }
     }).returning();

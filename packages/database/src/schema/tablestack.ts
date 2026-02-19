@@ -195,3 +195,93 @@ export const usersRelations = relations(users, ({ many }) => ({
   // Add relations if needed in the future
   // For now, users is a standalone table for contextual memory
 }));
+
+// OpenDeliver: Drivers table for delivery network
+export const drivers = pgTable('drivers', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  clerkId: text('clerk_id').unique(), // Link to Clerk authentication
+  fullName: text('full_name').notNull(),
+  email: text('email').unique().notNull(),
+  trustScore: integer('trust_score').default(80),
+  isActive: boolean('is_active').default(true),
+  createdAt: timestamp('created_at').defaultNow(),
+  lastOnline: timestamp('last_online'),
+}, (table) => {
+  return {
+    clerkIdIdx: uniqueIndex('drivers_clerk_id_idx').on(table.clerkId),
+    emailIdx: uniqueIndex('drivers_email_idx').on(table.email),
+  };
+});
+
+// OpenDeliver: Orders table for durable order storage
+export const orders = pgTable('orders', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').references(() => users.id),
+  driverId: uuid('driver_id').references(() => drivers.id),
+  storeId: uuid('store_id').references(() => restaurants.id),
+  status: text('status').notNull().default('pending'), // pending, matched, preparing, pickup, transit, delivered, cancelled
+  total: doublePrecision('total').notNull().default(0),
+  deliveryAddress: text('delivery_address').notNull(),
+  pickupAddress: text('pickup_address'),
+  specialInstructions: text('special_instructions'),
+  priority: text('priority').default('standard'), // standard, express, urgent
+  matchedAt: timestamp('matched_at'),
+  pickedUpAt: timestamp('picked_up_at'),
+  deliveredAt: timestamp('delivered_at'),
+  cancelledAt: timestamp('cancelled_at'),
+  cancellationReason: text('cancellation_reason'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, (table) => {
+  return {
+    userIdIdx: index('orders_user_id_idx').on(table.userId),
+    driverIdIdx: index('orders_driver_id_idx').on(table.driverId),
+    storeIdIdx: index('orders_store_id_idx').on(table.storeId),
+    statusIdx: index('orders_status_idx').on(table.status),
+  };
+});
+
+// OpenDeliver: Order items table
+export const orderItems = pgTable('order_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orderId: uuid('order_id').references(() => orders.id, { onDelete: 'cascade' }).notNull(),
+  name: text('name').notNull(),
+  quantity: integer('quantity').notNull().default(1),
+  price: doublePrecision('price').notNull(),
+  specialInstructions: text('special_instructions'),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (table) => {
+  return {
+    orderIdIdx: index('order_items_order_id_idx').on(table.orderId),
+  };
+});
+
+// OpenDeliver: Drivers relations
+export const driversRelations = relations(drivers, ({ many }) => ({
+  orders: many(orders),
+}));
+
+// OpenDeliver: Orders relations
+export const ordersRelations = relations(orders, ({ one, many }) => ({
+  user: one(users, {
+    fields: [orders.userId],
+    references: [users.id],
+  }),
+  driver: one(drivers, {
+    fields: [orders.driverId],
+    references: [drivers.id],
+  }),
+  store: one(restaurants, {
+    fields: [orders.storeId],
+    references: [restaurants.id],
+  }),
+  items: many(orderItems),
+}));
+
+// OpenDeliver: Order items relations
+export const orderItemsRelations = relations(orderItems, ({ one }) => ({
+  order: one(orders, {
+    fields: [orderItems.orderId],
+    references: [orders.id],
+  }),
+}));

@@ -5,6 +5,9 @@ import { TOOLS } from "@repo/mcp-protocol";
 import { redis } from "@/lib/redis-client";
 import { SecurityProvider } from "@repo/auth";
 import { randomUUID } from "crypto";
+import { db, orders, orderItems } from "@repo/database";
+import { eq } from "drizzle-orm";
+import { RealtimeService } from "@repo/shared";
 
 // Create a singleton server instance
 const server = new McpServer({
@@ -264,27 +267,93 @@ server.tool(
   },
   async (params, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
-    
+
     console.log(`[Trace:${traceId}] Dispatching intent fulfillment`);
-    
+
     // Generate fulfillment ID
     const fulfillmentId = randomUUID();
     const orderId = randomUUID();
+
+    // Format addresses
+    const pickupAddressStr = typeof params.pickupAddress === 'object' 
+      ? `${params.pickupAddress.street}, ${params.pickupAddress.city}, ${params.pickupAddress.state || ''} ${params.pickupAddress.zipCode || ''}`.trim()
+      : params.pickupAddress;
     
-    // Store in Redis for tracking
+    const deliveryAddressStr = typeof params.deliveryAddress === 'object'
+      ? `${params.deliveryAddress.street}, ${params.deliveryAddress.city}, ${params.deliveryAddress.state || ''} ${params.deliveryAddress.zipCode || ''}`.trim()
+      : params.deliveryAddress;
+
+    // 1. Write to Postgres (Durable storage)
+    try {
+      await db.insert(orders).values({
+        id: orderId,
+        userId: params.customerId,
+        status: 'pending',
+        total: params.priceDetails?.total || 0,
+        deliveryAddress: deliveryAddressStr,
+        pickupAddress: pickupAddressStr,
+        specialInstructions: params.specialInstructions,
+        priority: params.priority || 'standard',
+        createdAt: new Date(),
+      });
+
+      // Insert order items
+      if (params.items && params.items.length > 0) {
+        await db.insert(orderItems).values(
+          params.items.map((item: any) => ({
+            orderId,
+            name: item.name,
+            quantity: item.quantity || 1,
+            price: item.price || 0,
+            specialInstructions: item.specialInstructions,
+          }))
+        );
+      }
+
+      console.log(`[Trace:${traceId}] Order ${orderId} created in Postgres`);
+    } catch (error) {
+      console.error(`[Trace:${traceId}] Failed to create order in Postgres:`, error);
+      return createResponse({
+        error: "Failed to create order",
+        details: error instanceof Error ? error.message : "Unknown error",
+      }, traceId, true);
+    }
+
+    // 2. Store in Redis for fast lookup (with 1-hour TTL)
     const fulfillmentData = {
       ...params,
       fulfillmentId,
       orderId,
-      status: "searching",
+      status: "pending",
       createdAt: new Date().toISOString(),
       traceId,
     };
-    
+
     await redis.setex(`fulfillment:${fulfillmentId}`, 3600, JSON.stringify(fulfillmentData));
     await redis.setex(`opendeliver:intent:${orderId}`, 3600, JSON.stringify(fulfillmentData));
-    
-    // Simulate driver matching (async)
+    await redis.lpush("opendeliver:public_intents", orderId);
+
+    // 3. Broadcast to Ably Nervous System (Real-time driver notification)
+    try {
+      await RealtimeService.publish('nervous-system:updates', 'delivery.intent_created', {
+        orderId,
+        fulfillmentId,
+        pickupAddress: pickupAddressStr,
+        deliveryAddress: deliveryAddressStr,
+        price: params.priceDetails?.total,
+        priority: params.priority,
+        items: params.items,
+        timestamp: new Date().toISOString(),
+        traceId,
+      });
+      console.log(`[Trace:${traceId}] Broadcast intent_created to Ably`);
+    } catch (error) {
+      console.warn(`[Trace:${traceId}] Failed to broadcast to Ably:`, error);
+      // Non-fatal - continue even if Ably fails
+    }
+
+    // 4. Simulate driver matching (async background process)
+    // In production, this would be handled by a separate dispatcher service
     setTimeout(async () => {
       const matchedData = {
         ...fulfillmentData,
@@ -305,11 +374,11 @@ server.tool(
       await redis.setex(`fulfillment:${fulfillmentId}`, 3600, JSON.stringify(matchedData));
       console.log(`[Trace:${traceId}] Driver matched for fulfillment ${fulfillmentId}`);
     }, 5000);
-    
+
     return createResponse({
       fulfillmentId,
       orderId,
-      status: "searching",
+      status: "pending",
       message: "Intent dispatched to driver network",
       estimatedTimes: {
         driverMatch: "Within 5 minutes",

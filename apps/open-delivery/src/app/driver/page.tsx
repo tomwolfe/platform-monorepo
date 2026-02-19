@@ -45,6 +45,15 @@ const fetchPendingOrders = async (): Promise<OrderIntent[]> => {
   return data.orders || [];
 };
 
+const fetchDriverStats = async (): Promise<DriverStats> => {
+  const res = await fetch('/api/driver/stats');
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.error || 'Failed to fetch stats');
+  }
+  return res.json();
+};
+
 const checkDriverProfile = async (): Promise<{ hasProfile: boolean; profile?: DriverProfile; error?: string }> => {
   try {
     const res = await fetch('/api/driver/profile');
@@ -78,29 +87,31 @@ export default function DriverDashboard() {
       setProfileChecked(true);
     });
   }, []);
-  
+
+  // SWR for driver stats
+  const { data: stats, error: statsError, isLoading: statsLoading } = useSWR<DriverStats>(
+    profileChecked && driverProfile ? '/api/driver/stats' : null,
+    fetchDriverStats,
+    {
+      refreshInterval: 60000, // Refresh every minute
+      revalidateOnFocus: true,
+    }
+  );
+
   // SWR for pending orders - only fetch when online
-  const { 
-    data: availableOrders, 
-    mutate, 
+  const {
+    data: availableOrders,
+    mutate,
     error: ordersError,
-    isLoading 
+    isLoading
   } = useSWR<OrderIntent[]>(
-    isOnline ? '/api/driver/pending' : null, 
+    isOnline ? '/api/driver/pending' : null,
     fetchPendingOrders,
     {
       refreshInterval: 30000, // Refresh every 30 seconds
       revalidateOnFocus: true,
     }
   );
-
-  // Mock stats (would come from real data in production)
-  const stats: DriverStats = {
-    todayEarnings: 142.50,
-    deliveriesCount: 18,
-    avgTimePerDelivery: 14,
-    trustScore: 94,
-  };
 
   // Ably real-time subscription
   useEffect(() => {
@@ -314,8 +325,19 @@ export default function DriverDashboard() {
               <p className="text-slate-400 text-sm">Today&apos;s Earnings</p>
               <DollarSign className="text-emerald-400" size={20} />
             </div>
-            <h2 className="text-3xl font-bold">${stats.todayEarnings.toFixed(2)}</h2>
-            <p className="text-emerald-400 text-xs mt-2">↑ 12% from yesterday</p>
+            {statsLoading ? (
+              <div className="animate-pulse">
+                <div className="h-10 w-32 bg-slate-700 rounded mb-2"></div>
+                <div className="h-4 w-24 bg-slate-700 rounded"></div>
+              </div>
+            ) : statsError ? (
+              <p className="text-red-400 text-sm">Failed to load</p>
+            ) : (
+              <>
+                <h2 className="text-3xl font-bold">${stats?.todayEarnings.toFixed(2) ?? "0.00"}</h2>
+                <p className="text-emerald-400 text-xs mt-2">↑ 12% from yesterday</p>
+              </>
+            )}
           </div>
 
           <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700">
@@ -323,8 +345,19 @@ export default function DriverDashboard() {
               <p className="text-slate-400 text-sm">Deliveries</p>
               <Truck className="text-blue-400" size={20} />
             </div>
-            <h2 className="text-3xl font-bold">{stats.deliveriesCount}</h2>
-            <p className="text-slate-500 text-xs mt-2">Avg. {stats.avgTimePerDelivery} mins / delivery</p>
+            {statsLoading ? (
+              <div className="animate-pulse">
+                <div className="h-10 w-20 bg-slate-700 rounded mb-2"></div>
+                <div className="h-4 w-32 bg-slate-700 rounded"></div>
+              </div>
+            ) : statsError ? (
+              <p className="text-red-400 text-sm">Failed to load</p>
+            ) : (
+              <>
+                <h2 className="text-3xl font-bold">{stats?.deliveriesCount ?? 0}</h2>
+                <p className="text-slate-500 text-xs mt-2">Avg. {stats?.avgTimePerDelivery ?? 0} mins / delivery</p>
+              </>
+            )}
           </div>
         </div>
 
@@ -335,7 +368,7 @@ export default function DriverDashboard() {
               <Bell size={20} className="text-emerald-400" />
               Available Delivery Intents
             </h2>
-            {stats.trustScore > 90 && (
+            {(stats?.trustScore ?? 0) > 90 && (
               <span className="text-xs bg-emerald-500/10 text-emerald-400 px-3 py-1 rounded-full border border-emerald-500/20">
                 Priority Access Enabled
               </span>

@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
             SELECT 1 FROM ${restaurantReservations} r
             WHERE r.table_id = ${restaurantTables.id}
             AND r.status = 'confirmed'
-            AND (${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${start.toISOString()}, ${end.toISOString()})
+            AND (${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(start.toISOString())}, ${sql.placeholder(end.toISOString())})
           )`
         ),
       });
@@ -150,13 +150,13 @@ export async function POST(req: NextRequest) {
             )
           ),
           // Use overlap logic
-          sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${start.toISOString()}, ${end.toISOString()})`,
+          sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(start.toISOString())}, ${sql.placeholder(end.toISOString())})`,
           // Check if ANY of the tables we want are occupied
           or(
             // Check if it matches our single tableId
             assignedTableId ? eq(restaurantReservations.tableId, assignedTableId) : undefined,
             // OR if our tableId is part of someone else's combinedTables
-            assignedTableId ? sql`${restaurantReservations.combinedTableIds} @> ${JSON.stringify([assignedTableId])}::jsonb` : undefined,
+            assignedTableId ? sql`${restaurantReservations.combinedTableIds} @> ${sql.placeholder(JSON.stringify([assignedTableId]))}::jsonb` : undefined,
             // OR if our combinedTableIds contains a tableId that is someone's single tableId
             combinedTableIds ? sql`${restaurantReservations.tableId} = ANY(${sql.raw(`ARRAY['${tablesToCheck.join("','")}']::uuid[]`)})` : undefined,
             // OR if our combinedTableIds overlap with someone else's combinedTableIds

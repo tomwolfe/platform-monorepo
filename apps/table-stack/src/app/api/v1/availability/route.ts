@@ -25,7 +25,7 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
             gte(restaurantReservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
           )
         ),
-        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${startTime.toISOString()}::timestamptz, ${endTime.toISOString()}::timestamptz)`
+        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(startTime.toISOString())}::timestamptz, ${sql.placeholder(endTime.toISOString())}::timestamptz)`
       )
     );
 
@@ -46,7 +46,7 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
             gte(restaurantReservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
           )
         ),
-        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${startTime.toISOString()}::timestamptz, ${endTime.toISOString()}::timestamptz)`
+        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(startTime.toISOString())}::timestamptz, ${sql.placeholder(endTime.toISOString())}::timestamptz)`
       )
     );
 

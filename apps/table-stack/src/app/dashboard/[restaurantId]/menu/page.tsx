@@ -3,10 +3,11 @@ import { restaurants, restaurantProducts, inventoryLevels } from "@repo/database
 import { eq, desc } from 'drizzle-orm';
 import { notFound, redirect } from 'next/navigation';
 import { currentUser } from '@clerk/nextjs/server';
-import { getMenuItems, deleteMenuItem } from '../actions';
+import { getMenuItems } from '../actions';
 import { UserMenu } from '@/components/nav/UserMenu';
-import { Plus, Trash2, Edit, Package, DollarSign, Tag } from 'lucide-react';
+import { Plus, Edit, Package, DollarSign, Tag } from 'lucide-react';
 import CreateMenuItemForm from './CreateMenuItemForm';
+import DeleteMenuItemButton from './DeleteMenuItemButton';
 
 export default async function MenuManagementPage(props: { params: Promise<{ restaurantId: string }> }) {
   const params = await props.params;
@@ -110,26 +111,11 @@ export default async function MenuManagementPage(props: { params: Promise<{ rest
                         >
                           <Edit className="w-4 h-4" />
                         </button>
-                        <form
-                          action={async () => {
-                            'use server';
-                            await deleteMenuItem(item.id!, restaurantId);
-                          }}
-                          className="inline"
-                        >
-                          <button
-                            type="submit"
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Delete item"
-                            onClick={(e) => {
-                              if (!confirm(`Are you sure you want to delete "${item.name}"?`)) {
-                                e.preventDefault();
-                              }
-                            }}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </form>
+                        <DeleteMenuItemButton 
+                          productId={item.id!} 
+                          restaurantId={restaurantId} 
+                          itemName={item.name} 
+                        />
                       </div>
                     </div>
                   ))}

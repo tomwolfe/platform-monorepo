@@ -6,7 +6,7 @@ import { replan } from "@/lib/planner";
 import { AuditLog } from "@/lib/types";
 
 import { startTrace } from "@/lib/observability";
-import { withNervousSystemTracing } from "@repo/shared";
+import { withNervousSystemTracing } from "@repo/shared/tracing";
 
 export async function executeToolWithContext(
   tool_name: string, 

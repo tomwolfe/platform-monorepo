@@ -1,4 +1,4 @@
-import { injectTracingHeaders } from "@repo/shared";
+import { injectTracingHeaders } from "@repo/shared/tracing";
 
 /**
  * Enhanced fetch with automatic x-trace-id injection.

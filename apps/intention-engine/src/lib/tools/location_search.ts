@@ -3,7 +3,7 @@ import { redis } from "../redis-client";
 import { env } from "../config";
 import { RestaurantResultSchema } from "../schema";
 import { GeocodeSchema, SearchRestaurantSchema, DB_REFLECTED_SCHEMAS, UnifiedLocationSchema } from "@repo/mcp-protocol";
-import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared";
+import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared/tracing";
 
 /**
  * PhotonLocation - Standardized location response from Photon API

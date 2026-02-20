@@ -1,5 +1,6 @@
 import { resend } from './resend';
-import { getAblyClient, withNervousSystemTracing, injectTracingHeaders } from '@repo/shared';
+import { getAblyClient } from '@repo/shared';
+import { withNervousSystemTracing, injectTracingHeaders } from '@repo/shared/tracing';
 
 export interface NotifyOptions {
   to: string;

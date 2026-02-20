@@ -3,7 +3,7 @@ import { ToolDefinitionMetadata, ToolParameter } from "./types";
 import { geocode_location, search_web } from "./location_search";
 import { env } from "../config";
 import { signServiceToken } from "@repo/auth";
-import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared";
+import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared/tracing";
 import { TableReservationSchema } from "@repo/mcp-protocol";
 
 export type TableReservationParams = z.infer<typeof TableReservationSchema>;

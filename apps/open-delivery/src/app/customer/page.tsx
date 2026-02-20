@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { getRealVendors, placeRealOrder, getMenu, Vendor, MenuItem } from "./actions";
 import { useUser } from "@clerk/nextjs";
+import { reverseGeocode } from "@repo/shared/utils/geo";
 
 export const dynamic = "force-dynamic";
 
@@ -48,11 +49,44 @@ export default function CustomerDashboard() {
   const [isLoadingMenu, setIsLoadingMenu] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [showMenuModal, setShowMenuModal] = useState(false);
+  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [cityLabel, setCityLabel] = useState("Detecting location...");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+
+  useEffect(() => {
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        async (pos) => {
+          const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          setLocation(coords);
+          // Reverse geocode to get city name for UI
+          try {
+            const result = await reverseGeocode(coords.lat, coords.lng);
+            if (result.success && result.result?.address?.city) {
+              setCityLabel(result.result.address.city);
+            } else {
+              setCityLabel("Nearby");
+            }
+          } catch {
+            setCityLabel("Nearby");
+          }
+        },
+        () => {
+          // Fallback to San Francisco
+          setCityLabel("San Francisco (Default)");
+          setLocation({ lat: 37.7749, lng: -122.4194 });
+        }
+      );
+    } else {
+      setCityLabel("San Francisco (Default)");
+      setLocation({ lat: 37.7749, lng: -122.4194 });
+    }
+  }, []);
 
   useEffect(() => {
     const loadVendors = async () => {
       try {
-        const data = await getRealVendors();
+        const data = await getRealVendors(location?.lat, location?.lng);
         setVendors(data);
       } catch (err) {
         setError(
@@ -63,7 +97,7 @@ export default function CustomerDashboard() {
       }
     };
     loadVendors();
-  }, []);
+  }, [location]);
 
   useEffect(() => {
     if (!activeOrder) return;
@@ -165,7 +199,7 @@ export default function CustomerDashboard() {
         price: item.price,
         quantity: item.quantity,
       }));
-      const result = await placeRealOrder(selectedVendor.id, orderItems);
+      const result = await placeRealOrder(selectedVendor.id, orderItems, deliveryAddress || undefined);
 
       setActiveOrder({
         orderId: result.orderId,
@@ -181,7 +215,7 @@ export default function CustomerDashboard() {
     } finally {
       setIsPlacingOrder(false);
     }
-  }, [selectedVendor, cart]);
+  }, [selectedVendor, cart, deliveryAddress]);
 
   const handleOrderNow = useCallback(
     async (vendor: Vendor) => {
@@ -234,7 +268,9 @@ export default function CustomerDashboard() {
         </h1>
         <div className="bg-white px-4 py-2 rounded-full shadow-sm flex items-center gap-2">
           <MapPin size={18} className="text-red-500" />
-          <span className="text-sm font-medium">San Francisco, CA</span>
+          <span className="text-sm font-medium">
+            {cityLabel}
+          </span>
         </div>
       </header>
 
@@ -493,7 +529,22 @@ export default function CustomerDashboard() {
                         </p>
                       </div>
                     ))}
-                    <div className="border-t pt-4 mt-4">
+                    <div className="border-t pt-4 mt-4 space-y-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Delivery Address
+                        </label>
+                        <input
+                          type="text"
+                          value={deliveryAddress}
+                          onChange={(e) => setDeliveryAddress(e.target.value)}
+                          placeholder="123 Main St, Apt 4B"
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                        <p className="text-[10px] text-gray-400 mt-1">
+                          Leave empty to use current location
+                        </p>
+                      </div>
                       <div className="flex justify-between items-center">
                         <span className="font-bold">Total</span>
                         <span className="text-xl font-black text-blue-600">

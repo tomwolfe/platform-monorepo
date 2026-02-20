@@ -14,6 +14,7 @@ export interface Vendor {
   category: string;
   rating: number;
   image: string;
+  distance?: number;
 }
 
 export interface MenuItem {
@@ -24,20 +25,47 @@ export interface MenuItem {
   category: string;
 }
 
-export async function getRealVendors(): Promise<Vendor[]> {
+export async function getRealVendors(userLat?: number, userLng?: number): Promise<Vendor[]> {
   try {
-    const data = await db.query.restaurants.findMany({
-      where: sql`${restaurants.isShadow} = false AND ${restaurants.isClaimed} = true`,
-      columns: {
-        id: true,
-        name: true,
-        address: true,
-        slug: true,
-      },
-      limit: 20,
-    });
+    if (!userLat || !userLng) {
+      // Return default list if no location provided
+      const data = await db.query.restaurants.findMany({
+        where: sql`${restaurants.isShadow} = false AND ${restaurants.isClaimed} = true`,
+        columns: {
+          id: true,
+          name: true,
+          address: true,
+          slug: true,
+        },
+        limit: 10,
+      });
 
-    return data.map((r: { id: string; name: string; address: string | null; slug: string }) => ({
+      return data.map((r: { id: string; name: string; address: string | null; slug: string }) => ({
+        id: r.id,
+        name: r.name,
+        address: r.address || "Address unavailable",
+        slug: r.slug,
+        category: "Restaurant",
+        rating: 4.5,
+        image: "🍽️",
+      }));
+    }
+
+    // Use PostgreSQL to calculate distance and sort by proximity
+    // Distance = sqrt( (lat2-lat1)^2 + (lng2-lng1)^2 )
+    const data = await db.execute(sql`
+      SELECT *, 
+        sqrt(
+          pow(cast(lat as double precision) - ${userLat}, 2) + 
+          pow(cast(lng as double precision) - ${userLng}, 2)
+        ) as distance
+      FROM restaurants
+      WHERE is_shadow = false AND is_claimed = true
+      ORDER BY distance ASC
+      LIMIT 20
+    `);
+
+    return data.rows.map((r: any) => ({
       id: r.id,
       name: r.name,
       address: r.address || "Address unavailable",
@@ -45,6 +73,7 @@ export async function getRealVendors(): Promise<Vendor[]> {
       category: "Restaurant",
       rating: 4.5,
       image: "🍽️",
+      distance: parseFloat(r.distance) || undefined,
     }));
   } catch (error) {
     console.error("Failed to fetch vendors:", error);
@@ -74,7 +103,8 @@ export async function getMenu(restaurantId: string): Promise<MenuItem[]> {
 
 export async function placeRealOrder(
   vendorId: string,
-  items: Array<{ id: string; name: string; price: number; quantity: number }>
+  items: Array<{ id: string; name: string; price: number; quantity: number }>,
+  deliveryAddress?: string
 ) {
   const user = await currentUser();
 
@@ -92,6 +122,9 @@ export async function placeRealOrder(
 
   const orderId = randomUUID();
   const itemTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
+  // Use provided delivery address or fallback to user's default
+  const address = deliveryAddress || "123 Tech Lane, San Francisco, CA 94103";
 
   try {
     let userRecord = await db
@@ -122,7 +155,7 @@ export async function placeRealOrder(
         storeId: vendorId as any,
         status: "pending",
         total: itemTotal,
-        deliveryAddress: "123 Tech Lane, San Francisco, CA 94103",
+        deliveryAddress: address,
         pickupAddress: restaurant.address || "Restaurant Location",
         createdAt: new Date(),
         updatedAt: new Date(),

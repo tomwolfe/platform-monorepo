@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { randomUUID } from "crypto";
-import { withNervousSystemTracing } from "@repo/shared";
+import { withNervousSystemTracing } from "@repo/shared/tracing";
 import { startTrace } from "@/lib/observability";
 import { saveUserInteractionContext } from "@/lib/context-persistence";
 import { QStashService } from "@repo/shared";

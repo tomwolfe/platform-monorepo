@@ -6,7 +6,7 @@ import {
   UnifiedLocationSchema,
 } from "@repo/mcp-protocol";
 import type { UnifiedLocation } from "@repo/mcp-protocol";
-import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared";
+import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared/tracing";
 
 export { 
   MobilityRequestSchema, 

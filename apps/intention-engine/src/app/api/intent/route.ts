@@ -5,7 +5,7 @@ import { createAuditLog } from "@/lib/audit";
 import { getPlanWithAvoidance } from "@/app/actions";
 import { getMemoryClient } from "@/lib/engine/memory";
 import { z } from "zod";
-import { withNervousSystemTracing } from "@repo/shared";
+import { withNervousSystemTracing } from "@repo/shared/tracing";
 import { startTrace } from "@/lib/observability";
 
 export const runtime = "nodejs"; // AsyncLocalStorage needs nodejs runtime

@@ -24,6 +24,7 @@ const onboardingSchema = z.object({
   closingTime: z.string().min(1, "Please select a closing time"),
   daysOpen: z.array(z.string()).min(1, "Please select at least one day"),
   defaultDurationMinutes: z.number().min(1),
+  address: z.string().min(5, "Address must be at least 5 characters"),
   tables: z.array(z.object({
     id: z.string(), // Temporary ID for DnD
     tableNumber: z.string(),
@@ -81,6 +82,7 @@ export default function OnboardingPage() {
       closingTime: "22:00",
       daysOpen: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
       defaultDurationMinutes: 90,
+      address: "",
       tables: [],
     }
   });
@@ -187,6 +189,16 @@ export default function OnboardingPage() {
                     placeholder="The Golden Spatula"
                   />
                   {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name.message}</p>}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                  <input
+                    {...register("address")}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    placeholder="123 Main St, San Francisco, CA 94103"
+                  />
+                  {errors.address && <p className="text-red-500 text-xs mt-1">{errors.address.message}</p>}
                 </div>
 
                 <div>

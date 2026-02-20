@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import crypto from "crypto";
+import { geocode } from "@repo/shared/utils/geo";
 
 const onboardingSchema = z.object({
   name: z.string().min(2),
@@ -16,6 +17,7 @@ const onboardingSchema = z.object({
   closingTime: z.string().min(1),
   daysOpen: z.array(z.string()).min(1),
   defaultDurationMinutes: z.number().min(1),
+  address: z.string().min(5, "Address must be at least 5 characters"),
   tables: z.array(z.object({
     id: z.string().optional(),
     tableNumber: z.string(),
@@ -42,6 +44,18 @@ export async function createRestaurant(data: z.infer<typeof onboardingSchema>) {
     return { error: "This public slug is already taken. Please choose another one." };
   }
 
+  // Geocode the address to get coordinates
+  const geoResult = await geocode(validated.address);
+  let lat: string | null = null;
+  let lng: string | null = null;
+
+  if (geoResult.success && geoResult.result) {
+    lat = geoResult.result.lat.toString();
+    lng = geoResult.result.lng.toString();
+  } else {
+    console.warn(`[Onboarding] Geocoding failed for address: ${validated.address}`);
+  }
+
   const apiKey = `ts_${crypto.randomBytes(16).toString("hex")}`;
 
   const [restaurant] = await db.insert(restaurants).values({
@@ -54,6 +68,9 @@ export async function createRestaurant(data: z.infer<typeof onboardingSchema>) {
     closingTime: validated.closingTime,
     daysOpen: validated.daysOpen.join(','),
     defaultDurationMinutes: validated.defaultDurationMinutes,
+    address: validated.address,
+    lat,
+    lng,
     apiKey,
   }).returning();
 

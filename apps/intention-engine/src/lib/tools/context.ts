@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ToolDefinitionMetadata, ToolParameter } from "./types";
 import { normalizeLocation } from "./mobility";
 import { WeatherSchema, UnifiedLocationSchema } from "@repo/mcp-protocol";
-import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared";
+import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared/tracing";
 
 export type WeatherParams = z.infer<typeof WeatherSchema>;
 

@@ -53,7 +53,8 @@ export async function createRestaurant(data: z.infer<typeof onboardingSchema>) {
     lat = geoResult.result.lat.toString();
     lng = geoResult.result.lng.toString();
   } else {
-    console.warn(`[Onboarding] Geocoding failed for address: ${validated.address}`);
+    // Fail the onboarding if geocoding fails - restaurants without coordinates won't show up as "Nearby"
+    return { error: `Could not geocode address "${validated.address}". Please check the address and try again.` };
   }
 
   const apiKey = `ts_${crypto.randomBytes(16).toString("hex")}`;

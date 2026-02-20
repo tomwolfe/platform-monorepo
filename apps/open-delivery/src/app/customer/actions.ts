@@ -28,40 +28,32 @@ export interface MenuItem {
 export async function getRealVendors(userLat?: number, userLng?: number): Promise<Vendor[]> {
   try {
     if (!userLat || !userLng) {
-      // Return default list if no location provided
-      const data = await db.query.restaurants.findMany({
-        where: sql`${restaurants.isShadow} = false AND ${restaurants.isClaimed} = true`,
-        columns: {
-          id: true,
-          name: true,
-          address: true,
-          slug: true,
-        },
-        limit: 10,
-      });
-
-      return data.map((r: { id: string; name: string; address: string | null; slug: string }) => ({
-        id: r.id,
-        name: r.name,
-        address: r.address || "Address unavailable",
-        slug: r.slug,
-        category: "Restaurant",
-        rating: 4.5,
-        image: "🍽️",
-      }));
+      // Return empty list if no location provided (no fallback to SF)
+      return [];
     }
+
+    // 0.7 degrees is roughly 50 miles / 80 kilometers
+    const RADIUS_LIMIT = 0.7;
 
     // Use PostgreSQL to calculate distance and sort by proximity
     // Distance = sqrt( (lat2-lat1)^2 + (lng2-lng1)^2 )
     // Use NULLIF to handle empty TEXT coordinates safely
+    // Filter by radius to only show nearby restaurants
     const data = await db.execute(sql`
-      SELECT *,
+      SELECT id, name, address, slug, lat, lng,
         sqrt(
           pow(cast(NULLIF(lat, '') as double precision) - ${userLat}, 2) +
           pow(cast(NULLIF(lng, '') as double precision) - ${userLng}, 2)
         ) as distance
       FROM restaurants
-      WHERE is_shadow = false AND is_claimed = true
+      WHERE is_shadow = false 
+        AND is_claimed = true
+        -- Filter out restaurants with invalid coordinates
+        AND NULLIF(lat, '') IS NOT NULL
+        AND NULLIF(lng, '') IS NOT NULL
+        -- Hard radius limit: only show restaurants within ~50 miles
+        AND cast(NULLIF(lat, '') as double precision) BETWEEN ${userLat - RADIUS_LIMIT} AND ${userLat + RADIUS_LIMIT}
+        AND cast(NULLIF(lng, '') as double precision) BETWEEN ${userLng - RADIUS_LIMIT} AND ${userLng + RADIUS_LIMIT}
       ORDER BY distance ASC
       LIMIT 20
     `);

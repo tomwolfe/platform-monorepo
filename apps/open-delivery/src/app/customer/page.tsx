@@ -72,14 +72,15 @@ export default function CustomerDashboard() {
           }
         },
         () => {
-          // Fallback to San Francisco
-          setCityLabel("San Francisco (Default)");
-          setLocation({ lat: 37.7749, lng: -122.4194 });
+          // No fallback to San Francisco - show empty state instead
+          setCityLabel("Location needed");
+          setLocation(null);
         }
       );
     } else {
-      setCityLabel("San Francisco (Default)");
-      setLocation({ lat: 37.7749, lng: -122.4194 });
+      // Geolocation not available - show empty state
+      setCityLabel("Location needed");
+      setLocation(null);
     }
   }, []);
 

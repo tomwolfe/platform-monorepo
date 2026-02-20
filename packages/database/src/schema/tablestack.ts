@@ -220,7 +220,9 @@ export const orders = pgTable('orders', {
   driverId: uuid('driver_id').references(() => drivers.id),
   storeId: uuid('store_id').references(() => restaurants.id),
   status: text('status').notNull().default('pending'), // pending, matched, preparing, pickup, transit, delivered, cancelled
-  total: doublePrecision('total').notNull().default(0),
+  subtotal: doublePrecision('subtotal').notNull().default(0), // Price of food/items
+  tip: doublePrecision('tip').notNull().default(0), // Driver incentive
+  total: doublePrecision('total').notNull().default(0), // subtotal + tip
   deliveryAddress: text('delivery_address').notNull(),
   pickupAddress: text('pickup_address'),
   specialInstructions: text('special_instructions'),

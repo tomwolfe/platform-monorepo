@@ -13,7 +13,10 @@ interface OrderIntent {
   fulfillmentId?: string;
   pickupAddress: string;
   deliveryAddress: string;
+  subtotal?: number;
+  tip?: number;
   price?: number;
+  total?: number;
   priority?: string;
   items?: Array<{ name: string; quantity: number; price: number }>;
   timestamp: string;
@@ -409,21 +412,28 @@ export default function DriverDashboard() {
                 const displayId = orderId?.slice(0, 8).toUpperCase() || 'UNKNOWN';
                 
                 return (
-                  <div 
-                    key={orderId} 
+                  <div
+                    key={orderId}
                     className={`bg-slate-800 p-5 rounded-2xl border transition-all hover:scale-[1.02] cursor-pointer ${
-                      order.priority === 'urgent' 
-                        ? 'border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.1)]' 
+                      order.priority === 'urgent'
+                        ? 'border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.1)]'
                         : 'border-slate-700'
                     }`}
                   >
-                    <div className="flex justify-between items-start mb-4">
+                    <div className="flex justify-between items-center mb-2">
                       <span className="text-xs font-mono text-slate-500">{displayId}</span>
+                      <span className="text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-1 rounded-full border border-emerald-500/20">
+                        Bid for Priority
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-end mb-4">
+                      <div>
+                        <p className="text-[10px] text-slate-500 uppercase font-bold">Base: ${(order.subtotal || 0).toFixed(2)}</p>
+                        <p className="text-xl font-bold text-emerald-400">Tip: ${(order.tip || 0).toFixed(2)}</p>
+                      </div>
                       <div className="text-right">
-                        <div className="text-3xl font-black text-emerald-400 tracking-tighter">
-                          ${(order.price || 0).toFixed(2)}
-                        </div>
-                        <div className="text-[10px] text-slate-500 uppercase font-bold">Guaranteed Total</div>
+                        <span className="text-sm text-slate-400">Total Payout:</span>
+                        <h2 className="text-3xl font-black text-white">${(order.total || 0).toFixed(2)}</h2>
                       </div>
                     </div>
 

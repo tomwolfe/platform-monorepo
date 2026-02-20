@@ -12,6 +12,7 @@ import {
   Loader2,
   X,
   Menu,
+  DollarSign,
 } from "lucide-react";
 import { getRealVendors, placeRealOrder, getMenu, Vendor, MenuItem } from "./actions";
 import { useUser } from "@clerk/nextjs";
@@ -52,6 +53,7 @@ export default function CustomerDashboard() {
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [cityLabel, setCityLabel] = useState("Detecting location...");
   const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [tip, setTip] = useState(5.0); // Default $5 tip
 
   useEffect(() => {
     if ("geolocation" in navigator) {
@@ -211,23 +213,24 @@ export default function CustomerDashboard() {
         price: item.price,
         quantity: item.quantity,
       }));
-      const result = await placeRealOrder(selectedVendor.id, orderItems, deliveryAddress || undefined);
+      const result = await placeRealOrder(selectedVendor.id, orderItems, deliveryAddress || undefined, tip);
 
       setActiveOrder({
         orderId: result.orderId,
         status: "pending",
         vendor: selectedVendor.name,
-        total: cart.reduce((sum, item) => sum + item.price * item.quantity, 0),
+        total: cart.reduce((sum, item) => sum + item.price * item.quantity, 0) + tip,
         events: [{ timestamp: new Date().toISOString(), event: "order_created" }],
       });
       setShowMenuModal(false);
       setCart([]);
+      setTip(5.0); // Reset tip for next order
     } catch (err) {
       setError(err instanceof Error ? err.message : "Order failed");
     } finally {
       setIsPlacingOrder(false);
     }
-  }, [selectedVendor, cart, deliveryAddress]);
+  }, [selectedVendor, cart, deliveryAddress, tip]);
 
   const handleOrderNow = useCallback(
     async (vendor: Vendor) => {
@@ -557,11 +560,63 @@ export default function CustomerDashboard() {
                           Leave empty to use current location
                         </p>
                       </div>
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold">Total</span>
-                        <span className="text-xl font-black text-blue-600">
-                          ${cart.reduce((sum, item) => sum + item.price * item.quantity, 0).toFixed(2)}
-                        </span>
+
+                      {/* Driver Tip Section - "Bid for Priority" */}
+                      <div className="border-t pt-4 mt-4">
+                        <div className="flex items-center gap-2 mb-3">
+                          <DollarSign className="h-4 w-4 text-emerald-600" />
+                          <label className="block text-sm font-bold text-gray-900">
+                            Driver Tip (Bid for Priority)
+                          </label>
+                        </div>
+                        <p className="text-xs text-gray-500 mb-3">
+                          Higher tips attract drivers faster and prioritize your order
+                        </p>
+                        <div className="grid grid-cols-4 gap-2 mb-3">
+                          {[0, 3, 5, 8].map((amount) => (
+                            <button
+                              key={amount}
+                              onClick={() => setTip(amount)}
+                              className={`py-2 rounded-lg font-semibold text-sm transition-all ${
+                                tip === amount
+                                  ? "bg-emerald-500 text-white shadow-md"
+                                  : "bg-white border border-gray-300 text-gray-700 hover:border-emerald-400"
+                              }`}
+                            >
+                              ${amount}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-500">$</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            value={tip}
+                            onChange={(e) => setTip(Math.max(0, parseFloat(e.target.value) || 0))}
+                            className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 pt-4 border-t">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-500">Subtotal</span>
+                          <span className="font-medium">
+                            ${cart.reduce((sum, item) => sum + item.price * item.quantity, 0).toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-500">Driver Tip</span>
+                          <span className="font-medium text-emerald-600">${tip.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between items-center pt-2">
+                          <span className="font-bold text-gray-900">Total</span>
+                          <span className="text-xl font-black text-blue-600">
+                            ${(cart.reduce((sum, item) => sum + item.price * item.quantity, 0) + tip).toFixed(2)}
+                          </span>
+                        </div>
                       </div>
                     </div>
                     <button

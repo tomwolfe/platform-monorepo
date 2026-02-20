@@ -176,6 +176,13 @@ async function fetchLiveOperationalState(
     failureReason: string;
     failedAt: string;
   }>;
+  deliveryLoadState?: {
+    isHighLoad: boolean;
+    avgWaitTimeMinutes: number;
+    activeDrivers: number;
+    pendingOrders: number;
+    recommendedTipBoost: number;
+  };
   rawText?: string;
   hardConstraints?: string[];
   failoverSuggestions?: Array<{
@@ -431,9 +438,77 @@ async function fetchLiveOperationalState(
       }
     }
 
-    return { 
-      restaurantStates, 
+    // Check delivery load state for tip boost recommendations
+    let deliveryLoadState: {
+      isHighLoad: boolean;
+      avgWaitTimeMinutes: number;
+      activeDrivers: number;
+      pendingOrders: number;
+      recommendedTipBoost: number;
+    } | undefined;
+
+    try {
+      // Fetch pending orders count and active drivers from database
+      const { db, sql, orders, drivers } = await import("@repo/database");
+
+      const [pendingCountResult, activeDriversResult] = await Promise.all([
+        db.execute(sql`SELECT COUNT(*) as count FROM orders WHERE status = 'pending' AND driver_id IS NULL`),
+        db.execute(sql`SELECT COUNT(*) as count FROM drivers WHERE is_active = true`),
+      ]);
+
+      const pendingOrders = parseInt((pendingCountResult.rows[0] as any)?.count || "0");
+      const activeDrivers = parseInt((activeDriversResult.rows[0] as any)?.count || "0");
+
+      // Calculate load ratio and determine if high load
+      const driverRatio = activeDrivers > 0 ? pendingOrders / activeDrivers : 999;
+      const isHighLoad = driverRatio > 2 || pendingOrders > 10;
+
+      // Calculate recommended tip boost based on load
+      let recommendedTipBoost = 0;
+      if (isHighLoad) {
+        if (driverRatio > 5 || pendingOrders > 20) {
+          recommendedTipBoost = 5; // High demand - suggest $5 boost
+        } else if (driverRatio > 3 || pendingOrders > 15) {
+          recommendedTipBoost = 3; // Medium demand - suggest $3 boost
+        } else {
+          recommendedTipBoost = 2; // Low demand - suggest $2 boost
+        }
+      }
+
+      // Estimate wait time based on load
+      const avgWaitTimeMinutes = isHighLoad ? Math.round(15 + (driverRatio * 5)) : 10;
+
+      deliveryLoadState = {
+        isHighLoad,
+        avgWaitTimeMinutes,
+        activeDrivers,
+        pendingOrders,
+        recommendedTipBoost,
+      };
+
+      // Add tip boost suggestion if high load
+      if (isHighLoad && intentContext?.intentType?.includes("DELIVERY")) {
+        failoverSuggestions.push({
+          type: "tip_boost_recommendation",
+          value: {
+            current_load: "high",
+            pending_orders: pendingOrders,
+            active_drivers: activeDrivers,
+            recommended_boost: recommendedTipBoost,
+          },
+          confidence: 0.85,
+          message: `Drivers are in high demand right now. Increasing your tip by $${recommendedTipBoost} may attract a driver faster and reduce your wait time.`,
+        });
+      }
+    } catch (error) {
+      console.warn("[DeliveryLoadState] Failed to fetch delivery load state:", error);
+      // Continue without delivery load state
+    }
+
+    return {
+      restaurantStates,
       failedBookings: failedBookings?.length ? failedBookings : undefined,
+      deliveryLoadState,
       hardConstraints: hardConstraints.length > 0 ? hardConstraints : undefined,
       failoverSuggestions: failoverSuggestions.length > 0 ? failoverSuggestions : undefined,
     };
@@ -727,6 +802,14 @@ export async function POST(req: Request) {
         `\n### 💡 RECOMMENDED ALTERNATIVES (Pre-computed):\n${liveOperationalState.failoverSuggestions
           .map(s => `- [${s.type.toUpperCase()}] ${s.message || JSON.stringify(s.value)} (Confidence: ${(s.confidence * 100).toFixed(0)}%)`)
           .join("\n")}\n\n**TIP**: These alternatives have been pre-validated and are ready to offer.`
+      );
+    }
+
+    // DELIVERY LOAD STATE - Real-time demand/supply for tip recommendations
+    if (liveOperationalState.deliveryLoadState) {
+      const { isHighLoad, avgWaitTimeMinutes, activeDrivers, pendingOrders, recommendedTipBoost } = liveOperationalState.deliveryLoadState;
+      liveStateContextParts.push(
+        `\n### 🚗 DELIVERY LOAD STATE (Real-time):\n- Active Drivers: ${activeDrivers}\n- Pending Orders: ${pendingOrders}\n- Load Status: ${isHighLoad ? "HIGH DEMAND" : "Normal"}\n- Avg Wait Time: ${avgWaitTimeMinutes} minutes\n\n**TIP BOOST RECOMMENDATION**: ${isHighLoad ? `Suggest increasing tip by $${recommendedTipBoost} to prioritize this order. Higher tips attract drivers faster during high demand.` : "Current tip levels are adequate for normal demand."}`
       );
     }
 

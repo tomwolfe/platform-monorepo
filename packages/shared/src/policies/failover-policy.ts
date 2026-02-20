@@ -313,6 +313,40 @@ export const DEFAULT_FAILOVER_POLICIES: FailoverPolicy[] = [
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
+  {
+    id: "policy_delivery_no_driver_001",
+    name: "No Driver Found - Dynamic Tip Boost",
+    description: "When no driver matches a delivery order, suggest increasing tip to attract drivers",
+    enabled: true,
+    condition: {
+      intent_type: "DELIVERY",
+      failure_reason: "SERVICE_ERROR", // Mapping "No driver matched" to service error
+      max_attempts: 1,
+    },
+    actions: [
+      {
+        type: "RETRY_WITH_BACKOFF",
+        priority: 10,
+        max_retries: 2,
+        retry_delay_ms: 5000,
+        message_template: "Drivers are busy. Increasing tip by $2.00 may speed up your delivery. Would you like to boost?",
+        parameters: {
+          tip_increment: 200, // cents
+          backoff_multiplier: 2,
+          max_delay_ms: 15000,
+        },
+      },
+      {
+        type: "ESCALATE_TO_HUMAN",
+        priority: 5,
+        max_retries: 1,
+        retry_delay_ms: 500,
+        message_template: "We're having trouble finding a driver. Our support team will contact you shortly.",
+      },
+    ],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
 ];
 
 // ============================================================================

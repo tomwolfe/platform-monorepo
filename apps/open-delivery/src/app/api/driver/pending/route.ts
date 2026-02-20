@@ -13,12 +13,14 @@ export async function GET(request: NextRequest) {
     // Fetch all pending orders (not yet assigned to a driver)
     const pendingOrders = await db.execute(
       sql`
-        SELECT 
+        SELECT
           o.id,
           o.user_id,
           o.driver_id,
           o.store_id,
           o.status,
+          o.subtotal,
+          o.tip,
           o.total,
           o.delivery_address,
           o.pickup_address,
@@ -49,8 +51,9 @@ export async function GET(request: NextRequest) {
       orderId: row.id,
       pickupAddress: row.pickup_address,
       deliveryAddress: row.delivery_address,
-      price: row.total, // Map 'total' from DB to 'price' for the UI
-      total: row.total, // Keep for backward compatibility
+      subtotal: row.subtotal || 0,
+      tip: row.tip || 0,
+      total: row.total || 0,
       priority: row.priority,
       specialInstructions: row.special_instructions,
       createdAt: row.created_at,

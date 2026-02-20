@@ -97,7 +97,8 @@ export async function getMenu(restaurantId: string): Promise<MenuItem[]> {
 export async function placeRealOrder(
   vendorId: string,
   items: Array<{ id: string; name: string; price: number; quantity: number }>,
-  deliveryAddress?: string
+  deliveryAddress?: string,
+  tipAmount: number = 0
 ) {
   const user = await currentUser();
 
@@ -114,7 +115,9 @@ export async function placeRealOrder(
   }
 
   const orderId = randomUUID();
-  const itemTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const tip = Math.max(0, tipAmount); // Ensure non-negative
+  const total = subtotal + tip;
 
   try {
     let userRecord = await db
@@ -152,7 +155,9 @@ export async function placeRealOrder(
         userId: userRecord?.id,
         storeId: vendorId as any,
         status: "pending",
-        total: itemTotal,
+        subtotal,
+        tip,
+        total,
         deliveryAddress: address,
         pickupAddress: restaurant.address || "Restaurant Location",
         createdAt: new Date(),

@@ -10,8 +10,10 @@ import {
   Utensils,
   AlertCircle,
   Loader2,
+  X,
+  Menu,
 } from "lucide-react";
-import { getRealVendors, placeRealOrder, Vendor } from "./actions";
+import { getRealVendors, placeRealOrder, getMenu, Vendor, MenuItem } from "./actions";
 import { useUser } from "@clerk/nextjs";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +32,10 @@ interface OrderStatus {
   events: Array<{ timestamp: string; event: string }>;
 }
 
+interface CartItem extends MenuItem {
+  quantity: number;
+}
+
 export default function CustomerDashboard() {
   const { isLoaded, isSignedIn } = useUser();
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -37,6 +43,11 @@ export default function CustomerDashboard() {
   const [isLoadingVendors, setIsLoadingVendors] = useState(true);
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [isLoadingMenu, setIsLoadingMenu] = useState(false);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [showMenuModal, setShowMenuModal] = useState(false);
 
   useEffect(() => {
     const loadVendors = async () => {
@@ -93,6 +104,85 @@ export default function CustomerDashboard() {
     };
   }, [activeOrder?.orderId]);
 
+  const handleViewMenu = useCallback(
+    async (vendor: Vendor) => {
+      if (!isSignedIn) {
+        setError("Please sign in to view menu.");
+        return;
+      }
+      setSelectedVendor(vendor);
+      setIsLoadingMenu(true);
+      setError(null);
+
+      try {
+        const items = await getMenu(vendor.id);
+        setMenuItems(items);
+        setCart([]);
+        setShowMenuModal(true);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load menu");
+      } finally {
+        setIsLoadingMenu(false);
+      }
+    },
+    [isSignedIn]
+  );
+
+  const handleAddToCart = useCallback((item: MenuItem) => {
+    setCart((prev) => {
+      const existing = prev.find((i) => i.id === item.id);
+      if (existing) {
+        return prev.map((i) =>
+          i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
+        );
+      }
+      return [...prev, { ...item, quantity: 1 }];
+    });
+  }, []);
+
+  const handleRemoveFromCart = useCallback((itemId: string) => {
+    setCart((prev) => {
+      const existing = prev.find((i) => i.id === itemId);
+      if (existing && existing.quantity > 1) {
+        return prev.map((i) =>
+          i.id === itemId ? { ...i, quantity: i.quantity - 1 } : i
+        );
+      }
+      return prev.filter((i) => i.id !== itemId);
+    });
+  }, []);
+
+  const handleCheckout = useCallback(async () => {
+    if (!selectedVendor || cart.length === 0) return;
+
+    setIsPlacingOrder(true);
+    setError(null);
+
+    try {
+      const orderItems = cart.map((item) => ({
+        id: item.id,
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+      }));
+      const result = await placeRealOrder(selectedVendor.id, orderItems);
+
+      setActiveOrder({
+        orderId: result.orderId,
+        status: "pending",
+        vendor: selectedVendor.name,
+        total: cart.reduce((sum, item) => sum + item.price * item.quantity, 0),
+        events: [{ timestamp: new Date().toISOString(), event: "order_created" }],
+      });
+      setShowMenuModal(false);
+      setCart([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Order failed");
+    } finally {
+      setIsPlacingOrder(false);
+    }
+  }, [selectedVendor, cart]);
+
   const handleOrderNow = useCallback(
     async (vendor: Vendor) => {
       if (!isSignedIn) {
@@ -105,7 +195,12 @@ export default function CustomerDashboard() {
       const MOCK_TOTAL = 24.99;
 
       try {
-        const result = await placeRealOrder(vendor.id, MOCK_TOTAL);
+        const result = await placeRealOrder(vendor.id, [{
+          id: "mock-item",
+          name: `Chef's Special at ${vendor.name}`,
+          price: MOCK_TOTAL,
+          quantity: 1,
+        }]);
 
         setActiveOrder({
           orderId: result.orderId,
@@ -170,9 +265,8 @@ export default function CustomerDashboard() {
               {vendors.map((vendor) => (
                 <div
                   key={vendor.id}
-                  onClick={() => handleOrderNow(vendor)}
                   className={`bg-white p-5 rounded-xl border transition-all cursor-pointer relative overflow-hidden group ${
-                    isPlacingOrder
+                    isPlacingOrder || isLoadingMenu
                       ? "opacity-50 pointer-events-none"
                       : "hover:shadow-lg hover:border-blue-200"
                   }`}
@@ -194,18 +288,23 @@ export default function CustomerDashboard() {
                   </p>
 
                   <button
-                    disabled={isPlacingOrder || !isSignedIn}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleViewMenu(vendor);
+                    }}
+                    disabled={isPlacingOrder || isLoadingMenu || !isSignedIn}
                     className="mt-4 w-full bg-blue-600 text-white py-2.5 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
-                    {isPlacingOrder ? (
+                    {isLoadingMenu && selectedVendor?.id === vendor.id ? (
                       <>
-                        Processing{" "}
-                        <Loader2 className="animate-spin h-4 w-4" />
+                        Loading <Loader2 className="animate-spin h-4 w-4" />
                       </>
                     ) : !isSignedIn ? (
-                      "Sign In to Order"
+                      "Sign In to View Menu"
                     ) : (
-                      "Order Now"
+                      <>
+                        <Menu className="h-4 w-4" /> View Menu
+                      </>
                     )}
                   </button>
                 </div>
@@ -297,6 +396,131 @@ export default function CustomerDashboard() {
           </div>
         </div>
       </main>
+
+      {/* Menu Modal */}
+      {showMenuModal && selectedVendor && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-6 border-b flex justify-between items-center">
+              <div>
+                <h2 className="text-2xl font-bold">{selectedVendor.name}</h2>
+                <p className="text-sm text-gray-500">Select items to add to your order</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowMenuModal(false);
+                  setCart([]);
+                }}
+                className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
+              {/* Menu Items */}
+              <div className="flex-1 overflow-y-auto p-6">
+                {isLoadingMenu ? (
+                  <div className="flex items-center justify-center py-20">
+                    <Loader2 className="animate-spin h-8 w-8 text-blue-600" />
+                  </div>
+                ) : menuItems.length === 0 ? (
+                  <div className="text-center py-12 text-gray-500">
+                    <Utensils className="h-12 w-12 mx-auto mb-4 opacity-20" />
+                    <p>No menu items available</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {menuItems.map((item) => {
+                      const inCart = cart.find((c) => c.id === item.id);
+                      return (
+                        <div
+                          key={item.id}
+                          className="flex justify-between items-center p-4 border rounded-xl hover:border-blue-300 transition-colors"
+                        >
+                          <div className="flex-1">
+                            <h3 className="font-semibold text-gray-900">{item.name}</h3>
+                            <p className="text-sm text-gray-500">{item.description || "No description"}</p>
+                            <p className="text-blue-600 font-bold mt-1">${item.price.toFixed(2)}</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {inCart ? (
+                              <>
+                                <button
+                                  onClick={() => handleRemoveFromCart(item.id)}
+                                  className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center font-bold transition-colors"
+                                >
+                                  -
+                                </button>
+                                <span className="w-8 text-center font-semibold">{inCart.quantity}</span>
+                              </>
+                            ) : null}
+                            <button
+                              onClick={() => handleAddToCart(item)}
+                              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                            >
+                              {inCart ? "Add More" : "Add to Cart"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Cart Sidebar */}
+              <div className="lg:w-80 border-l bg-gray-50 p-6 overflow-y-auto">
+                <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+                  <ShoppingCart className="h-5 w-5" /> Your Order
+                </h3>
+                {cart.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <Package className="h-12 w-12 mx-auto mb-4 opacity-20" />
+                    <p className="text-sm">No items in cart</p>
+                    <p className="text-xs mt-1">Add items from the menu</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {cart.map((item) => (
+                      <div key={item.id} className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <p className="font-medium text-sm">{item.name}</p>
+                          <p className="text-xs text-gray-500">Qty: {item.quantity}</p>
+                        </div>
+                        <p className="font-semibold text-sm">
+                          ${(item.price * item.quantity).toFixed(2)}
+                        </p>
+                      </div>
+                    ))}
+                    <div className="border-t pt-4 mt-4">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold">Total</span>
+                        <span className="text-xl font-black text-blue-600">
+                          ${cart.reduce((sum, item) => sum + item.price * item.quantity, 0).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleCheckout}
+                      disabled={isPlacingOrder || cart.length === 0}
+                      className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {isPlacingOrder ? (
+                        <>
+                          Processing <Loader2 className="animate-spin h-4 w-4" />
+                        </>
+                      ) : (
+                        "Place Order"
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

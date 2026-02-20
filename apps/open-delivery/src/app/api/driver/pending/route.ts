@@ -49,7 +49,8 @@ export async function GET(request: NextRequest) {
       orderId: row.id,
       pickupAddress: row.pickup_address,
       deliveryAddress: row.delivery_address,
-      total: row.total,
+      price: row.total, // Map 'total' from DB to 'price' for the UI
+      total: row.total, // Keep for backward compatibility
       priority: row.priority,
       specialInstructions: row.special_instructions,
       createdAt: row.created_at,

@@ -1,6 +1,6 @@
 "use server";
 
-import { db, restaurants, orders, orderItems, users, sql } from "@repo/database";
+import { db, restaurants, orders, orderItems, users, sql, restaurantProducts, eq } from "@repo/database";
 import { currentUser } from "@clerk/nextjs/server";
 import { RealtimeService } from "@repo/shared";
 import { revalidatePath } from "next/cache";
@@ -14,6 +14,14 @@ export interface Vendor {
   category: string;
   rating: number;
   image: string;
+}
+
+export interface MenuItem {
+  id: string;
+  name: string;
+  description: string | null;
+  price: number;
+  category: string;
 }
 
 export async function getRealVendors(): Promise<Vendor[]> {
@@ -44,7 +52,30 @@ export async function getRealVendors(): Promise<Vendor[]> {
   }
 }
 
-export async function placeRealOrder(vendorId: string, itemTotal: number) {
+export async function getMenu(restaurantId: string): Promise<MenuItem[]> {
+  try {
+    const products = await db
+      .select()
+      .from(restaurantProducts)
+      .where(eq(restaurantProducts.restaurantId, restaurantId));
+
+    return products.map((p: typeof restaurantProducts.$inferSelect) => ({
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      price: p.price,
+      category: p.category,
+    }));
+  } catch (error) {
+    console.error("Failed to fetch menu:", error);
+    throw new Error("Could not load menu items");
+  }
+}
+
+export async function placeRealOrder(
+  vendorId: string,
+  items: Array<{ id: string; name: string; price: number; quantity: number }>
+) {
   const user = await currentUser();
 
   if (!user) {
@@ -60,6 +91,7 @@ export async function placeRealOrder(vendorId: string, itemTotal: number) {
   }
 
   const orderId = randomUUID();
+  const itemTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
   try {
     let userRecord = await db
@@ -97,22 +129,25 @@ export async function placeRealOrder(vendorId: string, itemTotal: number) {
       })
       .returning();
 
-    await db.insert(orderItems).values({
-      orderId: orderId,
-      name: `Chef's Special at ${restaurant.name}`,
-      quantity: 1,
-      price: itemTotal,
-      createdAt: new Date(),
-    });
+    // Insert all order items
+    await db.insert(orderItems).values(
+      items.map((item) => ({
+        orderId: orderId,
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price,
+        createdAt: new Date(),
+      }))
+    );
 
     await RealtimeService.publish("nervous-system:updates", "delivery.intent_created", {
       orderId: newOrder.id,
       fulfillmentId: newOrder.id,
       pickupAddress: newOrder.pickupAddress,
       deliveryAddress: newOrder.deliveryAddress,
-      price: newOrder.total,
+      price: newOrder.total, // Ensure this matches the key 'price' used in the driver UI
       priority: "standard",
-      items: [{ name: "Chef's Special", quantity: 1, price: itemTotal }],
+      items: items.map((item) => ({ name: item.name, quantity: item.quantity, price: item.price })),
       timestamp: new Date().toISOString(),
       traceId: `order-${orderId}`,
     });

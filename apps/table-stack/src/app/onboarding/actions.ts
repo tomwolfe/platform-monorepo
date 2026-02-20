@@ -72,6 +72,8 @@ export async function createRestaurant(data: z.infer<typeof onboardingSchema>) {
     lat,
     lng,
     apiKey,
+    isClaimed: true,
+    isShadow: false,
   }).returning();
 
   if (validated.tables.length > 0) {

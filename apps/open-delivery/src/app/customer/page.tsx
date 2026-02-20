@@ -85,8 +85,11 @@ export default function CustomerDashboard() {
 
   useEffect(() => {
     const loadVendors = async () => {
+      // Only fetch if we actually have coordinates
+      if (!location?.lat || !location?.lng) return;
+
       try {
-        const data = await getRealVendors(location?.lat, location?.lng);
+        const data = await getRealVendors(location.lat, location.lng);
         setVendors(data);
       } catch (err) {
         setError(
@@ -97,7 +100,7 @@ export default function CustomerDashboard() {
       }
     };
     loadVendors();
-  }, [location]);
+  }, [location?.lat, location?.lng]);
 
   useEffect(() => {
     if (!activeOrder) return;

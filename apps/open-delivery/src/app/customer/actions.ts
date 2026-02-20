@@ -53,11 +53,12 @@ export async function getRealVendors(userLat?: number, userLng?: number): Promis
 
     // Use PostgreSQL to calculate distance and sort by proximity
     // Distance = sqrt( (lat2-lat1)^2 + (lng2-lng1)^2 )
+    // Use NULLIF to handle empty TEXT coordinates safely
     const data = await db.execute(sql`
-      SELECT *, 
+      SELECT *,
         sqrt(
-          pow(cast(lat as double precision) - ${userLat}, 2) + 
-          pow(cast(lng as double precision) - ${userLng}, 2)
+          pow(cast(NULLIF(lat, '') as double precision) - ${userLat}, 2) +
+          pow(cast(NULLIF(lng, '') as double precision) - ${userLng}, 2)
         ) as distance
       FROM restaurants
       WHERE is_shadow = false AND is_claimed = true

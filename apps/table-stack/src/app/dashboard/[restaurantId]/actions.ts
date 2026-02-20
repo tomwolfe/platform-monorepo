@@ -1,6 +1,6 @@
 'use server';
 
-import { db, restaurantTables, restaurants, restaurantReservations, restaurantWaitlist } from '@repo/database';
+import { db, restaurantTables, restaurants, restaurantReservations, restaurantWaitlist, restaurantProducts, inventoryLevels } from '@repo/database';
 import { signBridgeToken } from '@repo/auth';
 import { redirect } from 'next/navigation';
 import { currentUser } from '@clerk/nextjs/server';
@@ -382,11 +382,144 @@ export async function createStripeConnectAccount(restaurantId: string) {
 
   // Mock Stripe Connect onboarding
   const mockStripeAccountId = `acct_${Math.random().toString(36).substring(2, 12)}`;
-  
+
   await db.update(restaurants)
     .set({ stripeAccountId: mockStripeAccountId })
     .where(eq(restaurants.id, restaurantId));
 
   revalidatePath(`/dashboard/${restaurantId}`);
   return { stripeAccountId: mockStripeAccountId };
+}
+
+// Menu Management Actions
+
+export async function getMenuItems(restaurantId: string) {
+  await verifyOwnership(restaurantId);
+  
+  try {
+    const products = await db
+      .select({
+        id: restaurantProducts.id,
+        name: restaurantProducts.name,
+        description: restaurantProducts.description,
+        price: restaurantProducts.price,
+        category: restaurantProducts.category,
+        availableQuantity: inventoryLevels.availableQuantity,
+      })
+      .from(restaurantProducts)
+      .leftJoin(inventoryLevels, eq(restaurantProducts.id, inventoryLevels.productId))
+      .where(eq(restaurantProducts.restaurantId, restaurantId));
+
+    return products;
+  } catch (error) {
+    console.error('Failed to fetch menu items:', error);
+    throw new Error('Failed to fetch menu items');
+  }
+}
+
+export async function createMenuItem(
+  restaurantId: string,
+  formData: FormData
+) {
+  await verifyOwnership(restaurantId);
+
+  const name = formData.get('name') as string;
+  const description = formData.get('description') as string;
+  const price = parseFloat(formData.get('price') as string);
+  const category = formData.get('category') as string;
+  const quantity = parseInt(formData.get('quantity') as string) || 50;
+
+  if (!name || !price || !category) {
+    throw new Error('Name, price, and category are required');
+  }
+
+  try {
+    const [product] = await db.insert(restaurantProducts).values({
+      restaurantId,
+      name,
+      description,
+      price,
+      category,
+    }).returning();
+
+    // Create inventory entry
+    await db.insert(inventoryLevels).values({
+      productId: product.id,
+      availableQuantity: quantity,
+    });
+
+    revalidatePath(`/dashboard/${restaurantId}`);
+    return { success: true, productId: product.id };
+  } catch (error) {
+    console.error('Failed to create menu item:', error);
+    throw new Error('Failed to create menu item');
+  }
+}
+
+export async function updateMenuItem(
+  productId: string,
+  restaurantId: string,
+  updates: { name?: string; description?: string; price?: number; category?: string }
+) {
+  await verifyOwnership(restaurantId);
+
+  try {
+    await db.update(restaurantProducts)
+      .set({
+        ...updates,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(restaurantProducts.id, productId),
+        eq(restaurantProducts.restaurantId, restaurantId)
+      ));
+
+    revalidatePath(`/dashboard/${restaurantId}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to update menu item:', error);
+    throw new Error('Failed to update menu item');
+  }
+}
+
+export async function updateMenuItemQuantity(
+  productId: string,
+  restaurantId: string,
+  quantity: number
+) {
+  await verifyOwnership(restaurantId);
+
+  try {
+    await db.update(inventoryLevels)
+      .set({ availableQuantity: quantity, updatedAt: new Date() })
+      .where(eq(inventoryLevels.productId, productId));
+
+    revalidatePath(`/dashboard/${restaurantId}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to update quantity:', error);
+    throw new Error('Failed to update quantity');
+  }
+}
+
+export async function deleteMenuItem(productId: string, restaurantId: string) {
+  await verifyOwnership(restaurantId);
+
+  try {
+    // Delete inventory first (cascade should handle this, but being explicit)
+    await db.delete(inventoryLevels).where(eq(inventoryLevels.productId, productId));
+    
+    // Delete product
+    await db.delete(restaurantProducts)
+      .where(and(
+        eq(restaurantProducts.id, productId),
+        eq(restaurantProducts.restaurantId, restaurantId)
+      ));
+
+    revalidatePath(`/dashboard/${restaurantId}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to delete menu item:', error);
+    throw new Error('Failed to delete menu item');
+  }
 }

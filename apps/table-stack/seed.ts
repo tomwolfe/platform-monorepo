@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { db, restaurants, restaurantTables } from "@repo/database";
+import { db, restaurants, restaurantTables, restaurantProducts, inventoryLevels } from "@repo/database";
 import { eq } from 'drizzle-orm';
 
 async function seed() {
@@ -42,6 +42,87 @@ async function seed() {
   }
 
   console.log(`✅ Created ${tables.length} tables`);
+
+  // Clear existing menu items and inventory for this restaurant to avoid duplicates
+  await db.delete(restaurantProducts).where(eq(restaurantProducts.restaurantId, restaurant.id));
+
+  const menuItems = [
+    {
+      name: 'Classic Margherita Pizza',
+      description: 'Fresh tomatoes, mozzarella, basil, and extra virgin olive oil on our signature thin crust',
+      price: 18.99,
+      category: 'Pizza',
+    },
+    {
+      name: 'Truffle Mushroom Risotto',
+      description: 'Arborio rice with wild mushrooms, black truffle oil, parmesan, and fresh herbs',
+      price: 24.99,
+      category: 'Main Course',
+    },
+    {
+      name: 'Grilled Salmon',
+      description: 'Atlantic salmon with lemon butter sauce, served with seasonal vegetables and rice pilaf',
+      price: 28.99,
+      category: 'Main Course',
+    },
+    {
+      name: 'Caesar Salad',
+      description: 'Crisp romaine lettuce, parmesan cheese, croutons, and our house-made Caesar dressing',
+      price: 12.99,
+      category: 'Salads',
+    },
+    {
+      name: 'Garlic Bread',
+      description: 'Toasted ciabatta bread with garlic butter, herbs, and melted mozzarella',
+      price: 8.99,
+      category: 'Appetizers',
+    },
+    {
+      name: 'Bruschetta',
+      description: 'Toasted bread topped with fresh tomatoes, basil, garlic, and balsamic glaze',
+      price: 10.99,
+      category: 'Appetizers',
+    },
+    {
+      name: 'Tiramisu',
+      description: 'Classic Italian dessert with layers of coffee-soaked ladyfingers and mascarpone cream',
+      price: 9.99,
+      category: 'Desserts',
+    },
+    {
+      name: 'Panna Cotta',
+      description: 'Silky vanilla custard topped with fresh berry compote',
+      price: 8.99,
+      category: 'Desserts',
+    },
+    {
+      name: 'Italian Espresso',
+      description: 'Rich and bold single-origin espresso shot',
+      price: 3.99,
+      category: 'Beverages',
+    },
+    {
+      name: 'Fresh Lemonade',
+      description: 'House-made lemonade with fresh mint and a hint of ginger',
+      price: 5.99,
+      category: 'Beverages',
+    },
+  ];
+
+  for (const item of menuItems) {
+    const [product] = await db.insert(restaurantProducts).values({
+      ...item,
+      restaurantId: restaurant.id,
+    }).returning();
+
+    // Create inventory entry for each product
+    await db.insert(inventoryLevels).values({
+      productId: product.id,
+      availableQuantity: 50, // Default stock
+    });
+  }
+
+  console.log(`✅ Created ${menuItems.length} menu items with inventory`);
   console.log('🚀 Seed complete!');
 }
 

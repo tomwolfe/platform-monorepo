@@ -6,8 +6,9 @@ import { currentUser } from '@clerk/nextjs/server';
 import FloorPlan from '@/components/dashboard/FloorPlan';
 import LiveView from '@/components/dashboard/LiveView';
 import { updateTablePositions, updateTableStatus, updateRestaurantSettings, addTable, deleteTable, updateTableDetails, deleteReservation, updateWaitlistStatus, regenerateApiKey, createStripeConnectAccount } from './actions';
-import { Trash2, Bell, UserCheck, CreditCard, Store } from 'lucide-react';
+import { Trash2, Bell, UserCheck, CreditCard, Store, Utensils } from 'lucide-react';
 import { UserMenu } from '@/components/nav/UserMenu';
+import Link from 'next/link';
 
 export default async function DashboardPage(props: { params: Promise<{ restaurantId: string }> }) {
   const params = await props.params;
@@ -292,8 +293,19 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
           <h3 className="text-blue-900 font-semibold mb-2">Total Tables</h3>
           <p className="text-3xl font-bold text-blue-600">{restaurant.tables.length}</p>
         </div>
-        
-        <div className="bg-purple-50 p-6 rounded-xl border border-purple-100 md:col-span-2 flex justify-between items-center">
+
+        <Link href={`/dashboard/${restaurantId}/menu`} className="bg-amber-50 p-6 rounded-xl border border-amber-100 hover:shadow-md transition-shadow group">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-amber-900 font-semibold flex items-center gap-2">
+              <Utensils className="w-4 h-4" />
+              Menu Management
+            </h3>
+            <span className="text-amber-600 group-hover:translate-x-1 transition-transform">→</span>
+          </div>
+          <p className="text-sm text-amber-700">Manage your menu items and pricing</p>
+        </Link>
+
+        <div className="bg-purple-50 p-6 rounded-xl border border-purple-100 md:col-span-1 flex justify-between items-center">
           <div>
             <h3 className="text-purple-900 font-semibold mb-2 flex items-center">
               <CreditCard className="w-4 h-4 mr-2" />
@@ -313,7 +325,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
               'use server';
               await createStripeConnectAccount(restaurantInternalId);
             }}>
-              <button 
+              <button
                 type="submit"
                 className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors"
               >

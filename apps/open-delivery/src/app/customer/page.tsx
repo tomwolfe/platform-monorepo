@@ -62,8 +62,16 @@ export default function CustomerDashboard() {
           // Reverse geocode to get city name for UI
           try {
             const result = await reverseGeocode(coords.lat, coords.lng);
-            if (result.success && result.result?.address?.city) {
-              setCityLabel(result.result.address.city);
+            if (result.success && result.result) {
+              if (result.result.address?.city) {
+                setCityLabel(result.result.address.city);
+              } else {
+                setCityLabel("Nearby");
+              }
+              // FIX: Set the actual delivery address for the order action
+              if (result.result.displayName) {
+                setDeliveryAddress(result.result.displayName);
+              }
             } else {
               setCityLabel("Nearby");
             }

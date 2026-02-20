@@ -116,9 +116,6 @@ export async function placeRealOrder(
   const orderId = randomUUID();
   const itemTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-  // Use provided delivery address or fallback to user's default
-  const address = deliveryAddress || "123 Tech Lane, San Francisco, CA 94103";
-
   try {
     let userRecord = await db
       .select()
@@ -138,6 +135,14 @@ export async function placeRealOrder(
         })
         .returning();
       userRecord = newUser;
+    }
+
+    // Use provided delivery address or fallback to user's default
+    // Fail explicitly if no address is available (no hardcoded defaults)
+    const address = deliveryAddress || userRecord.defaultDeliveryAddress;
+
+    if (!address) {
+      throw new Error("No delivery address provided and no default found in profile.");
     }
 
     const [newOrder] = await db

@@ -12,9 +12,12 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
   const baseUrl = env.LLM_BASE_URL;
   const model = env.LLM_MODEL;
 
-  const locationContext = userLocation 
-    ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}. Use these coordinates for 'nearby' requests.`
-    : "The user's location is unknown. If they ask for 'nearby' or don't specify a location, ask for confirmation or use a sensible default like London (51.5074, -0.1278).";
+  const locationContext = userLocation
+    ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}. 
+       YOU MUST use these coordinates for all searches and delivery requests. 
+       Do not use default cities like London or San Francisco.
+       If the user asks for 'nearby' services, use these exact coordinates.`
+    : "Location unknown. Ask the user for their address before proceeding.";
 
   if (!apiKey) {
     // For demonstration purposes if no API key is provided, we return a mock plan
@@ -24,7 +27,15 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
     if (text.includes("dinner") && (text.includes("calendar") || text.includes("book"))) {
       const temporalExpr = typeof intent === "object" ? intent.parameters.temporal_expression : null;
       const reservationTime = temporalExpr ? new Date(temporalExpr as string).toISOString() : new Date(Date.now() + 86400000).toISOString().split('T')[0] + "T19:00:00Z";
-      const location = typeof intent === "object" ? intent.parameters.location || "London" : "London";
+      
+      // Use userLocation if available, otherwise require explicit location parameter
+      const location = typeof intent === "object" 
+        ? intent.parameters.location || (userLocation ? `${userLocation.lat}, ${userLocation.lng}` : null)
+        : (userLocation ? `${userLocation.lat}, ${userLocation.lng}` : null);
+      
+      if (!location) {
+        throw new Error("Location required for dinner planning. Provide coordinates or a location parameter.");
+      }
 
       return {
         intent_type: "PLANNING",

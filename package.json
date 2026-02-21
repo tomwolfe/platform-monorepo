@@ -7,7 +7,11 @@
     "lint": "turbo lint",
     "qstash:setup": "tsx scripts/setup-qstash.ts",
     "qstash:test": "tsx scripts/test-qstash.ts",
-    "test:saga": "tsx scripts/test-saga-pattern.ts"
+    "test:saga": "tsx scripts/test-saga-pattern.ts",
+    "test": "tsx scripts/run-integration-tests.ts",
+    "test:integration": "tsx scripts/run-integration-tests.ts",
+    "test:chaos": "tsx scripts/run-chaos-tests.ts",
+    "test:all": "tsx scripts/run-integration-tests.ts && tsx scripts/run-chaos-tests.ts"
   },
   "engines": {
     "node": "24.x"
@@ -20,10 +24,13 @@
   "devDependencies": {
     "@neondatabase/serverless": "^1.0.2",
     "@tailwindcss/postcss": "^4.1.18",
+    "@types/node": "^20.17.16",
     "dotenv": "^16.4.7",
+    "jsdom": "^28.1.0",
     "postcss": "^8.5.1",
     "tsx": "^4.19.3",
-    "turbo": "^2.3.3"
+    "turbo": "^2.3.3",
+    "vitest": "^4.0.18"
   },
   "packageManager": "pnpm@8.15.9"
 }

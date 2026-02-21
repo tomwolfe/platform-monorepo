@@ -58,7 +58,7 @@ import {
   IDEMPOTENT_TOOLS,
 } from "@repo/mcp-protocol";
 import { DB_REFLECTED_SCHEMAS } from "@repo/mcp-protocol";
-import { NormalizationService } from "@repo/shared";
+import { NormalizationService, createFailoverPolicyEngine, FailoverPolicyEngine } from "@repo/shared";
 import { verifyPlan, DEFAULT_SAFETY_POLICY, SafetyPolicy } from "./verifier";
 
 // ============================================================================
@@ -223,6 +223,7 @@ export class WorkflowMachine {
   private correlationId: string;
   private idempotencyService?: IdempotencyService;
   private safetyPolicy: SafetyPolicy;
+  private failoverPolicyEngine: FailoverPolicyEngine;
   private compensationsRegistered: Array<{
     stepId: string;
     compensationTool: string;
@@ -251,6 +252,7 @@ export class WorkflowMachine {
     this.correlationId = options?.correlationId || crypto.randomUUID();
     this.idempotencyService = options?.idempotencyService;
     this.safetyPolicy = options?.safetyPolicy || DEFAULT_SAFETY_POLICY;
+    this.failoverPolicyEngine = createFailoverPolicyEngine();
 
     // Initialize or load state
     if (options?.initialState) {
@@ -831,13 +833,55 @@ export class WorkflowMachine {
             }
           }
 
+          // FAILOVER POLICY ENGINE: Check for semantic recovery options before marking as failed
+          const failoverResult = await this.evaluateFailoverPolicy(step, resolvedParameters, toolResult.error, errorCode);
+          
+          if (failoverResult.shouldRetry) {
+            console.log(
+              `[WorkflowMachine] Failover policy triggered for ${step.tool_name}: ${failoverResult.policyName}`
+            );
+            
+            // Try the failover action (e.g., alternative time, alternative restaurant)
+            if (failoverResult.retryParameters) {
+              const retryResult = await toolExecutor.execute(
+                step.tool_name,
+                failoverResult.retryParameters,
+                step.timeout_ms
+              );
+
+              if (retryResult.success) {
+                await RealtimeService.publishStreamingStatusUpdate({
+                  executionId: this.executionId,
+                  stepIndex,
+                  totalSteps,
+                  stepName: step.tool_name,
+                  status: 'completed',
+                  message: `Completed ${step.description || step.tool_name} (failover recovery)`,
+                  timestamp: new Date().toISOString(),
+                  traceId: traceId,
+                });
+
+                return {
+                  stepState: {
+                    step_id: step.id,
+                    status: "completed",
+                    output: retryResult.output,
+                    completed_at: new Date().toISOString(),
+                    latency_ms: latencyMs,
+                    attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+                  },
+                };
+              }
+            }
+          }
+
           await RealtimeService.publishStreamingStatusUpdate({
             executionId: this.executionId,
             stepIndex,
             totalSteps,
             stepName: step.tool_name,
             status: 'failed',
-            message: `Failed: ${typeof toolResult.error === 'string' ? toolResult.error : 'Unknown error'}`,
+            message: `Failed: ${typeof toolResult.error === 'string' ? toolResult.error : 'Unknown error'}${failoverResult.policyName ? ` [${failoverResult.policyName}]` : ''}`,
             timestamp: new Date().toISOString(),
             traceId: traceId,
           });
@@ -851,6 +895,8 @@ export class WorkflowMachine {
                 code: isValidationError ? "TOOL_VALIDATION_FAILED" : "TOOL_EXECUTION_FAILED",
                 message: toolResult.error || "Unknown tool execution error",
                 httpCode: errorCode,
+                failoverPolicy: failoverResult.policyName,
+                failoverSuggestions: failoverResult.suggestions,
               },
               completed_at: new Date().toISOString(),
               latency_ms: latencyMs,
@@ -972,6 +1018,235 @@ export class WorkflowMachine {
     }
 
     return resolved;
+  }
+
+  /**
+   * Evaluate failover policy for step failure
+   * Maps tool errors to failure reasons and checks for semantic recovery options
+   */
+  private async evaluateFailoverPolicy(
+    step: PlanStep,
+    parameters: Record<string, unknown>,
+    error: string | undefined,
+    errorCode: number | undefined
+  ): Promise<{
+    shouldRetry: boolean;
+    policyName?: string;
+    retryParameters?: Record<string, unknown>;
+    suggestions?: Array<{ type: string; value: unknown; confidence: number }>;
+  }> {
+    // Map error message to failure reason
+    const failureReason = this.mapErrorToFailureReason(error, errorCode);
+    
+    if (!failureReason) {
+      return { shouldRetry: false };
+    }
+
+    // Determine intent type from tool name
+    const intentType = this.mapToolNameToIntentType(step.tool_name);
+    
+    if (!intentType) {
+      return { shouldRetry: false };
+    }
+
+    // Build evaluation context
+    const context: {
+      intent_type: string;
+      failure_reason: string;
+      party_size?: number;
+      requested_time?: string;
+      restaurant_tags?: string[];
+      attempt_count?: number;
+    } = {
+      intent_type: intentType,
+      failure_reason: failureReason,
+      attempt_count: (getStepState(this.state, step.id)?.attempts || 0) + 1,
+    };
+
+    // Extract context from parameters
+    if (typeof parameters.party_size === 'number') {
+      context.party_size = parameters.party_size;
+    }
+    if (typeof parameters.time === 'string') {
+      context.requested_time = parameters.time;
+    }
+    if (typeof parameters.restaurant_tags === 'string') {
+      context.restaurant_tags = [parameters.restaurant_tags];
+    }
+
+    // Evaluate against failover policies
+    const result = this.failoverPolicyEngine.evaluate(context as any);
+
+    if (!result.matched || !result.recommended_action) {
+      return { shouldRetry: false };
+    }
+
+    console.log(
+      `[WorkflowMachine] Failover policy matched: "${result.policy?.name}" with action ${result.recommended_action.type}`
+    );
+
+    // Generate retry parameters based on recommended action
+    const retryParameters = await this.generateRetryParameters(
+      result.recommended_action.type,
+      step,
+      parameters,
+      result
+    );
+
+    // Get alternative suggestions
+    const suggestions = this.failoverPolicyEngine.getAlternativeSuggestions(
+      context as any,
+      result
+    );
+
+    return {
+      shouldRetry: !!retryParameters,
+      policyName: result.policy?.name,
+      retryParameters: retryParameters ?? undefined,
+      suggestions,
+    };
+  }
+
+  /**
+   * Map error message to failure reason enum
+   */
+  private mapErrorToFailureReason(
+    error: string | undefined,
+    errorCode: number | undefined
+  ): string | null {
+    if (!error) return null;
+
+    const errorLower = error.toLowerCase();
+
+    if (errorLower.includes('full') || errorLower.includes('no availability') || errorLower.includes('fully booked')) {
+      return 'RESTAURANT_FULL';
+    }
+    if (errorLower.includes('unavailable') || errorLower.includes('not available')) {
+      return 'TABLE_UNAVAILABLE';
+    }
+    if (errorLower.includes('overload') || errorLower.includes('busy') || errorLower.includes('high volume')) {
+      return 'KITCHEN_OVERLOADED';
+    }
+    if (errorLower.includes('payment') || errorLower.includes('card') || errorLower.includes('charge')) {
+      return 'PAYMENT_FAILED';
+    }
+    if (errorLower.includes('delivery') && (errorLower.includes('unavailable') || errorLower.includes('not available'))) {
+      return 'DELIVERY_UNAVAILABLE';
+    }
+    if (errorLower.includes('time slot') || errorLower.includes('time not available')) {
+      return 'TIME_SLOT_UNAVAILABLE';
+    }
+    if (errorLower.includes('party size') || errorLower.includes('too large') || errorLower.includes('exceeds')) {
+      return 'PARTY_SIZE_TOO_LARGE';
+    }
+    if (errorLower.includes('invalid') || errorLower.includes('validation')) {
+      return 'VALIDATION_FAILED';
+    }
+    if (errorLower.includes('timeout')) {
+      return 'TIMEOUT';
+    }
+    if (errorCode && errorCode >= 500) {
+      return 'SERVICE_ERROR';
+    }
+
+    return null;
+  }
+
+  /**
+   * Map tool name to intent type for failover policy evaluation
+   */
+  private mapToolNameToIntentType(toolName: string): string | null {
+    const toolLower = toolName.toLowerCase();
+    
+    if (toolLower.includes('reserve') || toolLower.includes('book') || toolLower.includes('table')) {
+      return 'BOOKING';
+    }
+    if (toolLower.includes('delivery') || toolLower.includes('dispatch') || toolLower.includes('fulfill')) {
+      return 'DELIVERY';
+    }
+    if (toolLower.includes('waitlist')) {
+      return 'WAITLIST';
+    }
+    if (toolLower.includes('modify') || toolLower.includes('update') || toolLower.includes('cancel')) {
+      return 'RESERVATION_MODIFY';
+    }
+    if (toolLower.includes('payment') || toolLower.includes('charge') || toolLower.includes('stripe')) {
+      return 'PAYMENT';
+    }
+
+    return null;
+  }
+
+  /**
+   * Generate retry parameters based on failover action type
+   */
+  private async generateRetryParameters(
+    actionType: string,
+    step: PlanStep,
+    originalParams: Record<string, unknown>,
+    policyResult: any
+  ): Promise<Record<string, unknown> | null> {
+    switch (actionType) {
+      case 'SUGGEST_ALTERNATIVE_TIME': {
+        // Try alternative time slots based on policy parameters
+        const offsets = (policyResult.recommended_action.parameters?.time_offset_minutes as number[]) || [-30, 30];
+        const originalTime = originalParams.time as string | undefined;
+        
+        if (!originalTime) return null;
+        
+        // Parse time and apply first offset (simplified - in production would try all)
+        const [hours, minutes] = originalTime.split(':').map(Number);
+        const baseMinutes = hours * 60 + minutes;
+        const offsetMinutes = offsets[0] || 30;
+        const newMinutes = baseMinutes + offsetMinutes;
+        
+        if (newMinutes >= 0 && newMinutes < 24 * 60) {
+          const newHours = Math.floor(newMinutes / 60);
+          const newMins = newMinutes % 60;
+          const newTime = `${newHours.toString().padStart(2, '0')}:${newMins.toString().padStart(2, '0')}`;
+          
+          return {
+            ...originalParams,
+            time: newTime,
+          };
+        }
+        
+        return null;
+      }
+
+      case 'TRIGGER_DELIVERY': {
+        // Convert booking to delivery - this would require a different tool
+        // For now, return null to let the booking fail and trigger delivery as separate step
+        return null;
+      }
+
+      case 'TRIGGER_WAITLIST': {
+        // Would trigger add_to_waitlist tool instead
+        return null;
+      }
+
+      case 'DOWNGRADE_PARTY_SIZE': {
+        const maxSize = (policyResult.recommended_action.parameters?.max_table_size as number) || 8;
+        const currentSize = originalParams.party_size as number | undefined;
+        
+        if (currentSize && currentSize > maxSize) {
+          return {
+            ...originalParams,
+            party_size: maxSize,
+          };
+        }
+        
+        return null;
+      }
+
+      case 'RETRY_WITH_BACKOFF': {
+        // Just retry with same parameters - backoff is handled by caller
+        return originalParams;
+      }
+
+      default:
+        return null;
+    }
   }
 
   /**

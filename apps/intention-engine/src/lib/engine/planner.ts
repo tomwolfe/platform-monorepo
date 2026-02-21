@@ -29,6 +29,7 @@ import {
   EngineErrorCodeSchema,
 } from "./types";
 import { generateStructured, GenerateStructuredResult } from "./llm";
+import { PARAMETER_ALIASES } from "@repo/mcp-protocol";
 
 // ============================================================================
 // DEFAULT CONSTRAINTS
@@ -315,7 +316,7 @@ export function convertRawPlanToPlan(
     stepIdMap.set(step.step_number, randomUUID());
   }
 
-  // Step 3: Convert raw steps to canonical PlanSteps
+  // Step 3: Convert raw steps to canonical PlanSteps with parameter aliasing
   const steps: PlanStep[] = expandedSteps.map(rawStep => {
     // Convert dependency step_numbers to UUIDs
     const dependencyUuids = rawStep.dependencies
@@ -327,12 +328,16 @@ export function convertRawPlanToPlan(
         return depId;
       });
 
+    // Apply parameter aliases BEFORE creating the step
+    // This ensures tools receive normalized parameter names
+    const normalizedParameters = applyParameterAliases(rawStep.parameters, rawStep.tool_name);
+
     return PlanStepSchema.parse({
       id: stepIdMap.get(rawStep.step_number)!,
       step_number: rawStep.step_number,
       tool_name: rawStep.tool_name,
       tool_version: rawStep.tool_version,
-      parameters: rawStep.parameters,
+      parameters: normalizedParameters,
       dependencies: dependencyUuids,
       description: rawStep.description,
       requires_confirmation: rawStep.requires_confirmation,
@@ -400,6 +405,157 @@ function validatePlanConstraints(
 }
 
 // ============================================================================
+// PARAMETER ALIASING
+// Apply parameter aliases to normalize LLM output before tool execution
+// This prevents silent failures from parameter name mismatches
+// ============================================================================
+
+/**
+ * Apply parameter aliases to a parameter object
+ * Maps LLM-hallucinated parameter names to canonical MCP parameter names
+ * 
+ * @param parameters - Raw parameters from LLM
+ * @param toolName - Tool name for tool-specific aliases (optional)
+ * @returns Parameters with aliases resolved
+ */
+function applyParameterAliases(
+  parameters: Record<string, unknown>,
+  toolName?: string
+): Record<string, unknown> {
+  const resolved: Record<string, unknown> = { ...parameters };
+  let aliasApplied = false;
+
+  // Global aliases from PARAMETER_ALIASES registry
+  for (const [alias, primary] of Object.entries(PARAMETER_ALIASES)) {
+    if (
+      resolved[alias] !== undefined &&
+      resolved[primary] === undefined
+    ) {
+      resolved[primary] = resolved[alias];
+      delete resolved[alias];
+      console.log(
+        `[Planner] Applied global alias: ${alias} -> ${primary} for ${toolName || 'unknown tool'}`
+      );
+      aliasApplied = true;
+    }
+  }
+
+  if (aliasApplied) {
+    console.log(
+      `[Planner] Alias resolution complete for ${toolName || 'unknown tool'}. Normalized ${Object.keys(resolved).length} parameters`
+    );
+  }
+
+  return resolved;
+}
+
+// ============================================================================
+// MERGE RULE VALIDATOR
+// Detects unmerged dining + delivery intents that should be unified
+// ============================================================================
+
+function validateMergeRule(
+  plan: Plan,
+  intent: Intent
+): { valid: boolean; reason?: string } {
+  const intentParams = intent.parameters as Record<string, any>;
+  
+  // Define tool lists at function scope for use throughout
+  const deliveryTools = ['calculateQuote', 'calculate_delivery_quote', 'fulfill_intent', 'dispatch_intent'];
+  const reservationTools = ['reserve_restaurant', 'reserve_table', 'bookTable', 'create_reservation', 'get_table_availability'];
+  
+  // Check if intent involves both dining and delivery elements
+  const hasDeliveryElement = 
+    intentParams.delivery || 
+    intentParams.delivery_address ||
+    intentParams.delivery_item ||
+    intent.rawText.toLowerCase().includes('deliver') ||
+    intent.rawText.toLowerCase().includes('delivery');
+  
+  const hasDiningElement = 
+    intentParams.restaurant ||
+    intentParams.restaurant_id ||
+    intentParams.restaurantId ||
+    intentParams.table ||
+    intent.rawText.toLowerCase().includes('table') ||
+    intent.rawText.toLowerCase().includes('reserve') ||
+    intent.rawText.toLowerCase().includes('booking') ||
+    intent.rawText.toLowerCase().includes('reservation');
+  
+  // Check for celebration keywords that typically require merging
+  const celebrationKeywords = ['celebration', 'anniversary', 'birthday', 'proposal', 'special occasion', 'surprise'];
+  const hasCelebrationElement = celebrationKeywords.some(keyword => 
+    intent.rawText.toLowerCase().includes(keyword)
+  );
+  
+  // If both dining and delivery elements exist, check if plan properly merges them
+  if (hasDeliveryElement && hasDiningElement) {
+    // Look for both delivery and reservation tools in the plan
+    const hasDeliveryStep = plan.steps.some(step => 
+      deliveryTools.some(tool => step.tool_name.toLowerCase().includes(tool.toLowerCase()))
+    );
+    
+    const hasReservationStep = plan.steps.some(step => 
+      reservationTools.some(tool => step.tool_name.toLowerCase().includes(tool.toLowerCase()))
+    );
+    
+    // Both types of steps exist - check if they're properly coordinated
+    if (hasDeliveryStep && hasReservationStep) {
+      // Check if delivery step has dependency on reservation or vice versa
+      const deliveryStep = plan.steps.find(step =>
+        deliveryTools.some(tool => step.tool_name.toLowerCase().includes(tool.toLowerCase()))
+      );
+      
+      const reservationStep = plan.steps.find(step =>
+        reservationTools.some(tool => step.tool_name.toLowerCase().includes(tool.toLowerCase()))
+      );
+      
+      if (deliveryStep && reservationStep) {
+        // Check if there's coordination via dependencies or shared parameters
+        const hasCoordination =
+          deliveryStep.dependencies.includes(reservationStep.id) ||
+          reservationStep.dependencies.includes(deliveryStep.id) ||
+          // Check for shared restaurant reference in parameters
+          (deliveryStep.parameters.restaurant_id === reservationStep.parameters.restaurant_id) ||
+          (deliveryStep.parameters.restaurantId === reservationStep.parameters.restaurantId);
+
+        if (!hasCoordination) {
+          return {
+            valid: false,
+            reason: "Plan contains both delivery and reservation steps but they are not coordinated. Delivery should be timed to arrive at or before the reservation time. Add dependencies or shared parameters to unify the plan.",
+          };
+        }
+      }
+    }
+    
+    // If we have celebration but only one type of step, suggest merging
+    if (hasCelebrationElement && (!hasDeliveryStep || !hasReservationStep)) {
+      return {
+        valid: false,
+        reason: "Celebration intent detected with both dining and delivery elements, but plan only includes one type. Create a unified plan that coordinates both the reservation and the special delivery.",
+      };
+    }
+  }
+  
+  // Check for explicit "to the restaurant" or "for when we arrive" patterns
+  const restaurantDeliveryPattern = /to the restaurant|at the restaurant|for when we arrive|when we get there/i;
+  if (restaurantDeliveryPattern.test(intent.rawText)) {
+    const hasDeliveryStep = plan.steps.some(step => 
+      deliveryTools.some(tool => step.tool_name.toLowerCase().includes(tool.toLowerCase()))
+    );
+    
+    if (!hasDeliveryStep) {
+      return {
+        valid: false,
+        reason: "User explicitly requested delivery 'to the restaurant' but plan has no delivery step. Add delivery coordination to the reservation plan.",
+      };
+    }
+  }
+  
+  return { valid: true };
+}
+
+// ============================================================================
 // GENERATE PLAN
 // Main entry point: generates validated plan from intent
 // LIVE STATE GATE: Checks operational state before planning for BOOKING intents
@@ -457,13 +613,24 @@ export async function generatePlan(
     });
 
     // Fetch recent successful intentions for context injection
-    const memory = getMemoryClient();
-    const recentIntents = await memory.getRecentSuccessfulIntents(3);
-    const contextHistory = recentIntents.map(s => ({
-      input: s.intent?.rawText,
-      summary: s.plan?.summary,
-      status: s.status
-    }));
+    // Use safe memory client with null guard
+    let contextHistory: Array<{ input?: string; summary?: string; status: string }> = [];
+    
+    try {
+      const memory = getMemoryClient();
+      const recentIntents = await memory.getRecentSuccessfulIntents(3);
+      contextHistory = recentIntents.map(s => ({
+        input: s.intent?.rawText,
+        summary: s.plan?.summary,
+        status: s.status
+      }));
+    } catch (error) {
+      console.warn(
+        '[Planner] Memory client unavailable, skipping context injection:',
+        error instanceof Error ? error.message : error
+      );
+      // Continue without context history - it's optional
+    }
 
     // Generate plan using LLM
     const basePrompt = JSON.stringify({
@@ -527,6 +694,37 @@ export async function generatePlan(
           plan_step_count: plan.steps.length,
           plan_total_tokens: plan.metadata.estimated_total_tokens,
           constraints,
+        },
+        recoverable: false,
+        timestamp,
+      });
+    }
+
+    // MERGE RULE VALIDATOR: Detect unmerged dining + delivery intents
+    const mergeValidation = validateMergeRule(plan, intent);
+    if (!mergeValidation.valid) {
+      console.warn(
+        `[Planner] Merge Rule violation detected: ${mergeValidation.reason}. Triggering replanning with feedback.`
+      );
+      
+      // Instead of failing, trigger replanning with explicit feedback
+      const repairFeedback = `MERGE RULE VIOLATION: ${mergeValidation.reason}. You MUST merge delivery and dining requests for the same restaurant/time into a SINGLE unified plan. The delivery should arrive at or slightly before the reservation time. Regenerate the plan with this constraint.`;
+      
+      // Recursive call with repair feedback (limited to 1 retry to avoid loops)
+      if (!context.repairFeedback) {
+        return generatePlan(intent, {
+          ...context,
+          repairFeedback,
+        });
+      }
+      
+      // If already retried, throw error
+      throw EngineErrorSchema.parse({
+        code: "PLAN_VALIDATION_FAILED",
+        message: `Merge Rule violation: ${mergeValidation.reason}. Failed to merge after retry.`,
+        details: {
+          plan_summary: plan.summary,
+          step_tools: plan.steps.map(s => s.tool_name),
         },
         recoverable: false,
         timestamp,

@@ -217,17 +217,24 @@ export async function updateTableStatus(
 
     // 3. Intention Engine: Notify when table is vacated for proactive re-engagement
     const intentionEngineUrl = process.env.INTENTION_ENGINE_API_URL;
+    const internalSystemKey = process.env.INTERNAL_SYSTEM_KEY;
+
+    // CRITICAL: Validate environment variables before attempting webhook
     if (status === 'vacant' && intentionEngineUrl) {
+      if (!internalSystemKey) {
+        console.error('[NervousSystemObserver] CRITICAL: INTERNAL_SYSTEM_KEY is not configured. Proactive re-engagement disabled.');
+      }
+
       const restaurant = await db.query.restaurants.findFirst({
         where: eq(restaurants.id, restaurantId),
       });
 
       if (restaurant) {
         const { signServiceToken } = await import('@repo/auth');
-        const token = await signServiceToken({ 
+        const token = await signServiceToken({
           purpose: 'table_vacated',
           tableId: table.id,
-          restaurantId 
+          restaurantId
         });
 
         const tableVacatedPayload = {
@@ -240,16 +247,54 @@ export async function updateTableStatus(
           timestamp: new Date().toISOString(),
         };
 
-        // Fire and forget webhook to Intention Engine for proactive re-engagement
-        fetch(`${intentionEngineUrl}/api/webhooks`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-            'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
-          },
-          body: JSON.stringify(tableVacatedPayload),
-        }).catch(err => console.error('Table vacated webhook failed:', err));
+        // Webhook with retry logic for NervousSystemObserver
+        const webhookHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        };
+
+        // Only add internal key if available
+        if (internalSystemKey) {
+          webhookHeaders['x-internal-system-key'] = internalSystemKey;
+        }
+
+        // Fire webhook with retry logic (3 attempts with exponential backoff)
+        const maxRetries = 3;
+        let lastError: Error | null = null;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            const response = await fetch(`${intentionEngineUrl}/api/webhooks`, {
+              method: 'POST',
+              headers: webhookHeaders,
+              body: JSON.stringify(tableVacatedPayload),
+            });
+
+            if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(`HTTP ${response.status}: ${errorText}`);
+            }
+
+            console.log(`[NervousSystemObserver] Webhook delivered successfully (attempt ${attempt})`);
+            break; // Success - exit retry loop
+          } catch (err) {
+            lastError = err instanceof Error ? err : new Error(String(err));
+
+            if (attempt < maxRetries) {
+              const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+              console.warn(
+                `[NervousSystemObserver] Webhook failed (attempt ${attempt}/${maxRetries}), retrying in ${backoffMs}ms:`,
+                lastError.message
+              );
+              await new Promise(resolve => setTimeout(resolve, backoffMs));
+            } else {
+              console.error(
+                `[NervousSystemObserver] CRITICAL: Webhook failed after ${maxRetries} attempts. Proactive re-engagement WILL NOT trigger for table ${table.id}.`,
+                lastError
+              );
+            }
+          }
+        }
       }
     }
 

@@ -471,11 +471,36 @@ export class ExecutionTraceStorage {
 
 let defaultMemoryClient: MemoryClient | null = null;
 
+/**
+ * Get Memory Client - Enhanced with explicit Redis availability check
+ * 
+ * @throws Error if Redis is not available
+ * @returns MemoryClient instance
+ */
 export function getMemoryClient(): MemoryClient {
   if (!defaultMemoryClient) {
+    // Check if redis is available
+    if (!redis) {
+      console.error('[MemoryClient] CRITICAL: Redis client is not available. Memory operations will fail.');
+      throw new Error('Redis client not available. Check UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN environment variables.');
+    }
     defaultMemoryClient = new MemoryClient();
   }
   return defaultMemoryClient;
+}
+
+/**
+ * Get Memory Client Safely - Returns null if Redis is unavailable
+ * 
+ * @returns MemoryClient instance or null
+ */
+export function getMemoryClientSafe(): MemoryClient | null {
+  try {
+    return getMemoryClient();
+  } catch (error) {
+    console.warn('[MemoryClient] Redis unavailable, returning null:', error instanceof Error ? error.message : error);
+    return null;
+  }
 }
 
 // ============================================================================

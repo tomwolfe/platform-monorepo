@@ -11,7 +11,10 @@
     "test": "tsx scripts/run-integration-tests.ts",
     "test:integration": "tsx scripts/run-integration-tests.ts",
     "test:chaos": "tsx scripts/run-chaos-tests.ts",
-    "test:all": "tsx scripts/run-integration-tests.ts && tsx scripts/run-chaos-tests.ts"
+    "test:all": "tsx scripts/run-integration-tests.ts && tsx scripts/run-chaos-tests.ts",
+    "validate:schema-sync": "tsx scripts/validate-schema-sync.ts",
+    "validate:schema-sync:strict": "tsx scripts/validate-schema-sync.ts --strict",
+    "ci:validate": "pnpm validate:schema-sync"
   },
   "engines": {
     "node": "24.x"

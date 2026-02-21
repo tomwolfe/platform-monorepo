@@ -263,16 +263,12 @@ export class MCPClient {
 
     // Semantic Parameter Aliases: Bridge common LLM naming to specific tool requirements
     const parameter_aliases: Record<string, string> = {
-      "reservation_time": "time",
-      "booking_time": "time",
-      "party_size": "guests",
       "number_of_people": "guests",
       "location_name": "query",
       "search_query": "query",
       "contact_name": "name",
       "customer_name": "name",
       "order_summary": "items",
-      "phone_number": "phone",
       "email_address": "email",
       ...mcpConfig.parameter_aliases, // Use centralized aliases
       ...shared_aliases,

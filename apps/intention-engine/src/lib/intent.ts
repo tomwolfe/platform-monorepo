@@ -8,6 +8,7 @@ import { normalizeIntent } from "./normalization";
 import { resolveAmbiguity } from "./ambiguity";
 import type { IntentHypotheses } from "./ambiguity";
 import { db, eq, users } from "@repo/database";
+import { getUserAuditLogs } from "./audit";
 
 const customOpenAI = createOpenAI({
   apiKey: env.LLM_API_KEY,
@@ -72,6 +73,43 @@ export async function getLastInteractionContext(userEmail: string): Promise<{
   } catch (error) {
     console.warn("[ContextualMemory] Failed to retrieve last interaction context:", error);
     return null;
+  }
+}
+
+/**
+ * Retrieve last 3 successful intents from Redis audit logs for contextual continuity.
+ * This enables the LLM to understand conversation history and resolve pronouns.
+ * Uses clerkId for user identification (from auth headers).
+ */
+export async function getLastSuccessfulIntents(
+  clerkId: string,
+  limit: number = 3
+): Promise<Array<{
+  intentType: string;
+  rawText: string;
+  parameters: Record<string, unknown>;
+  timestamp: string;
+}>> {
+  if (!clerkId) return [];
+
+  try {
+    const auditLogs = await getUserAuditLogs(clerkId, limit);
+    
+    // Filter for successful intents (completed status)
+    const successfulIntents = auditLogs
+      .filter(log => log.final_outcome && !log.steps?.some(s => s.status === "failed"))
+      .map(log => ({
+        intentType: log.intent.type,
+        rawText: log.intent.rawText,
+        parameters: log.intent.parameters || {},
+        timestamp: log.timestamp,
+      }))
+      .slice(0, limit);
+
+    return successfulIntents;
+  } catch (error) {
+    console.warn("[ContextualMemory] Failed to retrieve last successful intents:", error);
+    return [];
   }
 }
 
@@ -147,6 +185,11 @@ export async function saveInteractionContext(
 
 /**
  * Infer intent from raw text with ambiguity detection.
+ * 
+ * Enhanced with Contextual Continuity:
+ * - Retrieves last 3 successful intents from Redis audit logs
+ * - Retrieves last interaction context from Postgres
+ * - Uses both to resolve pronouns ("it", "there", "that restaurant")
  */
 export async function inferIntent(
   text: string,
@@ -156,14 +199,34 @@ export async function inferIntent(
     intentType?: string;
     rawText?: string;
     parameters?: Record<string, unknown>;
-  }
+  },
+  clerkId?: string // NEW: For retrieving intent history from audit logs
 ): Promise<IntentInferenceResult> {
   if (!text || text.trim().length === 0) {
     throw new Error("Input text is empty");
   }
 
+  // Retrieve last 3 successful intents from audit logs if clerkId provided
+  let successfulIntents: Array<{
+    intentType: string;
+    rawText: string;
+    parameters: Record<string, unknown>;
+    timestamp: string;
+  }> = [];
+
+  if (clerkId) {
+    successfulIntents = await getLastSuccessfulIntents(clerkId, 3);
+  }
+
   const avoidToolsContext = avoidTools.length > 0
     ? `\nPREVIOUSLY FAILED TOOLS (AVOID IF POSSIBLE): ${avoidTools.join(", ")}`
+    : "";
+
+  // Enhanced history context with both successful intents and passed-in history
+  const successfulIntentsContext = successfulIntents.length > 0
+    ? `\n\n### LAST 3 SUCCESSFUL INTENTS (FROM AUDIT LOGS):
+${successfulIntents.map((h, i) => `${i+1}. [${h.timestamp}] TYPE: ${h.intentType} | PARAMS: ${JSON.stringify(h.parameters)} | TEXT: "${h.rawText}"`).join("\n")}
+Use this history to resolve pronouns ("it", "then", "there") or to understand the context of a follow-up request.`
     : "";
 
   const historyContext = history.length > 0
@@ -210,10 +273,10 @@ Objective: Eliminate LLM Jitter. Map user input to exactly ONE of the 6 core Int
   4. VALIDATE: Ensure required parameters are present.
 
 ### CONTEXTUAL RESOLUTION (MEMORY)
-- Resolve pronouns ("it", "them", "that") using the RECENT HISTORY and LAST INTERACTION CONTEXT provided.
+- Resolve pronouns ("it", "them", "that") using the RECENT HISTORY, LAST 3 SUCCESSFUL INTENTS, and LAST INTERACTION CONTEXT provided.
 - If the user says "do it", refer to the most recent ACTION or SCHEDULE.
 - If the user says "where is it", refer to the target of the most recent SEARCH or QUERY.
-- If the user says "actually, make it 4 people" or "change the time", modify the parameters from the LAST INTERACTION CONTEXT.${historyContext}${memoryContext}
+- If the user says "actually, make it 4 people" or "change the time", modify the parameters from the LAST INTERACTION CONTEXT.${successfulIntentsContext}${historyContext}${memoryContext}
 
 ### "BOOK IT" DEFENSE
 - Assign confidence based on semantic clarity and parameter completeness.

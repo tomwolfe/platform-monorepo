@@ -702,7 +702,13 @@ export async function POST(req: Request) {
         return null;
       })();
 
-      const inferenceResult = await inferIntent(userText, avoidTools, [], lastInteractionContext || undefined);
+      const inferenceResult = await inferIntent(
+        userText,
+        avoidTools,
+        [],
+        lastInteractionContext || undefined,
+        clerkId || undefined // Pass clerkId for retrieving last 3 successful intents from audit logs
+      );
       intentInferenceLatency = Date.now() - intentStart;
       intent = inferenceResult.hypotheses.primary;
       rawModelResponse = inferenceResult.rawResponse;

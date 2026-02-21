@@ -329,10 +329,13 @@ async function orchestrateExecution(
 
         // Trigger the FIRST step via QStash
         // This starts the recursive self-trigger chain
+        // CRITICAL: Pass trace context for distributed tracing
         await QStashService.triggerNextStep({
           executionId,
           stepIndex: 0,
           internalKey: INTERNAL_SYSTEM_KEY,
+          traceId: executionId, // Use executionId as initial traceId
+          correlationId: executionId,
         });
 
         // Finalize trace

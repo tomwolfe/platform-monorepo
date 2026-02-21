@@ -46,6 +46,10 @@ export interface QStashTriggerOptions {
   stepIndex: number;
   /** Optional: internal system key for auth */
   internalKey?: string;
+  /** Optional: trace ID for distributed tracing (x-trace-id) */
+  traceId?: string;
+  /** Optional: correlation ID for request correlation (x-correlation-id) */
+  correlationId?: string;
 }
 
 export interface QStashScheduleOptions extends QStashTriggerOptions {
@@ -154,6 +158,15 @@ export class QStashService {
         headers["x-internal-system-key"] = options.internalKey;
       }
 
+      // CRITICAL: Propagate trace context for distributed tracing
+      // This closes the "Ghost in the Machine" debugging gap
+      if (options.traceId) {
+        headers["x-trace-id"] = options.traceId;
+      }
+      if (options.correlationId) {
+        headers["x-correlation-id"] = options.correlationId;
+      }
+
       const result = await client.publish({
         url,
         body: payload,
@@ -163,7 +176,7 @@ export class QStashService {
       const messageId = "messageId" in result ? result.messageId : undefined;
 
       console.log(
-        `[QStashService] Triggered next step for execution ${options.executionId} (step ${options.stepIndex})${messageId ? ` [message: ${messageId}]` : ''}`
+        `[QStashService] Triggered next step for execution ${options.executionId} (step ${options.stepIndex})${messageId ? ` [message: ${messageId}]` : ''}${options.traceId ? ` [trace: ${options.traceId}]` : ''}`
       );
 
       return messageId || null;
@@ -295,12 +308,25 @@ export class QStashService {
       // Use setTimeout for non-blocking fire-and-forget
       setTimeout(async () => {
         try {
+          const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+          };
+
+          if (options.internalKey) {
+            headers["x-internal-system-key"] = options.internalKey;
+          }
+
+          // Propagate trace context even in fallback mode
+          if (options.traceId) {
+            headers["x-trace-id"] = options.traceId;
+          }
+          if (options.correlationId) {
+            headers["x-correlation-id"] = options.correlationId;
+          }
+
           const response = await fetch(url, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(options.internalKey && { "x-internal-system-key": options.internalKey }),
-            },
+            headers,
             body: JSON.stringify({
               executionId: options.executionId,
               startStepIndex: options.stepIndex,
@@ -312,7 +338,7 @@ export class QStashService {
               `[FallbackFetch] Failed to trigger next step: ${response.status} ${response.statusText}`
             );
           } else {
-            console.log(`[FallbackFetch] Next step triggered successfully`);
+            console.log(`[FallbackFetch] Next step triggered successfully${options.traceId ? ` [trace: ${options.traceId}]` : ''}`);
           }
         } catch (error) {
           console.error(`[FallbackFetch] Error triggering next step:`, error);

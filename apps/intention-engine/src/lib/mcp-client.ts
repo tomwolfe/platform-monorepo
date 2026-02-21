@@ -10,20 +10,23 @@ import {
   ToolOutput,
   McpToolRegistry,
 } from "@repo/mcp-protocol";
+import { createSchemaEvolutionService } from "@repo/shared";
 
 /**
- * MCP Client - Enhanced with Dynamic Tool Discovery
- * 
+ * MCP Client - Enhanced with Dynamic Tool Discovery and Schema Evolution
+ *
  * Vercel Hobby Tier Optimization:
  * - Auto-discovers tools from SERVICES registry
  * - Parameter aliasing middleware for seamless integration
+ * - Schema evolution tracking for continuous learning
  * - Plug-and-Play: New apps automatically available
- * 
+ *
  * Architecture:
  * 1. Scans SERVICES registry for MCP endpoints
  * 2. Connects to each service and retrieves tool definitions
  * 3. Builds unified tool registry with parameter aliases
  * 4. Intercepts tool calls to apply parameter aliasing
+ * 5. Tracks normalization failures for schema evolution
  */
 
 // ============================================================================
@@ -62,9 +65,47 @@ export interface ToolCallResult {
 
 export class ParameterAliaser {
   private aliases: Record<string, string>;
+  private schemaEvolutionService: any | null = null;
+  private aliasUsageCounter: Map<string, number> = new Map();
 
   constructor(aliases: Record<string, string> = PARAMETER_ALIASES) {
     this.aliases = aliases;
+    // Lazy initialization of schema evolution service
+    this.initializeSchemaEvolution();
+  }
+
+  /**
+   * Initialize schema evolution service for continuous learning
+   */
+  private async initializeSchemaEvolution(): Promise<void> {
+    try {
+      // Lazy load to avoid circular dependencies
+      const { redis } = await import("./redis-client");
+      if (redis) {
+        this.schemaEvolutionService = createSchemaEvolutionService({ redis });
+        console.log("[ParameterAliaser] Schema evolution tracking enabled");
+      }
+    } catch (error) {
+      // Silently fail - schema evolution is optional
+      console.warn("[ParameterAliaser] Schema evolution not available:", error);
+    }
+  }
+
+  /**
+   * Track alias usage for schema evolution analysis
+   */
+  private trackAliasUsage(alias: string, canonical: string): void {
+    const key = `${alias}->${canonical}`;
+    const count = this.aliasUsageCounter.get(key) || 0;
+    this.aliasUsageCounter.set(key, count + 1);
+
+    // Log frequently used aliases for schema evolution review
+    if (count > 10 && this.schemaEvolutionService) {
+      console.log(
+        `[ParameterAliaser] High-frequency alias detected: ${alias} -> ${canonical} (${count + 1} uses)`
+      );
+      // Could trigger schema evolution review here
+    }
   }
 
   /**
@@ -73,6 +114,7 @@ export class ParameterAliaser {
    */
   applyAliases(parameters: ToolInput, targetSchema?: any): ToolInput {
     const resolved: ToolInput = { ...parameters };
+    let aliasApplied = false;
 
     for (const [alias, primary] of Object.entries(this.aliases)) {
       // If parameter exists as alias but not as primary, move it
@@ -85,6 +127,8 @@ export class ParameterAliaser {
         console.log(
           `[ParameterAliaser] Applied alias: ${alias} -> ${primary}`
         );
+        this.trackAliasUsage(alias, primary as string);
+        aliasApplied = true;
       }
     }
 
@@ -99,8 +143,19 @@ export class ParameterAliaser {
         ) {
           resolved[primary as string] = resolved[alias];
           delete resolved[alias];
+          console.log(
+            `[ParameterAliaser] Applied tool-specific alias: ${alias} -> ${primary}`
+          );
+          this.trackAliasUsage(alias, primary as string);
+          aliasApplied = true;
         }
       }
+    }
+
+    if (aliasApplied) {
+      console.log(
+        `[ParameterAliaser] Alias resolution complete. Applied ${Object.keys(resolved).length} parameters`
+      );
     }
 
     return resolved;

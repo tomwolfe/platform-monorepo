@@ -61,10 +61,10 @@ const ChatRequestSchema = z.object({
 
 /**
  * Trigger async execution for saga-type operations
- * 
+ *
  * This function creates an execution state and triggers QStash to run the plan
  * asynchronously using the recursive self-trigger pattern.
- * 
+ *
  * @param intent - The parsed intent
  * @param userContext - User context (userId, clerkId, etc.)
  * @param auditLogId - Audit log ID for tracing
@@ -76,37 +76,40 @@ async function triggerAsyncExecution(
   auditLogId: string
 ): Promise<string> {
   const executionId = randomUUID();
-  
+
   try {
     // Create initial state
     let state = createInitialState(executionId);
     state = setIntent(state, intent);
-    
+
     // Generate plan
     const registryManager = getRegistryManager();
     const planResult = await engineGeneratePlan(intent, {
       execution_id: executionId,
       available_tools: registryManager.listAllTools(),
     });
-    
+
     // Verify plan
     const verification = verifyPlan(planResult.plan, DEFAULT_SAFETY_POLICY);
     if (!verification.valid) {
       throw new Error(verification.reason || "Plan verification failed");
     }
-    
+
     state = setPlan(state, planResult.plan);
     await saveExecutionState(state);
-    
+
     // Trigger first step via QStash
+    // CRITICAL: Pass trace context for distributed tracing
     await QStashService.triggerNextStep({
       executionId,
       stepIndex: 0,
       internalKey: INTERNAL_SYSTEM_KEY,
+      traceId: executionId, // Use executionId as initial traceId
+      correlationId: executionId,
     });
-    
-    console.log(`[Chat] Triggered async execution ${executionId} for intent ${intent.type}`);
-    
+
+    console.log(`[Chat] Triggered async execution ${executionId} for intent ${intent.type} [trace: ${executionId}]`);
+
     return executionId;
   } catch (error) {
     console.error("[Chat] Failed to trigger async execution:", error);

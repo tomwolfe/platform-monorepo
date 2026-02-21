@@ -445,13 +445,183 @@ export const TOOL_METADATA = {
   execute_parallel: { requires_confirmation: false },
 };
 
+/**
+ * PARAMETER ALIAS REGISTRY - CRITICAL FOR LLM PARAMETER NORMALIZATION
+ * 
+ * This registry maps LLM-hallucinated parameter names (aliases) to canonical MCP parameter names.
+ * The ParameterAliaser in mcp-client.ts automatically applies these aliases before tool execution.
+ * 
+ * Format: { "alias_name": "canonical_name" }
+ * Example: If LLM provides `venueId` but tool expects `restaurant_id`, alias is: "venueId": "restaurant_id"
+ * 
+ * HOW TO UPDATE:
+ * 1. When adding new MCP tools, identify all parameter names in the input schema
+ * 2. Add aliases for common LLM hallucinations (e.g., camelCase vs snake_case, synonyms)
+ * 3. Test with: "I want to book at venueId=123" -> should resolve to restaurant_id=123
+ * 
+ * CATEGORIES:
+ * - Location/Venue Identifiers
+ * - Time/Date Fields
+ * - Party/Group Size
+ * - Contact Information
+ * - Order/Transaction IDs
+ * - Address Fields
+ */
 export const PARAMETER_ALIASES = {
-  "restaurant_id": "venue_id",
-  "merchant_id": "venue_id",
-  "restaurantName": "pickup_address",
-  "restaurant_name": "pickup_address",
-  "pickup_address": "restaurant_address",
-  "delivery_address": "target_address",
+  // ============================================================================
+  // LOCATION / VENUE IDENTIFIERS
+  // ============================================================================
+  "venue_id": "restaurant_id",
+  "venueId": "restaurant_id",
+  "merchant_id": "restaurant_id",
+  "merchantId": "restaurant_id",
+  "location_id": "restaurant_id",
+  "locationId": "restaurant_id",
+  "place_id": "restaurant_id",
+  "placeId": "restaurant_id",
+  "business_id": "restaurant_id",
+  "businessId": "restaurant_id",
+  
+  // ============================================================================
+  // RESTAURANT NAME / ADDRESS ALIASES
+  // ============================================================================
+  "restaurantName": "restaurant_name",
+  "restaurant_name": "pickup_address", // For delivery context
+  "restaurant_address": "pickup_address",
+  "pickup_address": "pickupAddress",
+  "pickupAddress": "pickup_address",
+  "pickup_location": "pickup_address",
+  "pickupLocation": "pickup_address",
+  "pickupLocationId": "pickup_address",
+  
+  // ============================================================================
+  // DELIVERY ADDRESS ALIASES
+  // ============================================================================
+  "delivery_address": "deliveryAddress",
+  "deliveryAddress": "delivery_address",
+  "delivery_location": "deliveryAddress",
+  "deliveryLocation": "deliveryAddress",
+  "dropoff_address": "deliveryAddress",
+  "dropoffAddress": "deliveryAddress",
+  "dropoff_location": "deliveryAddress",
+  "dropoffLocation": "deliveryAddress",
+  "target_address": "deliveryAddress",
+  "targetAddress": "deliveryAddress",
+  "destination_address": "deliveryAddress",
+  "destinationAddress": "deliveryAddress",
+  "destination_location": "deliveryAddress",
+  "destinationLocation": "deliveryAddress",
+  
+  // ============================================================================
+  // TIME / DATE FIELDS
+  // ============================================================================
+  "time": "reservation_time",
+  "reservationTime": "reservation_time",
+  "reservation_time": "time",
+  "booking_time": "time",
+  "bookingTime": "time",
+  "date": "reservation_date",
+  "reservationDate": "date",
+  "booking_date": "date",
+  "bookingDate": "date",
+  "datetime": "time",
+  "dateTime": "time",
+  "timestamp": "time",
+  "scheduled_time": "time",
+  "scheduledTime": "time",
+  
+  // ============================================================================
+  // PARTY / GROUP SIZE
+  // ============================================================================
+  "partySize": "party_size",
+  "party_size": "guests",
+  "guests": "party_size",
+  "numGuests": "party_size",
+  "num_guests": "party_size",
+  "groupSize": "party_size",
+  "group_size": "party_size",
+  "people": "party_size",
+  "personCount": "party_size",
+  "person_count": "party_size",
+  "attendees": "party_size",
+  
+  // ============================================================================
+  // CONTACT INFORMATION
+  // ============================================================================
+  "email": "userEmail",
+  "userEmail": "email",
+  "user_email": "email",
+  "customer_email": "email",
+  "customerEmail": "email",
+  "phone": "userPhone",
+  "userPhone": "phone",
+  "user_phone": "phone",
+  "customer_phone": "phone",
+  "customerPhone": "phone",
+  "phoneNumber": "phone",
+  "phone_number": "phone",
+  
+  // ============================================================================
+  // ORDER / TRANSACTION IDS
+  // ============================================================================
+  "order_id": "orderId",
+  "orderId": "order_id",
+  "orderNumber": "order_id",
+  "transaction_id": "order_id",
+  "transactionId": "order_id",
+  "booking_id": "reservationId",
+  "bookingId": "reservationId",
+  "reservation_id": "reservationId",
+  "reservationId": "reservation_id",
+  "confirmation_id": "reservationId",
+  "confirmationId": "reservationId",
+  "fulfillment_id": "fulfillmentId",
+  "fulfillmentId": "fulfillment_id",
+  "ride_id": "rideId",
+  "rideId": "ride_id",
+  
+  // ============================================================================
+  // LOCATION COORDINATES
+  // ============================================================================
+  "lat": "latitude",
+  "latitude": "lat",
+  "lng": "longitude",
+  "lon": "longitude",
+  "longitude": "lng",
+  "coordinates": "location",
+  "coords": "location",
+  "geo": "location",
+  "location_coords": "location",
+  "locationCoords": "location",
+  
+  // ============================================================================
+  // SERVICE / PROVIDER SELECTION
+  // ============================================================================
+  "service": "provider",
+  "provider": "service",
+  "vendor": "service",
+  "company": "service",
+  "ride_type": "service_level",
+  "rideType": "service_level",
+  "service_level": "ride_type",
+  "car_type": "ride_type",
+  "carType": "ride_type",
+  "vehicle_type": "ride_type",
+  "vehicleType": "ride_type",
+  
+  // ============================================================================
+  // MISCELLANEOUS
+  // ============================================================================
+  "notes": "special_requests",
+  "specialRequests": "special_requests",
+  "special_requests": "notes",
+  "instructions": "special_requests",
+  "message": "special_requests",
+  "comment": "special_requests",
+  "comments": "special_requests",
+  "reason": "cancellation_reason",
+  "cancellationReason": "reason",
+  "cancellation_reason": "reason",
 };
 
 export const UserLocationSchema = z.object({

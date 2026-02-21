@@ -23,6 +23,11 @@
  * Security:
  * - Requires x-internal-system-key header for recursive calls
  * - QStash webhook verification for production deployments
+ *
+ * Trace Context Propagation:
+ * - Extracts x-trace-id and x-correlation-id from headers
+ * - Passes trace context to QStash for next step
+ * - Logs trace ID for debugging "Ghost in the Machine" issues
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -221,16 +226,26 @@ async function acquireStepIdempotencyLock(
 // Replaces unreliable fetch(self) with guaranteed delivery
 // ============================================================================
 
-async function triggerNextStep(executionId: string, currentStepIndex: number): Promise<void> {
+async function triggerNextStep(
+  executionId: string,
+  currentStepIndex: number,
+  traceContext?: { traceId?: string; correlationId?: string }
+): Promise<void> {
   // Use QStash for reliable queue-based execution
   const messageId = await QStashService.triggerNextStep({
     executionId,
     stepIndex: currentStepIndex + 1,
     internalKey: INTERNAL_SYSTEM_KEY,
+    // CRITICAL: Propagate trace context for distributed tracing
+    traceId: traceContext?.traceId,
+    correlationId: traceContext?.correlationId,
   });
 
   if (messageId) {
-    console.log(`[ExecuteStep] QStash message sent for next step [message: ${messageId}]`);
+    console.log(
+      `[ExecuteStep] QStash message sent for next step [message: ${messageId}]` +
+      (traceContext?.traceId ? ` [trace: ${traceContext.traceId}]` : '')
+    );
   } else {
     console.log(`[ExecuteStep] QStash not configured, using fallback fetch(self)`);
   }
@@ -251,13 +266,25 @@ async function executeStepHandler(
   startTime: number
 ): Promise<NextResponse> {
   try {
+    // EXTRACT TRACE CONTEXT - Critical for distributed tracing
+    // This closes the "Ghost in the Machine" debugging gap
+    const traceId = request.headers.get("x-trace-id") || executionId;
+    const correlationId = request.headers.get("x-correlation-id") || traceId;
+
+    // Log trace context for debugging
+    console.log(
+      `[ExecuteStep] Starting step ${startStepIndex + 1} for execution ${executionId}` +
+      ` [trace: ${traceId}]` +
+      (correlationId !== traceId ? ` [correlation: ${correlationId}]` : '')
+    );
+
     // SECURITY: Check internal system key for recursive calls
     // Allow first call without key (from /api/execute or /api/chat)
     const internalKey = request.headers.get("x-internal-system-key");
     const isRecursiveCall = internalKey !== null;
 
     if (isRecursiveCall && internalKey !== INTERNAL_SYSTEM_KEY) {
-      console.warn(`[ExecuteStep] Invalid internal key for ${executionId}`);
+      console.warn(`[ExecuteStep] Invalid internal key for ${executionId} [trace: ${traceId}]`);
       return NextResponse.json(
         {
           success: false,
@@ -545,7 +572,8 @@ async function executeStepHandler(
       // If step succeeded and more steps remain, trigger next step recursively
       if (willTriggerNext) {
         const nextStepIndex = result.completedSteps;
-        await triggerNextStep(executionId, nextStepIndex);
+        // CRITICAL: Propagate trace context to next step
+        await triggerNextStep(executionId, nextStepIndex, { traceId, correlationId });
       }
 
       // ========================================================================
@@ -615,10 +643,12 @@ async function executeStepHandler(
             await redis.del(replanKey);
 
             // Trigger first step of new plan
-            await triggerNextStep(executionId, 0);
+            // CRITICAL: Propagate trace context to replanned execution
+            await triggerNextStep(executionId, 0, { traceId, correlationId });
 
             console.log(
-              `[ExecuteStep] Replanning complete for ${executionId}, new plan has ${newPlan.steps.length} steps`
+              `[ExecuteStep] Replanning complete for ${executionId}, new plan has ${newPlan.steps.length} steps` +
+              ` [trace: ${traceId}]`
             );
           }
         } catch (replanError) {

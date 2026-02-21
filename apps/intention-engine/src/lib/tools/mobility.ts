@@ -51,6 +51,14 @@ export const routeEstimateReturnSchema = {
   traffic_status: "string"
 };
 
+// Return schema for cancel_ride tool
+export const cancelRideReturnSchema = {
+  status: "string",
+  ride_id: "string",
+  cancellation_time: "string",
+  refund_amount: "number"
+};
+
 export async function mobility_request(params: MobilityRequestParams): Promise<{ success: boolean; result?: any; error?: string }> {
   const validated = MobilityRequestSchema.safeParse(params);
   if (!validated.success) {
@@ -109,6 +117,39 @@ export async function mobility_request(params: MobilityRequestParams): Promise<{
     };
   } catch (error: any) {
     return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Cancel a ride request
+ * 
+ * Compensation for request_ride / mobility_request
+ * Automatically called by saga orchestrator when a ride needs to be cancelled
+ * (e.g., restaurant booking failed after ride was requested)
+ */
+export async function cancel_ride(params: { ride_id?: string; service?: string; pickup_location?: string; destination_location?: string }): Promise<{ success: boolean; result?: any; error?: string }> {
+  console.log(`Cancelling ride: ${params.ride_id || params.service || 'unknown'}`);
+
+  // In a real implementation, this would call the ride service's cancellation API
+  // For now, simulate a successful cancellation
+  const rideId = params.ride_id || `ride_${Math.random().toString(36).substring(2, 9)}`;
+  
+  try {
+    return {
+      success: true,
+      result: {
+        status: "cancelled",
+        ride_id: rideId,
+        cancellation_time: new Date().toISOString(),
+        refund_amount: 0, // No charge if cancelled before pickup
+        message: "Ride successfully cancelled"
+      }
+    };
+  } catch (error: any) {
+    return { 
+      success: false, 
+      error: `Failed to cancel ride: ${error.message}` 
+    };
   }
 }
 

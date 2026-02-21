@@ -2,11 +2,13 @@ import { z } from "zod";
 import { ToolDefinition } from "./types";
 import { geocode_location, search_restaurant } from "./location_search";
 import { add_calendar_event } from "./calendar";
-import { 
-  mobility_request, 
-  get_route_estimate, 
+import {
+  mobility_request,
+  get_route_estimate,
+  cancel_ride,
   mobilityRequestReturnSchema,
-  routeEstimateReturnSchema
+  routeEstimateReturnSchema,
+  cancelRideReturnSchema
 } from "./mobility";
 import { 
   reserve_table, 
@@ -162,6 +164,43 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
       requests_per_hour: 1000
     },
     execute: get_route_estimate
+  }],
+  ["cancel_ride", {
+    name: "cancel_ride",
+    version: "1.0.0",
+    description: "Cancels a previously requested ride. Used for automatic compensation when a ride was requested but subsequent steps fail (e.g., restaurant booking failed).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ride_id: {
+          type: "string",
+          description: "The ride ID returned by request_ride or mobility_request."
+        },
+        service: {
+          type: "string",
+          enum: ["uber", "tesla", "lyft"],
+          description: "The mobility service (fallback if ride_id not available)."
+        },
+        pickup_location: {
+          type: "string",
+          description: "The pickup location (fallback if ride_id not available)."
+        },
+        destination_location: {
+          type: "string",
+          description: "The destination location (fallback if ride_id not available)."
+        }
+      },
+      required: []
+    },
+    return_schema: cancelRideReturnSchema,
+    timeout_ms: 15000,
+    requires_confirmation: false, // Auto-compensation should not require confirmation
+    category: "external",
+    rate_limits: {
+      requests_per_minute: 20,
+      requests_per_hour: 100
+    },
+    execute: cancel_ride
   }],
   ["book_restaurant_table", {
     name: "book_restaurant_table",

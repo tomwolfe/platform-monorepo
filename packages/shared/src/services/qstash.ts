@@ -140,8 +140,8 @@ export class QStashService {
     try {
       const client = new Client({ token });
       // Quick ping by getting topics (lightweight operation)
-      await client.topics();
-      
+      await client.topics;
+
       console.log("[QStashService] Preflight check passed - QStash is reachable");
       return { configured: true, canConnect: true };
     } catch (error) {

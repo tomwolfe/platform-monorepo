@@ -246,9 +246,58 @@ export class NervousSystemObserver {
   /**
    * Find users with matching last_interaction_context
    * Specifically targets users whose last interaction FAILED for this restaurant
+   *
+   * OPTIMIZATION: Redis-First Approach
+   * 1. Check Redis failed_bookings:{restaurantId} first (fast path)
+   * 2. Fall back to Postgres query only if Redis is empty (slow path)
+   * This avoids expensive Postgres queries for common cases
    */
   async findMatchingUsers(event: TableVacatedEvent): Promise<UserContextMatch[]> {
     try {
+      // FAST PATH: Check Redis for failed bookings first
+      const failedBookingsKey = `failed_bookings:${event.restaurantId}`;
+      const failedBookings = await redis?.get<any[]>(failedBookingsKey) || [];
+
+      if (failedBookings.length > 0) {
+        console.log(
+          `[NervousSystemObserver] Fast path: Found ${failedBookings.length} failed bookings in Redis for ${event.restaurantId}`
+        );
+
+        // Convert Redis failures to UserContextMatch format
+        const matchedUsers: UserContextMatch[] = [];
+        for (const failure of failedBookings.slice(0, 5)) {
+          // Verify context is still fresh
+          const failureTime = new Date(failure.timestamp);
+          const hoursSinceFailure =
+            (Date.now() - failureTime.getTime()) / (1000 * 60 * 60);
+
+          if (hoursSinceFailure > this.config.contextFreshnessHours) {
+            continue; // Skip stale failures
+          }
+
+          matchedUsers.push({
+            userId: failure.userId || failure.clerkId || `anon_${failure.userEmail || 'unknown'}`,
+            userEmail: failure.userEmail || '',
+            clerkId: failure.clerkId,
+            lastInteractionContext: {
+              intentType: failure.intentType || 'BOOKING',
+              parameters: failure.parameters || {},
+              timestamp: failure.timestamp,
+              status: 'FAILED' as const,
+            },
+            matchReason: `FAILED booking at ${event.restaurantName || event.restaurantId}: ${failure.reason || 'Unknown error'}`,
+            confidence: 0.9, // High confidence for explicit failures
+          });
+        }
+
+        return matchedUsers;
+      }
+
+      // SLOW PATH: Fall back to Postgres query if Redis is empty
+      console.log(
+        `[NervousSystemObserver] Slow path: No Redis failures, querying Postgres for ${event.restaurantId}`
+      );
+
       // Get restaurant details
       const restaurant = await this.getRestaurantById(event.restaurantId);
       if (!restaurant) {

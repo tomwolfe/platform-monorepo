@@ -207,7 +207,7 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
 
           Available tools:
           ${getToolDefinitions()}
-          
+
           If a tool is unavailable, use the most similar available tool or provide a general recommendation based on common knowledge in the 'summary'.
 
           Tool Chaining & Context Injection:
@@ -237,6 +237,28 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
           5. When adding a calendar event for a restaurant, include the 'restaurant_name' and 'restaurant_address' in the parameters.
           6. Always use coordinates from \`geocode_location\` if you use that tool, instead of passing the raw location string to \`search_restaurant\`.
           7. For 'add_calendar_event', always provide an array of events under the 'events' key.
+
+          **SYSTEM 2 REASONING - MERGE RULE** (CRITICAL):
+          When a user request contains MULTIPLE related intents (e.g., "dinner and a ride", "book table and send invite"):
+          1. DO NOT create separate plans for each intent
+          2. Create a SINGLE Atomic Saga with combined steps
+          3. Use dependency graphs: later steps depend on earlier step results
+          4. Example: "I want dinner at Italian place and need a ride home"
+             - Step 0: search_restaurant (cuisine: Italian)
+             - Step 1: book_restaurant_table (depends on Step 0 result)
+             - Step 2: add_calendar_event (depends on Step 1 confirmation)
+             - Step 3: get_route_estimate (origin: restaurant from Step 1, destination: user home)
+             - Step 4: request_ride (depends on Step 3 estimate, scheduled after Step 2 event time)
+          5. Example: "Book table at Pesto Place and invite John and Sarah"
+             - Step 0: discover_restaurant (name: "Pesto Place")
+             - Step 1: check_availability (restaurantId from Step 0)
+             - Step 2: book_tablestack_reservation (tableId from Step 1)
+             - Step 3: send_comm (to: John, about: reservation from Step 2)
+             - Step 4: send_comm (to: Sarah, about: reservation from Step 2)
+          6. Temporal/spatial coupling indicates merge requirement:
+             - Same time reference → merge
+             - Same location reference → merge
+             - Causal dependency (B needs A's result) → merge
 
           Return ONLY pure JSON. No free text.`
         },

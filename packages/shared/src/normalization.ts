@@ -2,16 +2,23 @@
  * Normalization Service
  * Validates raw LLM output against McpToolRegistry schemas
  * Provides deterministic guardrails against "Confidence Inflation"
+ * 
+ * Integrated with Schema Evolution Service to automatically record
+ * parameter mismatches for continuous schema improvement.
  */
 
 import { z } from "zod";
 import { TOOLS, McpToolRegistry } from "@repo/mcp-protocol";
+import type { SchemaEvolutionService } from "./services/schema-evolution";
 
 export interface NormalizationResult<T = unknown> {
   success: boolean;
   data?: T;
   errors: NormalizationError[];
   rawInput: unknown;
+  // Schema evolution tracking
+  mismatchRecorded?: boolean;
+  mismatchEventId?: string;
 }
 
 export interface NormalizationError {
@@ -22,11 +29,29 @@ export interface NormalizationError {
 
 /**
  * NormalizationService
- * 
+ *
  * Takes raw LLM output and validates it against the McpToolRegistry schemas.
  * This overrides LLM "Confidence Inflation" with deterministic Zod failures.
+ * 
+ * When schema evolution service is provided, automatically records mismatches
+ * to enable self-healing schema evolution.
  */
 export class NormalizationService {
+  // Optional schema evolution service for automatic mismatch tracking
+  private static schemaEvolutionService: SchemaEvolutionService | null = null;
+
+  /**
+   * Initialize the normalization service with schema evolution tracking
+   */
+  static initialize(options?: {
+    schemaEvolutionService?: SchemaEvolutionService;
+  }): void {
+    if (options?.schemaEvolutionService) {
+      this.schemaEvolutionService = options.schemaEvolutionService;
+      console.log("[NormalizationService] Schema evolution tracking enabled");
+    }
+  }
+
   /**
    * Get all available schemas from the McpToolRegistry
    */
@@ -146,7 +171,7 @@ export class NormalizationService {
   /**
    * Normalize intent parameters against known tool schemas
    * This is the primary method for Phase 3 guardrails
-   * 
+   *
    * @param intentType - The inferred intent type
    * @param parameters - The raw parameters from LLM
    * @returns Normalized and validated parameters
@@ -166,9 +191,9 @@ export class NormalizationService {
       "WEATHER": ["get_weather_data"],
       "OPERATIONAL": ["getLiveOperationalState"],
     };
-    
+
     const candidateTools = intentToolMap[intentType] || [];
-    
+
     // Try to validate against candidate tools
     for (const toolName of candidateTools) {
       const result = this.validateToolParameters(toolName, parameters);
@@ -176,9 +201,54 @@ export class NormalizationService {
         return result;
       }
     }
-    
+
     // If no candidate matched, try all tools
-    return this.validateAgainstAllTools(parameters);
+    const result = this.validateAgainstAllTools(parameters);
+
+    // RECORD MISMATCH FOR SCHEMA EVOLUTION
+    // When schema evolution is enabled and validation fails, record the mismatch
+    if (!result.success && this.schemaEvolutionService) {
+      try {
+        // Extract field information from errors
+        const expectedFields = new Set<string>();
+        const unexpectedFields = new Set<string>();
+
+        for (const error of result.errors) {
+          const fieldPath = error.path.split('.')[0];
+          if (error.code === "unrecognized_keys" || error.message.includes("unrecognized")) {
+            unexpectedFields.add(fieldPath);
+          } else if (error.code === "invalid_type" || error.code === "required") {
+            expectedFields.add(fieldPath);
+          }
+        }
+
+        // Record the mismatch event (async, non-blocking)
+        this.schemaEvolutionService.recordMismatch({
+          intentType,
+          toolName: "unknown", // Could be improved with better tool detection
+          timestamp: new Date().toISOString(),
+          llmParameters: parameters,
+          expectedFields: Array.from(expectedFields),
+          unexpectedFields: Array.from(unexpectedFields),
+          missingFields: Array.from(expectedFields),
+          errors: result.errors.map(e => ({
+            field: e.path,
+            message: e.message,
+            code: e.code,
+          })),
+        }).then(event => {
+          result.mismatchRecorded = true;
+          result.mismatchEventId = event.id;
+        }).catch(err => {
+          console.warn("[NormalizationService] Failed to record mismatch:", err);
+        });
+      } catch (evolutionError) {
+        // Silently fail - schema evolution is optional
+        console.warn("[NormalizationService] Schema evolution recording failed:", evolutionError);
+      }
+    }
+
+    return result;
   }
 
   /**

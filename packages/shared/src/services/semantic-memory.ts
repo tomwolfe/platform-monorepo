@@ -574,16 +574,20 @@ export function createSemanticVectorStore(options?: {
   ttlSeconds?: number;
 }): SemanticVectorStore {
   const { getRedisClient, ServiceNamespace } = require("../redis");
-  
+
   const redis = options?.redis || getRedisClient(ServiceNamespace.SHARED);
-  
+
   let embeddingService: EmbeddingService;
-  
-  if (options?.useMockEmbeddings || !options?.embeddingApiKey) {
+
+  // Check for HuggingFace API key in options or environment
+  const apiKey = options?.embeddingApiKey || process.env.HUGGINGFACE_API_KEY;
+  const modelUrl = process.env.HUGGINGFACE_MODEL_URL;
+
+  if (options?.useMockEmbeddings || !apiKey) {
     embeddingService = new MockEmbeddingService(384);
-    console.log("[VectorStore] Using mock embedding service");
+    console.log("[VectorStore] Using mock embedding service (set HUGGINGFACE_API_KEY for real embeddings)");
   } else {
-    embeddingService = new HuggingFaceEmbeddingService(options.embeddingApiKey);
+    embeddingService = new HuggingFaceEmbeddingService(apiKey, modelUrl);
     console.log("[VectorStore] Using Hugging Face embedding service");
   }
 

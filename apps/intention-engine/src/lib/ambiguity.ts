@@ -39,8 +39,8 @@ export function resolveAmbiguity(intents: Intent[]): IntentHypotheses {
     clarificationQuestion = `I'm torn between ${primary.type} and ${alternatives[0].type}. Which did you mean?`;
   }
 
-  // Rule 3: Explicit REFUSED or UNKNOWN
-  if (primary.type === "REFUSED" || primary.type === "UNKNOWN") {
+  // Rule 3: Explicit SERVICE_DEGRADED or UNKNOWN
+  if (primary.type === "SERVICE_DEGRADED" || primary.type === "UNKNOWN") {
     isAmbiguous = true;
     clarificationQuestion = "I cannot perform this request as stated.";
   }

@@ -13,7 +13,7 @@ export const IntentTypeSchema = z.enum([
   "ANALYSIS",
   "UNKNOWN",
   "CLARIFICATION_REQUIRED",
-  "REFUSED"
+  "SERVICE_DEGRADED",
 ]);
 
 export type IntentType = z.infer<typeof IntentTypeSchema>;
@@ -41,6 +41,8 @@ export const IntentSchema = z.object({
   explanation: z.string().optional(), // Why this intent was chosen
   hash: z.string().optional(), // SHA-256 hash for immutable linking
   metadata: IntentMetadataSchema,
+  requires_clarification: z.boolean().default(false),
+  clarification_prompt: z.string().optional(),
 });
 
 export type Intent = z.infer<typeof IntentSchema>;
@@ -58,16 +60,44 @@ export const RestaurantResultSchema = z.object({
 export type RestaurantResult = z.infer<typeof RestaurantResultSchema>;
 
 export const StepSchema = z.object({
+  id: z.string().uuid(),
+  step_number: z.number().int().nonnegative(),
   tool_name: z.string(),
+  tool_version: z.string().optional(),
   parameters: z.record(z.string(), z.any()),
-  requires_confirmation: z.boolean(),
-  description: z.string(), // Human readable description of the step
+  dependencies: z.array(z.string().uuid()).default([]),
+  description: z.string(),
+  requires_confirmation: z.boolean().default(false),
+  timeout_ms: z.number().int().positive().default(30000),
+  estimated_tokens: z.number().int().nonnegative().optional(),
+  retry_policy: z.object({
+    max_attempts: z.number().int().positive().default(1),
+    backoff_ms: z.number().int().nonnegative().default(1000),
+  }).optional(),
+});
+
+export const PlanConstraintsSchema = z.object({
+  max_steps: z.number().int().positive().default(10),
+  max_total_tokens: z.number().int().positive().default(100000),
+  max_execution_time_ms: z.number().int().positive().default(300000),
+  allowed_tools: z.array(z.string()).optional(),
+  require_confirmation_for: z.array(z.string()).optional(),
+});
+
+export const PlanMetadataSchema = z.object({
+  version: z.string().default("1.0.0"),
+  created_at: z.string().datetime(),
+  planning_model_id: z.string(),
+  estimated_total_tokens: z.number().int().nonnegative(),
+  estimated_latency_ms: z.number().int().nonnegative(),
 });
 
 export const PlanSchema = z.object({
-  intent_type: z.string(),
-  constraints: z.array(z.string()),
-  ordered_steps: z.array(StepSchema),
+  id: z.string().uuid(),
+  intent_id: z.string().uuid(),
+  steps: z.array(StepSchema).max(100),
+  constraints: PlanConstraintsSchema,
+  metadata: PlanMetadataSchema,
   summary: z.string(),
 });
 

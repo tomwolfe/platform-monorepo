@@ -23,93 +23,151 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
     // For demonstration purposes if no API key is provided, we return a mock plan
     // for specific examples
     const text = intentText.toLowerCase();
-    
+
     if (text.includes("dinner") && (text.includes("calendar") || text.includes("book"))) {
       const temporalExpr = typeof intent === "object" ? intent.parameters.temporal_expression : null;
       const reservationTime = temporalExpr ? new Date(temporalExpr as string).toISOString() : new Date(Date.now() + 86400000).toISOString().split('T')[0] + "T19:00:00Z";
-      
+
       // Use userLocation if available, otherwise require explicit location parameter
-      const location = typeof intent === "object" 
+      const location = typeof intent === "object"
         ? intent.parameters.location || (userLocation ? `${userLocation.lat}, ${userLocation.lng}` : null)
         : (userLocation ? `${userLocation.lat}, ${userLocation.lng}` : null);
-      
+
       if (!location) {
         throw new Error("Location required for dinner planning. Provide coordinates or a location parameter.");
       }
 
+      const steps = [
+        {
+          id: crypto.randomUUID(),
+          step_number: 0,
+          tool_name: "search_restaurant",
+          tool_version: "1.0.0",
+          parameters: {
+            cuisine: "Italian",
+            location: location
+          },
+          dependencies: [],
+          requires_confirmation: false,
+          timeout_ms: 30000,
+          description: `Search for a highly-rated Italian restaurant in ${location}.`,
+        },
+        {
+          id: crypto.randomUUID(),
+          step_number: 1,
+          tool_name: "book_restaurant_table",
+          tool_version: "1.0.0",
+          parameters: {
+            restaurant_name: "{{step_0.result[0].name}}",
+            date: reservationTime.split('T')[0],
+            time: reservationTime.split('T')[1].substring(0, 5),
+            party_size: 2
+          },
+          dependencies: [],
+          requires_confirmation: true,
+          timeout_ms: 30000,
+          description: "Book a table for 2 at the selected restaurant.",
+        },
+        {
+          id: crypto.randomUUID(),
+          step_number: 2,
+          tool_name: "send_comm",
+          tool_version: "1.0.0",
+          parameters: {
+            to: "me",
+            channel: "sms",
+            message: "Reminder: Dinner at {{step_0.result[0].name}} tonight at 7 PM."
+          },
+          dependencies: [],
+          requires_confirmation: true,
+          timeout_ms: 30000,
+          description: "Send a reminder SMS about the reservation."
+        }
+      ];
+
       return {
-        intent_type: "PLANNING",
-        constraints: [`dinner time at 7 PM`, `location: ${location}`],
-        ordered_steps: [
-          {
-            tool_name: "search_restaurant",
-            parameters: { 
-              cuisine: "Italian", 
-              location: location
-            },
-            requires_confirmation: false,
-            description: `Search for a highly-rated Italian restaurant in ${location}.`,
-          },
-          {
-            tool_name: "book_restaurant_table",
-            parameters: { 
-              restaurant_name: "{{step_0.result[0].name}}", 
-              date: reservationTime.split('T')[0],
-              time: reservationTime.split('T')[1].substring(0, 5),
-              party_size: 2
-            },
-            requires_confirmation: true,
-            description: "Book a table for 2 at the selected restaurant.",
-          },
-          {
-            tool_name: "send_comm",
-            parameters: {
-              to: "me",
-              channel: "sms",
-              message: "Reminder: Dinner at {{step_0.result[0].name}} tonight at 7 PM."
-            },
-            requires_confirmation: true,
-            description: "Send a reminder SMS about the reservation."
-          }
-        ],
+        id: crypto.randomUUID(),
+        intent_id: typeof intent === "object" ? intent.id : crypto.randomUUID(),
+        steps,
+        constraints: {
+          max_steps: 10,
+          max_total_tokens: 100000,
+          max_execution_time_ms: 300000,
+        },
+        metadata: {
+          version: "1.0.0",
+          created_at: new Date().toISOString(),
+          planning_model_id: model,
+          estimated_total_tokens: 1000,
+          estimated_latency_ms: 5000,
+        },
         summary: "I will find an Italian restaurant, book a table for 7 PM, and send you a reminder SMS."
       };
     }
-    
+
     if (text.includes("restaurant") && text.includes("book") && text.includes("sms")) {
        const userLocStr = userLocation ? `${userLocation.lat.toFixed(3)}, ${userLocation.lng.toFixed(3)}` : "nearby";
-       return {
-        intent_type: "PLANNING",
-        constraints: [],
-        ordered_steps: [
-          {
-            tool_name: "search_restaurant",
-            parameters: { location: userLocStr },
-            requires_confirmation: false,
-            description: `Finding restaurants near ${userLocStr}.`,
+       const steps = [
+        {
+          id: crypto.randomUUID(),
+          step_number: 0,
+          tool_name: "search_restaurant",
+          tool_version: "1.0.0",
+          parameters: { location: userLocStr },
+          dependencies: [],
+          requires_confirmation: false,
+          timeout_ms: 30000,
+          description: `Finding restaurants near ${userLocStr}.`,
+        },
+        {
+          id: crypto.randomUUID(),
+          step_number: 1,
+          tool_name: "book_restaurant_table",
+          tool_version: "1.0.0",
+          parameters: {
+            restaurant_name: "{{step_0.result[0].name}}",
+            date: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+            time: "19:00",
+            party_size: 2
           },
-          {
-            tool_name: "book_restaurant_table",
-            parameters: { 
-              restaurant_name: "{{step_0.result[0].name}}", 
-              date: new Date(Date.now() + 86400000).toISOString().split('T')[0],
-              time: "19:00",
-              party_size: 2
-            },
-            requires_confirmation: true,
-            description: "Booking the table.",
+          dependencies: [],
+          requires_confirmation: true,
+          timeout_ms: 30000,
+          description: "Booking the table.",
+        },
+        {
+          id: crypto.randomUUID(),
+          step_number: 2,
+          tool_name: "send_comm",
+          tool_version: "1.0.0",
+          parameters: {
+            to: "me",
+            channel: "sms",
+            message: "Booked!"
           },
-          {
-            tool_name: "send_comm",
-            parameters: {
-              to: "me",
-              channel: "sms",
-              message: "Booked!"
-            },
-            requires_confirmation: false,
-            description: "Sending SMS reminder."
-          }
-        ],
+          dependencies: [],
+          requires_confirmation: false,
+          timeout_ms: 30000,
+          description: "Sending SMS reminder."
+        }
+      ];
+
+      return {
+        id: crypto.randomUUID(),
+        intent_id: typeof intent === "object" ? intent.id : crypto.randomUUID(),
+        steps,
+        constraints: {
+          max_steps: 10,
+          max_total_tokens: 100000,
+          max_execution_time_ms: 300000,
+        },
+        metadata: {
+          version: "1.0.0",
+          created_at: new Date().toISOString(),
+          planning_model_id: model,
+          estimated_total_tokens: 1000,
+          estimated_latency_ms: 5000,
+        },
         summary: "Finding a restaurant, booking it, and sending you an SMS."
       };
     }

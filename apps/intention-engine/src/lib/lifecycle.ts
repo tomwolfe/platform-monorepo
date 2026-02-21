@@ -29,7 +29,7 @@ export function supersedeIntent(
 export function revokeIntent(intent: Intent, reason: string): Intent {
   return {
     ...intent,
-    type: "REFUSED",
+    type: "SERVICE_DEGRADED",
     explanation: `REVOKED: ${reason}. Original: ${intent.explanation}`,
     confidence: 0,
     metadata: {

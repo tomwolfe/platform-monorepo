@@ -149,6 +149,8 @@ function createFallbackIntent(
     parameters: {},
     rawText,
     explanation,
+    requires_clarification: type === "CLARIFICATION_REQUIRED",
+    clarification_prompt: type === "CLARIFICATION_REQUIRED" ? explanation : undefined,
     metadata: {
       version: "1.0.0",
       timestamp: new Date().toISOString(),

@@ -36,9 +36,14 @@ export function createExecutionPlan(intent: Intent, dryRun: boolean = true): Exe
     }
 
     steps.push({
+      id: crypto.randomUUID(),
+      step_number: steps.length,
       tool_name: toolName,
+      tool_version: "1.0.0",
       parameters: parameters,
+      dependencies: [],
       requires_confirmation: guardrail.requiresConfirmation,
+      timeout_ms: 30000,
       description: guardrail.reason || `Execute ${toolName}`
     });
   } else if (intent.type === "SCHEDULE") {
@@ -48,19 +53,27 @@ export function createExecutionPlan(intent: Intent, dryRun: boolean = true): Exe
     if (isDinner) {
       // Special logic for dinner: add route estimate
       steps.push({
+        id: crypto.randomUUID(),
+        step_number: steps.length,
         tool_name: "get_route_estimate",
+        tool_version: "1.0.0",
         parameters: {
           origin: "current_location",
           destination: intent.parameters.location || intent.parameters.restaurant_address || "the restaurant",
           travel_mode: "driving"
         },
+        dependencies: [],
         requires_confirmation: false,
+        timeout_ms: 30000,
         description: "Calculate travel time for dinner"
       });
     }
 
     steps.push({
+      id: crypto.randomUUID(),
+      step_number: steps.length,
       tool_name: "add_calendar_event",
+      tool_version: "1.0.0",
       parameters: {
         events: [{
           title: intent.parameters.title || "New Event",
@@ -70,7 +83,9 @@ export function createExecutionPlan(intent: Intent, dryRun: boolean = true): Exe
           restaurant_name: intent.parameters.restaurant_name
         }]
       },
+      dependencies: [],
       requires_confirmation: guardrail.requiresConfirmation,
+      timeout_ms: 30000,
       description: isDinner ? "Schedule dinner and adjust for travel" : "Schedule event"
     });
   }

@@ -489,7 +489,7 @@ async function executeStepHandler(
         // If failover policy recommends a specific action type, trigger replanning
         // with the new constraints/suggestions
         // ========================================================================
-        const shouldReplan = [
+        const shouldReplan = failoverResult.recommended_action && [
           "SUGGEST_ALTERNATIVE_TIME",
           "SUGGEST_ALTERNATIVE_RESTAURANT",
           "SUGGEST_ALTERNATIVE_DATE",
@@ -516,7 +516,7 @@ async function executeStepHandler(
             );
 
             console.log(
-              `[ExecuteStep] Marked execution ${executionId} for automatic replanning: ${failoverResult.recommended_action.type}`
+              `[ExecuteStep] Marked execution ${executionId} for automatic replanning: ${failoverResult.recommended_action?.type}`
             );
 
             // Publish replan event to Ably for UI notification
@@ -526,8 +526,8 @@ async function executeStepHandler(
               {
                 executionId,
                 reason: failoverResult.policy?.name,
-                actionType: failoverResult.recommended_action.type,
-                message: `Your request needs adjustment. ${failoverResult.recommended_action.message_template}`,
+                actionType: failoverResult.recommended_action?.type,
+                message: `Your request needs adjustment. ${failoverResult.recommended_action?.message_template}`,
                 timestamp: new Date().toISOString(),
               },
               {}
@@ -597,12 +597,16 @@ async function executeStepHandler(
 
             // Update execution state with new plan
             const updatedState = await loadExecutionState(executionId);
+            if (!updatedState) {
+              throw new Error(`Execution state not found for ${executionId}`);
+            }
             updatedState.intent = newIntent;
             updatedState.plan = newPlan;
             updatedState.status = "PLANNED";
-            updatedState.step_states = newPlan.steps.map(() => ({
+            updatedState.step_states = newPlan.steps.map((step) => ({
+              step_id: step.id,
               status: "pending",
-              error: null,
+              attempts: 0,
             }));
 
             await saveExecutionState(updatedState);

@@ -373,12 +373,15 @@ export class SemanticVectorStore {
 
     for (const entryId of candidateIds.slice(0, 100)) { // Limit candidates for performance
       const key = this.buildKey(entryId);
-      const entryJson = await this.redis.get<string>(key);
-      
-      if (!entryJson) continue;
+      const entryData = await this.redis.get<any>(key);
+
+      if (!entryData) continue;
 
       try {
-        const entry = JSON.parse(entryJson) as SemanticMemoryEntry;
+        // Redis may auto-deserialize JSON, so check if already an object
+        const entry: SemanticMemoryEntry = typeof entryData === 'string' 
+          ? JSON.parse(entryData) 
+          : entryData;
 
         // Filter by intent type if specified
         if (query.intentType && entry.intentType !== query.intentType) {
@@ -425,11 +428,15 @@ export class SemanticVectorStore {
 
     for (const entryId of entryIds) {
       const key = this.buildKey(entryId);
-      const entryJson = await this.redis.get<string>(key);
+      const entryData = await this.redis.get<any>(key);
 
-      if (entryJson) {
+      if (entryData) {
         try {
-          entries.push(JSON.parse(entryJson) as SemanticMemoryEntry);
+          // Redis may auto-deserialize JSON, so check if already an object
+          const entry: SemanticMemoryEntry = typeof entryData === 'string' 
+            ? JSON.parse(entryData) 
+            : entryData;
+          entries.push(entry);
         } catch (error) {
           console.warn(`[VectorStore] Failed to parse entry ${entryId}:`, error);
         }
@@ -444,12 +451,15 @@ export class SemanticVectorStore {
    */
   async deleteEntry(entryId: string): Promise<boolean> {
     const key = this.buildKey(entryId);
-    const entryJson = await this.redis.get<string>(key);
-    
-    if (!entryJson) return false;
+    const entryData = await this.redis.get<any>(key);
+
+    if (!entryData) return false;
 
     try {
-      const entry = JSON.parse(entryJson) as SemanticMemoryEntry;
+      // Redis may auto-deserialize JSON, so check if already an object
+      const entry: SemanticMemoryEntry = typeof entryData === 'string' 
+        ? JSON.parse(entryData) 
+        : entryData;
 
       // Remove from user index
       const userIndexKey = this.buildUserIndexKey(entry.userId);

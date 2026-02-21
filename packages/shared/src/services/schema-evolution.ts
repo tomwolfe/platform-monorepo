@@ -220,11 +220,15 @@ export class SchemaEvolutionService {
 
     for (const eventId of eventIds) {
       const key = this.buildMismatchKey(eventId);
-      const eventJson = await this.config.redis.get<string>(key);
-      
-      if (eventJson) {
+      const eventData = await this.config.redis.get<any>(key);
+
+      if (eventData) {
         try {
-          events.push(JSON.parse(eventJson) as SchemaMismatchEvent);
+          // Redis may auto-deserialize JSON, so check if already an object
+          const event: SchemaMismatchEvent = typeof eventData === 'string' 
+            ? JSON.parse(eventData) 
+            : eventData;
+          events.push(event);
         } catch (error) {
           console.warn(`[SchemaEvolution] Failed to parse mismatch event ${eventId}:`, error);
         }
@@ -435,12 +439,16 @@ export class SchemaEvolutionService {
    */
   async getProposal(proposalId: string): Promise<ProposedSchemaChange | null> {
     const key = this.buildProposalKey(proposalId);
-    const proposalJson = await this.config.redis.get<string>(key);
-    
-    if (!proposalJson) return null;
+    const proposalData = await this.config.redis.get<any>(key);
+
+    if (!proposalData) return null;
 
     try {
-      return JSON.parse(proposalJson) as ProposedSchemaChange;
+      // Redis may auto-deserialize JSON, so check if already an object
+      const proposal: ProposedSchemaChange = typeof proposalData === 'string' 
+        ? JSON.parse(proposalData) 
+        : proposalData;
+      return proposal;
     } catch (error) {
       console.error(`[SchemaEvolution] Failed to parse proposal ${proposalId}:`, error);
       return null;

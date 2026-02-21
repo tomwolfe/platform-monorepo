@@ -483,6 +483,60 @@ async function executeStepHandler(
             console.warn("[FailoverPolicyEngine] Failed to publish to Ably:", err);
           }
         }
+
+        // ========================================================================
+        // AUTOMATIC REPLANNING TRIGGER
+        // If failover policy recommends a specific action type, trigger replanning
+        // with the new constraints/suggestions
+        // ========================================================================
+        const shouldReplan = [
+          "SUGGEST_ALTERNATIVE_TIME",
+          "SUGGEST_ALTERNATIVE_RESTAURANT",
+          "SUGGEST_ALTERNATIVE_DATE",
+          "TRIGGER_DELIVERY",
+          "TRIGGER_WAITLIST",
+          "ESCALATE_TO_HUMAN",
+        ].includes(failoverResult.recommended_action.type);
+
+        if (shouldReplan && redis) {
+          try {
+            // Mark execution for replanning
+            const replanKey = `exec:${executionId}:replan`;
+            await redis.setex(
+              replanKey,
+              300, // 5 minute TTL
+              JSON.stringify({
+                shouldReplan: true,
+                reason: failoverResult.policy?.name || "Failover policy triggered",
+                suggestedAction: failoverResult.recommended_action,
+                suggestions: failoverEngine.getAlternativeSuggestions(failoverContext, failoverResult),
+                originalIntent: state.intent,
+                triggeredAt: new Date().toISOString(),
+              })
+            );
+
+            console.log(
+              `[ExecuteStep] Marked execution ${executionId} for automatic replanning: ${failoverResult.recommended_action.type}`
+            );
+
+            // Publish replan event to Ably for UI notification
+            await RealtimeService.publish(
+              "nervous-system:updates",
+              "AutomaticReplanTriggered",
+              {
+                executionId,
+                reason: failoverResult.policy?.name,
+                actionType: failoverResult.recommended_action.type,
+                message: `Your request needs adjustment. ${failoverResult.recommended_action.message_template}`,
+                timestamp: new Date().toISOString(),
+              },
+              {}
+            );
+          } catch (replanError) {
+            console.warn("[ExecuteStep] Failed to mark for replanning:", replanError);
+            // Continue without replanning - not critical
+          }
+        }
       }
 
       // Determine if we should trigger next step
@@ -492,6 +546,81 @@ async function executeStepHandler(
       if (willTriggerNext) {
         const nextStepIndex = result.completedSteps;
         await triggerNextStep(executionId, nextStepIndex);
+      }
+
+      // ========================================================================
+      // CHECK FOR REPLANNING MARKER
+      // If execution is complete or failed and marked for replanning, trigger
+      // a new planning cycle with the failover suggestions
+      // ========================================================================
+      const isComplete = result.isComplete || (result.stepState.status === "failed" && !willTriggerNext);
+      
+      if (isComplete && redis) {
+        try {
+          const replanKey = `exec:${executionId}:replan`;
+          const replanData = await redis.get<any>(replanKey);
+
+          if (replanData && replanData.shouldReplan) {
+            console.log(
+              `[ExecuteStep] Execution ${executionId} marked for replanning, triggering new plan...`
+            );
+
+            // Import planning functions
+            const { generatePlan } = await import("@/lib/planner");
+            const { inferIntent } = await import("@/lib/intent");
+
+            // Build new user text from suggestions
+            const suggestions = replanData.suggestions || [];
+            const suggestionText = suggestions
+              .map((s: any) => {
+                if (s.type === "alternative_time") {
+                  return `Try at ${s.value}`;
+                }
+                if (s.type === "delivery_alternative") {
+                  return "Switch to delivery";
+                }
+                if (s.type === "waitlist_alternative") {
+                  return "Join the waitlist";
+                }
+                return s.message || JSON.stringify(s.value);
+              })
+              .join(". ");
+
+            const newRawText = `${replanData.originalIntent?.rawText || ""}. ${suggestionText}`.trim();
+
+            // Re-infer intent with new context
+            const { hypotheses } = await inferIntent(newRawText, []);
+            const newIntent = hypotheses.primary;
+
+            // Generate new plan with failover constraints
+            const newPlan = await generatePlan(newRawText);
+
+            // Update execution state with new plan
+            const updatedState = await loadExecutionState(executionId);
+            updatedState.intent = newIntent;
+            updatedState.plan = newPlan;
+            updatedState.status = "PLANNED";
+            updatedState.step_states = newPlan.steps.map(() => ({
+              status: "pending",
+              error: null,
+            }));
+
+            await saveExecutionState(updatedState);
+
+            // Clear replan marker
+            await redis.del(replanKey);
+
+            // Trigger first step of new plan
+            await triggerNextStep(executionId, 0);
+
+            console.log(
+              `[ExecuteStep] Replanning complete for ${executionId}, new plan has ${newPlan.steps.length} steps`
+            );
+          }
+        } catch (replanError) {
+          console.warn("[ExecuteStep] Failed to execute replanning:", replanError);
+          // Continue without replanning - not critical
+        }
       }
 
       return NextResponse.json(

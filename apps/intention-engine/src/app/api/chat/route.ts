@@ -116,9 +116,12 @@ async function triggerAsyncExecution(
 
 /**
  * Check if an intent requires saga-style async execution
- * 
+ *
  * Saga operations are multi-step, state-modifying operations that benefit from
  * the recursive self-trigger pattern (e.g., booking, reservation, complex workflows)
+ *
+ * STRICT SAGA ENFORCEMENT: All state-modifying operations MUST use async execution
+ * to avoid Vercel 10s timeout and ensure proper compensation handling.
  */
 function requiresSagaExecution(intentType: string): boolean {
   const sagaIntentTypes = [
@@ -131,8 +134,26 @@ function requiresSagaExecution(intentType: string): boolean {
     "PLACE_ORDER",
     "CHECKOUT",
     "PURCHASE",
+    // Delivery and logistics
+    "DISPATCH",
+    "DELIVERY",
+    "CREATE_DELIVERY",
+    // Communication (state-modifying)
+    "SEND_COMM",
+    "SEND_EMAIL",
+    "SEND_SMS",
+    // Calendar (state-modifying)
+    "ADD_CALENDAR_EVENT",
+    "CREATE_EVENT",
+    // Payment (state-modifying)
+    "PAYMENT",
+    "PROCESS_PAYMENT",
+    "REFUND",
+    // Ride/mobility
+    "REQUEST_RIDE",
+    "MOBILITY",
   ];
-  
+
   return sagaIntentTypes.some(type => intentType.includes(type) || intentType === type);
 }
 
@@ -853,12 +874,39 @@ export async function POST(req: Request) {
             }
 
             // SAGA DETECTION - Check if this tool requires async execution
-            // For saga-type operations (booking, reservation, etc.), trigger async execution
-            // instead of executing inline to avoid Vercel timeout
-            if (requiresSagaExecution(localTool.name) || requiresSagaExecution(intent.type)) {
+            // STRICT SAGA ENFORCEMENT: All state-modifying tools MUST use async execution
+            // to avoid Vercel 10s timeout and ensure proper compensation handling
+            const stateModifyingTools = [
+              "book_restaurant_table",
+              "reserve_restaurant",
+              "create_reservation",
+              "create_order",
+              "place_order",
+              "checkout",
+              "purchase",
+              "dispatch_driver",
+              "create_delivery",
+              "send_comm",
+              "send_email",
+              "send_sms",
+              "add_calendar_event",
+              "create_event",
+              "process_payment",
+              "refund_payment",
+              "request_ride",
+              "update_order_status",
+              "update_reservation_status",
+              "cancel_reservation",
+              "cancel_order",
+            ];
+
+            const isStateModifying = stateModifyingTools.some(tool => localTool.name.includes(tool));
+            const isSagaIntent = requiresSagaExecution(intent.type);
+
+            if (isStateModifying || isSagaIntent) {
               try {
                 console.log(`[Chat] Detected saga operation (${localTool.name}), triggering async execution`);
-                
+
                 // Create a synthetic intent for this specific tool execution
                 const sagaIntent = {
                   id: crypto.randomUUID(),
@@ -868,14 +916,14 @@ export async function POST(req: Request) {
                   rawText: userText,
                   metadata: { version: "1.0.0", timestamp: new Date().toISOString(), source: "chat_saga" }
                 };
-                
+
                 // Trigger async execution via QStash
                 const executionId = await triggerAsyncExecution(sagaIntent, {
                   userId: userId as string | undefined,
                   clerkId: clerkId || undefined,
                   userEmail: undefined,
                 }, auditLog.id);
-                
+
                 // Return immediately with execution ID for tracking
                 return {
                   success: true,
@@ -892,7 +940,7 @@ export async function POST(req: Request) {
               }
             }
 
-            // Normal inline execution for non-saga operations
+            // Read-only operations execute inline (search, geocode, get_weather, etc.)
             const result = await executeToolWithContext(localTool.name, enrichedParams, {
               audit_log_id: auditLog.id,
               step_index: auditLog.steps.length

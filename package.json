@@ -5,6 +5,9 @@
     "build": "turbo build",
     "dev": "turbo dev",
     "lint": "turbo lint",
+    "preflight": "tsx scripts/preflight-check.ts",
+    "validate:env": "tsx scripts/validate-env.ts",
+    "validate:env:strict": "tsx scripts/validate-env.ts --strict",
     "qstash:setup": "tsx scripts/setup-qstash.ts",
     "qstash:test": "tsx scripts/test-qstash.ts",
     "test:saga": "tsx scripts/test-saga-pattern.ts",
@@ -14,7 +17,7 @@
     "test:all": "tsx scripts/run-integration-tests.ts && tsx scripts/run-chaos-tests.ts",
     "validate:schema-sync": "tsx scripts/validate-schema-sync.ts",
     "validate:schema-sync:strict": "tsx scripts/validate-schema-sync.ts --strict",
-    "ci:validate": "pnpm validate:schema-sync"
+    "ci:validate": "pnpm validate:env && pnpm validate:schema-sync"
   },
   "engines": {
     "node": "24.x"

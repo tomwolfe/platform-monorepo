@@ -20,7 +20,13 @@ export const getAblyClient = () => {
   if (!ablyInstance) {
     const apiKey = process.env.ABLY_API_KEY;
     if (!apiKey) {
-      console.warn('Ably API key missing');
+      // CRITICAL: Fail fast in production if Ably is not configured
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error(
+          'CRITICAL: Ably API key missing. Set ABLY_API_KEY environment variable for production.'
+        );
+      }
+      console.warn('Ably API key missing - real-time events disabled in development');
       return null;
     }
     ablyInstance = new Ably.Rest(apiKey);

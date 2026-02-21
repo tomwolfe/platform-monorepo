@@ -91,12 +91,26 @@ export function wrapWithPrefix(obj: any, prefix: string): any {
 }
 
 export const getRedisConfig = (appName: string) => {
-  const url = process.env.SHARED_UPSTASH_REDIS_REST_URL || process.env.UPSTASH_REDIS_REST_URL || 'http://localhost:8080';
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN || 'example_token';
+  const url = process.env.SHARED_UPSTASH_REDIS_REST_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+  // CRITICAL: Fail fast in production if Redis is not configured
+  const isProduction = process.env.NODE_ENV === 'production';
   
-  if (!process.env.UPSTASH_REDIS_REST_URL && !process.env.SHARED_UPSTASH_REDIS_REST_URL) {
-    console.warn(`${appName}: Redis environment variables are missing, defaulting to localhost`);
+  if (!url || !token) {
+    if (isProduction) {
+      throw new Error(
+        `CRITICAL: Redis configuration missing for ${appName}. ` +
+        'Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN environment variables.'
+      );
+    }
+    // Development: provide clear warning but allow fallback
+    console.warn(
+      `[${appName}] Redis environment variables missing. ` +
+      'Using localhost fallback. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for production.'
+    );
+    return { url: 'http://localhost:8080', token: 'example_token' };
   }
-  
+
   return { url, token };
 };

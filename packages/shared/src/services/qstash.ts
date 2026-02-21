@@ -95,7 +95,64 @@ export class QStashService {
       });
       console.log("[QStashService] Initialized with retry config:", this.config.retry);
     } else {
-      console.warn("[QStashService] QStash not configured - will fallback to fetch(self)");
+      // PRODUCTION HARDENING: Clear error message for missing QStash
+      if (process.env.NODE_ENV === 'production') {
+        console.error(
+          "[QStashService] CRITICAL: QStash not configured in production. " +
+          "Set QSTASH_TOKEN or UPSTASH_QSTASH_TOKEN environment variable. " +
+          "Saga execution will fail without QStash."
+        );
+      } else {
+        console.warn("[QStashService] QStash not configured - will fallback to fetch(self) for development");
+      }
+    }
+  }
+
+  /**
+   * Pre-flight Check - Validate QStash configuration before use
+   * Call this at application startup to catch configuration issues early
+   * 
+   * @param options - Check options
+   * @param options.throwOnError - Throw error if not configured (default: true in production)
+   * @returns Configuration status
+   */
+  static async preflightCheck(options?: { throwOnError?: boolean }): Promise<{
+    configured: boolean;
+    canConnect: boolean;
+    error?: string;
+  }> {
+    const shouldThrow = options?.throwOnError ?? (process.env.NODE_ENV === 'production');
+    
+    // Check if configured
+    const token = this.config?.token || process.env.QSTASH_TOKEN || process.env.UPSTASH_QSTASH_TOKEN;
+    
+    if (!token) {
+      const errorMsg = "QStash token not configured. Set QSTASH_TOKEN or UPSTASH_QSTASH_TOKEN.";
+      
+      if (shouldThrow && process.env.NODE_ENV === 'production') {
+        throw new Error(`[QStashService] CRITICAL: ${errorMsg}`);
+      }
+      
+      return { configured: false, canConnect: false, error: errorMsg };
+    }
+
+    // Test connectivity (optional - can be slow)
+    try {
+      const client = new Client({ token });
+      // Quick ping by getting topics (lightweight operation)
+      await client.topics();
+      
+      console.log("[QStashService] Preflight check passed - QStash is reachable");
+      return { configured: true, canConnect: true };
+    } catch (error) {
+      const errorMsg = `QStash connectivity test failed: ${error instanceof Error ? error.message : String(error)}`;
+      
+      if (shouldThrow && process.env.NODE_ENV === 'production') {
+        throw new Error(`[QStashService] ${errorMsg}`);
+      }
+      
+      console.warn("[QStashService] Preflight check warning:", errorMsg);
+      return { configured: true, canConnect: false, error: errorMsg };
     }
   }
 

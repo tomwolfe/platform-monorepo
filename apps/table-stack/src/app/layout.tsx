@@ -1,6 +1,7 @@
 import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { NervousSystemProvider, NervousSystemPulse } from "@repo/ui-theme";
 import "./globals.css";
 
 export const dynamic = 'force-dynamic';
@@ -31,7 +32,10 @@ export default function RootLayout({
         <body
           className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         >
-          {children}
+          <NervousSystemProvider autoSubscribe={true}>
+            {children}
+            <NervousSystemPulse includeProvider={false} />
+          </NervousSystemProvider>
         </body>
       </html>
     </ClerkProvider>

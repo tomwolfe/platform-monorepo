@@ -44,6 +44,7 @@ export interface ProgressStepperProps {
     stepName: string;
     status: StepStatus;
     message?: string;
+    timestamp?: string;
   }>;
   /** Auto-subscribe to Ably updates */
   autoSubscribe?: boolean;
@@ -331,17 +332,19 @@ export const StreamingProgressStepper: React.FC<ProgressStepperProps> = ({
 
     const connectToAbly = async () => {
       try {
-        // Dynamic import for server-side rendering compatibility
-        const { getAblyClient } = await import("@repo/shared");
-        ably = getAblyClient();
-
-        if (!ably) {
+        // Direct Ably initialization for browser compatibility
+        const apiKey = process.env.NEXT_PUBLIC_ABLY_API_KEY;
+        
+        if (!apiKey) {
           console.warn(
-            "[StreamingProgressStepper] Ably not configured, using polling"
+            "[StreamingProgressStepper] Ably not configured"
           );
           setIsConnected(false);
           return;
         }
+
+        const Ably = (await import("ably")).default;
+        ably = new Ably.Realtime({ key: apiKey });
 
         const channel = ably.channels.get("nervous-system:updates");
 

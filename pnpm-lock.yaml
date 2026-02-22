@@ -509,6 +509,12 @@ importers:
       '@radix-ui/react-toast':
         specifier: ^1.2.2
         version: 1.2.15(@types/react-dom@19.2.3)(@types/react@19.2.14)(react-dom@19.0.0)(react@19.0.0)
+      '@repo/shared':
+        specifier: workspace:*
+        version: link:../shared
+      ably:
+        specifier: ^2.17.1
+        version: 2.17.1(react-dom@19.0.0)(react@19.0.0)
       class-variance-authority:
         specifier: ^0.7.0
         version: 0.7.1
@@ -3728,6 +3734,31 @@ packages:
       '@vitest/pretty-format': 4.0.18
       tinyrainbow: 3.0.3
     dev: true
+
+  /ably@2.17.1(react-dom@19.0.0)(react@19.0.0):
+    resolution: {integrity: sha512-70yfXHoM7JtJD/8FCtPD1gkWW0f+AJqbJp0PsqDAqiyxFB8cPFY+FuKHgNTYb8eRHKXq8hT1xiDphUcY0+GHnA==}
+    engines: {node: '>=16'}
+    peerDependencies:
+      react: '>=16.8.0'
+      react-dom: '>=16.8.0'
+    peerDependenciesMeta:
+      react:
+        optional: true
+      react-dom:
+        optional: true
+    dependencies:
+      '@ably/msgpack-js': 0.4.1
+      dequal: 2.0.3
+      fastestsmallesttextencoderdecoder: 1.0.22
+      got: 11.8.6
+      react: 19.0.0
+      react-dom: 19.0.0(react@19.0.0)
+      ulid: 2.4.0
+      ws: 8.19.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+    dev: false
 
   /ably@2.17.1(react-dom@19.0.3)(react@19.0.3):
     resolution: {integrity: sha512-70yfXHoM7JtJD/8FCtPD1gkWW0f+AJqbJp0PsqDAqiyxFB8cPFY+FuKHgNTYb8eRHKXq8hT1xiDphUcY0+GHnA==}

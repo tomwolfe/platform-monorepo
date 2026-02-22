@@ -362,7 +362,7 @@ server.tool(
       deliveryAddress: deliveryAddressStr,
       customerId: params.customerId,
       items: params.items,
-      priority: params.priority || "standard",
+      priority: params.priority ? "urgent" : "standard",
       priceDetails: params.priceDetails,
       specialInstructions: params.specialInstructions,
       traceId,

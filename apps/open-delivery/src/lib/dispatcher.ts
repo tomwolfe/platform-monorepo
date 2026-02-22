@@ -347,7 +347,7 @@ async function createMatchResult(
 
   // Step 4: Update Redis with match data
   const fulfillmentKey = `fulfillment:${orderIntent.fulfillmentId}`;
-  const fulfillmentData = await redis.get(fulfillmentKey);
+  const fulfillmentData = await redis.get<string>(fulfillmentKey);
   const updatedFulfillment = {
     ...(fulfillmentData ? JSON.parse(fulfillmentData) : {}),
     ...matchResult,
@@ -401,18 +401,18 @@ export async function retryPendingDispatches(): Promise<number> {
   const pattern = "dispatch:pending:*";
   const keys = await redis.keys(pattern);
 
-  let retryCount = 0;
+  let successfulRetries = 0;
 
   for (const key of keys) {
     try {
-      const data = await redis.get(key);
+      const data = await redis.get<string>(key);
       if (!data) continue;
 
       const orderIntent = JSON.parse(data);
-      const retryCount = (orderIntent.retryCount || 0) + 1;
+      const attemptCount = (orderIntent.retryCount || 0) + 1;
 
       // Max 3 retries
-      if (retryCount > 3) {
+      if (attemptCount > 3) {
         await redis.del(key);
         console.log(
           `[Dispatcher] Max retries reached for order ${orderIntent.orderId}, removing from queue`
@@ -421,16 +421,16 @@ export async function retryPendingDispatches(): Promise<number> {
       }
 
       // Try dispatch again
-      orderIntent.retryCount = retryCount;
+      orderIntent.retryCount = attemptCount;
       orderIntent.lastAttempt = new Date().toISOString();
 
       const result = await dispatchOrder(orderIntent);
 
       if (result.success) {
         await redis.del(key);
-        retryCount++;
+        successfulRetries++;
         console.log(
-          `[Dispatcher] Retry successful for order ${orderIntent.orderId} (attempt ${retryCount})`
+          `[Dispatcher] Retry successful for order ${orderIntent.orderId} (attempt ${attemptCount})`
         );
       } else {
         // Update retry count in Redis
@@ -441,5 +441,5 @@ export async function retryPendingDispatches(): Promise<number> {
     }
   }
 
-  return retryCount;
+  return successfulRetries;
 }

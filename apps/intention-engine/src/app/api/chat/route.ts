@@ -39,6 +39,8 @@ import { parseIntent as engineParseIntent } from "@/lib/engine/intent";
 import { generatePlan as engineGeneratePlan } from "@/lib/engine/planner";
 import { getRegistryManager } from "@/lib/engine/registry";
 import { verifyPlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/verifier";
+import { promptInjectionMiddleware } from "@/lib/middleware/prompt-injection";
+import { rateLimitMiddleware, createRateLimitMiddleware } from "@/lib/middleware/rate-limiter";
 
 // Internal system key for QStash-triggered requests
 const INTERNAL_SYSTEM_KEY = process.env.INTERNAL_SYSTEM_KEY || "internal-system-key-change-in-production";
@@ -614,6 +616,31 @@ export async function POST(req: Request) {
     const userIp = req.headers.get("x-forwarded-for") || "anonymous";
     const clerkId = req.headers.get("x-clerk-id") || undefined;
     const userId = clerkId || userIp; // Prefer clerkId, fallback to IP for anonymous
+    
+    // RATE LIMITING: User-level rate limiting to prevent quota drain
+    const rateLimitResult = await rateLimitMiddleware(userId, "chat");
+    
+    if (!rateLimitResult.allowed) {
+      console.warn(`[RateLimiter] Rate limit exceeded for user ${userId}`);
+      
+      return new Response(
+        JSON.stringify({
+          error: "Rate limit exceeded",
+          message: "Too many requests. Please wait a moment before trying again.",
+          retryAfter: rateLimitResult.result.retryAfter,
+          limit: rateLimitResult.result.headers["X-RateLimit-Limit"],
+          remaining: rateLimitResult.result.headers["X-RateLimit-Remaining"],
+        }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            ...rateLimitResult.result.headers,
+          },
+        }
+      );
+    }
+
     const userPrefsKey = `prefs:${userId}`;
     let userPreferences = null;
     let recentLogs: any[] = [];
@@ -647,6 +674,42 @@ export async function POST(req: Request) {
     }
 
     // Step 2: Semantic Memory & Proactive Retrieval
+    
+    // SECURITY: Prompt Injection Detection
+    // Scan user input for prompt injection attacks before processing
+    const securityCheck = await promptInjectionMiddleware(userText, userId, {
+      enableHeuristics: true,
+      enableSemanticAnalysis: true,
+      enableEncodingDetection: true,
+      enableAuditLog: true,
+    });
+
+    if (!securityCheck.allowed) {
+      console.warn(`[Security] Prompt injection detected for user ${userId}:`, securityCheck.detectionResult);
+
+      // Return appropriate error based on risk level
+      const statusCode = securityCheck.detectionResult.riskLevel === "critical" ? 403 : 400;
+      return new Response(
+        JSON.stringify({
+          error: "Input blocked for security reasons",
+          message: securityCheck.detectionResult.recommendedAction === "block"
+            ? "Your input contains patterns that may attempt to manipulate the AI system. Please rephrase your request."
+            : "Your input requires review. Please rephrase or contact support if this persists.",
+          riskLevel: securityCheck.detectionResult.riskLevel,
+          ...(process.env.NODE_ENV === "development" && {
+            debug: {
+              attackTypes: securityCheck.detectionResult.attackTypes,
+              explanation: securityCheck.detectionResult.explanation,
+            },
+          }),
+        }),
+        {
+          status: statusCode,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
     const getRelevantFailures = function(text: string, logs: any[]) {
       const keywords = text.toLowerCase().split(/\W+/).filter(w => w.length > 3);
       const failures: string[] = [];

@@ -1,0 +1,196 @@
+name: Performance Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  performance-budgets:
+    name: Performance Budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: apps
+          POSTGRES_PASSWORD: apps
+          POSTGRES_DB: apps_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.15.9
+      
+      - name: Install dependencies
+        run: pnpm install
+      
+      - name: Setup environment
+        run: |
+          cp .env.local.example .env.local
+          echo "DATABASE_URL=postgresql://apps:apps@localhost:5432/apps_test" >> .env.local
+          echo "UPSTASH_REDIS_REST_URL=http://localhost:6379" >> .env.local
+          echo "UPSTASH_REDIS_REST_TOKEN=test" >> .env.local
+      
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+      
+      - name: Build application
+        run: pnpm build
+      
+      - name: Start application
+        run: pnpm dev &
+        env:
+          NODE_ENV: test
+      
+      - name: Wait for application to be ready
+        run: |
+          for i in {1..30}; do
+            if curl -s http://localhost:3000/api/health > /dev/null 2>&1; then
+              echo "Application is ready"
+              exit 0
+            fi
+            echo "Waiting for application... ($i/30)"
+            sleep 2
+          done
+          echo "Application failed to start"
+          exit 1
+      
+      - name: Run performance budget tests
+        run: k6 run k6/scripts/performance-budgets.js
+        env:
+          BASE_URL: http://localhost:3000
+          TEST_USER_ID: github-actions-test
+          INTERNAL_SYSTEM_KEY: test-key
+      
+      - name: Upload k6 results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-results
+          path: |
+            k6-results.json
+            *.log
+          retention-days: 30
+  
+  load-test:
+    name: Load Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: performance-budgets
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: apps
+          POSTGRES_PASSWORD: apps
+          POSTGRES_DB: apps_test
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.15.9
+      
+      - name: Install dependencies
+        run: pnpm install
+      
+      - name: Setup environment
+        run: |
+          cp .env.local.example .env.local
+          echo "DATABASE_URL=postgresql://apps:apps@localhost:5432/apps_test" >> .env.local
+          echo "UPSTASH_REDIS_REST_URL=http://localhost:6379" >> .env.local
+      
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+      
+      - name: Build application
+        run: pnpm build
+      
+      - name: Start application
+        run: pnpm dev &
+        env:
+          NODE_ENV: test
+      
+      - name: Wait for application to be ready
+        run: |
+          for i in {1..30}; do
+            if curl -s http://localhost:3000/api/health > /dev/null 2>&1; then
+              echo "Application is ready"
+              exit 0
+            fi
+            echo "Waiting for application... ($i/30)"
+            sleep 2
+          done
+          exit 1
+      
+      - name: Run load test
+        run: k6 run k6/scripts/load-test.js
+        env:
+          BASE_URL: http://localhost:3000
+      
+      - name: Upload k6 results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-load-results
+          path: k6-results.json
+          retention-days: 30

@@ -34,3 +34,10 @@ yarn-error.log*
 # IDE
 .vscode/
 .idea/
+
+# K6 Testing
+k6-results.json
+*.k6.log
+
+# Docker
+docker-data/

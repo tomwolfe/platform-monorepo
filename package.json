@@ -17,7 +17,22 @@
     "test:all": "tsx scripts/run-integration-tests.ts && tsx scripts/run-chaos-tests.ts",
     "validate:schema-sync": "tsx scripts/validate-schema-sync.ts",
     "validate:schema-sync:strict": "tsx scripts/validate-schema-sync.ts --strict",
-    "ci:validate": "pnpm validate:env && pnpm validate:schema-sync"
+    "ci:validate": "pnpm validate:env && pnpm validate:schema-sync",
+    "docker:up": "tsx scripts/docker.ts up",
+    "docker:down": "tsx scripts/docker.ts down",
+    "docker:clean": "tsx scripts/docker.ts clean",
+    "docker:logs": "tsx scripts/docker.ts logs",
+    "docker:status": "tsx scripts/docker.ts status",
+    "docker:restart": "tsx scripts/docker.ts restart",
+    "docker:help": "tsx scripts/docker.ts help",
+    "setup:local": "tsx scripts/setup-local-dev.ts",
+    "db:generate": "turbo run db:generate --filter=@repo/database",
+    "db:migrate": "turbo run db:migrate --filter=@repo/database",
+    "db:studio": "turbo run db:studio --filter=@repo/database",
+    "test:performance": "k6 run k6/scripts/performance-budgets.js",
+    "test:performance:load": "k6 run k6/scripts/load-test.js",
+    "test:performance:stress": "k6 run k6/scripts/stress-test.js",
+    "test:performance:all": "k6 run k6/scripts/performance-budgets.js"
   },
   "engines": {
     "node": "24.x"

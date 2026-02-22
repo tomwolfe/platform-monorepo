@@ -1,0 +1,160 @@
+# Local Development Infrastructure
+# Provides parity with cloud services for zero-cost local development
+# Run: docker compose up -d
+
+services:
+  # ─────────────────────────────────────────────────────────────
+  # PostgreSQL (Local Neon parity)
+  # ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: apps-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: apps
+      POSTGRES_PASSWORD: apps
+      POSTGRES_DB: apps
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-local-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U apps -d apps"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - apps-network
+
+  # ─────────────────────────────────────────────────────────────
+  # Redis (Local Upstash parity)
+  # ─────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: apps-redis
+    restart: unless-stopped
+    command: redis-server --requirepass apps
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - apps-network
+
+  # ─────────────────────────────────────────────────────────────
+  # QStash Emulator (Local message queue parity)
+  # QStash doesn't have an official emulator, so we use Redis Streams
+  # as a compatible alternative for local development
+  # ─────────────────────────────────────────────────────────────
+  qstash-emulator:
+    image: redis:7-alpine
+    container_name: apps-qstash-emulator
+    restart: unless-stopped
+    command: redis-server --requirepass apps --port 6380
+    ports:
+      - "6380:6380"
+    volumes:
+      - qstash_data:/data
+    networks:
+      - apps-network
+    profiles:
+      - emulators
+
+  # ─────────────────────────────────────────────────────────────
+  # Ably Local (Local realtime messaging parity)
+  # Ably doesn't have an official emulator; using locally hosted
+  # alternative for development. For production, use Ably cloud.
+  # ─────────────────────────────────────────────────────────────
+  ably-local:
+    image: ably/ably-local:latest
+    container_name: apps-ably-local
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - ABLY_LOCAL_PORT=5000
+    networks:
+      - apps-network
+    profiles:
+      - emulators
+
+  # ─────────────────────────────────────────────────────────────
+  # OpenTelemetry Collector
+  # ─────────────────────────────────────────────────────────────
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.112.0
+    container_name: apps-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./docker/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"  # OTLP gRPC
+      - "4318:4318"  # OTLP HTTP
+      - "55679:55679" # Health check
+    depends_on:
+      - tempo
+    networks:
+      - apps-network
+    profiles:
+      - observability
+
+  # ─────────────────────────────────────────────────────────────
+  # Grafana Tempo (Distributed Tracing Backend)
+  # ─────────────────────────────────────────────────────────────
+  tempo:
+    image: grafana/tempo:2.7.1
+    container_name: apps-tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./docker/tempo-config.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/tmp/tempo
+    ports:
+      - "3200:3200"  # Tempo API
+      - "4317:4317"  # OTLP gRPC (alternative)
+      - "9411:9411"  # Zipkin (alternative)
+    networks:
+      - apps-network
+    profiles:
+      - observability
+
+  # ─────────────────────────────────────────────────────────────
+  # Grafana (Visualization Dashboard)
+  # ─────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: apps-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"  # Using 3001 to avoid conflict with Next.js
+    depends_on:
+      - tempo
+    networks:
+      - apps-network
+    profiles:
+      - observability
+
+networks:
+  apps-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  qstash_data:
+  tempo_data:
+  grafana_data:

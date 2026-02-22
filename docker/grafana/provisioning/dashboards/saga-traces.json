@@ -1,0 +1,60 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 20,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "nodeGraph": {
+          "enabled": true
+        },
+        "serviceMap": {
+          "enabled": true
+        },
+        "traceToLogs": {
+          "enabled": true
+        },
+        "showTraceId": true
+      },
+      "title": "Distributed Trace View",
+      "type": "traces"
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 39,
+  "tags": ["traces", "debug"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Saga Execution Traces",
+  "uid": "saga-traces",
+  "version": 1,
+  "weekStart": ""
+}

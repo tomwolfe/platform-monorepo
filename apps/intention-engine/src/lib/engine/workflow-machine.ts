@@ -60,6 +60,19 @@ import {
 import { DB_REFLECTED_SCHEMAS } from "@repo/mcp-protocol";
 import { NormalizationService, createFailoverPolicyEngine, FailoverPolicyEngine } from "@repo/shared";
 import { verifyPlan, DEFAULT_SAFETY_POLICY, SafetyPolicy } from "./verifier";
+import { redis } from "../redis-client";
+
+// ============================================================================
+// LLM CIRCUIT BREAKER CONFIGURATION
+// Prevents "LLM Budget Bleed" from recursive correction loops
+// ============================================================================
+
+const LLM_CIRCUIT_BREAKER_CONFIG = {
+  maxAttempts: 3,              // Max correction attempts before tripping
+  windowMs: 60 * 1000,         // 60 second window for attempt counting
+  ttlSeconds: 120,             // TTL for circuit breaker keys in Redis
+  openTimeoutMs: 5 * 60 * 1000, // 5 minutes before circuit can be tried again
+};
 
 // ============================================================================
 // CONFIGURATION
@@ -636,12 +649,31 @@ export class WorkflowMachine {
       });
 
       try {
-        // IDEMPOTENCY CHECK
+        let stepState = updateStepState(state, step.id, {
+          status: "in_progress",
+          started_at: timestamp,
+          attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+        });
+
+        // Resolve parameter references BEFORE idempotency check
+        const resolvedParameters = this.resolveStepParameters(step, stepState);
+
+        // Dynamic Parameter Bridge
+        if (toolDef?.parameter_aliases) {
+          for (const [alias, primary] of Object.entries(toolDef.parameter_aliases)) {
+            if (resolvedParameters[alias] !== undefined && resolvedParameters[primary] === undefined) {
+              resolvedParameters[primary] = resolvedParameters[alias];
+            }
+          }
+        }
+
+        // IDEMPOTENCY CHECK - Enhanced with parameter hashing
         const idempotencyKey = `${this.intentId || this.executionId}:${stepIndex}`;
         if (idempotencyService) {
-          const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey);
+          const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey, resolvedParameters);
           if (isDuplicate) {
-            console.log(`[Idempotency] Step ${step.tool_name} (${step.id}) already executed, skipping`);
+            const keyHash = await idempotencyService.getKey(idempotencyKey, resolvedParameters);
+            console.log(`[Idempotency] Step ${step.tool_name} (${step.id}) already executed, skipping. Key: ${keyHash}`);
             span.setAttributes({ idempotency_skip: true });
 
             await RealtimeService.publishStreamingStatusUpdate({
@@ -665,24 +697,6 @@ export class WorkflowMachine {
                 attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
               },
             };
-          }
-        }
-
-        let stepState = updateStepState(state, step.id, {
-          status: "in_progress",
-          started_at: timestamp,
-          attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-        });
-
-        // Resolve parameter references
-        const resolvedParameters = this.resolveStepParameters(step, stepState);
-
-        // Dynamic Parameter Bridge
-        if (toolDef?.parameter_aliases) {
-          for (const [alias, primary] of Object.entries(toolDef.parameter_aliases)) {
-            if (resolvedParameters[alias] !== undefined && resolvedParameters[primary] === undefined) {
-              resolvedParameters[primary] = resolvedParameters[alias];
-            }
           }
         }
 
@@ -835,12 +849,47 @@ export class WorkflowMachine {
 
           // FAILOVER POLICY ENGINE: Check for semantic recovery options before marking as failed
           const failoverResult = await this.evaluateFailoverPolicy(step, resolvedParameters, toolResult.error, errorCode);
-          
+
+          // Handle circuit breaker trip - escalate to human
+          if (failoverResult.circuitBroken) {
+            console.warn(
+              `[WorkflowMachine] LLM correction circuit breaker tripped for ${step.tool_name}. ` +
+              `Escalating to human intervention.`
+            );
+            
+            await RealtimeService.publishStreamingStatusUpdate({
+              executionId: this.executionId,
+              stepIndex,
+              totalSteps,
+              stepName: step.tool_name,
+              status: 'failed',
+              message: 'Automatic correction exhausted. Human intervention required.',
+              timestamp: new Date().toISOString(),
+              traceId: traceId,
+            });
+
+            return {
+              stepState: {
+                step_id: step.id,
+                status: "failed",
+                error: {
+                  code: "LLM_CIRCUIT_BROKEN",
+                  message: "Automatic correction failed multiple times. Human intervention required.",
+                  httpCode: 409,
+                  suggestions: failoverResult.suggestions,
+                },
+                completed_at: new Date().toISOString(),
+                latency_ms: latencyMs,
+                attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+              },
+            };
+          }
+
           if (failoverResult.shouldRetry) {
             console.log(
               `[WorkflowMachine] Failover policy triggered for ${step.tool_name}: ${failoverResult.policyName}`
             );
-            
+
             // Try the failover action (e.g., alternative time, alternative restaurant)
             if (failoverResult.retryParameters) {
               const retryResult = await toolExecutor.execute(
@@ -850,6 +899,9 @@ export class WorkflowMachine {
               );
 
               if (retryResult.success) {
+                // RESET CIRCUIT BREAKER on successful recovery
+                await this.resetCircuitBreaker(this.executionId, step.id);
+
                 await RealtimeService.publishStreamingStatusUpdate({
                   executionId: this.executionId,
                   stepIndex,
@@ -1020,9 +1072,122 @@ export class WorkflowMachine {
     return resolved;
   }
 
+  // ========================================================================
+  // LLM CIRCUIT BREAKER
+  // Prevents infinite correction loops and budget bleed
+  // ========================================================================
+
+  /**
+   * Check if the LLM correction circuit breaker is open
+   * Returns true if circuit is open (should NOT call LLM)
+   */
+  private async isCircuitBreakerOpen(executionId: string, stepId: string): Promise<boolean> {
+    const circuitKey = `llm:circuit:${executionId}:${stepId}`;
+    
+    try {
+      const circuitState = await redis.get<{
+        isOpen: boolean;
+        openedAt: number;
+        attemptCount: number;
+      }>(circuitKey);
+
+      if (!circuitState) {
+        return false; // No circuit state = closed (allow LLM calls)
+      }
+
+      // Check if circuit has timed out
+      const now = Date.now();
+      if (circuitState.isOpen && (now - circuitState.openedAt) > LLM_CIRCUIT_BREAKER_CONFIG.openTimeoutMs) {
+        // Circuit timeout expired - allow half-open state (one test call)
+        console.log(`[CircuitBreaker] Circuit timeout expired for ${stepId}, allowing test call`);
+        return false;
+      }
+
+      return circuitState.isOpen;
+    } catch (error) {
+      console.error(`[CircuitBreaker] Failed to check circuit state:`, error);
+      return false; // Fail open - allow LLM calls if Redis fails
+    }
+  }
+
+  /**
+   * Record an LLM correction attempt
+   * Trips the circuit breaker if max attempts exceeded
+   */
+  private async recordCorrectionAttempt(executionId: string, stepId: string): Promise<{
+    shouldProceed: boolean;
+    attemptCount: number;
+  }> {
+    const circuitKey = `llm:circuit:${executionId}:${stepId}`;
+    const windowKey = `llm:window:${executionId}:${stepId}`;
+    
+    try {
+      // Use a sliding window to count attempts
+      const now = Date.now();
+      const windowStart = now - LLM_CIRCUIT_BREAKER_CONFIG.windowMs;
+      
+      // Add current attempt to sorted set with timestamp as score
+      await redis.zadd(windowKey, { score: now, member: `${now}-${crypto.randomUUID()}` });
+      
+      // Remove old attempts outside the window
+      await redis.zremrangebyscore(windowKey, 0, windowStart);
+      
+      // Count attempts in current window
+      const attemptCount = await redis.zcard(windowKey);
+      
+      // Set TTL on window key
+      await redis.expire(windowKey, LLM_CIRCUIT_BREAKER_CONFIG.ttlSeconds);
+
+      // Check if we exceeded max attempts
+      if (attemptCount > LLM_CIRCUIT_BREAKER_CONFIG.maxAttempts) {
+        // Trip the circuit breaker
+        await redis.setex(
+          circuitKey,
+          LLM_CIRCUIT_BREAKER_CONFIG.ttlSeconds,
+          JSON.stringify({
+            isOpen: true,
+            openedAt: now,
+            attemptCount,
+            reason: `Exceeded ${LLM_CIRCUIT_BREAKER_CONFIG.maxAttempts} attempts in ${LLM_CIRCUIT_BREAKER_CONFIG.windowMs / 1000}s`,
+          })
+        );
+        
+        console.warn(
+          `[CircuitBreaker] TRIPPED for ${stepId} after ${attemptCount} attempts. ` +
+          `Will reopen in ${LLM_CIRCUIT_BREAKER_CONFIG.openTimeoutMs / 1000}s`
+        );
+        
+        return { shouldProceed: false, attemptCount };
+      }
+
+      return { shouldProceed: true, attemptCount };
+    } catch (error) {
+      console.error(`[CircuitBreaker] Failed to record correction attempt:`, error);
+      return { shouldProceed: true, attemptCount: 0 }; // Fail open
+    }
+  }
+
+  /**
+   * Reset the circuit breaker after successful recovery
+   */
+  private async resetCircuitBreaker(executionId: string, stepId: string): Promise<void> {
+    const circuitKey = `llm:circuit:${executionId}:${stepId}`;
+    const windowKey = `llm:window:${executionId}:${stepId}`;
+    
+    try {
+      await redis.del(circuitKey);
+      await redis.del(windowKey);
+      console.log(`[CircuitBreaker] RESET for ${stepId} after successful recovery`);
+    } catch (error) {
+      console.error(`[CircuitBreaker] Failed to reset circuit breaker:`, error);
+    }
+  }
+
   /**
    * Evaluate failover policy for step failure
    * Maps tool errors to failure reasons and checks for semantic recovery options
+   * 
+   * Integrated with LLM Circuit Breaker to prevent budget bleed from correction loops
    */
   private async evaluateFailoverPolicy(
     step: PlanStep,
@@ -1034,19 +1199,63 @@ export class WorkflowMachine {
     policyName?: string;
     retryParameters?: Record<string, unknown>;
     suggestions?: Array<{ type: string; value: unknown; confidence: number }>;
+    circuitBroken?: boolean;
   }> {
+    // CIRCUIT BREAKER CHECK - Prevent LLM budget bleed
+    const circuitOpen = await this.isCircuitBreakerOpen(this.executionId, step.id);
+    if (circuitOpen) {
+      console.warn(
+        `[WorkflowMachine] Circuit breaker OPEN for ${step.tool_name} (${step.id}). ` +
+        `Skipping LLM-based failover correction. Escalating to human intervention.`
+      );
+      return {
+        shouldRetry: false,
+        circuitBroken: true,
+        suggestions: [{
+          type: 'human_intervention',
+          value: {
+            reason: 'LLM correction loop detected',
+            message: 'Automatic correction failed multiple times. Human review required.',
+          },
+          confidence: 1.0,
+        }],
+      };
+    }
+
     // Map error message to failure reason
     const failureReason = this.mapErrorToFailureReason(error, errorCode);
-    
+
     if (!failureReason) {
       return { shouldRetry: false };
     }
 
     // Determine intent type from tool name
     const intentType = this.mapToolNameToIntentType(step.tool_name);
-    
+
     if (!intentType) {
       return { shouldRetry: false };
+    }
+
+    // RECORD CORRECTION ATTEMPT - May trip circuit breaker
+    const correctionResult = await this.recordCorrectionAttempt(this.executionId, step.id);
+    if (!correctionResult.shouldProceed) {
+      console.warn(
+        `[WorkflowMachine] Correction attempt blocked by circuit breaker for ${step.tool_name}. ` +
+        `Attempt #${correctionResult.attemptCount}`
+      );
+      return {
+        shouldRetry: false,
+        circuitBroken: true,
+        suggestions: [{
+          type: 'human_intervention',
+          value: {
+            reason: 'Max correction attempts exceeded',
+            attempts: correctionResult.attemptCount,
+            message: 'Automatic correction exhausted. Human review required.',
+          },
+          confidence: 1.0,
+        }],
+      };
     }
 
     // Build evaluation context
@@ -1060,7 +1269,7 @@ export class WorkflowMachine {
     } = {
       intent_type: intentType,
       failure_reason: failureReason,
-      attempt_count: (getStepState(this.state, step.id)?.attempts || 0) + 1,
+      attempt_count: correctionResult.attemptCount,
     };
 
     // Extract context from parameters

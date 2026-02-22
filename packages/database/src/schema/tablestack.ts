@@ -196,6 +196,50 @@ export const usersRelations = relations(users, ({ many }) => ({
   // For now, users is a standalone table for contextual memory
 }));
 
+// ============================================================================
+// TRANSACTIONAL OUTBOX PATTERN
+// For reliable saga state synchronization between Postgres and Redis
+// ============================================================================
+
+export const outboxStatusEnum = pgEnum('outbox_status', ['pending', 'processing', 'processed', 'failed']);
+
+export const outbox = pgTable('outbox', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  // Event type (e.g., 'SAGA_STEP_COMPLETED', 'SAGA_COMPENSATION_TRIGGERED')
+  eventType: text('event_type').notNull(),
+  // Payload containing event data (JSON)
+  payload: jsonb('payload').notNull().$type<{
+    executionId: string;
+    stepId?: string;
+    stepIndex?: number;
+    status?: string;
+    output?: Record<string, unknown>;
+    error?: Record<string, unknown>;
+    timestamp: string;
+    traceId?: string;
+    correlationId?: string;
+  }>(),
+  // Status of the event (pending -> processing -> processed/failed)
+  status: outboxStatusEnum('status').default('pending').notNull(),
+  // Number of processing attempts (for retry logic)
+  attempts: integer('attempts').default(0).notNull(),
+  // Error message if processing failed
+  errorMessage: text('error_message'),
+  // When this event was created
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  // When this event was last processed
+  processedAt: timestamp('processed_at'),
+  // When this event expires (for cleanup)
+  expiresAt: timestamp('expires_at'),
+}, (table) => {
+  return {
+    // Index for efficient polling of pending events
+    statusCreatedAtIdx: index('outbox_status_created_at_idx').on(table.status, table.createdAt),
+    // Index for looking up by execution ID
+    executionIdIdx: index('outbox_execution_id_idx').on(table.payload),
+  };
+});
+
 // OpenDeliver: Drivers table for delivery network
 export const drivers = pgTable('drivers', {
   id: uuid('id').primaryKey().defaultRandom(),

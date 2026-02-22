@@ -12,6 +12,86 @@ function getSecret() {
   return new TextEncoder().encode(INTERNAL_SYSTEM_KEY);
 }
 
+// ============================================================================
+// SHORT-LIVED JWT FOR INTERNAL COMMUNICATION
+// Security Fix: Replace static INTERNAL_SYSTEM_KEY with rotating JWTs
+// ============================================================================
+
+/**
+ * Sign a short-lived JWT for internal service-to-service communication
+ * 
+ * Security improvements over static key:
+ * - 5-minute TTL limits exposure window if token is compromised
+ * - Strict issuer (iss) and audience (aud) claims prevent token reuse
+ * - Each service has unique identity
+ * 
+ * @param payload - Token payload (will include iss, aud, exp, iat automatically)
+ * @param options - JWT options
+ * @returns Signed JWT
+ */
+export async function signInternalJWT(
+  payload: Record<string, unknown> = {},
+  options: {
+    issuer: string;
+    audience: string;
+    expiresIn?: string;
+    subject?: string;
+  }
+): Promise<string> {
+  const secret = getSecret();
+  const { issuer, audience, expiresIn = '5m', subject } = options;
+
+  const jwtPayload: Record<string, unknown> = {
+    ...payload,
+    iss: issuer,
+    aud: audience,
+  };
+
+  if (subject) {
+    jwtPayload.sub = subject;
+  }
+
+  return await new SignJWT(jwtPayload)
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime(expiresIn)
+    .sign(secret);
+}
+
+/**
+ * Verify a short-lived JWT for internal service-to-service communication
+ * 
+ * Validates:
+ * - Signature integrity
+ * - Expiration time (exp)
+ * - Issuer (iss) matches expected
+ * - Audience (aud) matches expected
+ * 
+ * @param token - JWT to verify
+ * @param expectedIssuer - Expected issuer claim
+ * @param expectedAudience - Expected audience claim
+ * @returns Decoded payload if valid, null if invalid
+ */
+export async function verifyInternalJWT(
+  token: string,
+  expectedIssuer: string,
+  expectedAudience: string
+): Promise<Record<string, unknown> | null> {
+  const secret = getSecret();
+  
+  try {
+    const { payload } = await jwtVerify(token, secret, {
+      issuer: expectedIssuer,
+      audience: expectedAudience,
+      algorithms: ['HS256'],
+    });
+    return payload as Record<string, unknown>;
+  } catch (error) {
+    console.warn(`[Auth] JWT verification failed:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
 /**
  * signInternalToken - Unified signing for internal tokens
  */

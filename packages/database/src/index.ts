@@ -6,6 +6,38 @@ export const schema = {
   ...tablestackSchema,
 };
 
+// Re-export all schema items for convenience
+export {
+  users,
+  restaurants,
+  restaurantTables,
+  restaurantReservations,
+  restaurantWaitlist,
+  restaurantProducts,
+  inventoryLevels,
+  guestProfiles,
+  drivers,
+  orders,
+  orderItems,
+  outbox,
+  // Enums
+  waitlistStatusEnum,
+  userRoleEnum,
+  outboxStatusEnum,
+  // Relations
+  usersRelations,
+  restaurantsRelations,
+  restaurantTablesRelations,
+  restaurantReservationsRelations,
+  restaurantWaitlistRelations,
+  restaurantProductsRelations,
+  inventoryLevelsRelations,
+  guestProfilesRelations,
+  driversRelations,
+  ordersRelations,
+  orderItemsRelations,
+} from './schema/tablestack';
+
 const databaseUrl = process.env.DATABASE_URL!;
 
 // We avoid calling neon() if databaseUrl is missing, which can happen during build

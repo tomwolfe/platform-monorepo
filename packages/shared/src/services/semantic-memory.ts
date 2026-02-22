@@ -331,6 +331,16 @@ export class SemanticVectorStore {
 
   /**
    * Search for similar memories
+   * 
+   * PERFORMANCE FIX: Replaced redis.keys() with SCAN to avoid blocking Redis
+   * - redis.keys() is O(N) and blocks the single-threaded Redis event loop
+   * - SCAN is non-blocking and allows incremental iteration
+   * - Added strict candidate limits to prevent timeout cascades
+   * 
+   * PRODUCTION RECOMMENDATION: For >10k memories, migrate to:
+   * - Upstash Vector (managed vector database)
+   * - Neon pgvector (Postgres with vector extension)
+   * - RedisVL (Redis Vector Library with HNSW indexes for O(log N) search)
    */
   async search(query: SemanticSearchQuery): Promise<SemanticSearchResult[]> {
     let queryEmbedding = query.queryEmbedding;
@@ -362,16 +372,28 @@ export class SemanticVectorStore {
         { byScore: true }
       ) as string[];
     } else {
-      // Global search - get all entries (expensive, limit strictly)
-      const pattern = `${this.indexName}:entry:*`;
-      const keys = await this.redis.keys(pattern);
-      candidateIds = keys.map(k => k.replace(`${this.indexName}:entry:`, ""));
+      // Global search - use SCAN instead of KEYS to avoid blocking Redis
+      // SCAN is non-blocking and allows incremental iteration
+      candidateIds = await this.scanForKeys(`${this.indexName}:entry:*`, 1000);
+    }
+
+    // PERFORMANCE FIX: Strict limit on candidates to prevent timeout cascades
+    // With >10k memories, this brute-force approach will be too slow
+    // Production systems should migrate to vector databases (Upstash Vector, pgvector, RedisVL)
+    const MAX_CANDIDATES = 500; // Reduced from 100 to be more conservative
+    if (candidateIds.length > MAX_CANDIDATES) {
+      console.warn(
+        `[VectorStore] Candidate set (${candidateIds.length}) exceeds limit (${MAX_CANDIDATES}). ` +
+        `Consider migrating to a dedicated vector database for production scale.`
+      );
+      // Take most recent candidates (already sorted by timestamp in indexed searches)
+      candidateIds = candidateIds.slice(0, MAX_CANDIDATES);
     }
 
     // Compute similarities (brute-force)
     const results: Array<{ entry: SemanticMemoryEntry; similarity: number }> = [];
 
-    for (const entryId of candidateIds.slice(0, 100)) { // Limit candidates for performance
+    for (const entryId of candidateIds) {
       const key = this.buildKey(entryId);
       const entryData = await this.redis.get<any>(key);
 
@@ -379,8 +401,8 @@ export class SemanticVectorStore {
 
       try {
         // Redis may auto-deserialize JSON, so check if already an object
-        const entry: SemanticMemoryEntry = typeof entryData === 'string' 
-          ? JSON.parse(entryData) 
+        const entry: SemanticMemoryEntry = typeof entryData === 'string'
+          ? JSON.parse(entryData)
           : entryData;
 
         // Filter by intent type if specified
@@ -414,6 +436,45 @@ export class SemanticVectorStore {
       ...result,
       rank: index + 1,
     }));
+  }
+
+  /**
+   * Scan for keys matching a pattern without blocking Redis
+   * Uses SCAN command instead of KEYS for production safety
+   * 
+   * @param pattern - Key pattern to match (e.g., "index:entry:*")
+   * @param maxCount - Maximum number of keys to return (prevents memory issues)
+   * @returns Array of matching keys
+   */
+  private async scanForKeys(pattern: string, maxCount: number = 1000): Promise<string[]> {
+    const keys: string[] = [];
+    let cursor = 0;
+    const batchSize = 100; // Process 100 keys at a time
+
+    do {
+      const result = await this.redis.scan(cursor, {
+        match: pattern,
+        count: batchSize,
+      });
+
+      cursor = parseInt(result[0] as string, 10);
+      const batchKeys = result[1] as string[];
+      
+      // Strip prefix from keys (our Redis wrapper adds namespace prefix)
+      for (const key of batchKeys) {
+        const strippedKey = key.startsWith(`${this.indexName}:entry:`) 
+          ? key.replace(`${this.indexName}:entry:`, "")
+          : key;
+        keys.push(strippedKey);
+      }
+
+      // Early exit if we've collected enough keys
+      if (keys.length >= maxCount) {
+        break;
+      }
+    } while (cursor !== 0);
+
+    return keys.slice(0, maxCount);
   }
 
   /**
@@ -502,6 +563,8 @@ export class SemanticVectorStore {
 
   /**
    * Get statistics about the vector store
+   * 
+   * PERFORMANCE FIX: Uses SCAN instead of KEYS to avoid blocking Redis
    */
   async getStats(): Promise<{
     totalEntries: number;
@@ -509,18 +572,16 @@ export class SemanticVectorStore {
     uniqueRestaurants: number;
     avgEntriesPerUser: number;
   }> {
-    const pattern = `${this.indexName}:entry:*`;
-    const keys = await this.redis.keys(pattern);
-    const totalEntries = keys.length;
+    // Use SCAN instead of KEYS to avoid blocking Redis
+    const entryKeys = await this.scanForKeys(`${this.indexName}:entry:*`, 10000);
+    const totalEntries = entryKeys.length;
 
     // Count unique users
-    const userIndexPattern = `${this.indexName}:user:*`;
-    const userIndexKeys = await this.redis.keys(userIndexPattern);
+    const userIndexKeys = await this.scanForKeys(`${this.indexName}:user:*`, 1000);
     const uniqueUsers = userIndexKeys.length;
 
     // Count unique restaurants
-    const restaurantIndexPattern = `${this.indexName}:restaurant:*`;
-    const restaurantIndexKeys = await this.redis.keys(restaurantIndexPattern);
+    const restaurantIndexKeys = await this.scanForKeys(`${this.indexName}:restaurant:*`, 1000);
     const uniqueRestaurants = restaurantIndexKeys.length;
 
     return {

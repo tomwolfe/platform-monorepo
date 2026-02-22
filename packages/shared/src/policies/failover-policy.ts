@@ -48,6 +48,31 @@ export const FailureReasonSchema = z.enum([
 export type FailureReason = z.infer<typeof FailureReasonSchema>;
 
 /**
+ * User-friendly error message templates
+ * Maps failure reasons to human-readable messages for end users
+ */
+export const USER_FRIENDLY_MESSAGES: Record<string, string> = {
+  RESTAURANT_FULL: "That time is fully booked! How about 30 minutes later?",
+  TABLE_UNAVAILABLE: "That table isn't available at this time. Would you like to try a different time?",
+  KITCHEN_OVERLOADED: "The kitchen is experiencing high volume. Would you like to try a later time?",
+  PAYMENT_FAILED: "Your card was declined. Would you like to try a different payment method?",
+  DELIVERY_UNAVAILABLE: "Delivery isn't available to your location. Would you like to try pickup instead?",
+  TIME_SLOT_UNAVAILABLE: "That time slot isn't available. Would you like to try a different time?",
+  PARTY_SIZE_TOO_LARGE: "That party size requires special handling. Shall I call the manager?",
+  VALIDATION_FAILED: "I'm having trouble understanding the details. Could you rephrase?",
+  SERVICE_ERROR: "We're experiencing a temporary issue. Would you like to try again?",
+  TIMEOUT: "The request timed out. Would you like to try again?",
+};
+
+/**
+ * Get a user-friendly message for a failure reason
+ * Falls back to a generic message if no specific template exists
+ */
+export function getUserFriendlyMessage(failureReason: string, customMessage?: string): string {
+  return customMessage || USER_FRIENDLY_MESSAGES[failureReason] || "Something went wrong. Let's try a different approach.";
+}
+
+/**
  * Failover action types
  */
 export const FailoverActionTypeSchema = z.enum([
@@ -145,8 +170,8 @@ export const DEFAULT_FAILOVER_POLICIES: FailoverPolicy[] = [
     description: "When a restaurant is full, suggest nearby time slots",
     enabled: true,
     condition: {
-      intent_type: "BOOKING",
-      failure_reason: "RESTAURANT_FULL",
+      intent_type: "BOOKING" as const,
+      failure_reason: "RESTAURANT_FULL" as const,
       max_attempts: 1,
     },
     actions: [
@@ -155,7 +180,7 @@ export const DEFAULT_FAILOVER_POLICIES: FailoverPolicy[] = [
         priority: 8,
         max_retries: 2,
         retry_delay_ms: 500,
-        message_template: "That time is fully booked. How about {alternative_time} instead?",
+        message_template: getUserFriendlyMessage("RESTAURANT_FULL"),
         parameters: {
           time_offset_minutes: [-30, 30, -60, 60], // Try ±30min, then ±60min
         },
@@ -177,8 +202,8 @@ export const DEFAULT_FAILOVER_POLICIES: FailoverPolicy[] = [
     description: "When a restaurant is full, offer delivery as alternative",
     enabled: true,
     condition: {
-      intent_type: "BOOKING",
-      failure_reason: "RESTAURANT_FULL",
+      intent_type: "BOOKING" as const,
+      failure_reason: "RESTAURANT_FULL" as const,
       max_attempts: 2,
     },
     actions: [
@@ -203,8 +228,8 @@ export const DEFAULT_FAILOVER_POLICIES: FailoverPolicy[] = [
     description: "When delivery is unavailable, suggest pickup option",
     enabled: true,
     condition: {
-      intent_type: "DELIVERY",
-      failure_reason: "DELIVERY_UNAVAILABLE",
+      intent_type: "DELIVERY" as const,
+      failure_reason: "DELIVERY_UNAVAILABLE" as const,
     },
     actions: [
       {
@@ -212,7 +237,7 @@ export const DEFAULT_FAILOVER_POLICIES: FailoverPolicy[] = [
         priority: 7,
         max_retries: 3,
         retry_delay_ms: 500,
-        message_template: "Delivery isn't available to your location, but you can order for pickup at {restaurant_name}.",
+        message_template: getUserFriendlyMessage("DELIVERY_UNAVAILABLE"),
         parameters: {
           search_radius_km: 5,
           max_results: 3,
@@ -228,8 +253,8 @@ export const DEFAULT_FAILOVER_POLICIES: FailoverPolicy[] = [
     description: "When payment fails, retry with exponential backoff",
     enabled: true,
     condition: {
-      intent_type: "PAYMENT",
-      failure_reason: "PAYMENT_FAILED",
+      intent_type: "PAYMENT" as const,
+      failure_reason: "PAYMENT_FAILED" as const,
       max_attempts: 2,
     },
     actions: [
@@ -238,7 +263,7 @@ export const DEFAULT_FAILOVER_POLICIES: FailoverPolicy[] = [
         priority: 9,
         max_retries: 3,
         retry_delay_ms: 2000,
-        message_template: "Payment failed. Retrying... (Attempt {attempt}/{max_attempts})",
+        message_template: getUserFriendlyMessage("PAYMENT_FAILED"),
         parameters: {
           backoff_multiplier: 2,
           max_delay_ms: 10000,
@@ -261,8 +286,8 @@ export const DEFAULT_FAILOVER_POLICIES: FailoverPolicy[] = [
     description: "When party size exceeds capacity, suggest splitting or alternative",
     enabled: true,
     condition: {
-      intent_type: "BOOKING",
-      failure_reason: "PARTY_SIZE_TOO_LARGE",
+      intent_type: "BOOKING" as const,
+      failure_reason: "PARTY_SIZE_TOO_LARGE" as const,
       party_size_range: { min: 9 },
     },
     actions: [
@@ -271,7 +296,7 @@ export const DEFAULT_FAILOVER_POLICIES: FailoverPolicy[] = [
         priority: 6,
         max_retries: 1,
         retry_delay_ms: 500,
-        message_template: "For parties of {party_size}, we recommend splitting into two reservations or contacting the restaurant directly.",
+        message_template: getUserFriendlyMessage("PARTY_SIZE_TOO_LARGE"),
         parameters: {
           max_table_size: 8,
           suggest_split: true,
@@ -294,8 +319,8 @@ export const DEFAULT_FAILOVER_POLICIES: FailoverPolicy[] = [
     description: "When a service error occurs, retry with exponential backoff",
     enabled: true,
     condition: {
-      intent_type: "BOOKING",
-      failure_reason: "SERVICE_ERROR",
+      intent_type: "BOOKING" as const,
+      failure_reason: "SERVICE_ERROR" as const,
     },
     actions: [
       {
@@ -303,7 +328,7 @@ export const DEFAULT_FAILOVER_POLICIES: FailoverPolicy[] = [
         priority: 8,
         max_retries: 3,
         retry_delay_ms: 1000,
-        message_template: "Temporary service issue. Retrying...",
+        message_template: getUserFriendlyMessage("SERVICE_ERROR"),
         parameters: {
           backoff_multiplier: 2,
           max_delay_ms: 8000,
@@ -319,8 +344,8 @@ export const DEFAULT_FAILOVER_POLICIES: FailoverPolicy[] = [
     description: "When no driver matches a delivery order, suggest increasing tip to attract drivers",
     enabled: true,
     condition: {
-      intent_type: "DELIVERY",
-      failure_reason: "SERVICE_ERROR", // Mapping "No driver matched" to service error
+      intent_type: "DELIVERY" as const,
+      failure_reason: "SERVICE_ERROR" as const,
       max_attempts: 1,
     },
     actions: [

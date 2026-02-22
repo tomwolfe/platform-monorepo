@@ -43,13 +43,13 @@ export interface LockResult {
 export class Lock {
   private lockKey: string;
   private ownerId: string;
-  private metadata: LockMetadata;
+  private lockMetadata: LockMetadata;
   private released = false;
 
   constructor(lockKey: string, ownerId: string, metadata: LockMetadata) {
     this.lockKey = lockKey;
     this.ownerId = ownerId;
-    this.metadata = metadata;
+    this.lockMetadata = metadata;
   }
 
   /**
@@ -62,7 +62,7 @@ export class Lock {
     }
 
     const currentOwner = await redis.get(this.lockKey);
-    if (currentOwner !== this.ownerId) {
+    if ((currentOwner as string) !== this.ownerId) {
       console.warn(
         `[Lock] Cannot release ${this.lockKey}: owner mismatch (expected ${this.ownerId}, got ${currentOwner})`
       );
@@ -82,7 +82,7 @@ export class Lock {
    */
   async extend(ttlSeconds: number): Promise<boolean> {
     const currentOwner = await redis.get(this.lockKey);
-    if (currentOwner !== this.ownerId) {
+    if ((currentOwner as string) !== this.ownerId) {
       console.warn(
         `[Lock] Cannot extend ${this.lockKey}: owner mismatch`
       );
@@ -90,7 +90,7 @@ export class Lock {
     }
 
     await redis.expire(this.lockKey, ttlSeconds);
-    this.metadata.ttlSeconds = ttlSeconds;
+    this.lockMetadata.ttlSeconds = ttlSeconds;
 
     console.log(`[Lock] Extended ${this.lockKey} to ${ttlSeconds}s`);
     return true;
@@ -101,11 +101,11 @@ export class Lock {
    */
   async isStillOwner(): Promise<boolean> {
     const currentOwner = await redis.get(this.lockKey);
-    return currentOwner === this.ownerId;
+    return (currentOwner as string) === this.ownerId;
   }
 
   get metadata(): LockMetadata {
-    return { ...this.metadata };
+    return { ...this.lockMetadata };
   }
 
   get isReleased(): boolean {
@@ -157,7 +157,7 @@ export namespace LockingService {
           const existingMetadata = await redis.get(metadataKey);
 
           if (existingMetadata) {
-            const parsed = JSON.parse(existingMetadata) as LockMetadata;
+            const parsed = JSON.parse(existingMetadata as string) as LockMetadata;
             const age = Date.now() - new Date(parsed.acquiredAt).getTime();
             const ageSeconds = age / 1000;
 
@@ -203,8 +203,8 @@ export namespace LockingService {
       return {
         acquired: false,
         lockKey,
-        metadata: currentMetadata ? JSON.parse(currentMetadata) : undefined,
-        error: `Lock held by ${currentOwner?.slice(0, 8)}...`,
+        metadata: currentMetadata ? JSON.parse(currentMetadata as string) : undefined,
+        error: `Lock held by ${(currentOwner as string)?.slice(0, 8)}...`,
       };
     } catch (error) {
       console.error(`[Lock] Failed to acquire ${lockKey}:`, error);
@@ -265,9 +265,9 @@ export namespace LockingService {
     }
 
     const currentOwner = await redis.get(lockKey);
-    if (currentOwner !== expectedOwner) {
+    if ((currentOwner as string) !== expectedOwner) {
       console.warn(
-        `[Lock] Cannot release ${lockKey}: owner mismatch (expected ${expectedOwner.slice(0, 8)}..., got ${currentOwner?.slice(0, 8)}...)`
+        `[Lock] Cannot release ${lockKey}: owner mismatch (expected ${expectedOwner.slice(0, 8)}..., got ${(currentOwner as string)?.slice(0, 8)}...)`
       );
       return false;
     }
@@ -305,7 +305,7 @@ export namespace LockingService {
     const owner = await redis.get(lockKey);
     const metadataKey = `${lockKey}:meta`;
     const metadataStr = await redis.get(metadataKey);
-    const metadata = metadataStr ? (JSON.parse(metadataStr) as LockMetadata) : undefined;
+    const metadata = metadataStr ? (JSON.parse(metadataStr as string) as LockMetadata) : undefined;
 
     const ttl = await redis.ttl(lockKey);
     const ageSeconds = metadata
@@ -314,7 +314,7 @@ export namespace LockingService {
 
     return {
       isLocked: true,
-      owner,
+      owner: owner as string,
       ageSeconds,
       ttlSeconds: ttl > 0 ? ttl : undefined,
       metadata,

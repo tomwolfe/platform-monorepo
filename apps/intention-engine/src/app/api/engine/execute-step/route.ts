@@ -47,6 +47,7 @@ import { NervousSystemObserver } from "@/lib/listeners/nervous-system-observer";
 import { WorkflowMachine } from "@/lib/engine/workflow-machine";
 import type { ToolExecutor as WorkflowToolExecutor } from "@/lib/engine/workflow-machine";
 import { FailoverPolicyEngine, type PolicyEvaluationContext } from "@repo/shared";
+import { LockingService } from "@/lib/engine/locking";
 
 // ============================================================================
 // TOOL EXECUTOR ADAPTER
@@ -157,47 +158,45 @@ const ExecuteStepResponseSchema = z.object({
 });
 
 // ============================================================================
-// REDIS LOCKING
-// Prevents double execution when recursive fetch fires twice
+// REDIS LOCKING - Enhanced with Deadlock Prevention
+// Uses LockingService for automatic stale lock recovery and ownership tracking
 // ============================================================================
 
 /**
- * Acquire execution lock using SETNX
+ * Acquire execution lock using enhanced LockingService
  * @param executionId - Execution ID to lock
  * @param ttlSeconds - Lock TTL (default 30s)
- * @returns true if lock acquired, false if already held
+ * @returns Lock instance or null if already held
  */
-async function acquireLock(executionId: string, ttlSeconds: number = 30): Promise<boolean> {
+async function acquireLock(executionId: string, ttlSeconds: number = 30): Promise<ReturnType<typeof LockingService.acquire>> {
   const lockKey = `exec:${executionId}:lock`;
 
-  // SETNX - Set if Not eXists
-  const acquired = await redis.set(lockKey, "locked", {
-    nx: true,
-    ex: ttlSeconds,
+  return LockingService.acquire(lockKey, {
+    ttlSeconds,
+    operation: 'execute-step',
   });
-
-  return acquired === "OK";
 }
 
 /**
  * Release execution lock
+ * @deprecated Use Lock instance.release() instead
  */
 async function releaseLock(executionId: string): Promise<void> {
   const lockKey = `exec:${executionId}:lock`;
-  await redis.del(lockKey);
+  await LockingService.releaseLock(lockKey);
 }
 
 /**
  * Check if lock is currently held
+ * @deprecated Use LockingService.isLocked() instead
  */
 async function isLockHeld(executionId: string): Promise<boolean> {
   const lockKey = `exec:${executionId}:lock`;
-  const exists = await redis.exists(lockKey);
-  return exists === 1;
+  return LockingService.isLocked(lockKey);
 }
 
 /**
- * IDEMPOTENCY CHECK - Step-level locking
+ * IDEMPOTENCY CHECK - Step-level locking with deadlock prevention
  * Prevents double execution of the same step when QStash retries
  * @param executionId - Execution ID
  * @param stepIndex - Step index
@@ -209,15 +208,13 @@ async function acquireStepIdempotencyLock(
   stepIndex: number,
   ttlSeconds: number = 3600
 ): Promise<boolean> {
-  const idempotencyKey = `exec:${executionId}:step:${stepIndex}:lock`;
+  const result = await LockingService.acquireStepIdempotencyLock(
+    executionId,
+    stepIndex,
+    ttlSeconds
+  );
 
-  // SETNX - Set if Not eXists
-  const acquired = await redis.set(idempotencyKey, "locked", {
-    nx: true,
-    ex: ttlSeconds,
-  });
-
-  return acquired === "OK";
+  return result.acquired;
 }
 
 // ============================================================================
@@ -336,9 +333,9 @@ async function executeStepHandler(
       );
     }
 
-    // ACQUIRE LOCK - Prevent double execution
-    const lockAcquired = await acquireLock(executionId);
-    if (!lockAcquired) {
+    // ACQUIRE LOCK - Prevent double execution using Lock instance
+    const lock = await acquireLock(executionId);
+    if (!lock) {
       console.warn(`[ExecuteStep] Lock already held for ${executionId}, aborting`);
       return NextResponse.json(
         {
@@ -670,8 +667,8 @@ async function executeStepHandler(
         })
       );
     } finally {
-      // RELEASE LOCK
-      await releaseLock(executionId);
+      // RELEASE LOCK - Use Lock instance for safe release
+      await lock.release();
     }
   } catch (error) {
     console.error("[ExecuteStep] Handler error:", error);

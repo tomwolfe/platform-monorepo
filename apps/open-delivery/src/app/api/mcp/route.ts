@@ -8,6 +8,7 @@ import { randomUUID } from "crypto";
 import { db, orders, orderItems } from "@repo/database";
 import { eq } from "drizzle-orm";
 import { RealtimeService } from "@repo/shared";
+import { dispatchOrder } from "@/lib/dispatcher";
 
 // Create a singleton server instance
 const server = new McpServer({
@@ -352,28 +353,37 @@ server.tool(
       // Non-fatal - continue even if Ably fails
     }
 
-    // 4. Simulate driver matching (async background process)
-    // In production, this would be handled by a separate dispatcher service
-    setTimeout(async () => {
-      const matchedData = {
-        ...fulfillmentData,
-        status: "matched",
-        driver: {
-          id: randomUUID(),
-          name: "Driver " + Math.floor(Math.random() * 1000),
-          phone: "+1-555-0" + Math.floor(Math.random() * 1000000),
-          vehicleType: params.items.some((i: any) => (i.weight || 0) > 5) ? "van" : "car",
-          rating: 4.5 + Math.random() * 0.5,
-        },
-        estimatedTimes: {
-          driverArrival: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-          pickup: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-          delivery: new Date(Date.now() + 40 * 60 * 1000).toISOString(),
-        },
-      };
-      await redis.setex(`fulfillment:${fulfillmentId}`, 3600, JSON.stringify(matchedData));
-      console.log(`[Trace:${traceId}] Driver matched for fulfillment ${fulfillmentId}`);
-    }, 5000);
+    // 4. Dispatch to driver network using real dispatcher service
+    // This queries active drivers from Postgres and assigns the best match
+    const orderIntent: Parameters<typeof dispatchOrder>[0] = {
+      orderId,
+      fulfillmentId,
+      pickupAddress: pickupAddressStr,
+      deliveryAddress: deliveryAddressStr,
+      customerId: params.customerId,
+      items: params.items,
+      priority: params.priority || "standard",
+      priceDetails: params.priceDetails,
+      specialInstructions: params.specialInstructions,
+      traceId,
+    };
+
+    // Dispatch asynchronously (don't block the response)
+    // The dispatcher will update Redis and broadcast via Ably when matched
+    dispatchOrder(orderIntent).then((result) => {
+      if (result.success) {
+        console.log(
+          `[Trace:${traceId}] Driver matched for fulfillment ${fulfillmentId}: ` +
+          `${result.driver?.full_name} (trust: ${result.driver?.trust_score})`
+        );
+      } else {
+        console.warn(
+          `[Trace:${traceId}] No driver found for fulfillment ${fulfillmentId}: ${result.error}`
+        );
+      }
+    }).catch((err) => {
+      console.error(`[Trace:${traceId}] Dispatch error:`, err);
+    });
 
     return createResponse({
       fulfillmentId,
@@ -443,21 +453,49 @@ server.tool(
   TOOLS.openDelivery.getDriverLocation.schema.shape,
   async ({ order_id }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
-    
+
     console.log(`[Trace:${traceId}] Getting driver location for order ${order_id}`);
-    
+
     const intentKey = `opendeliver:intent:${order_id}`;
     const intent = await redis.get(intentKey);
 
+    if (!intent) {
+      return createResponse({
+        order_id,
+        status: "not_found",
+        error: "Order not found",
+      }, traceId, true);
+    }
+
+    const fulfillmentData = typeof intent === "string" ? JSON.parse(intent) : intent;
+
+    // If order has a driver assigned, return driver's last known location
+    if (fulfillmentData.driver) {
+      // In production, query driver's real-time location from Redis/Postgres
+      // For now, use driver's registered location if available
+      return createResponse({
+        order_id,
+        status: fulfillmentData.status || "matched",
+        driver: {
+          id: fulfillmentData.driver.id,
+          name: fulfillmentData.driver.full_name || fulfillmentData.driver.name,
+          vehicleType: fulfillmentData.driver.vehicle_type || fulfillmentData.driver.vehicleType,
+          trustScore: fulfillmentData.driver.trust_score || fulfillmentData.driver.trustScore,
+        },
+        location: {
+          lat: fulfillmentData.driver.current_lat || 40.7128,
+          lng: fulfillmentData.driver.current_lng || -74.0060,
+        },
+        bearing: fulfillmentData.driver.bearing || 0,
+        estimated_arrival_mins: fulfillmentData.driver.estimated_arrival_mins || 10,
+      }, traceId);
+    }
+
+    // No driver assigned yet
     return createResponse({
       order_id,
-      status: intent ? "matched" : "searching",
-      location: {
-        lat: 40.7128 + (Math.random() - 0.5) * 0.01,
-        lng: -74.0060 + (Math.random() - 0.5) * 0.01,
-      },
-      bearing: Math.floor(Math.random() * 360),
-      estimated_arrival_mins: Math.floor(Math.random() * 15) + 5,
+      status: "searching",
+      message: "Looking for available drivers...",
     }, traceId);
   }
 );

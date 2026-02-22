@@ -317,6 +317,16 @@ export const ExecutionStateSchema = z.object({
     total_tokens: 0,
   }),
   latency_ms: z.number().int().nonnegative().default(0),
+  // FINANCIAL GUARDRAILS - Hard cost ceiling per execution
+  budget: z.object({
+    token_limit: z.number().int().positive().default(50000),
+    cost_limit_usd: z.number().positive().default(0.50), // Hard $0.50 cap per saga
+    current_cost_usd: z.number().nonnegative().default(0),
+  }).default({
+    token_limit: 50000,
+    cost_limit_usd: 0.50,
+    current_cost_usd: 0,
+  }),
 });
 
 export type ExecutionState = z.infer<typeof ExecutionStateSchema>;

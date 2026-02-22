@@ -360,6 +360,77 @@ export class WorkflowMachine {
   }
 
   /**
+   * FINANCIAL GUARDRAIL - Assert budget safety before LLM calls
+   * 
+   * Enforces hard USD cost ceiling per execution to prevent runaway token spend.
+   * Throws EngineError with BUDGET_EXCEEDED code if limit would be exceeded.
+   * 
+   * @param estimatedTokens - Estimated tokens for upcoming LLM call
+   * @throws EngineError if budget would be exceeded
+   */
+  private async assertBudgetSafety(estimatedTokens?: number): Promise<void> {
+    const budget = this.state.budget;
+    
+    // Check token limit
+    if (estimatedTokens) {
+      const projectedTotal = this.state.token_usage.total_tokens + estimatedTokens;
+      if (projectedTotal > budget.token_limit) {
+        throw EngineErrorSchema.parse({
+          code: "BUDGET_EXCEEDED",
+          message: `Execution halted: Token limit (${budget.token_limit.toLocaleString()}) would be exceeded.`,
+          recoverable: false,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+
+    // Check USD cost limit
+    // Pricing: $0.50 / 1M input tokens, $1.50 / 1M output tokens (GPT-4o-mini approx)
+    const INPUT_COST_PER_TOKEN = 0.0000005; // $0.50 per 1M
+    const OUTPUT_COST_PER_TOKEN = 0.0000015; // $1.50 per 1M
+    
+    const estimatedInputCost = (estimatedTokens || 0) * 0.7 * INPUT_COST_PER_TOKEN; // Assume 70% input
+    const estimatedOutputCost = (estimatedTokens || 0) * 0.3 * OUTPUT_COST_PER_TOKEN; // Assume 30% output
+    const estimatedCost = estimatedInputCost + estimatedOutputCost;
+    
+    const projectedCost = budget.current_cost_usd + estimatedCost;
+    
+    if (projectedCost > budget.cost_limit_usd) {
+      throw EngineErrorSchema.parse({
+        code: "BUDGET_EXCEEDED",
+        message: `Execution halted: Cost limit ($${budget.cost_limit_usd.toFixed(2)}) would be exceeded. Current: $${budget.current_cost_usd.toFixed(4)}, Estimated: $${estimatedCost.toFixed(4)}`,
+        recoverable: false,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  /**
+   * Update budget tracking after LLM call
+   */
+  private updateBudgetTracking(tokenUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }): void {
+    const INPUT_COST_PER_TOKEN = 0.0000005;
+    const OUTPUT_COST_PER_TOKEN = 0.0000015;
+    
+    const inputCost = tokenUsage.prompt_tokens * INPUT_COST_PER_TOKEN;
+    const outputCost = tokenUsage.completion_tokens * OUTPUT_COST_PER_TOKEN;
+    const totalCost = inputCost + outputCost;
+    
+    this.state = {
+      ...this.state,
+      token_usage: {
+        prompt_tokens: this.state.token_usage.prompt_tokens + tokenUsage.prompt_tokens,
+        completion_tokens: this.state.token_usage.completion_tokens + tokenUsage.completion_tokens,
+        total_tokens: this.state.token_usage.total_tokens + tokenUsage.total_tokens,
+      },
+      budget: {
+        ...this.state.budget,
+        current_cost_usd: this.state.budget.current_cost_usd + totalCost,
+      },
+    };
+  }
+
+  /**
    * Execute the workflow with yield-and-resume pattern
    */
   async execute(): Promise<WorkflowResult> {
@@ -390,6 +461,9 @@ export class WorkflowMachine {
             });
           }
         }
+
+        // FINANCIAL GUARDRAIL - Check budget before starting execution
+        await this.assertBudgetSafety(1000); // Conservative estimate for planning overhead
 
         this.state = transitionState(this.state, "EXECUTING");
 

@@ -12,6 +12,130 @@ import { z } from "zod";
 import { ProposedSchemaChange, ProposedSchemaChangeSchema } from "./schema-evolution";
 
 // ============================================================================
+// SAFE-SQL VALIDATOR
+// Prevents SQL injection and reserved keyword violations in schema migrations
+// ============================================================================
+
+/**
+ * Reserved PostgreSQL keywords that cannot be used as identifiers without quoting
+ * This is a conservative list - when in doubt, the validator rejects it
+ */
+const RESERVED_POSTGRES_KEYWORDS = new Set([
+  // Core SQL keywords
+  "select", "insert", "update", "delete", "drop", "alter", "create", "truncate",
+  "from", "where", "group", "order", "having", "limit", "offset", "join",
+  "inner", "outer", "left", "right", "full", "cross", "on", "as",
+  "table", "index", "view", "sequence", "schema", "database", "column",
+  "primary", "foreign", "key", "references", "constraint", "unique", "check",
+  "default", "null", "not", "true", "false", "case", "when", "then", "else",
+  "end", "and", "or", "in", "exists", "between", "like", "ilike", "similar",
+  "to", "is", "distinct", "all", "any", "some", "cast", "convert",
+  "user", "current_user", "session_user", "role", "authorization", "grant",
+  "revoke", "execute", "usage", "create", "temporary", "temp",
+  "with", "recursive", "values", "returning", "into", "union", "except",
+  "intersect", "for", "of", "nowait", "skip", "locked",
+  "asc", "desc", "nulls", "first", "last",
+  // Additional dangerous keywords
+  "password", "admin", "superuser", "login", "role", "permission",
+  "function", "procedure", "trigger", "rule", "domain", "type",
+  "array", "enum", "composite", "range", "multirange",
+]);
+
+/**
+ * Safe field name pattern:
+ * - Must start with lowercase letter or underscore
+ * - Can only contain lowercase letters, numbers, and underscores
+ * - Maximum 63 characters (PostgreSQL identifier limit)
+ * - Cannot be a reserved keyword
+ */
+const SAFE_FIELD_NAME_PATTERN = /^[a-z_][a-z0-9_]*$/;
+const MAX_FIELD_NAME_LENGTH = 63;
+
+/**
+ * Validation result for field names
+ */
+interface FieldNameValidation {
+  valid: boolean;
+  error?: string;
+}
+
+/**
+ * Validate a field name for safety
+ * 
+ * @param fieldName - The field name to validate
+ * @returns Validation result with error message if invalid
+ */
+function validateFieldName(fieldName: string): FieldNameValidation {
+  // Check for empty or null
+  if (!fieldName || fieldName.trim().length === 0) {
+    return {
+      valid: false,
+      error: `Field name cannot be empty`,
+    };
+  }
+
+  // Check length
+  if (fieldName.length > MAX_FIELD_NAME_LENGTH) {
+    return {
+      valid: false,
+      error: `Field name "${fieldName}" exceeds maximum length of ${MAX_FIELD_NAME_LENGTH} characters`,
+    };
+  }
+
+  // Check pattern (lowercase, numbers, underscores only)
+  if (!SAFE_FIELD_NAME_PATTERN.test(fieldName)) {
+    return {
+      valid: false,
+      error: `Field name "${fieldName}" contains illegal characters. Must be snake_case (lowercase letters, numbers, underscores only, must start with letter or underscore)`,
+    };
+  }
+
+  // Check for reserved keywords
+  if (RESERVED_POSTGRES_KEYWORDS.has(fieldName.toLowerCase())) {
+    return {
+      valid: false,
+      error: `CRITICAL: Field name "${fieldName}" is a reserved PostgreSQL keyword and cannot be used`,
+    };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Validate SQL string for dangerous patterns
+ * 
+ * @param sql - SQL string to validate
+ * @returns Validation result with error message if dangerous patterns detected
+ */
+function validateSqlString(sql: string): FieldNameValidation {
+  // Check for common SQL injection patterns
+  const dangerousPatterns = [
+    /--/g,  // SQL comment
+    /;/g,   // Statement terminator (injection separator)
+    /\bDROP\b/i,
+    /\bDELETE\b/i,
+    /\bTRUNCATE\b/i,
+    /\bALTER\s+USER\b/i,
+    /\bCREATE\s+USER\b/i,
+    /\bGRANT\b/i,
+    /\bREVOKE\b/i,
+    /\bEXECUTE\b/i,
+    /'/g,   // Quote injection (unless properly escaped)
+  ];
+
+  for (const pattern of dangerousPatterns) {
+    if (pattern.test(sql)) {
+      return {
+        valid: false,
+        error: `CRITICAL: SQL contains potentially dangerous pattern: ${pattern.source}`,
+      };
+    }
+  }
+
+  return { valid: true };
+}
+
+// ============================================================================
 // MIGRATION SCHEMAS
 // ============================================================================
 
@@ -78,12 +202,15 @@ const TYPE_MAPPING: Record<string, { drizzleType: string; postgresType: string; 
 export class MigrationGeneratorService {
   /**
    * Generate a Drizzle migration file from a schema change proposal
+   * 
+   * SECURITY: Validates all field names against SQL injection and reserved keywords
+   * before generating migration SQL.
    */
   async generateMigration(proposal: ProposedSchemaChange): Promise<MigrationGenerationResult> {
     try {
       // Determine table name from tool/intent
       const tableName = this.inferTableName(proposal);
-      
+
       if (!tableName) {
         return {
           success: false,
@@ -93,16 +220,57 @@ export class MigrationGeneratorService {
         };
       }
 
+      // SECURITY FIX: Validate all field names BEFORE generating migration
+      const validationErrors: string[] = [];
+      
+      for (const field of proposal.proposedFields) {
+        const validation = validateFieldName(field.name);
+        if (!validation.valid) {
+          validationErrors.push(validation.error!);
+        }
+      }
+
+      // Also validate deprecated fields
+      if (proposal.deprecatedFields) {
+        for (const fieldName of proposal.deprecatedFields) {
+          const validation = validateFieldName(fieldName);
+          if (!validation.valid) {
+            validationErrors.push(validation.error!);
+          }
+        }
+      }
+
+      // Block migration if any validation fails
+      if (validationErrors.length > 0) {
+        return {
+          success: false,
+          error: `CRITICAL: Schema validation failed - ${validationErrors.join("; ")}`,
+          warnings: [],
+          affectedColumns: [],
+        };
+      }
+
       // Generate migration content
       const migrationContent = this.generateMigrationContent(proposal, tableName);
       const rollbackContent = this.generateRollbackContent(proposal, tableName);
-      
+
       // Generate SQL preview
       const sqlPreview = this.generateSqlPreview(proposal, tableName);
-      
+
+      // SECURITY FIX: Validate generated SQL for dangerous patterns
+      const sqlValidation = validateSqlString(sqlPreview);
+      if (!sqlValidation.valid) {
+        return {
+          success: false,
+          error: sqlValidation.error,
+          warnings: [],
+          affectedColumns: [],
+        };
+      }
+
       // Create migration file name
       const fileName = this.generateMigrationFileName(proposal, tableName);
-      
+
       // Determine affected columns
       const affectedColumns: Array<{ name: string; type: string; action: 'add' | 'remove' | 'modify' }> = proposal.proposedFields.map(field => ({
         name: field.name,

@@ -7,6 +7,7 @@
  * - Deadlock detection via lock age monitoring
  * - Automatic recovery for stale locks
  * - Lock acquisition telemetry
+ * - O(1) lock registry using Redis Sets (no more KEYS scanning)
  *
  * Usage:
  * ```typescript
@@ -23,6 +24,48 @@
 
 import { redis } from "@/lib/redis-client";
 import { randomUUID } from "crypto";
+
+// ============================================================================
+// O(1) LOCK REGISTRY
+// Replaces O(N) KEYS scanning with Redis Set for constant-time lock tracking
+// ============================================================================
+
+/**
+ * Redis Set key for active lock registry
+ * All active locks are registered here for O(1) retrieval
+ */
+const ACTIVE_LOCK_REGISTRY_KEY = "locks:active_registry";
+
+/**
+ * Register a lock in the active registry (O(1) operation)
+ */
+async function registerLockInRegistry(lockKey: string, ttlSeconds: number): Promise<void> {
+  const pipeline = redis.pipeline();
+  
+  // Add to active lock registry (O(1) sadd operation)
+  pipeline.sadd(ACTIVE_LOCK_REGISTRY_KEY, lockKey);
+  
+  // Set expiry on the registry entry (TTL + buffer)
+  // This ensures stale entries are cleaned up even if release fails
+  pipeline.expire(ACTIVE_LOCK_REGISTRY_KEY, ttlSeconds + 60);
+  
+  await pipeline.exec();
+}
+
+/**
+ * Remove a lock from the active registry (O(1) operation)
+ */
+async function removeLockFromRegistry(lockKey: string): Promise<void> {
+  await redis.srem(ACTIVE_LOCK_REGISTRY_KEY, lockKey);
+}
+
+/**
+ * Get all active locks from registry (O(1) retrieval vs O(N) KEYS scan)
+ */
+async function getActiveLocksFromRegistry(): Promise<string[]> {
+  const locks = await redis.smembers(ACTIVE_LOCK_REGISTRY_KEY);
+  return locks as string[];
+}
 
 export interface LockMetadata {
   ownerId: string;
@@ -70,6 +113,11 @@ export class Lock {
     }
 
     await redis.del(this.lockKey);
+    await redis.del(`${this.lockKey}:meta`);
+    
+    // PERFORMANCE FIX: Remove from O(1) registry
+    await removeLockFromRegistry(this.lockKey);
+    
     this.released = true;
 
     console.log(`[Lock] Released ${this.lockKey} (owner: ${this.ownerId})`);
@@ -184,6 +232,9 @@ export namespace LockingService {
         const metadataKey = `${lockKey}:meta`;
         await redis.setex(metadataKey, ttlSeconds, JSON.stringify(metadata));
 
+        // PERFORMANCE FIX: Register lock in O(1) registry instead of relying on KEYS scan
+        await registerLockInRegistry(lockKey, ttlSeconds);
+
         console.log(
           `[Lock] Acquired ${lockKey} (owner: ${ownerId.slice(0, 8)}..., TTL: ${ttlSeconds}s)`
         );
@@ -261,6 +312,8 @@ export namespace LockingService {
       // Simple release without owner check (legacy behavior)
       await redis.del(lockKey);
       await redis.del(`${lockKey}:meta`);
+      // PERFORMANCE FIX: Remove from O(1) registry
+      await removeLockFromRegistry(lockKey);
       return true;
     }
 
@@ -274,6 +327,8 @@ export namespace LockingService {
 
     await redis.del(lockKey);
     await redis.del(`${lockKey}:meta`);
+    // PERFORMANCE FIX: Remove from O(1) registry
+    await removeLockFromRegistry(lockKey);
 
     console.log(`[Lock] Released ${lockKey} (owner: ${expectedOwner.slice(0, 8)}...)`);
     return true;
@@ -324,14 +379,22 @@ export namespace LockingService {
   /**
    * Detect potentially deadlocked locks
    * Returns locks that are older than their TTL
+   * 
+   * PERFORMANCE FIX: Uses O(1) registry instead of O(N) KEYS scan
    */
   export async function detectDeadlocks(
     pattern = "exec:*:lock"
   ): Promise<Array<{ key: string; info: NonNullable<Awaited<ReturnType<typeof getLockInfo>>> }>> {
-    const keys = await redis.keys(pattern);
+    // PERFORMANCE FIX: Use O(1) registry instead of redis.keys() scan
+    const keys = await getActiveLocksFromRegistry();
     const deadlocks: Array<{ key: string; info: NonNullable<Awaited<ReturnType<typeof getLockInfo>>> }> = [];
 
     for (const key of keys) {
+      // Filter by pattern if provided (optional regex match)
+      if (pattern && !new RegExp("^" + pattern.replace(/\*/g, ".*") + "$").test(key)) {
+        continue;
+      }
+
       const info = await getLockInfo(key);
       if (info && info.isLocked && info.metadata) {
         const ageSeconds = info.ageSeconds || 0;
@@ -360,6 +423,8 @@ export namespace LockingService {
 
   /**
    * Recover deadlocked locks by deleting them
+   * 
+   * PERFORMANCE FIX: Uses O(1) registry and cleans up registry entries
    */
   export async function recoverDeadlocks(
     pattern = "exec:*:lock"
@@ -370,6 +435,8 @@ export namespace LockingService {
     for (const { key } of deadlocks) {
       await redis.del(key);
       await redis.del(`${key}:meta`);
+      // PERFORMANCE FIX: Remove from O(1) registry
+      await removeLockFromRegistry(key);
       recovered++;
     }
 

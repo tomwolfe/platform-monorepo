@@ -522,6 +522,11 @@ export async function executeSaga(
       completion_tokens: 0,
       total_tokens: 0,
     },
+    budget: {
+      token_limit: 50000,
+      cost_limit_usd: 0.50,
+      current_cost_usd: 0,
+    },
   };
 
   const sagaContext = transactionManager.getSagaContext();

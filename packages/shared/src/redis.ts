@@ -37,11 +37,11 @@ export function wrapWithPrefix(obj: any, prefix: string): any {
           // Special handling for keys()
           if (prop === 'keys') {
             const pattern = args[0] || '*';
-            return target.keys(prefix + pattern).then((keys: string[]) => 
+            return target.keys(prefix + pattern).then((keys: string[]) =>
               keys.map((k: string) => k.startsWith(prefix) ? k.slice(prefix.length) : k)
             );
           }
-          
+
           // Custom flushdb()
           if (prop === 'flushdb' || prop === 'flushall') {
             return (async () => {
@@ -73,7 +73,7 @@ export function wrapWithPrefix(obj: any, prefix: string): any {
           // Optimized prefixing for hot paths
           if (typeof args[0] === 'string' && !['info', 'ping', 'echo', 'quit'].includes(prop as string)) {
             args[0] = prefix + args[0];
-            
+
             // Handle multiple keys in del, exists, etc.
             if (prop === 'del' || prop === 'exists' || prop === 'unlink') {
               for (let i = 1; i < args.length; i++) {
@@ -81,7 +81,7 @@ export function wrapWithPrefix(obj: any, prefix: string): any {
               }
             }
           }
-          
+
           return value.apply(target, args);
         };
       }
@@ -113,6 +113,8 @@ export const getRedisConfig = (appName: string) => {
         'Using localhost fallback. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for production.'
       );
     }
+    // Use local Redis HTTP interface (redis-commander or similar)
+    // For local dev with docker-compose, we use the HTTP port
     return { url: 'http://localhost:8080', token: 'example_token' };
   }
 

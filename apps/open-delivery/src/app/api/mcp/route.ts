@@ -2,13 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { TOOLS } from "@repo/mcp-protocol";
-import { redis } from "@/lib/redis-client";
 import { SecurityProvider } from "@repo/auth";
 import { randomUUID } from "crypto";
 import { db, orders, orderItems } from "@repo/database";
 import { eq } from "drizzle-orm";
 import { RealtimeService } from "@repo/shared";
 import { dispatchOrder } from "@/lib/dispatcher";
+
+// Lazy load Redis to avoid build-time initialization
+let _redis: any = null;
+const getRedis = async () => {
+  if (!_redis) {
+    const { redis } = await import("@/lib/redis-client");
+    _redis = redis;
+  }
+  return _redis;
+};
 
 // Create a singleton server instance
 const server = new McpServer({
@@ -330,6 +339,7 @@ server.tool(
       traceId,
     };
 
+    const redis = await getRedis();
     await redis.setex(`fulfillment:${fulfillmentId}`, 3600, JSON.stringify(fulfillmentData));
     await redis.setex(`opendeliver:intent:${orderId}`, 3600, JSON.stringify(fulfillmentData));
     await redis.lpush("opendeliver:public_intents", orderId);
@@ -412,9 +422,10 @@ server.tool(
   },
   async ({ fulfillmentId }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
-    
+
     console.log(`[Trace:${traceId}] Getting fulfillment status for ${fulfillmentId}`);
-    
+
+    const redis = await getRedis();
     const data = await redis.get(`fulfillment:${fulfillmentId}`);
     
     if (!data) {
@@ -457,6 +468,7 @@ server.tool(
     console.log(`[Trace:${traceId}] Getting driver location for order ${order_id}`);
 
     const intentKey = `opendeliver:intent:${order_id}`;
+    const redis = await getRedis();
     const intent = await redis.get(intentKey);
 
     if (!intent) {
@@ -511,27 +523,28 @@ server.tool(
   },
   async ({ fulfillmentId, reason, details }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
-    
+
     console.log(`[Trace:${traceId}] Cancelling fulfillment ${fulfillmentId}`);
-    
+
+    const redis = await getRedis();
     const data = await redis.get(`fulfillment:${fulfillmentId}`);
-    
+
     if (!data) {
       return createResponse({
         error: "Fulfillment not found",
         fulfillmentId,
       }, traceId, true);
     }
-    
+
     const fulfillment = typeof data === "string" ? JSON.parse(data) : data;
-    
+
     if (fulfillment.status === "delivered") {
       return createResponse({
         error: "Cannot cancel - already delivered",
         fulfillmentId,
       }, traceId, true);
     }
-    
+
     // Update status
     const cancelledData = {
       ...fulfillment,
@@ -540,7 +553,7 @@ server.tool(
       cancellationReason: reason,
       cancellationDetails: details,
     };
-    
+
     await redis.setex(`fulfillment:${fulfillmentId}`, 3600, JSON.stringify(cancelledData));
     
     return createResponse({

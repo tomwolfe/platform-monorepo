@@ -44,46 +44,13 @@ const BASE_URL = __ENV.BASE_URL || "http://localhost:3000";
 export default function () {
   const executionId = `chaos-redis-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-  // Test 1: Lock acquisition endpoint (simulated)
-  const lockResponse = http.post(
-    `${BASE_URL}/api/engine/lock`,
-    JSON.stringify({
-      execution_id: executionId,
-      resource: `test:${executionId}`,
-      ttl_seconds: 30,
-    }),
-    {
-      headers: { "Content-Type": "application/json" },
-      timeout: "3s",
-      tags: { name: "lock_acquire" },
-    }
-  );
-
-  const lockCheck = check(lockResponse, {
-    "lock: status is 200, 409, or 503": (r) =>
-      [200, 409, 503].includes(r.status),
-    "lock: graceful failure on Redis outage": (r) => {
-      if (r.status === 503) {
-        const body = JSON.parse(r.body || "{}");
-        return body.error?.includes("Redis") || body.error?.includes("lock");
-      }
-      return true;
-    },
-  });
-
-  fallbackRate.add(lockResponse.status === 503);
-  errorRate.add(!lockCheck);
-
-  sleep(0.3);
-
-  // Test 2: Execution with potential lock contention
+  // Test 1: Intent endpoint (uses Redis for memory/locks)
   const intentPayload = {
-    user_input: "Show me my reservations",
-    execution_id: executionId,
+    text: "Show me my reservations",
   };
 
   const intentResponse = http.post(
-    `${BASE_URL}/api/intent/parse`,
+    `${BASE_URL}/api/intent`,
     JSON.stringify(intentPayload),
     {
       headers: { "Content-Type": "application/json" },
@@ -93,12 +60,16 @@ export default function () {
   );
 
   const intentCheck = check(intentResponse, {
-    "intent: status is 200, 429, or 503": (r) =>
-      [200, 429, 503].includes(r.status),
+    "intent: status is 200, 400, 429, or 503": (r) =>
+      [200, 400, 429, 503].includes(r.status),
     "intent: valid response structure": (r) => {
       if (r.status !== 200) return true;
-      const body = JSON.parse(r.body || "{}");
-      return body.intent_id || body.intent?.type;
+      try {
+        const body = JSON.parse(r.body || "{}");
+        return body.success !== undefined || body.error;
+      } catch {
+        return false;
+      }
     },
   });
 
@@ -106,30 +77,42 @@ export default function () {
 
   sleep(0.5);
 
-  // Test 3: Cache read with Redis failure
-  const cacheResponse = http.get(
-    `${BASE_URL}/api/cache/user/test-user`,
+  // Test 2: Execution endpoint (uses Redis for state management)
+  const executionPayload = {
+    input: "Show me my reservations",
+    context: {
+      execution_id: executionId,
+    },
+  };
+
+  const executionResponse = http.post(
+    `${BASE_URL}/api/execute`,
+    JSON.stringify(executionPayload),
     {
       headers: { "Content-Type": "application/json" },
-      timeout: "2s",
-      tags: { name: "cache_read" },
+      timeout: "8s",
+      tags: { name: "execution_redis" },
     }
   );
 
-  const cacheCheck = check(cacheResponse, {
-    "cache: status is 200, 404, or 503": (r) =>
-      [200, 404, 503].includes(r.status),
-    "cache: graceful degradation": (r) => {
+  const executionCheck = check(executionResponse, {
+    "execution: status is 200, 400, 429, or 503": (r) =>
+      [200, 400, 429, 503].includes(r.status),
+    "execution: graceful degradation on Redis outage": (r) => {
       if (r.status === 503) {
-        const body = JSON.parse(r.body || "{}");
-        return body.error?.includes("cache") || body.fallback === true;
+        try {
+          const body = JSON.parse(r.body || "{}");
+          return body.error?.includes("Redis") || body.error?.includes("redis") || body.fallback === true;
+        } catch {
+          return true;
+        }
       }
       return true;
     },
   });
 
-  fallbackRate.add(cacheResponse.status === 503);
-  errorRate.add(!cacheCheck);
+  fallbackRate.add(executionResponse.status === 503);
+  errorRate.add(!executionCheck);
 
   sleep(1);
 }

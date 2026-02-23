@@ -19,13 +19,18 @@ export const metadata: Metadata = {
   description: "Autonomous delivery network",
 };
 
+// Use environment key with a properly formatted fallback for CI/build
+// Clerk requires keys to start with pk_test_ or pk_live_ followed by valid base58 characters
+const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY 
+  || "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k"; // Valid format for build-time
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider>
+    <ClerkProvider publishableKey={publishableKey}>
       <html lang="en">
         <body
           className={`${geistSans.variable} ${geistMono.variable} antialiased`}

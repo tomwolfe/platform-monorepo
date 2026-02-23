@@ -96,13 +96,12 @@ jobs:
         run: |
           # Start Next.js in standalone mode for CI
           cd apps/open-delivery
-          # Explicitly set PORT and HOSTNAME for standalone server
           export NODE_ENV=test
           export HOSTNAME=0.0.0.0
           export PORT=3000
-          # Load environment variables from .env.local
+          # Ensure env vars from .env.local are loaded into the shell for the node process
           set -a
-          source ../../.env.local
+          [ -f ../../.env.local ] && source ../../.env.local
           set +a
           node .next/standalone/apps/open-delivery/server.js &
           cd ../..
@@ -227,13 +226,12 @@ jobs:
         run: |
           # Start Next.js in standalone mode for CI
           cd apps/open-delivery
-          # Explicitly set PORT and HOSTNAME for standalone server
           export NODE_ENV=test
           export HOSTNAME=0.0.0.0
           export PORT=3000
-          # Load environment variables from .env.local
+          # Ensure env vars from .env.local are loaded into the shell for the node process
           set -a
-          source ../../.env.local
+          [ -f ../../.env.local ] && source ../../.env.local
           set +a
           node .next/standalone/apps/open-delivery/server.js &
           cd ../..

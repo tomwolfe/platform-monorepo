@@ -83,9 +83,10 @@ jobs:
 
       - name: Start Applications and Run Chaos Suite
         run: |
-          # Use production servers for stability during load/chaos tests
-          cd apps/intention-engine && pnpm start -- -p 3000 &
-          cd apps/open-delivery && pnpm start -- -p 3001 &
+          # Use PORT env var instead of -p flag to avoid argument parsing issues in CI
+          # Use --filter to ensure we target the correct packages from root
+          PORT=3000 pnpm --filter @repo/intention-engine start &
+          PORT=3001 pnpm --filter @repo/open-delivery start &
 
           echo "Waiting for intention-engine to start..."
           READY=0
@@ -101,6 +102,8 @@ jobs:
 
           if [ "$READY" -eq 0 ]; then
             echo "❌ intention-engine failed to start"
+            # Output logs for debugging
+            docker compose logs
             exit 1
           fi
 

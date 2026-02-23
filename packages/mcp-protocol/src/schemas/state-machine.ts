@@ -233,18 +233,11 @@ export type ConfirmationResponse = z.infer<typeof ConfirmationResponseSchema>;
 
 /**
  * Table vacated event payload
+ * 
+ * Note: This schema is now defined centrally in event-registry.ts
+ * to avoid duplication. We re-export it here for backward compatibility.
  */
-export const TableVacatedEventSchema = z.object({
-  tableId: z.string(),
-  restaurantId: z.string().uuid(),
-  restaurantName: z.string().optional(),
-  restaurantSlug: z.string().optional(),
-  capacity: z.number().int().positive().optional(),
-  timestamp: z.string().datetime(),
-  traceId: z.string().optional(),
-});
-
-export type TableVacatedEvent = z.infer<typeof TableVacatedEventSchema>;
+export { TableVacatedEventSchema, type TableVacatedEvent } from "./event-registry";
 
 /**
  * User context match for proactive notifications

@@ -142,5 +142,3 @@ export const exists = (subquery: any) => drizzleExists(subquery as any);
 export const notExists = (subquery: any) => drizzleNotExists(subquery as any);
 export const between = (col: any, min: any, max: any) => drizzleBetween(col as any, min as any, max as any);
 export const notBetween = (col: any, min: any, max: any) => drizzleNotBetween(col as any, min as any, max as any);
-
-export * from './schema/tablestack';

@@ -193,6 +193,8 @@ export const TableVacatedEventSchema = BaseEventSchema.extend({
   }),
 });
 
+export type TableVacatedEvent = z.infer<typeof TableVacatedEventSchema>;
+
 export const TableSeatedEventSchema = BaseEventSchema.extend({
   eventType: z.literal("TABLE_SEATED"),
   payload: z.object({

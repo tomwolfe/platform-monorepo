@@ -76,27 +76,27 @@ jobs:
 
       - name: Start applications
         run: |
-          # Start intention-engine in background
-          cd apps/intention-engine && pnpm dev &
+          # Start intention-engine on port 3000 in background
+          cd apps/intention-engine && pnpm dev -- -p 3000 &
           INTENTION_PID=$!
 
-          # Start open-delivery in background
-          cd apps/open-delivery && pnpm dev &
+          # Start open-delivery on port 3001 in background (avoid port conflict)
+          cd apps/open-delivery && pnpm dev -- -p 3001 &
           OPENDELIVER_PID=$!
 
-          # Wait for applications to be ready (poll for up to 60 seconds)
-          echo "Waiting for applications to start..."
+          # Wait for intention-engine to be ready (poll for up to 60 seconds)
+          echo "Waiting for intention-engine to start..."
           for i in {1..30}; do
-            if curl -sf http://localhost:3000 > /dev/null 2>&1; then
-              echo "✅ Application is ready after $((i * 2)) seconds"
+            if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+              echo "✅ intention-engine is ready after $((i * 2)) seconds"
               break
             fi
-            echo "Waiting for application... ($i/30)"
+            echo "Waiting for intention-engine... ($i/30)"
             sleep 2
           done
 
-          # Verify apps are running (root page should load)
-          curl -f http://localhost:3000 || echo "⚠️ Health check failed, but continuing..."
+          # Verify intention-engine health endpoint
+          curl -sf http://localhost:3000/api/health || echo "⚠️ Health check failed, but continuing..."
         env:
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
           CLERK_SECRET_KEY: ${{ env.CLERK_SECRET_KEY }}

@@ -1,19 +1,22 @@
 /**
  * DurableExecutionManager - State-Machine Execution with Checkpointing
  *
+ * ⚠️ DEPRECATED: Use WorkflowMachine for all new development.
+ *
  * Vercel Hobby Tier Optimization:
  * - State-Machine Task Queue pattern for durable execution
  * - Atomic state transitions stored in Upstash Redis
  * - QStash-style scheduled triggers for execution resumption
  * - Ably webhook callbacks for continuation signaling
  *
- * Architecture:
- * 1. Executes steps until ~7 seconds elapsed
- * 2. Saves state transition to Redis (TaskState)
- * 3. Schedules resume via scheduleTaskResume (QStash pattern)
- * 4. Publishes CONTINUE_EXECUTION event to Ably for webhook trigger
- * 5. Returns partial response to client
- * 6. /api/mesh/resume picks up execution from TaskState
+ * This module is superseded by WorkflowMachine which provides:
+ * - Unified execution engine with adaptive batching
+ * - Infrastructure-aware pre-warming
+ * - Time-travel debugging with context snapshots
+ * - Speculative execution for cold start masking
+ *
+ * @deprecated Use WorkflowMachine directly for all new development
+ * @see {@link WorkflowMachine} for the unified execution engine
  */
 
 import {

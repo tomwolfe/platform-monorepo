@@ -1,8 +1,13 @@
 /**
  * SagaOrchestrator Wrapper - Phase 3 Integration (Consolidated on WorkflowMachine)
  *
+ * ⚠️ DEPRECATED: This is a compatibility wrapper. Use WorkflowMachine directly.
+ *
  * Wrapper around WorkflowMachine for saga-pattern execution with automatic compensation.
  * All execution logic is consolidated in WorkflowMachine - this is a compatibility layer.
+ *
+ * @deprecated Use WorkflowMachine directly for all new development
+ * @see {@link WorkflowMachine} for the unified execution engine
  */
 
 import { WorkflowMachine, executeWorkflow, type WorkflowResult } from "./workflow-machine";

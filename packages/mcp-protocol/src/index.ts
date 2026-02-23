@@ -657,6 +657,9 @@ export const AddCalendarEventSchema = z.object({
 
 export * from './bridge';
 
+// Phase 6: Event Schema Registry (Nervous System Hardening)
+export * from './schemas/event-registry';
+
 export type ToolInput = Record<string, unknown>;
 export type ToolOutput = {
   content: Array<{ type: string; text: string }>;

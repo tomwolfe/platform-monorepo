@@ -360,6 +360,62 @@ export const ValidStateTransitions: Record<ExecutionStatus, ExecutionStatus[]> =
 // Observability and audit trail
 // ============================================================================
 
+/**
+ * Context Snapshot for Time-Travel Debugging
+ *
+ * Captures the complete state of the system at a specific millisecond
+ * to enable "Replay from here" functionality for developers.
+ *
+ * This snapshot includes:
+ * - Full execution state at that moment
+ * - All relevant external state (Redis cache, DB state references)
+ * - Environmental context (feature flags, config, etc.)
+ */
+export const ContextSnapshotSchema = z.object({
+  // Complete execution state at this moment
+  executionState: z.record(z.string(), z.unknown()),
+  // Step states snapshot
+  stepStates: z.array(z.object({
+    step_id: z.string(),
+    status: z.string(),
+    output: z.unknown().optional(),
+    error: z.unknown().optional(),
+  })),
+  // Redis cache keys that were accessed/modified
+  cacheState: z.record(z.string(), z.unknown()).optional(),
+  // Database record IDs that were accessed
+  dbReferences: z.array(z.object({
+    table: z.string(),
+    recordId: z.string(),
+    // Snapshot of key fields (not full record to save space)
+    keyFields: z.record(z.string(), z.unknown()),
+  })).optional(),
+  // Environmental context
+  environment: z.object({
+    featureFlags: z.record(z.string(), z.boolean()).optional(),
+    configOverrides: z.record(z.string(), z.unknown()).optional(),
+    systemLoad: z.object({
+      memoryUsage: z.number().optional(),
+      cpuUsage: z.number().optional(),
+    }).optional(),
+  }).optional(),
+  // LLM context (for replaying LLM calls with mocked responses)
+  llmContext: z.object({
+    modelId: z.string().optional(),
+    temperature: z.number().optional(),
+    maxTokens: z.number().optional(),
+    // Mocked response for deterministic replay
+    mockedResponse: z.string().optional(),
+    mockedToolCalls: z.array(z.unknown()).optional(),
+  }).optional(),
+  // Timestamp and metadata
+  capturedAt: z.string().datetime(),
+  segmentNumber: z.number().int().nonnegative().optional(),
+  nextStepIndex: z.number().int().nonnegative().optional(),
+});
+
+export type ContextSnapshot = z.infer<typeof ContextSnapshotSchema>;
+
 export const TraceEntrySchema = z.object({
   timestamp: z.string().datetime(),
   phase: z.enum(["intent", "planning", "execution", "system"]),
@@ -374,6 +430,18 @@ export const TraceEntrySchema = z.object({
     prompt_tokens: z.number().int().nonnegative(),
     completion_tokens: z.number().int().nonnegative(),
     total_tokens: z.number().int().nonnegative(),
+  }).optional(),
+  // TIME-TRAVEL DEBUGGING: Context snapshot for replayability
+  contextSnapshot: ContextSnapshotSchema.optional(),
+  // Replay metadata
+  replayable: z.boolean().default(false),
+  replayConfig: z.object({
+    // Whether this step can be replayed independently
+    canReplayStandalone: z.boolean().default(false),
+    // Prerequisites for replay (previous steps that must be replayed first)
+    requiresReplayOf: z.array(z.string().uuid()).default([]),
+    // Mocked outputs for dependencies (for deterministic replay)
+    mockedDependencies: z.record(z.string(), z.unknown()).optional(),
   }).optional(),
 });
 

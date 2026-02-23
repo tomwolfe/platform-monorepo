@@ -33,7 +33,7 @@ export async function POST(req: Request) {
     // 2. Idempotency Check
     if (idempotencyKey) {
       const idempotencyService = new IdempotencyService(redis);
-      const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey);
+      const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey, 'ably_state_sync');
       if (isDuplicate) {
         return NextResponse.json({ synced: true, duplicate: true });
       }

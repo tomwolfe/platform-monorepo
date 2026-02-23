@@ -22,7 +22,7 @@
  */
 
 import { Redis } from '@upstash/redis';
-import { getRedisClient, ServiceNamespace } from './redis';
+import { getRedisClient, ServiceNamespace } from '../redis';
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -424,7 +424,7 @@ export function createParameterAliaserService(config?: {
   mismatchThreshold?: number;
   cacheTtlSeconds?: number;
 }): ParameterAliaserService {
-  const { getRedisClient, ServiceNamespace } = require('./redis');
+  const { getRedisClient, ServiceNamespace } = require('../redis');
 
   const redis = config?.redis || getRedisClient(ServiceNamespace.SHARED);
 

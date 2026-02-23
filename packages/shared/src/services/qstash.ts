@@ -355,6 +355,96 @@ export class QStashService {
   }
 
   /**
+   * Publish a message to any URL via QStash
+   * Generic method for fire-and-forget HTTP calls with retry logic
+   *
+   * @param options - Publish options
+   * @param options.url - Target URL to call
+   * @param options.body - Request body (will be JSON stringified if object)
+   * @param options.headers - Optional headers
+   * @returns Message ID if successful
+   */
+  static async publish(options: {
+    url: string;
+    body: unknown;
+    headers?: Record<string, string>;
+  }): Promise<string | null> {
+    const client = this.getClient();
+
+    if (!client || !this.config?.enabled) {
+      if (process.env.NODE_ENV === "production") {
+        throw new Error(
+          "QStash is required for production reliability. " +
+          "Fallback to fetch(self) is disabled in production."
+        );
+      }
+      // Development only: allow fallback to fetch
+      console.warn("[QStashService] QStash not configured, using fallback fetch (dev only)");
+      await this.fallbackPublish(options);
+      return null;
+    }
+
+    try {
+      const result = await client.publish({
+        url: options.url,
+        body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body),
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      });
+
+      const messageId = "messageId" in result ? result.messageId : undefined;
+      console.log(`[QStashService] Published message to ${options.url}${messageId ? ` [message: ${messageId}]` : ''}`);
+
+      return messageId || null;
+    } catch (error) {
+      console.error("[QStashService] Failed to publish message:", error);
+      if (process.env.NODE_ENV === "production") {
+        throw error;
+      }
+      await this.fallbackPublish(options);
+      return null;
+    }
+  }
+
+  /**
+   * Fallback for generic publish when QStash is not configured
+   */
+  private static async fallbackPublish(options: {
+    url: string;
+    body: unknown;
+    headers?: Record<string, string>;
+  }): Promise<void> {
+    try {
+      setTimeout(async () => {
+        try {
+          const response = await fetch(options.url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...options.headers,
+            },
+            body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body),
+          });
+
+          if (!response.ok) {
+            console.error(
+              `[FallbackPublish] Failed to call URL: ${response.status} ${response.statusText}`
+            );
+          } else {
+            console.log(`[FallbackPublish] URL called successfully`);
+          }
+        } catch (error) {
+          console.error(`[FallbackPublish] Error calling URL:`, error);
+        }
+      }, 200);
+    } catch (error) {
+      console.error("[FallbackPublish] Failed to schedule fetch:", error);
+    }
+  }
+
+  /**
    * Fallback to direct fetch when QStash is not configured
    * Maintains backward compatibility for local development
    */

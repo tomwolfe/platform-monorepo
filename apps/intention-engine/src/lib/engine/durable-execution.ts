@@ -353,7 +353,7 @@ async function executeStepWithCheckpointing(
       // IDEMPOTENCY CHECK
       const idempotencyKey = `${state.intent?.id || state.execution_id}:${stepIndex}`;
       if (idempotencyService) {
-        const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey);
+        const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey, step.tool_name);
         if (isDuplicate) {
           console.log(`[Idempotency] Step ${step.tool_name} (${step.id}) already executed, skipping`);
           span.setAttributes({ idempotency_skip: true });

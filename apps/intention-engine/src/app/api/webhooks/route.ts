@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
     // Idempotency Check
     if (idempotencyKey) {
       const idempotencyService = new IdempotencyService(redis);
-      const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey);
+      const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey, 'intention_engine_webhook');
       if (isDuplicate) {
         return NextResponse.json({ message: "Event already processed", duplicate: true });
       }

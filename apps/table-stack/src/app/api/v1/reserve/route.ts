@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
   const idempotencyKey = req.headers.get(IDEMPOTENCY_KEY_HEADER);
   if (idempotencyKey) {
     const idempotencyService = new IdempotencyService(redis);
-    const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey);
+    const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey, 'reserve_api');
     if (isDuplicate) {
       return NextResponse.json({ message: 'Reservation already processed' }, { status: 200, headers: { 'x-idempotency-duplicate': 'true' } });
     }

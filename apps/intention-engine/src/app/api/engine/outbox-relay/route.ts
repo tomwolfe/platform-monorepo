@@ -22,6 +22,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getOutboxService } from '@repo/shared';
 import { QStashService, verifyQStashWebhook } from '@repo/shared';
+import { redis } from '@/lib/redis-client';
 
 // ============================================================================
 // CONFIGURATION
@@ -56,7 +57,7 @@ async function outboxRelayHandler(
     console.log(`[OutboxRelay] Processing outbox for execution ${executionId}`);
 
     // Get outbox service
-    const outboxService = getOutboxService();
+    const outboxService = getOutboxService(redis);
 
     // Process pending events for this execution
     // Note: In production, you might want to query by executionId specifically

@@ -207,7 +207,9 @@ export class OutboxService {
         };
 
         // Use Redis hash to store step state
-        await this.redis.hset(stateKey, `${payload.stepIndex}`, JSON.stringify(stateData));
+        await this.redis.hset(stateKey, {
+          [`${payload.stepIndex}`]: JSON.stringify(stateData),
+        });
         await this.redis.expire(stateKey, 86400); // 24 hour TTL
 
         console.log(`[OutboxService] Updated Redis cache for step ${payload.stepIndex} (${payload.status})`);

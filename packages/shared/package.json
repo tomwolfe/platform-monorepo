@@ -22,7 +22,8 @@
     "zod": "^3.24.1",
     "uuid": "^11.0.0",
     "@repo/auth": "workspace:*",
-    "@repo/mcp-protocol": "workspace:*"
+    "@repo/mcp-protocol": "workspace:*",
+    "@repo/database": "workspace:*"
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",

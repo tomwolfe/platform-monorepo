@@ -4,6 +4,7 @@ export * from './types/execution';
 export * from './normalization';
 export * from './clients';
 export * from './idempotency';
+export * from './outbox';
 export * from './services';
 export * from './realtime';
 export * from './state-machine';

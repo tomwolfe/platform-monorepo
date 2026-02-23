@@ -451,6 +451,9 @@ importers:
       '@repo/auth':
         specifier: workspace:*
         version: link:../auth
+      '@repo/database':
+        specifier: workspace:*
+        version: link:../database
       '@repo/mcp-protocol':
         specifier: workspace:*
         version: link:../mcp-protocol

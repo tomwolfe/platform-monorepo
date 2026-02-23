@@ -13,8 +13,8 @@ import http from "k6/http";
 import { check, sleep } from "k6";
 import { Rate } from "k6/metrics";
 
-// Custom metrics
-const errorRate = new Rate("errors");
+// Custom metric to track UNEXPECTED errors only (503/429 are expected chaos responses)
+const unexpectedErrors = new Rate("unexpected_errors");
 const timeoutRate = new Rate("timeouts");
 
 export const options = {
@@ -33,9 +33,9 @@ export const options = {
   },
   thresholds: {
     http_req_duration: ["p(95)<5000"], // p95 must be under 5 seconds (LLM calls + latency injection)
-    http_req_failed: ["rate<0.50"],    // Relaxed for stability under injected latency
-    checks: ["rate>=0.90"],           // Strict on logic/checks passing
-    errors: ["rate<0.45"],             // Relaxed for CI stability
+    http_req_failed: ["rate<0.80"],    // Relaxed: 503/429 are expected chaos responses
+    checks: ["rate>=0.95"],            // Strict on logical validations passing
+    unexpected_errors: ["rate<0.05"],  // Strict: unexpected errors (500s) must be under 5%
     timeouts: ["rate<0.50"],           // Relaxed for CI stability
   },
 };
@@ -60,8 +60,11 @@ export default function () {
     }
   );
 
+  // 200, 429, 503 are expected responses in chaos testing
+  const isIntentExpected = [200, 400, 429, 503].includes(intentResponse.status);
+
   const intentCheck = check(intentResponse, {
-    "intent parse: status is 200, 400, 429, or 503": (r) => [200, 400, 429, 503].includes(r.status),
+    "intent parse: is resilient status": (r) => isIntentExpected,
     "intent parse: has valid response or rate limit": (r) => {
       if (r.status === 429 || r.status === 400 || r.status === 503) return true;
       try {
@@ -73,7 +76,8 @@ export default function () {
     },
   });
 
-  errorRate.add(!intentCheck);
+  // Track unexpected errors (not 200/400/429/503 and not a timeout)
+  unexpectedErrors.add(!isIntentExpected && intentResponse.status !== 0);
 
   sleep(0.5);
 
@@ -95,9 +99,11 @@ export default function () {
     }
   );
 
+  // 200, 400, 429, 503 are expected responses in chaos testing
+  const isExecutionExpected = [200, 400, 429, 503].includes(executionResponse.status);
+
   const executionCheck = check(executionResponse, {
-    "execution: status is 200, 400, 429, or 503": (r) =>
-      [200, 400, 429, 503].includes(r.status),
+    "execution: is resilient status": (r) => isExecutionExpected,
     "execution: graceful degradation on timeout": (r) => {
       if (r.status === 503 || r.status === 429 || r.status === 400) return true;
       try {
@@ -110,7 +116,8 @@ export default function () {
   });
 
   timeoutRate.add(executionResponse.timings?.duration > 5000);
-  errorRate.add(!executionCheck);
+  // Track unexpected errors (not 200/400/429/503 and not a timeout)
+  unexpectedErrors.add(!isExecutionExpected && executionResponse.status !== 0);
 
   sleep(1);
 }

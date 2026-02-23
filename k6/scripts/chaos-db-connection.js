@@ -12,8 +12,8 @@ import http from "k6/http";
 import { check, sleep } from "k6";
 import { Rate } from "k6/metrics";
 
-// Custom metrics
-const errorRate = new Rate("errors");
+// Custom metrics - track UNEXPECTED errors only (503/429 are expected chaos responses)
+const unexpectedErrors = new Rate("unexpected_errors");
 const retryRate = new Rate("retries");
 
 export const options = {
@@ -31,9 +31,9 @@ export const options = {
     },
   },
   thresholds: {
-    http_req_failed: ["rate<0.25"],    // Error rate under 25%
-    checks: ["rate>=0.85"],            // 85% of checks must pass
-    errors: ["rate<0.30"],             // Error rate under 30%
+    http_req_failed: ["rate<0.80"],      // Relaxed: 503/429 are expected chaos responses
+    checks: ["rate>=0.95"],              // 95% of checks must pass
+    unexpected_errors: ["rate<0.05"],    // Strict: unexpected errors (500s) must be under 5%
   },
 };
 
@@ -57,9 +57,11 @@ export default function () {
     }
   );
 
+  // 200, 400, 429, 503 are expected responses in chaos testing
+  const isIntentExpected = [200, 400, 429, 503].includes(intentResponse.status);
+
   const intentCheck = check(intentResponse, {
-    "intent: status is 200, 400, or 503": (r) =>
-      [200, 400, 503].includes(r.status),
+    "intent: is resilient status": (r) => isIntentExpected,
     "intent: graceful degradation on DB failure": (r) => {
       if (r.status === 503) {
         try {
@@ -81,7 +83,8 @@ export default function () {
     },
   });
 
-  errorRate.add(!intentCheck);
+  // Track unexpected errors (not 200/400/429/503 and not a timeout)
+  unexpectedErrors.add(!isIntentExpected && intentResponse.status !== 0);
 
   sleep(0.5);
 
@@ -103,9 +106,11 @@ export default function () {
     }
   );
 
+  // 200, 400, 429, 503 are expected responses in chaos testing
+  const isExecutionExpected = [200, 400, 429, 503].includes(executionResponse.status);
+
   const executionCheck = check(executionResponse, {
-    "execution: status is 200, 400, or 503": (r) =>
-      [200, 400, 503].includes(r.status),
+    "execution: is resilient status": (r) => isExecutionExpected,
     "execution: proper error on DB failure": (r) => {
       if (r.status === 503) {
         try {
@@ -128,7 +133,8 @@ export default function () {
   });
 
   retryRate.add(executionResponse.headers?.["x-retry-count"] !== undefined);
-  errorRate.add(!executionCheck);
+  // Track unexpected errors (not 200/400/429/503 and not a timeout)
+  unexpectedErrors.add(!isExecutionExpected && executionResponse.status !== 0);
 
   sleep(1);
 }

@@ -12,8 +12,8 @@ import http from "k6/http";
 import { check, sleep } from "k6";
 import { Rate, Counter } from "k6/metrics";
 
-// Custom metrics
-const errorRate = new Rate("errors");
+// Custom metrics - track UNEXPECTED errors only (503/429 are expected chaos responses)
+const unexpectedErrors = new Rate("unexpected_errors");
 const fallbackRate = new Rate("fallback_used");
 const recoverySuccess = new Counter("recovery_success");
 
@@ -32,10 +32,10 @@ export const options = {
     },
   },
   thresholds: {
-    http_req_failed: ["rate<0.2"],    // Error rate under 20%
-    checks: ["rate>=0.90"],           // 90% of checks must pass
-    errors: ["rate<0.25"],            // Error rate under 25%
-    fallback_used: ["rate>=0.05"],    // At least some fallbacks should trigger
+    http_req_failed: ["rate<0.80"],      // Relaxed: 503/429 are expected chaos responses
+    checks: ["rate>=0.95"],              // 95% of checks must pass
+    unexpected_errors: ["rate<0.05"],    // Strict: unexpected errors (500s) must be under 5%
+    fallback_used: ["rate>=0.05"],       // At least some fallbacks should trigger
   },
 };
 
@@ -59,9 +59,11 @@ export default function () {
     }
   );
 
+  // 200, 400, 429, 503 are expected responses in chaos testing
+  const isIntentExpected = [200, 400, 429, 503].includes(intentResponse.status);
+
   const intentCheck = check(intentResponse, {
-    "intent: status is 200, 400, 429, or 503": (r) =>
-      [200, 400, 429, 503].includes(r.status),
+    "intent: is resilient status": (r) => isIntentExpected,
     "intent: valid response structure": (r) => {
       if (r.status !== 200) return true;
       try {
@@ -73,7 +75,8 @@ export default function () {
     },
   });
 
-  errorRate.add(!intentCheck);
+  // Track unexpected errors (not 200/400/429/503 and not a timeout)
+  unexpectedErrors.add(!isIntentExpected && intentResponse.status !== 0);
 
   sleep(0.5);
 
@@ -95,9 +98,11 @@ export default function () {
     }
   );
 
+  // 200, 400, 429, 503 are expected responses in chaos testing
+  const isExecutionExpected = [200, 400, 429, 503].includes(executionResponse.status);
+
   const executionCheck = check(executionResponse, {
-    "execution: status is 200, 400, 429, or 503": (r) =>
-      [200, 400, 429, 503].includes(r.status),
+    "execution: is resilient status": (r) => isExecutionExpected,
     "execution: graceful degradation on Redis outage": (r) => {
       if (r.status === 503) {
         try {
@@ -112,7 +117,8 @@ export default function () {
   });
 
   fallbackRate.add(executionResponse.status === 503);
-  errorRate.add(!executionCheck);
+  // Track unexpected errors (not 200/400/429/503 and not a timeout)
+  unexpectedErrors.add(!isExecutionExpected && executionResponse.status !== 0);
 
   sleep(1);
 }

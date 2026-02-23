@@ -16,7 +16,7 @@
  */
 
 import { Redis } from "@upstash/redis";
-import { RealtimeService } from "./realtime";
+import { RealtimeService } from "../realtime";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -333,7 +333,7 @@ export class DLQMonitoringService {
    */
   private async retryCompensation(zombie: ZombieSaga): Promise<{
     success: boolean;
-    action: "COMPENSATION_RETRIED";
+    action: "COMPENSATION_RETRIED" | "ESCALATED";
     message?: string;
   }> {
     console.log(`[DLQ] Retrying compensation for zombie saga ${zombie.executionId}`);

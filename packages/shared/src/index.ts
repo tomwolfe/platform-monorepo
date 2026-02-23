@@ -29,3 +29,4 @@ export * from './services/circuit-breaker';
 // Note: chaos-engine is Node.js only, import directly from './services/chaos/chaos-engine'
 export * from './services/anomaly-detector';
 export * from './services/security-correlator';
+export * from './services/dlq-monitoring';

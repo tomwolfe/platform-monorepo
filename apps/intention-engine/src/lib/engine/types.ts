@@ -45,6 +45,15 @@ export const IntentTypeSchema = z.enum([
   "UNKNOWN",
   "CLARIFICATION_REQUIRED",
   "SERVICE_DEGRADED",
+  "BOOKING",
+  "DELIVERY",
+  "WAITLIST",
+  "RESERVATION_MODIFY",
+  "RESERVATION_CANCEL",
+  "CANCEL",
+  "MODIFY",
+  "PAYMENT",
+  "COMMUNICATION",
 ]);
 
 export type IntentType = z.infer<typeof IntentTypeSchema>;

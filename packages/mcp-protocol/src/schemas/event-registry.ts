@@ -573,7 +573,7 @@ export class EventSchemaRegistry {
       };
     }
 
-    return validator(data);
+    return validator(data) as { success: boolean; data?: T; error?: string };
   }
 
   /**

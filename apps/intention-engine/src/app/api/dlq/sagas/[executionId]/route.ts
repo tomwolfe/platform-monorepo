@@ -23,9 +23,9 @@ import { RealtimeService } from "@repo/shared";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { executionId: string } }
+  { params }: { params: Promise<{ executionId: string }> }
 ) {
-  const { executionId } = params;
+  const { executionId } = await params;
 
   return Tracer.startActiveSpan("dlq_get_saga_detail", async (span) => {
     try {
@@ -57,16 +57,16 @@ export async function GET(
       // Load execution trace for additional context
       const traceKey = `trace:${executionId}`;
       const traceData = await redis?.get(traceKey);
-      
+
       // Load context snapshots for time-travel debugging
       const snapshotKeys = await redis?.hvals(`snapshots:${executionId}`);
       const snapshots = snapshotKeys
-        ? await Promise.all(snapshotKeys.map(key => redis?.get(key)))
+        ? await Promise.all(snapshotKeys.map((key: string) => redis?.get(key)))
         : [];
-      
+
       const saga = {
-        ...sagaData,
-        inactiveDurationHuman: formatDuration(sagaData.inactiveDurationMs),
+        ...(sagaData as any),
+        inactiveDurationHuman: formatDuration((sagaData as any).inactiveDurationMs),
         trace: traceData,
         snapshots: snapshots.slice(0, 10), // Limit to 10 most recent
       };
@@ -93,9 +93,9 @@ export async function GET(
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { executionId: string } }
+  { params }: { params: Promise<{ executionId: string }> }
 ) {
-  const { executionId } = params;
+  const { executionId } = await params;
   const { searchParams } = new URL(req.url);
   const action = searchParams.get("action") || "resume";
 
@@ -115,31 +115,31 @@ async function handleResume(req: NextRequest, executionId: string) {
     try {
       const body = await req.json();
       const result = ResumeSagaBodySchema.safeParse(body);
-      
+
       if (!result.success) {
         return NextResponse.json(
           { error: "Invalid request body", details: result.error.format() },
           { status: 400 }
         );
       }
-      
+
       const { fixedParameters, skipSteps, resumeFromStep, reason, adminUserId } = result.data;
-      
+
       // Get saga from DLQ
       const dlqKey = `dlq:saga:${executionId}`;
-      const sagaData = await redis?.get(dlqKey);
-      
+      const sagaData = await redis?.get(dlqKey) as any;
+
       if (!sagaData) {
         return NextResponse.json(
           { error: "Saga not found in DLQ" },
           { status: 404 }
         );
       }
-      
+
       // Validate saga is resumable
       if (sagaData.requiresHumanIntervention && !fixedParameters) {
         return NextResponse.json(
-          { 
+          {
             error: "Saga requires parameter fixes before resuming",
             requiresFix: true,
             currentParameters: sagaData.stepStates
@@ -149,7 +149,7 @@ async function handleResume(req: NextRequest, executionId: string) {
           { status: 400 }
         );
       }
-      
+
       // Publish resume event via Nervous System
       const registry = getEventSchemaRegistry();
       const resumeEvent: NervousSystemEvent = {
@@ -169,13 +169,13 @@ async function handleResume(req: NextRequest, executionId: string) {
           elapsedMs: sagaData.inactiveDurationMs,
         } as any,
       };
-      
+
       // Validate event
       const validation = registry.validate("saga_resumed", resumeEvent);
       if (!validation.success) {
         console.error("[DLQ API] Resume event validation failed:", validation.error);
       }
-      
+
       // Publish to Nervous System
       await RealtimeService.publishNervousSystemEvent(
         "SAGA_MANUAL_RESUME",
@@ -191,10 +191,10 @@ async function handleResume(req: NextRequest, executionId: string) {
           resumedAt: new Date().toISOString(),
         }
       );
-      
+
       // Remove from DLQ
       await redis?.del(dlqKey);
-      
+
       // Trigger execution resume via QStash pattern
       await redis?.setex(
         `resume:${executionId}`,
@@ -208,13 +208,13 @@ async function handleResume(req: NextRequest, executionId: string) {
           reason,
         })
       );
-      
+
       span.setAttributes({
         "dlq.execution_id": executionId,
         "dlq.resume_reason": reason,
         "dlq.admin_user_id": adminUserId,
       });
-      
+
       return NextResponse.json({
         success: true,
         message: "Saga resume initiated",
@@ -235,27 +235,27 @@ async function handleCancel(req: NextRequest, executionId: string) {
     try {
       const body = await req.json();
       const result = CancelSagaBodySchema.safeParse(body);
-      
+
       if (!result.success) {
         return NextResponse.json(
           { error: "Invalid request body", details: result.error.format() },
           { status: 400 }
         );
       }
-      
+
       const { reason, adminUserId, attemptCompensation } = result.data;
-      
+
       // Get saga from DLQ
       const dlqKey = `dlq:saga:${executionId}`;
-      const sagaData = await redis?.get(dlqKey);
-      
+      const sagaData = await redis?.get(dlqKey) as any;
+
       if (!sagaData) {
         return NextResponse.json(
           { error: "Saga not found in DLQ" },
           { status: 404 }
         );
       }
-      
+
       // If compensation requested, trigger compensation workflow
       if (attemptCompensation && sagaData.compensationsRegistered?.length > 0) {
         await RealtimeService.publishNervousSystemEvent(
@@ -268,7 +268,7 @@ async function handleCancel(req: NextRequest, executionId: string) {
           }
         );
       }
-      
+
       // Mark as cancelled
       await redis?.setex(
         `cancelled:${executionId}`,
@@ -282,16 +282,16 @@ async function handleCancel(req: NextRequest, executionId: string) {
           previousStatus: sagaData.status,
         })
       );
-      
+
       // Remove from DLQ
       await redis?.del(dlqKey);
-      
+
       span.setAttributes({
         "dlq.execution_id": executionId,
         "dlq.cancel_reason": reason,
         "dlq.compensation_attempted": attemptCompensation,
       });
-      
+
       return NextResponse.json({
         success: true,
         message: "Saga cancelled successfully",

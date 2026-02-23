@@ -339,8 +339,7 @@ export class ContextSnapshotter {
       // Add to snapshot index
       redis?.hset(
         `snapshots:${this.executionId}`,
-        `${stepIndex}:${snapshot.capturedAt}`,
-        snapshotKey
+        { [`${stepIndex}:${snapshot.capturedAt}`]: snapshotKey }
       ),
     ]);
 
@@ -445,7 +444,7 @@ export class ReplayEngine {
     if (!snapshotKeys) return null;
 
     // Find the closest snapshot at or before the target step
-    const matchingKeys = snapshotKeys.filter(key => {
+    const matchingKeys = snapshotKeys.filter((key: string) => {
       const parts = key.split(":");
       const snapshotStepIndex = parseInt(parts[parts.length - 3]);
       return snapshotStepIndex <= stepIndex;
@@ -460,7 +459,7 @@ export class ReplayEngine {
     if (!snapshotData) return null;
 
     // Decompress if needed (in production)
-    return JSON.parse(snapshotData) as ContextSnapshot;
+    return JSON.parse(snapshotData as string) as ContextSnapshot;
   }
 
   /**

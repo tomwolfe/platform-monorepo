@@ -483,6 +483,7 @@ async function executeStepWithCheckpointing(
           output: toolResult.success ? toolResult.output : undefined,
           error: toolResult.success ? undefined : toolResult.error,
           latency_ms: latencyMs,
+          replayable: true,
         });
       }
 
@@ -605,6 +606,7 @@ async function executeStepWithCheckpointing(
           event: "step_error",
           error: errorMessage,
           latency_ms: latencyMs,
+          replayable: true,
         });
       }
 

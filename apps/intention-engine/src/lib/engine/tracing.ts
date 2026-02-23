@@ -146,6 +146,7 @@ export class ExecutionTracer {
             total_tokens: tokenUsage.prompt + tokenUsage.completion,
           }
         : undefined,
+      replayable: true,
     });
   }
 
@@ -170,6 +171,7 @@ export class ExecutionTracer {
             total_tokens: tokenUsage.prompt + tokenUsage.completion,
           }
         : undefined,
+      replayable: true,
     });
   }
 
@@ -189,6 +191,7 @@ export class ExecutionTracer {
       output,
       error,
       latency_ms: latencyMs,
+      replayable: true,
     });
   }
 
@@ -200,6 +203,7 @@ export class ExecutionTracer {
       phase: "system",
       event,
       input: details,
+      replayable: true,
     });
   }
 
@@ -213,6 +217,7 @@ export class ExecutionTracer {
       event: "state_transition",
       input: { from: fromState, to: toState },
       output: { success },
+      replayable: true,
     });
   }
 
@@ -229,6 +234,7 @@ export class ExecutionTracer {
       event: "error",
       error: errorMessage,
       input: { code: errorCode, details },
+      replayable: true,
     });
   }
 

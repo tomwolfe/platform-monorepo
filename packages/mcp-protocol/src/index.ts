@@ -18,7 +18,56 @@ export * from "./schemas/events";
 export * from "./schemas/compensations";
 
 // Phase 4: State Machine & Safety (Vercel Hobby Tier Optimization)
-export * from "./schemas/state-machine";
+// Note: Excluding TableVacatedEventSchema to avoid conflict with event-registry
+export {
+  TaskStatusSchema,
+  TaskStateTransitionSchema,
+  TaskStateSchema,
+  TaskQueueItemSchema,
+  StateTransitionResultSchema,
+  HighRiskToolCategorySchema,
+  HighRiskToolSchema,
+  IntentSafetyCheckSchema,
+  SafetyPlanStepSchema,
+  SafetyPlanSchema,
+  SafetyIntentSchema,
+  ConfirmationStatusSchema,
+  ConfirmationRequestSchema,
+  ConfirmationResponseSchema,
+  UserContextMatchSchema,
+  ProactiveNotificationSchema,
+  ServiceRegistryEntrySchema,
+  ToolCallContextSchema,
+  ToolCallResultSchema,
+  ParameterAliasSchema,
+  StreamingStatusUpdateSchema,
+  ValidStateTransitions,
+  isTerminalStatus,
+  isValidTransition,
+} from "./schemas/state-machine";
+export type {
+  TaskStatus,
+  TaskStateTransition,
+  TaskState,
+  TaskQueueItem,
+  StateTransitionResult,
+  HighRiskToolCategory,
+  HighRiskTool,
+  IntentSafetyCheck,
+  SafetyPlanStep,
+  SafetyPlan,
+  SafetyIntent,
+  ConfirmationStatus,
+  ConfirmationRequest,
+  ConfirmationResponse,
+  UserContextMatch,
+  ProactiveNotification,
+  ServiceRegistryEntry,
+  ToolCallContext,
+  ToolCallResult,
+  ParameterAlias,
+  StreamingStatusUpdate,
+} from "./schemas/state-machine";
 
 import { MobilityRequestSchema, RouteEstimateSchema } from "./schemas/mobility";
 import { GetAvailabilitySchema, BookTableSchema, TableReservationSchema } from "./schemas/booking";

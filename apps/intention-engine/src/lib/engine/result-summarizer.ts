@@ -74,7 +74,11 @@ export interface ExecutionResult {
 }
 
 export interface TemplateMatch {
-  template: string;
+  template: {
+    id: string;
+    name: string;
+    template: string;
+  };
   variables: Record<string, string>;
   confidence: number;
 }

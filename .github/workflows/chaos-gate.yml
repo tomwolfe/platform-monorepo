@@ -112,7 +112,6 @@ jobs:
         run: |
           echo "🔬 Running Latency Spike Chaos Test..."
           k6 run --summary-export=k6-results-latency.json \
-            --summary-only \
             k6/scripts/chaos-latency.js || {
               echo "❌ Latency spike test failed - resilience regression detected"
               exit 1
@@ -125,7 +124,6 @@ jobs:
         run: |
           echo "🔬 Running Redis Failure Chaos Test..."
           k6 run --summary-export=k6-results-redis.json \
-            --summary-only \
             k6/scripts/chaos-redis-failure.js || {
               echo "❌ Redis failure test failed - resilience regression detected"
               exit 1
@@ -138,7 +136,6 @@ jobs:
         run: |
           echo "🔬 Running Database Connection Chaos Test..."
           k6 run --summary-export=k6-results-db.json \
-            --summary-only \
             k6/scripts/chaos-db-connection.js || {
               echo "❌ Database connection test failed - resilience regression detected"
               exit 1

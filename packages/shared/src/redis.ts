@@ -113,9 +113,15 @@ export const getRedisConfig = (appName: string) => {
         'Using localhost fallback. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for production.'
       );
     }
-    // Use local Redis HTTP interface (redis-commander or similar)
-    // For local dev with docker-compose, we use the HTTP port
-    return { url: 'http://localhost:8080', token: 'example_token' };
+    // Use a valid HTTPS URL format for build-time stub
+    // This is required because Upstash Redis client validates URL format
+    // In CI/build environments, we use a placeholder that passes validation
+    return { 
+      url: process.env.CI === 'true' 
+        ? 'https://placeholder.upstash.io' 
+        : 'http://localhost:8080', 
+      token: process.env.CI === 'true' ? 'placeholder_token' : 'example_token' 
+    };
   }
 
   return { url, token };

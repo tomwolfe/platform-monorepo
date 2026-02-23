@@ -128,7 +128,7 @@ function textSummary(data, options) {
 
   return `
 Chaos Test Results - Latency Spike:
-  p95 Latency: ${httpReqDuration["p(95)"]?.toFixed(0) || "N/A"}ms (threshold: <2000ms)
-  Pass Rate: ${(checks.rate || 0 * 100).toFixed(2)}%
+  p95 Latency: ${httpReqDuration["p(95)"]?.toFixed(0) || "N/A"}ms (threshold: <5000ms)
+  Pass Rate: ${((checks.rate || 0) * 100).toFixed(2)}%
 `;
 }

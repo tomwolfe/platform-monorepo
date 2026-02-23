@@ -13,7 +13,6 @@ concurrency:
 env:
   NODE_VERSION: "24"
   REDIS_URL: ${{ secrets.REDIS_URL }}
-  DATABASE_URL: ${{ secrets.DATABASE_URL }}
   # Clerk test keys for CI build
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY || 'pk_test_test' }}
   CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY || 'sk_test_test' }}

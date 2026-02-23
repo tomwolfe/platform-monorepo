@@ -795,7 +795,11 @@ export class MemoryClient {
       `;
 
       // Execute Lua script atomically
-      const result = await this.redis.eval(script, 1, key, expectedVersion.toString(), JSON.stringify(newState), timestamp);
+      const result = await this.redis.eval(
+        script,
+        [key], // keys array
+        [expectedVersion.toString(), JSON.stringify(newState), timestamp] // args array
+      );
 
       return {
         success: true,

@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
 
     // Rate limiting - more generous than chat endpoint
     const userId = clerkId || req.headers.get('x-forwarded-for') || 'anonymous';
-    const rateLimitResult = await rateLimitMiddleware(userId, 'warm-cache');
+    const rateLimitResult = await rateLimitMiddleware(userId, 'cache');
 
     if (!rateLimitResult.allowed) {
       // Return 200 anyway - cache warming is best-effort, don't block

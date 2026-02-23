@@ -47,6 +47,8 @@ export interface EndpointRateLimitConfig {
   webhook: RateLimitConfig;
   /** Rate limit for API endpoints (general) */
   api: RateLimitConfig;
+  /** Rate limit for cache warming endpoints */
+  cache: RateLimitConfig;
 }
 
 // Default configurations
@@ -82,6 +84,14 @@ export const DEFAULT_LIMITS: EndpointRateLimitConfig = {
     enableRedisSync: true,
     fallbackToLocal: true,
     keyPrefix: "ratelimit:api:",
+  },
+  cache: {
+    maxRequests: 200,
+    windowMs: 60000, // 1 minute
+    burstAllowance: 50,
+    enableRedisSync: true,
+    fallbackToLocal: true,
+    keyPrefix: "ratelimit:cache:",
   },
 };
 

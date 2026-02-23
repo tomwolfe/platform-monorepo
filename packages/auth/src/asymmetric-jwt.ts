@@ -1,24 +1,20 @@
 /**
  * Asymmetric JWT Authentication (RS256)
- * 
+ *
  * Zero-Trust Internal Authentication
  * Replaces shared secret (HS256) with asymmetric key pairs (RS256)
- * 
+ *
  * Security Benefits:
  * - Private key never leaves the Intention Engine
  * - Satellite apps (TableStack, OpenDeliver) only need public key for verification
  * - Compromise of a satellite app doesn't expose signing capability
  * - Key rotation is simplified (just update public key)
- * 
+ *
  * @package @repo/auth
  * @since 1.0.0
  */
 
-import { SignJWT, jwtVerify, importPKCS8, importSPKI, exportPKCS8, exportSPKI } from 'jose';
-import { generateKeyPair } from 'crypto';
-import { promisify } from 'util';
-
-const generateKeyPairAsync = promisify(generateKeyPair);
+import { SignJWT, jwtVerify, importPKCS8, importSPKI, exportPKCS8, exportSPKI, generateKeyPair } from 'jose';
 
 // ============================================================================
 // KEY MANAGEMENT
@@ -31,30 +27,28 @@ export interface KeyPair {
 
 /**
  * Generate a new RSA key pair for service authentication
- * 
+ *
  * In production, generate once and store in environment variables:
  * - INTENTION_ENGINE_PRIVATE_KEY (private, never shared)
  * - TABLESTACK_PUBLIC_KEY, OPENDELIVERY_PUBLIC_KEY (distributed to verifiers)
- * 
+ *
  * @param modulusLength - Key size (default 2048, use 4096 for production)
  * @returns Key pair in SPKI/PKCS#8 format
  */
 export async function generateServiceKeyPair(
   modulusLength: number = 2048
 ): Promise<KeyPair> {
-  const { publicKey, privateKey } = await generateKeyPairAsync('rsa', {
+  const { publicKey, privateKey } = await generateKeyPair('RS256', {
     modulusLength,
-    publicKeyEncoding: {
-      type: 'spki',
-      format: 'pem',
-    },
-    privateKeyEncoding: {
-      type: 'pkcs8',
-      format: 'pem',
-    },
+    extractable: true,
   });
 
-  return { publicKey, privateKey };
+  const [publicKeyPEM, privateKeyPEM] = await Promise.all([
+    exportSPKI(publicKey),
+    exportPKCS8(privateKey),
+  ]);
+
+  return { publicKey: publicKeyPEM, privateKey: privateKeyPEM };
 }
 
 /**
@@ -282,20 +276,20 @@ export async function verifyAsymmetricJWT(
 
 /**
  * Export a key pair for distribution
- * 
+ *
  * Use this to securely export the public key for satellite services.
  * The private key should NEVER be exported or shared.
- * 
+ *
  * @param keyPair - Key pair to export
  * @returns Object with public key (for distribution) and masked private key info
  */
-export function exportKeyPairForDistribution(keyPair: KeyPair): {
+export async function exportKeyPairForDistribution(keyPair: KeyPair): Promise<{
   publicKey: string;
   publicKeyFingerprint: string;
   privateKeyInfo: string;
-} {
+}> {
   // Generate a fingerprint of the public key (for verification)
-  const fingerprint = generateKeyFingerprint(keyPair.publicKey);
+  const fingerprint = await generateKeyFingerprint(keyPair.publicKey);
 
   return {
     publicKey: keyPair.publicKey,
@@ -306,29 +300,31 @@ export function exportKeyPairForDistribution(keyPair: KeyPair): {
 
 /**
  * Generate a fingerprint of a public key (for verification)
- * 
+ *
  * This creates a short, human-readable hash that can be used to verify
  * key integrity during distribution.
  */
-export function generateKeyFingerprint(publicKey: string): string {
-  const hash = require('crypto').createHash('sha256');
-  hash.update(publicKey);
-  const digest = hash.digest('hex');
+export async function generateKeyFingerprint(publicKey: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(publicKey);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const digest = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   // Return first 16 chars as fingerprint
   return digest.substring(0, 16).match(/.{1,4}/g)?.join(':') || digest.substring(0, 16);
 }
 
 /**
  * Generate setup instructions for a satellite service
- * 
+ *
  * Use this to generate environment variable setup instructions
  * for distributing public keys to satellite services.
  */
-export function generateSatelliteSetupInstructions(
+export async function generateSatelliteSetupInstructions(
   keyPair: KeyPair,
   satelliteServices: string[]
-): string {
-  const fingerprint = generateKeyFingerprint(keyPair.publicKey);
+): Promise<string> {
+  const fingerprint = await generateKeyFingerprint(keyPair.publicKey);
 
   let instructions = `
 ╔══════════════════════════════════════════════════════════════════════════════╗

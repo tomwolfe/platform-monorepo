@@ -19,7 +19,7 @@
 
 'use client';
 
-import { useCallback, useRef, useEffect } from 'react';
+import { useCallback, useRef, useEffect, ComponentType, createElement } from 'react';
 
 export interface UseProactiveCacheWarmingOptions {
   /** Debounce delay in ms (default: 500ms) */
@@ -155,15 +155,15 @@ export function useProactiveCacheWarming(
 
 /**
  * Higher-order component wrapper for cache warming
- * 
+ *
  * Usage:
  *   const ChatInputWithCacheWarming = withProactiveCacheWarming(ChatInput);
  */
 export function withProactiveCacheWarming<P extends object>(
-  WrappedComponent: React.ComponentType<P & { warmCache: UseProactiveCacheWarmingReturn['warmCache'] }>
+  WrappedComponent: ComponentType<P & { warmCache: UseProactiveCacheWarmingReturn['warmCache'] }>
 ) {
   return function WithProactiveCacheWarming(props: P) {
     const { warmCache } = useProactiveCacheWarming();
-    return <WrappedComponent {...props} warmCache={warmCache} />;
+    return createElement(WrappedComponent, { ...props, warmCache });
   };
 }

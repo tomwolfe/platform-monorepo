@@ -95,8 +95,7 @@ export const getRedisConfig = (appName: string) => {
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
 
   // CRITICAL: Fail fast in production runtime if Redis is not configured
-  // Note: We allow build-time to pass without Redis config (for CI/CD builds)
-  // The actual runtime check happens when the app starts, not during build
+  // We allow CI/test environments to use fallback values
   const isProductionRuntime = process.env.NODE_ENV === 'production' && process.env.CI !== 'true';
 
   if (!url || !token) {
@@ -106,21 +105,17 @@ export const getRedisConfig = (appName: string) => {
         'Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN environment variables.'
       );
     }
-    // Development/CI build: provide clear warning but allow fallback
-    if (process.env.CI !== 'true') {
+    // Development/CI/test: provide fallback without warnings in CI
+    if (process.env.CI !== 'true' && process.env.NODE_ENV !== 'test') {
       console.warn(
         `[${appName}] Redis environment variables missing. ` +
         'Using localhost fallback. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for production.'
       );
     }
-    // Use a valid HTTPS URL format for build-time stub
-    // This is required because Upstash Redis client validates URL format
-    // In CI/build environments, we use a placeholder that passes validation
-    return { 
-      url: process.env.CI === 'true' 
-        ? 'https://placeholder.upstash.io' 
-        : 'http://localhost:8080', 
-      token: process.env.CI === 'true' ? 'placeholder_token' : 'example_token' 
+    // Use localhost for CI/test/development
+    return {
+      url: 'http://localhost:6379',
+      token: 'test_token'
     };
   }
 

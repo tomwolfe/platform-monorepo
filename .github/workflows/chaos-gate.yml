@@ -74,6 +74,11 @@ jobs:
           # Check Postgres connectivity
           docker compose exec -T postgres pg_isready -U apps || exit 1
 
+      - name: Run Migrations
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+
       - name: Start applications
         run: |
           # Start intention-engine on port 3000 in background

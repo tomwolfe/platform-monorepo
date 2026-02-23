@@ -1,6 +1,12 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
 
+const isPublicRoute = createRouteMatcher([
+  '/api/health',
+  '/api/auth/bridge(.*)',
+  '/api/mcp(.*)',
+]);
+
 const isProtectedRoute = createRouteMatcher([
   '/driver(.*)',
   '/dashboard(.*)',
@@ -8,17 +14,17 @@ const isProtectedRoute = createRouteMatcher([
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
+  // Skip middleware for public routes
+  if (isPublicRoute(req)) {
+    return NextResponse.next();
+  }
+
   // Skip middleware for _not-found route during build
   if (req.nextUrl.pathname.startsWith('/_not-found')) {
     return NextResponse.next();
   }
 
-  // 1. Allow the bridge route to bypass initial auth
-  if (req.nextUrl.pathname.startsWith('/api/auth/bridge')) {
-    return NextResponse.next();
-  }
-
-  // 2. Standard protection for other routes
+  // Standard protection for other routes
   if (isProtectedRoute(req)) {
     // If no Clerk session, check if we have our custom bridge cookie
     const hasBridge = req.cookies.has('edge_session_bridge');

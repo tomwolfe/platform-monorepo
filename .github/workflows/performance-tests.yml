@@ -94,17 +94,14 @@ jobs:
 
       - name: Start application
         run: |
-          # Start Next.js in standalone mode for CI
-          cd apps/open-delivery
+          # Start Intention Engine (the target for performance tests)
           export NODE_ENV=test
           export HOSTNAME=0.0.0.0
           export PORT=3000
-          # Ensure env vars from .env.local are loaded into the shell for the node process
           set -a
-          [ -f ../../.env.local ] && source ../../.env.local
+          [ -f .env.local ] && source .env.local
           set +a
-          node .next/standalone/apps/open-delivery/server.js &
-          cd ../..
+          node apps/intention-engine/.next/standalone/apps/intention-engine/server.js &
 
       - name: Wait for application to be ready
         run: |
@@ -224,17 +221,14 @@ jobs:
 
       - name: Start application
         run: |
-          # Start Next.js in standalone mode for CI
-          cd apps/open-delivery
+          # Start Intention Engine (the target for performance tests)
           export NODE_ENV=test
           export HOSTNAME=0.0.0.0
           export PORT=3000
-          # Ensure env vars from .env.local are loaded into the shell for the node process
           set -a
-          [ -f ../../.env.local ] && source ../../.env.local
+          [ -f .env.local ] && source .env.local
           set +a
-          node .next/standalone/apps/open-delivery/server.js &
-          cd ../..
+          node apps/intention-engine/.next/standalone/apps/intention-engine/server.js &
 
       - name: Wait for application to be ready
         run: |

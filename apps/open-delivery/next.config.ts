@@ -14,10 +14,6 @@ const nextConfig: NextConfig = {
   },
   // Enable standalone output for Docker/CI deployments
   output: 'standalone',
-  // Ensure all required assets are included
-  experimental: {
-    serverComponentsExternalPackages: ['ably'],
-  },
 };
 
 export default nextConfig;

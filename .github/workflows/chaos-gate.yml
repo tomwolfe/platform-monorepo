@@ -50,6 +50,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
       - name: Build project
         run: pnpm build
         env:
@@ -83,11 +91,10 @@ jobs:
 
       - name: Start Applications and Run Chaos Suite
         run: |
-          # Use PORT env var instead of -p flag to avoid argument parsing issues in CI
-          # Use --filter to ensure we target the correct packages from root
-          PORT=3000 pnpm --filter @repo/intention-engine start &
-          PORT=3001 pnpm --filter @repo/open-delivery start &
-
+          # Use the standalone entry points as per Next.js 15 recommendation
+          PORT=3000 node apps/intention-engine/.next/standalone/apps/intention-engine/server.js &
+          PORT=3001 node apps/open-delivery/.next/standalone/apps/open-delivery/server.js &
+          
           echo "Waiting for intention-engine to start..."
           READY=0
           for i in {1..30}; do

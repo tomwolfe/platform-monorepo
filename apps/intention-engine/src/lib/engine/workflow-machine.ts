@@ -1598,6 +1598,7 @@ export class WorkflowMachine {
     // Note: Can't transition to "COMPENSATING" as it's not in the ExecutionStatus enum
     // We'll just execute the compensation directly
 
+    const MAX_COMPENSATION_ATTEMPTS = 3;
     let compensated = 0;
     let failed = 0;
     const compensationFailures: Array<{
@@ -1617,7 +1618,6 @@ export class WorkflowMachine {
       }
 
       // MULTI-STEP COMPENSATION: Retry logic for compensation actions
-      const MAX_COMPENSATION_ATTEMPTS = 3;
       let compensationSuccess = false;
       let lastError: string | null = null;
 

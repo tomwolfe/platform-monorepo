@@ -1,5 +1,5 @@
 import { injectTracingHeaders } from "@repo/shared/tracing";
-import { Tracer } from "./tracing";
+import { Tracer } from "./engine/tracing";
 
 /**
  * Enhanced fetch with automatic x-trace-id injection.

@@ -1756,7 +1756,7 @@ export class WorkflowMachine {
         const toolDef = registry.getDefinition(step.tool_name);
         if (toolDef) {
           // Generate schema hash for version detection
-          const schemaHash = await this.generateSchemaHash(toolDef.input_schema || {});
+          const schemaHash = await this.generateSchemaHash(toolDef.inputSchema || {});
           toolVersions[step.tool_name] = {
             version: toolDef.version || "1.0.0",
             schemaHash,
@@ -1849,7 +1849,7 @@ export class WorkflowMachine {
     expiresAt: string;
   }> {
     const { ConfirmationService } = await import(
-      "@/app/api/engine/confirm/route"
+      "@/lib/engine/confirmation-service"
     );
 
     const userId = (this.state.context?.userId as string) || undefined;
@@ -1898,15 +1898,10 @@ export class WorkflowMachine {
       stepIndex,
       totalSteps: this.state.step_states.length,
       stepName: step.tool_name,
-      status: "suspended",
+      status: "pending",
       message: `Confirmation required: ${riskAssessment.reason}`,
       timestamp,
       traceId: this.traceId,
-      metadata: {
-        confirmationToken: token,
-        riskLevel: riskAssessment.level,
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      },
     });
 
     // Publish nervous system event for confirmation required
@@ -2356,7 +2351,7 @@ export class WorkflowMachine {
       }
 
       const currentVersion = toolDef.version || "1.0.0";
-      const currentSchemaHash = await this.generateSchemaHash(toolDef.input_schema || {});
+      const currentSchemaHash = await this.generateSchemaHash(toolDef.inputSchema || {});
 
       const versionChanged = checkpointVersion.version !== currentVersion;
       const schemaChanged = checkpointVersion.schemaHash !== currentSchemaHash;

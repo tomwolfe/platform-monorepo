@@ -542,3 +542,26 @@ export function isValidStateTransition(
 export function isTerminalStatus(status: ExecutionStatus): boolean {
   return ["COMPLETED", "FAILED", "REJECTED", "TIMEOUT", "CANCELLED"].includes(status);
 }
+
+/**
+ * Transition execution state to a new status
+ * Validates the transition is allowed before applying
+ */
+export function transitionState(
+  state: ExecutionState,
+  newStatus: ExecutionStatus
+): ExecutionState {
+  const currentStatus = state.status;
+  
+  if (!isValidStateTransition(currentStatus, newStatus)) {
+    throw new Error(
+      `Invalid state transition from ${currentStatus} to ${newStatus}`
+    );
+  }
+
+  return {
+    ...state,
+    status: newStatus,
+    updated_at: new Date().toISOString(),
+  };
+}

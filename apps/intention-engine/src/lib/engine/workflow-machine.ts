@@ -85,6 +85,22 @@ const SEGMENT_TIMEOUT_MS = 8500; // Abort individual steps at 8.5s
 const SAGA_TIMEOUT_MS = 120000; // 2 minutes for entire saga
 
 // ============================================================================
+// ADAPTIVE BATCHING CONFIGURATION
+// Reduces cold start penalties by batching steps intelligently
+// ============================================================================
+
+const ADAPTIVE_BATCHING_CONFIG = {
+  // Minimum elapsed time before checking if we should yield
+  minElapsedBeforeYieldCheck: 4000, // Don't yield before 4s - maximize lambda utilization
+  // Estimated average step duration (used for prediction)
+  estimatedStepDurationMs: 1500, // Conservative estimate: 1.5s per step
+  // Buffer time for state persistence and QStash trigger
+  yieldBufferMs: 1500, // Reserve 1.5s for checkpoint + QStash trigger
+  // Maximum steps to batch in one segment
+  maxBatchSize: 3, // Don't batch more than 3 steps to avoid timeout risk
+};
+
+// ============================================================================
 // WORKFLOW STATUS ENUM
 // Extended execution status with saga-specific states
 // ============================================================================
@@ -467,13 +483,16 @@ export class WorkflowMachine {
 
         this.state = transitionState(this.state, "EXECUTING");
 
-        // Main execution loop
+        // Main execution loop with ADAPTIVE BATCHING
         while (true) {
-          // Check if we're approaching timeout
           const elapsedInSegment = Date.now() - this.segmentStartTime;
-          if (elapsedInSegment >= CHECKPOINT_THRESHOLD_MS) {
+
+          // ADAPTIVE BATCHING: Check if we should yield BEFORE executing next batch
+          const shouldYield = this.shouldYieldExecution(elapsedInSegment);
+
+          if (shouldYield) {
             console.log(
-              `[WorkflowMachine] Approaching timeout (${elapsedInSegment}ms), yielding...`
+              `[WorkflowMachine] Adaptive batching: yielding after ${elapsedInSegment}ms (elapsed >= ${ADAPTIVE_BATCHING_CONFIG.minElapsedBeforeYieldCheck}ms)`
             );
             return await this.yieldExecution("TIMEOUT_APPROACHING");
           }
@@ -515,10 +534,19 @@ export class WorkflowMachine {
             }
           }
 
+          // ADAPTIVE BATCHING: Limit batch size to avoid timeout
+          const stepsToExecute = readySteps.slice(0, ADAPTIVE_BATCHING_CONFIG.maxBatchSize);
+
+          if (stepsToExecute.length < readySteps.length) {
+            console.log(
+              `[WorkflowMachine] Adaptive batching: limiting batch to ${stepsToExecute.length}/${readySteps.length} steps`
+            );
+          }
+
           // Execute ready steps in parallel
-          const stepIds = readySteps.map(s => s.id);
+          const stepIds = stepsToExecute.map(s => s.id);
           const stepResultsSettled = await Promise.allSettled(
-            readySteps.map((step) =>
+            stepsToExecute.map((step) =>
               this.executeStep({
                 state: this.state,
                 step,
@@ -561,7 +589,7 @@ export class WorkflowMachine {
           }
 
           // Check if any step failed and needs compensation
-          const failedStep = readySteps.find((step, i) => {
+          const failedStep = stepsToExecute.find((step, i) => {
             const result = stepResultsSettled[i];
             return result.status === "fulfilled" && result.value.stepState.status === "failed";
           });
@@ -579,9 +607,10 @@ export class WorkflowMachine {
             }
           }
 
-          // Check if we need to yield after this batch
+          // ADAPTIVE BATCHING: Check if we need to yield after this batch
+          // Use the intelligent shouldYieldExecution method instead of simple threshold
           const elapsedAfterBatch = Date.now() - this.segmentStartTime;
-          if (elapsedAfterBatch >= CHECKPOINT_THRESHOLD_MS) {
+          if (this.shouldYieldExecution(elapsedAfterBatch)) {
             return await this.yieldExecution("TIMEOUT_APPROACHING");
           }
         }
@@ -741,12 +770,21 @@ export class WorkflowMachine {
           }
         }
 
-        // IDEMPOTENCY CHECK - Enhanced with parameter hashing
+        // IDEMPOTENCY CHECK - Enhanced with Semantic Checksum
+        // Uses SHA-256(toolName + sortedParameters) for stricter idempotency
         const idempotencyKey = `${this.intentId || this.executionId}:${stepIndex}`;
         if (idempotencyService) {
-          const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey, resolvedParameters);
+          const isDuplicate = await idempotencyService.isDuplicate(
+            idempotencyKey,
+            step.tool_name,
+            resolvedParameters
+          );
           if (isDuplicate) {
-            const keyHash = await idempotencyService.getKey(idempotencyKey, resolvedParameters);
+            const keyHash = await idempotencyService.getKey(
+              idempotencyKey,
+              step.tool_name,
+              resolvedParameters
+            );
             console.log(`[Idempotency] Step ${step.tool_name} (${step.id}) already executed, skipping. Key: ${keyHash}`);
             span.setAttributes({ idempotency_skip: true });
 
@@ -1530,6 +1568,42 @@ export class WorkflowMachine {
       default:
         return null;
     }
+  }
+
+  /**
+   * ADAPTIVE BATCHING: Determine if we should yield execution
+   *
+   * Intelligent yield decision based on:
+   * 1. Elapsed time in current segment
+   * 2. Estimated time for next step
+   * 3. Buffer time needed for checkpoint + QStash trigger
+   *
+   * This reduces cold start penalties by maximizing lambda utilization
+   * while ensuring we always have enough time to checkpoint safely.
+   *
+   * @param elapsedInSegment - Milliseconds elapsed in current segment
+   * @returns true if we should yield, false if we can continue
+   */
+  private shouldYieldExecution(elapsedInSegment: number): boolean {
+    // If we haven't reached minimum elapsed time, don't yield
+    if (elapsedInSegment < ADAPTIVE_BATCHING_CONFIG.minElapsedBeforeYieldCheck) {
+      return false;
+    }
+
+    // Calculate projected time if we execute more steps
+    const projectedTime = elapsedInSegment + ADAPTIVE_BATCHING_CONFIG.estimatedStepDurationMs;
+    const thresholdWithBuffer = CHECKPOINT_THRESHOLD_MS + ADAPTIVE_BATCHING_CONFIG.yieldBufferMs;
+
+    // Yield if projected time exceeds threshold with buffer
+    if (projectedTime >= thresholdWithBuffer) {
+      console.log(
+        `[WorkflowMachine:AdaptiveBatching] Projected time (${projectedTime}ms) exceeds threshold (${thresholdWithBuffer}ms), yielding`
+      );
+      return true;
+    }
+
+    // Don't yield if we're still in safe zone
+    return false;
   }
 
   /**

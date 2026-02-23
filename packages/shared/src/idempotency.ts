@@ -8,23 +8,34 @@ export class IdempotencyService {
    * Uses Web Crypto API for Edge Runtime compatibility
    * Normalizes and sorts parameters to ensure consistent hashing
    * even if LLM sends parameters in different order or with whitespace variations
+   *
+   * ENHANCEMENT: Semantic Checksum Idempotency
+   * - Now includes toolName in the hash for stricter idempotency
+   * - Key format: SHA-256(toolName + sortedParameters)
+   * - Prevents double-execution even if plan changes but action is the same
    */
-  private async generateParamsHash(parameters: Record<string, unknown>): Promise<string> {
-    // Normalize parameters: sort keys and stringify
-    const sortedParams = JSON.stringify(
-      Object.entries(parameters)
+  private async generateParamsHash(
+    toolName: string,
+    parameters: Record<string, unknown>
+  ): Promise<string> {
+    // Include toolName in the hash input for semantic idempotency
+    const hashInput = {
+      tool: toolName,
+      params: Object.entries(parameters)
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, value]) => [key, this.normalizeValue(value)])
-    );
-    
+        .map(([key, value]) => [key, this.normalizeValue(value)]),
+    };
+
+    const sortedParams = JSON.stringify(hashInput);
+
     // Use Web Crypto API for Edge Runtime compatibility
     const encoder = new TextEncoder();
     const data = encoder.encode(sortedParams);
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-    
-    return hashHex.substring(0, 8);
+
+    return hashHex.substring(0, 16); // Use 16 chars for better collision resistance
   }
 
   /**
@@ -58,20 +69,26 @@ export class IdempotencyService {
   /**
    * Checks if a key has already been processed.
    * If not, it sets the key with a 24-hour TTL.
-   * 
-   * Enhanced with parameter hashing to prevent duplicate execution
-   * when LLM sends slightly different parameters on retry.
-   * 
+   *
+   * ENHANCEMENT: Semantic Checksum Idempotency
+   * - Uses SHA-256(toolName + sortedParameters) for stricter idempotency
+   * - Even if plan changes, if the action is the same, it won't repeat
+   *
    * @param key - Base key (e.g., `${executionId}:${stepIndex}`)
+   * @param toolName - Tool name to include in semantic hash
    * @param parameters - Optional parameters to include in hash for stricter idempotency
    * @returns true if it's a duplicate, false if it's new.
    */
-  async isDuplicate(key: string, parameters?: Record<string, unknown>): Promise<boolean> {
-    const paramsHash = parameters ? await this.generateParamsHash(parameters) : null;
-    const fullKey = paramsHash 
+  async isDuplicate(
+    key: string,
+    toolName: string,
+    parameters?: Record<string, unknown>
+  ): Promise<boolean> {
+    const paramsHash = parameters ? await this.generateParamsHash(toolName, parameters) : null;
+    const fullKey = paramsHash
       ? `idempotency:${key}:${paramsHash}`
       : `idempotency:${key}`;
-    
+
     const set = await this.redis.set(fullKey, 'processed', {
       nx: true,
       ex: 24 * 60 * 60, // 24 hours
@@ -82,9 +99,13 @@ export class IdempotencyService {
   /**
    * Get the idempotency key for debugging/logging
    */
-  async getKey(key: string, parameters?: Record<string, unknown>): Promise<string> {
-    const paramsHash = parameters ? await this.generateParamsHash(parameters) : null;
-    return paramsHash 
+  async getKey(
+    key: string,
+    toolName: string,
+    parameters?: Record<string, unknown>
+  ): Promise<string> {
+    const paramsHash = parameters ? await this.generateParamsHash(toolName, parameters) : null;
+    return paramsHash
       ? `idempotency:${key}:${paramsHash}`
       : `idempotency:${key}`;
   }

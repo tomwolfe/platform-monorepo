@@ -36,6 +36,17 @@
     "dev": {
       "cache": false,
       "persistent": true
+    },
+    "db:generate": {
+      "cache": false
+    },
+    "db:migrate": {
+      "cache": false,
+      "dependsOn": ["^build"]
+    },
+    "db:studio": {
+      "cache": false,
+      "persistent": true
     }
   }
 }

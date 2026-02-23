@@ -35,7 +35,7 @@ export const options = {
         { duration: '2m', target: 25 },   // Ramp down
         { duration: '1m', target: 0 },    // Cooldown
       ],
-      graceRampDown: '1m',
+      gracefulRampDown: '1m',
     },
   },
 };

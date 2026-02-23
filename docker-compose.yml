@@ -40,7 +40,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      test: ["CMD", "redis-cli", "-a", "apps", "--raw", "incr", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -52,13 +52,15 @@ services:
   # Provides HTTP REST interface to Redis for Upstash SDK parity
   # ─────────────────────────────────────────────────────────────
   upstash-proxy:
-    image: upstash/rest-server:latest
+    image: hiett/serverless-redis-http:latest
     container_name: apps-upstash-proxy
     restart: unless-stopped
     environment:
-      - REDIS_URL=redis://:apps@redis:6379
+      - SRH_CONNECTION_STRING=redis://:apps@redis:6379
+      - SRH_TOKEN=apps
+      - SRH_MODE=env
     ports:
-      - "8080:8080"
+      - "8080:80"
     depends_on:
       redis:
         condition: service_healthy

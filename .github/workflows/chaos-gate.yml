@@ -74,7 +74,7 @@ jobs:
           # Check Postgres connectivity
           docker compose exec -T postgres pg_isready -U apps || exit 1
           # Check Upstash proxy connectivity
-          curl -sf http://localhost:8080/ping || echo "⚠️ Upstash proxy not ready yet, continuing..."
+          curl -sf -H "Authorization: Bearer apps" http://localhost:8080/PING || echo "⚠️ Upstash proxy not ready yet, continuing..."
 
       - name: Run Migrations
         run: pnpm db:migrate

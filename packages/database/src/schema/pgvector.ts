@@ -123,9 +123,8 @@ export const semanticMemories = pgTable(
     restaurantName: text('restaurant_name'),
 
     // Outcome of the interaction
-    outcome: text('outcome', {
-      enum: ['success', 'failed', 'partial', 'abandoned'],
-    }),
+    // FIX: Removed invalid enum config object for Postgres text column
+    outcome: text('outcome'),
 
     // Additional metadata
     metadata: jsonb('metadata').$type<Record<string, unknown>>(),

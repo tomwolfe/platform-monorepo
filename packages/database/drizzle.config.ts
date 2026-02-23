@@ -7,6 +7,6 @@ export default defineConfig({
   dbCredentials: {
     url: process.env.DATABASE_URL!,
   },
-  // Use standard pg driver for migrations (not @neondatabase/serverless which only works with remote instances)
-  driver: 'pg',
+  // Note: 'driver' is removed as of drizzle-kit 0.30.0.
+  // It is now automatically detected based on the 'dialect'.
 });

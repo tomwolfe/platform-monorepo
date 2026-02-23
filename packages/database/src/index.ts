@@ -59,7 +59,7 @@ export {
   type SemanticMemorySearchResult,
 } from './schema/pgvector';
 
-const databaseUrl = process.env.DATABASE_URL!;
+const databaseUrl = process.env.DATABASE_URL;
 
 // We avoid calling neon() if databaseUrl is missing, which can happen during build
 // This allows the package to be imported during build time for type checking/metadata
@@ -78,7 +78,17 @@ if (wrappedClient && neonClient) {
   Object.assign(wrappedClient, neonClient);
 }
 
-export const db = wrappedClient ? drizzle(wrappedClient as any, { schema }) : (null as any);
+// FIX: Export a Proxy to prevent crashes when DATABASE_URL is missing during build
+export const db = wrappedClient
+  ? drizzle(wrappedClient as any, { schema })
+  : new Proxy({} as any, {
+      get(_, prop) {
+        if (prop === 'then') return undefined;
+        return () => {
+          throw new Error(`Database operation failed: DATABASE_URL is not configured.`);
+        };
+      }
+    });
 
 export type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
 

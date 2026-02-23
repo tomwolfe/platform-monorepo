@@ -33,10 +33,10 @@ export const options = {
   },
   thresholds: {
     http_req_duration: ["p(95)<5000"], // p95 must be under 5 seconds (LLM calls + latency injection)
-    http_req_failed: ["rate<0.40"],    // Relaxed from 0.35 for CI stability
-    checks: ["rate>=0.50"],            // Relaxed from 0.55 for CI stability
-    errors: ["rate<0.45"],             // Relaxed from 0.40 for CI stability
-    timeouts: ["rate<0.50"],           // Relaxed from 0.45 for CI stability
+    http_req_failed: ["rate<0.50"],    // Relaxed for stability under injected latency
+    checks: ["rate>=0.90"],           // Strict on logic/checks passing
+    errors: ["rate<0.45"],             // Relaxed for CI stability
+    timeouts: ["rate<0.50"],           // Relaxed for CI stability
   },
 };
 

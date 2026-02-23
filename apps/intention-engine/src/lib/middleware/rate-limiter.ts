@@ -54,40 +54,40 @@ export interface EndpointRateLimitConfig {
 // Default configurations
 export const DEFAULT_LIMITS: EndpointRateLimitConfig = {
   chat: {
-    maxRequests: 60,
-    windowMs: 60000, // 1 minute
+    maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "60"),
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000"),
     burstAllowance: 10,
     enableRedisSync: true,
     fallbackToLocal: true,
     keyPrefix: "ratelimit:chat:",
   },
   execute: {
-    maxRequests: 30,
-    windowMs: 60000, // 1 minute
+    maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "30"),
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000"),
     burstAllowance: 5,
     enableRedisSync: true,
     fallbackToLocal: true,
     keyPrefix: "ratelimit:execute:",
   },
   webhook: {
-    maxRequests: 100,
-    windowMs: 60000, // 1 minute
+    maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "100"),
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000"),
     burstAllowance: 20,
     enableRedisSync: true,
     fallbackToLocal: true,
     keyPrefix: "ratelimit:webhook:",
   },
   api: {
-    maxRequests: 100,
-    windowMs: 60000, // 1 minute
+    maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "100"),
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000"),
     burstAllowance: 20,
     enableRedisSync: true,
     fallbackToLocal: true,
     keyPrefix: "ratelimit:api:",
   },
   cache: {
-    maxRequests: 200,
-    windowMs: 60000, // 1 minute
+    maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "200"),
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000"),
     burstAllowance: 50,
     enableRedisSync: true,
     fallbackToLocal: true,

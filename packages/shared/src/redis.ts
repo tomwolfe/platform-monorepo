@@ -123,10 +123,10 @@ export const getRedisConfig = (appName: string) => {
         'Using localhost fallback. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for production.'
       );
     }
-    // Use localhost for CI/test/development
+    // Use localhost with Upstash proxy port (8080) for SDK compatibility
     return {
-      url: 'http://localhost:6379',
-      token: 'test_token'
+      url: 'http://localhost:8080',
+      token: 'apps'
     };
   }
 

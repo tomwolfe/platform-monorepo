@@ -156,6 +156,12 @@ export interface WorkflowCheckpoint {
       parameters: Record<string, unknown>;
     }>;
   };
+  // ENHANCEMENT: Semantic Checksum Versioning for Tools
+  // Tracks tool versions at checkpoint time to detect schema evolution
+  toolVersions?: Record<string, {
+    version: string;
+    schemaHash: string;
+  }>;
 }
 
 // ============================================================================
@@ -772,18 +778,22 @@ export class WorkflowMachine {
 
         // IDEMPOTENCY CHECK - Enhanced with Semantic Checksum
         // Uses SHA-256(toolName + sortedParameters) for stricter idempotency
+        // CRITICAL FIX: Salt hash with userId to prevent cross-user blocking
         const idempotencyKey = `${this.intentId || this.executionId}:${stepIndex}`;
+        const userId = (state.context?.userId as string) || undefined;
         if (idempotencyService) {
           const isDuplicate = await idempotencyService.isDuplicate(
             idempotencyKey,
             step.tool_name,
-            resolvedParameters
+            resolvedParameters,
+            userId
           );
           if (isDuplicate) {
             const keyHash = await idempotencyService.getKey(
               idempotencyKey,
               step.tool_name,
-              resolvedParameters
+              resolvedParameters,
+              userId
             );
             console.log(`[Idempotency] Step ${step.tool_name} (${step.id}) already executed, skipping. Key: ${keyHash}`);
             span.setAttributes({ idempotency_skip: true });
@@ -810,6 +820,41 @@ export class WorkflowMachine {
               },
             };
           }
+        }
+
+        // HITL: Check if step requires confirmation before execution
+        // ENHANCEMENT: Interrupted Sagas with Confirmation Tokens
+        if (step.requires_confirmation) {
+          console.log(
+            `[WorkflowMachine] Step ${step.id} (${step.tool_name}) requires confirmation`
+          );
+
+          // Assess risk level based on tool type and parameters
+          const riskAssessment = this.assessStepRisk(step, resolvedParameters);
+
+          // Create confirmation token and suspend saga
+          const confirmationResult = await this.createConfirmationAndSuspend(
+            step,
+            stepIndex,
+            riskAssessment
+          );
+
+          // Return suspended state - execution will resume when user confirms
+          return {
+            stepState: {
+              step_id: step.id,
+              status: "suspended",
+              output: {
+                requiresConfirmation: true,
+                confirmationToken: confirmationResult.token,
+                expiresAt: confirmationResult.expiresAt,
+                riskAssessment,
+              },
+              completed_at: new Date().toISOString(),
+              latency_ms: 0,
+              attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+            },
+          };
         }
 
         // Validation before execution using DB_REFLECTED_SCHEMAS
@@ -1607,10 +1652,118 @@ export class WorkflowMachine {
   }
 
   /**
+   * Assess risk level of a step for confirmation requirements
+   *
+   * ENHANCEMENT: Human-in-the-Loop Risk Assessment
+   * - Evaluates step risk based on tool type, parameters, and context
+   * - HIGH/CRITICAL: Payments, large deposits, irreversible actions
+   * - MEDIUM: Bookings, reservations with moderate commitment
+   * - LOW: Informational queries, searches
+   *
+   * @param step - Step to assess
+   * @param parameters - Resolved parameters
+   * @returns Risk assessment with level and reason
+   */
+  private assessStepRisk(
+    step: PlanStep,
+    parameters: Record<string, unknown>
+  ): {
+    level: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+    reason: string;
+    amount?: number;
+  } {
+    const toolName = step.tool_name.toLowerCase();
+
+    // CRITICAL: Payment-related actions
+    if (
+      toolName.includes("payment") ||
+      toolName.includes("charge") ||
+      toolName.includes("refund") ||
+      toolName.includes("stripe")
+    ) {
+      const amount = (parameters.amount as number) || (parameters.total as number) || 0;
+      if (amount > 500) {
+        return {
+          level: "CRITICAL",
+          reason: `High-value payment of $${amount.toFixed(2)} requires explicit confirmation`,
+          amount,
+        };
+      }
+      return {
+        level: "HIGH",
+        reason: `Payment action of $${amount.toFixed(2)} requires confirmation`,
+        amount,
+      };
+    }
+
+    // HIGH: Booking with deposit
+    if (
+      toolName.includes("book") ||
+      toolName.includes("reserve") ||
+      toolName.includes("deposit")
+    ) {
+      const depositAmount = (parameters.deposit_amount as number) || 0;
+      const partySize = (parameters.party_size as number) || 1;
+
+      if (depositAmount > 100 || partySize > 8) {
+        return {
+          level: "HIGH",
+          reason: depositAmount > 100
+            ? `Large deposit of $${depositAmount.toFixed(2)} requires confirmation`
+            : `Large party size (${partySize}) requires confirmation`,
+          amount: depositAmount,
+        };
+      }
+
+      return {
+        level: "MEDIUM",
+        reason: "Booking/reservation requires confirmation",
+        amount: depositAmount || undefined,
+      };
+    }
+
+    // MEDIUM: Send/notify actions
+    if (
+      toolName.includes("send") ||
+      toolName.includes("notify") ||
+      toolName.includes("email") ||
+      toolName.includes("sms")
+    ) {
+      return {
+        level: "MEDIUM",
+        reason: "Communication action requires confirmation",
+      };
+    }
+
+    // LOW: Default for other actions
+    return {
+      level: "LOW",
+      reason: "Standard action requires confirmation",
+    };
+  }
+
+  /**
    * Yield execution and save checkpoint
    */
   private async yieldExecution(reason: WorkflowCheckpoint["reason"]): Promise<WorkflowResult> {
     const nextStepIndex = this.getNextStepIndex();
+
+    // ENHANCEMENT: Capture tool versions for schema evolution detection
+    const toolVersions: Record<string, { version: string; schemaHash: string }> = {};
+    if (this.plan) {
+      const registry = getToolRegistry();
+      for (const step of this.plan.steps) {
+        const toolDef = registry.getDefinition(step.tool_name);
+        if (toolDef) {
+          // Generate schema hash for version detection
+          const schemaHash = await this.generateSchemaHash(toolDef.input_schema || {});
+          toolVersions[step.tool_name] = {
+            version: toolDef.version || "1.0.0",
+            schemaHash,
+          };
+        }
+      }
+    }
 
     const checkpoint: WorkflowCheckpoint = {
       executionId: this.executionId,
@@ -1629,6 +1782,7 @@ export class WorkflowMachine {
         sagaId: `saga:${this.executionId}`,
         compensationsRegistered: this.compensationsRegistered,
       } : undefined,
+      toolVersions,
     };
 
     // Save checkpoint to Redis
@@ -1657,8 +1811,137 @@ export class WorkflowMachine {
   }
 
   /**
+   * Generate a hash of a tool's schema for version detection
+   */
+  private async generateSchemaHash(schema: Record<string, unknown>): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(JSON.stringify(schema, Object.keys(schema).sort()));
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 16);
+  }
+
+  /**
+   * Create confirmation token and suspend saga for Human-in-the-Loop (HITL)
+   *
+   * ENHANCEMENT: Interrupted Sagas with Confirmation Tokens
+   * - Detects high-risk actions (payments, bookings with deposits, etc.)
+   * - Generates confirmation token with 15-minute TTL
+   * - Transitions state to SUSPENDED
+   * - Publishes real-time update to UI with confirmation prompt
+   * - Only /api/engine/confirm endpoint can resume the saga
+   *
+   * @param step - Step requiring confirmation
+   * @param stepIndex - Index of the step
+   * @param riskAssessment - Risk level and reason for confirmation
+   * @returns Confirmation token for UI to present to user
+   */
+  private async createConfirmationAndSuspend(
+    step: PlanStep,
+    stepIndex: number,
+    riskAssessment: {
+      level: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+      reason: string;
+      amount?: number;
+    }
+  ): Promise<{
+    token: string;
+    expiresAt: string;
+  }> {
+    const { ConfirmationService } = await import(
+      "@/app/api/engine/confirm/route"
+    );
+
+    const userId = (this.state.context?.userId as string) || undefined;
+    const clerkId = (this.state.context?.clerkId as string) || undefined;
+
+    // Create confirmation token
+    const token = await ConfirmationService.createConfirmation(
+      this.executionId,
+      step.id,
+      stepIndex,
+      step.tool_name,
+      step.parameters,
+      riskAssessment,
+      userId,
+      clerkId
+    );
+
+    // Update step state to suspended
+    const timestamp = new Date().toISOString();
+    this.state = updateStepState(this.state, step.id, {
+      status: "suspended",
+      output: {
+        requiresConfirmation: true,
+        confirmationToken: token,
+        riskAssessment,
+        suspendedAt: timestamp,
+      },
+      completed_at: timestamp,
+    });
+
+    // Transition state to SUSPENDED
+    this.state = transitionState(this.state, "SUSPENDED");
+    this.state.context = {
+      ...this.state.context,
+      confirmationPending: true,
+      confirmationToken: token,
+      confirmationCreatedAt: timestamp,
+    };
+
+    // Save state to Redis
+    await saveExecutionState(this.state);
+
+    // Publish real-time update to UI
+    await RealtimeService.publishStreamingStatusUpdate({
+      executionId: this.executionId,
+      stepIndex,
+      totalSteps: this.state.step_states.length,
+      stepName: step.tool_name,
+      status: "suspended",
+      message: `Confirmation required: ${riskAssessment.reason}`,
+      timestamp,
+      traceId: this.traceId,
+      metadata: {
+        confirmationToken: token,
+        riskLevel: riskAssessment.level,
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      },
+    });
+
+    // Publish nervous system event for confirmation required
+    await RealtimeService.publishNervousSystemEvent(
+      "CONFIRMATION_REQUIRED",
+      {
+        executionId: this.executionId,
+        workflowId: this.workflowId,
+        intentId: this.intentId,
+        stepId: step.id,
+        stepIndex,
+        toolName: step.tool_name,
+        parameters: step.parameters,
+        riskAssessment,
+        confirmationToken: token,
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+        timestamp,
+      },
+      undefined
+    );
+
+    console.log(
+      `[WorkflowMachine] Created confirmation token ${token} for step ${step.id} ` +
+      `(${step.tool_name}), risk level: ${riskAssessment.level}`
+    );
+
+    return {
+      token,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    };
+  }
+
+  /**
    * Execute compensation for failed saga
-   * 
+   *
    * ENHANCEMENT (Task 2 & 4):
    * - Treats compensation as its own retryable mini-workflow
    * - Emits SAGA_MANUAL_INTERVENTION_REQUIRED to Ably if compensation fails
@@ -1956,6 +2239,10 @@ export class WorkflowMachine {
 
   /**
    * Resume workflow from checkpoint
+   *
+   * ENHANCEMENT: Semantic Checksum Versioning for Tools
+   * - On resume, compares checkpoint tool versions with current registry
+   * - If schema changed, transitions to REFLECTING state for LLM to adjust plan
    */
   static async resume(
     executionId: string,
@@ -1999,11 +2286,94 @@ export class WorkflowMachine {
       machine["segmentNumber"] = (taskState.segment_number || 1) + 1;
       machine["segmentStartTime"] = Date.now();
 
+      // ENHANCEMENT: Check for schema evolution
+      const checkpointToolVersions = (taskState.context.tool_versions as Record<string, { version: string; schemaHash: string }>) || {};
+      if (Object.keys(checkpointToolVersions).length > 0) {
+        const schemaChanges = await machine.checkSchemaEvolution(checkpointToolVersions);
+        if (schemaChanges.length > 0) {
+          console.warn(
+            `[WorkflowMachine] Detected schema evolution for ${schemaChanges.length} tools:`,
+            schemaChanges.map(s => s.toolName).join(", ")
+          );
+
+          // Transition to REFLECTING state to allow LLM to adjust plan
+          machine.state = transitionState(machine.state, "REFLECTING");
+          machine.state.context = {
+            ...machine.state.context,
+            schemaEvolutionDetected: true,
+            schemaChanges,
+            reflectionReason: "Tool schema evolution detected - plan adjustment required",
+          };
+
+          // Publish notification to Ably
+          await RealtimeService.publishNervousSystemEvent(
+            "SCHEMA_EVOLUTION_DETECTED",
+            {
+              executionId,
+              schemaChanges,
+              requiresReplan: true,
+              timestamp: new Date().toISOString(),
+            },
+            undefined
+          );
+        }
+      }
+
       return await machine.execute();
     } catch (error) {
       console.error("[WorkflowMachine] Resume failed:", error);
       throw error;
     }
+  }
+
+  /**
+   * Check for schema evolution by comparing checkpoint versions with current registry
+   */
+  private async checkSchemaEvolution(
+    checkpointVersions: Record<string, { version: string; schemaHash: string }>
+  ): Promise<Array<{
+    toolName: string;
+    oldVersion: string;
+    newVersion: string;
+    oldSchemaHash: string;
+    newSchemaHash: string;
+    changed: boolean;
+  }>> {
+    const registry = getToolRegistry();
+    const changes: Array<{
+      toolName: string;
+      oldVersion: string;
+      newVersion: string;
+      oldSchemaHash: string;
+      newSchemaHash: string;
+      changed: boolean;
+    }> = [];
+
+    for (const [toolName, checkpointVersion] of Object.entries(checkpointVersions)) {
+      const toolDef = registry.getDefinition(toolName);
+      if (!toolDef) {
+        continue; // Tool no longer exists
+      }
+
+      const currentVersion = toolDef.version || "1.0.0";
+      const currentSchemaHash = await this.generateSchemaHash(toolDef.input_schema || {});
+
+      const versionChanged = checkpointVersion.version !== currentVersion;
+      const schemaChanged = checkpointVersion.schemaHash !== currentSchemaHash;
+
+      if (versionChanged || schemaChanged) {
+        changes.push({
+          toolName,
+          oldVersion: checkpointVersion.version,
+          newVersion: currentVersion,
+          oldSchemaHash: checkpointVersion.schemaHash,
+          newSchemaHash: currentSchemaHash,
+          changed: true,
+        });
+      }
+    }
+
+    return changes;
   }
 }
 

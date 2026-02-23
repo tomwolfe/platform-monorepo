@@ -19,6 +19,7 @@ export const ExecutionStatusSchema = z.enum([
   "STARTED",       // Async execution triggered (Vercel Hobby pattern)
   "EXECUTING",     // Actively executing plan steps
   "AWAITING_CONFIRMATION", // Paused for user approval of a step
+  "SUSPENDED",     // Human-in-the-Loop wait state: yielded for external confirmation token
   "REFLECTING",    // Analyzing failure and replanning
   "COMPLETED",     // All steps executed successfully
   "FAILED",        // Execution failed (non-recoverable)
@@ -274,7 +275,7 @@ export type Checkpoint = z.infer<typeof CheckpointSchema>;
 
 export const StepExecutionStateSchema = z.object({
   step_id: z.string().uuid(),
-  status: z.enum(["pending", "in_progress", "completed", "failed", "skipped", "timeout", "awaiting_confirmation"]),
+  status: z.enum(["pending", "in_progress", "completed", "failed", "skipped", "timeout", "awaiting_confirmation", "suspended"]),
   input: z.record(z.string(), z.unknown()).optional(),
   output: z.unknown().optional(),
   error: z.object({
@@ -343,8 +344,9 @@ export const ValidStateTransitions: Record<ExecutionStatus, ExecutionStatus[]> =
   PLANNING: ["PLANNED", "REJECTED", "TIMEOUT", "FAILED"],
   PLANNED: ["STARTED", "EXECUTING", "CANCELLED"],
   STARTED: ["EXECUTING", "FAILED", "TIMEOUT", "CANCELLED"],
-  EXECUTING: ["COMPLETED", "FAILED", "TIMEOUT", "CANCELLED", "REFLECTING", "AWAITING_CONFIRMATION"],
-  AWAITING_CONFIRMATION: ["EXECUTING", "CANCELLED", "FAILED"],
+  EXECUTING: ["COMPLETED", "FAILED", "TIMEOUT", "CANCELLED", "REFLECTING", "AWAITING_CONFIRMATION", "SUSPENDED"],
+  AWAITING_CONFIRMATION: ["EXECUTING", "CANCELLED", "FAILED", "SUSPENDED"],
+  SUSPENDED: ["EXECUTING", "CANCELLED", "FAILED"], // Can resume to EXECUTING or be cancelled
   REFLECTING: ["EXECUTING", "FAILED", "CANCELLED"],
   COMPLETED: [],
   FAILED: [],

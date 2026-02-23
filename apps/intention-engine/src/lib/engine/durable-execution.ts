@@ -350,10 +350,17 @@ async function executeStepWithCheckpointing(
     });
 
     try {
-      // IDEMPOTENCY CHECK
+      // IDEMPOTENCY CHECK - Enhanced with Semantic Checksum
+      // CRITICAL FIX: Salt hash with userId to prevent cross-user blocking
       const idempotencyKey = `${state.intent?.id || state.execution_id}:${stepIndex}`;
+      const userId = (state.context?.userId as string) || undefined;
       if (idempotencyService) {
-        const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey, step.tool_name);
+        const isDuplicate = await idempotencyService.isDuplicate(
+          idempotencyKey,
+          step.tool_name,
+          undefined,
+          userId
+        );
         if (isDuplicate) {
           console.log(`[Idempotency] Step ${step.tool_name} (${step.id}) already executed, skipping`);
           span.setAttributes({ idempotency_skip: true });

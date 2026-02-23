@@ -493,6 +493,7 @@ export function createSemanticVectorStore(options?: {
   const useUpstashVector = options?.useUpstashVector ?? !!process.env.UPSTASH_VECTOR_TOKEN;
   const upstashToken = process.env.UPSTASH_VECTOR_TOKEN;
   const upstashUrl = process.env.UPSTASH_VECTOR_URL;
+  const indexPrefix = process.env.UPSTASH_VECTOR_INDEX_PREFIX;
 
   let vectorStore: VectorStore;
 
@@ -507,9 +508,12 @@ export function createSemanticVectorStore(options?: {
         indexName: options?.indexName || "semantic_memory",
         dimensions: 384,
         metric: "cosine",
+        indexPrefix, // Multi-tenant safety
       },
     });
-    console.log("[VectorStore] Using Upstash Vector (production mode)");
+    // Log the full index name for observability
+    const fullIndexName = indexPrefix ? `${indexPrefix}_semantic_memory` : "semantic_memory";
+    console.log(`[VectorStore] Using Upstash Vector (production mode) with index: ${fullIndexName}`);
   } else {
     // Fallback to Redis (development)
     const redis = options?.redis || getRedisClient(ServiceNamespace.SHARED);

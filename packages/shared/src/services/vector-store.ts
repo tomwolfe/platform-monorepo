@@ -26,6 +26,8 @@ import { Redis } from "@upstash/redis";
 export const VectorIndexConfigSchema = z.object({
   /** Index name/identifier */
   indexName: z.string().default("semantic_memory"),
+  /** App-specific prefix for multi-tenant Upstash Vector instances (e.g., "apps-monorepo") */
+  indexPrefix: z.string().optional(),
   /** Vector dimensions (384 for all-MiniLM-L6-v2) */
   dimensions: z.number().int().positive().default(384),
   /** Distance metric: cosine, euclidean, dot */
@@ -149,11 +151,24 @@ export interface UpstashVectorConfig extends VectorIndexConfig {
 export class UpstashVectorStore implements VectorStore {
   private config: UpstashVectorConfig;
   private indexName: string;
+  private fullIndexName: string;
   private initialized = false;
 
   constructor(config: UpstashVectorConfig) {
     this.config = config;
     this.indexName = config.indexName;
+    // Build full index name with prefix for multi-tenant safety
+    // Format: {prefix}_{indexName} (e.g., "apps-monorepo_semantic_memory")
+    this.fullIndexName = config.indexPrefix 
+      ? `${config.indexPrefix}_${config.indexName}`
+      : config.indexName;
+  }
+
+  /**
+   * Get the full index name (with prefix if configured)
+   */
+  getIndexName(): string {
+    return this.fullIndexName;
   }
 
   /**
@@ -165,13 +180,13 @@ export class UpstashVectorStore implements VectorStore {
     try {
       // Check if index exists
       const existingIndexes = await this.listIndexes();
-      
-      if (!existingIndexes.includes(this.indexName)) {
+
+      if (!existingIndexes.includes(this.fullIndexName)) {
         // Create new index
         await this.createIndex();
-        console.log(`[UpstashVector] Created index: ${this.indexName}`);
+        console.log(`[UpstashVector] Created index: ${this.fullIndexName}`);
       } else {
-        console.log(`[UpstashVector] Using existing index: ${this.indexName}`);
+        console.log(`[UpstashVector] Using existing index: ${this.fullIndexName}`);
       }
 
       this.initialized = true;
@@ -202,7 +217,7 @@ export class UpstashVectorStore implements VectorStore {
    * Create a new vector index
    */
   private async createIndex(): Promise<void> {
-    const response = await fetch(`${this.getBaseUrl()}/index/${this.indexName}`, {
+    const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}`, {
       method: "PUT",
       headers: this.getHeaders(),
       body: JSON.stringify({
@@ -224,8 +239,8 @@ export class UpstashVectorStore implements VectorStore {
     await this.initialize();
 
     const id = crypto.randomUUID();
-    
-    const response = await fetch(`${this.getBaseUrl()}/index/${this.indexName}/upsert`, {
+
+    const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}/upsert`, {
       method: "POST",
       headers: this.getHeaders(),
       body: JSON.stringify({
@@ -251,7 +266,7 @@ export class UpstashVectorStore implements VectorStore {
       throw new Error(`Failed to add vector: ${response.statusText}`);
     }
 
-    console.log(`[UpstashVector] Added vector ${id} for user ${entry.userId}`);
+    console.log(`[UpstashVector] Added vector ${id} for user ${entry.userId} (index: ${this.fullIndexName})`);
     return id;
   }
 
@@ -285,7 +300,7 @@ export class UpstashVectorStore implements VectorStore {
       };
     });
 
-    const response = await fetch(`${this.getBaseUrl()}/index/${this.indexName}/upsert`, {
+    const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}/upsert`, {
       method: "POST",
       headers: this.getHeaders(),
       body: JSON.stringify({ vectors }),
@@ -324,7 +339,7 @@ export class UpstashVectorStore implements VectorStore {
       Object.assign(filter, query.filter);
     }
 
-    const response = await fetch(`${this.getBaseUrl()}/index/${this.indexName}/query`, {
+    const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}/query`, {
       method: "POST",
       headers: this.getHeaders(),
       body: JSON.stringify({
@@ -358,7 +373,7 @@ export class UpstashVectorStore implements VectorStore {
   async deleteVector(id: string): Promise<boolean> {
     await this.initialize();
 
-    const response = await fetch(`${this.getBaseUrl()}/index/${this.indexName}/delete`, {
+    const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}/delete`, {
       method: "POST",
       headers: this.getHeaders(),
       body: JSON.stringify({ ids: [id] }),
@@ -392,7 +407,7 @@ export class UpstashVectorStore implements VectorStore {
     }
 
     // Delete all found vectors
-    const response = await fetch(`${this.getBaseUrl()}/index/${this.indexName}/delete`, {
+    const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}/delete`, {
       method: "POST",
       headers: this.getHeaders(),
       body: JSON.stringify({ ids: results.map(r => r.id) }),
@@ -417,7 +432,7 @@ export class UpstashVectorStore implements VectorStore {
     await this.initialize();
 
     try {
-      const response = await fetch(`${this.getBaseUrl()}/index/${this.indexName}/info`, {
+      const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}/info`, {
         method: "GET",
         headers: this.getHeaders(),
       });
@@ -449,7 +464,7 @@ export class UpstashVectorStore implements VectorStore {
   async reset(): Promise<void> {
     await this.initialize();
 
-    const response = await fetch(`${this.getBaseUrl()}/index/${this.indexName}/reset`, {
+    const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}/reset`, {
       method: "POST",
       headers: this.getHeaders(),
     });
@@ -750,12 +765,17 @@ export function createVectorStore(options: VectorStoreOptions): VectorStore {
     metric: "cosine",
     clusters: 16,
     capacity: 100000,
+    // Support multi-tenant Upstash Vector instances via index prefix
+    indexPrefix: process.env.UPSTASH_VECTOR_INDEX_PREFIX,
     ...options.indexConfig,
   };
 
   // Use Upstash Vector if configured
   if (options.useUpstashVector && options.upstashVectorToken) {
-    console.log("[VectorStore] Using Upstash Vector (production mode)");
+    console.log(
+      `[VectorStore] Using Upstash Vector (production mode) ` +
+      `${indexConfig.indexPrefix ? `with prefix "${indexConfig.indexPrefix}"` : ''}`
+    );
     return new UpstashVectorStore({
       ...indexConfig,
       upstashToken: options.upstashVectorToken,

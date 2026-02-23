@@ -725,6 +725,144 @@ export class MemoryClient {
     const confirmationKey = `confirmation:${stepId}`;
     return taskState.context[confirmationKey] as { requires_confirmation: boolean; status: string } | null;
   }
+
+  // ========================================================================
+  // ATOMIC STATE VERSIONING (OCC - Optimistic Concurrency Control)
+  // Prevents "Ghost Re-plan" Race Condition
+  // ========================================================================
+
+  /**
+   * Atomically updates execution state with version checking (CAS pattern).
+   * Prevents split-brain state when QStash retry happens simultaneously with user follow-up.
+   *
+   * @param executionId - The execution ID
+   * @param newState - The new state to set
+   * @param expectedVersion - The expected current version (for CAS check)
+   * @returns Object with success status and new version or error
+   *
+   * @example
+   * const result = await memory.updateStateAtomically(executionId, newState, currentState.version);
+   * if (result.success) {
+   *   console.log(`Updated to version ${result.newVersion}`);
+   * } else if (result.error?.code === 'CONFLICT') {
+   *   // Another lambda modified state - reload and retry
+   *   console.log('Conflict detected - reload state');
+   * }
+   */
+  async updateStateAtomically(
+    executionId: string,
+    newState: Partial<ExecutionState> & { version?: number },
+    expectedVersion: number
+  ): Promise<{
+    success: boolean;
+    newVersion?: number;
+    currentVersion?: number;
+    error?: {
+      code: 'NOT_FOUND' | 'CONFLICT' | 'OPERATION_FAILED';
+      message: string;
+    };
+  }> {
+    const key = this.buildTaskKey(executionId);
+    const timestamp = new Date().toISOString();
+
+    try {
+      // Lua script for atomic compare-and-swap
+      const script = `
+        local current = redis.call('get', KEYS[1])
+        if not current then
+          return redis.error_reply('NOT_FOUND')
+        end
+        
+        local decoded = cjson.decode(current)
+        local currentVersion = decoded.version or 0
+        
+        if currentVersion ~= tonumber(ARGV[1]) then
+          return redis.error_reply('CONFLICT:' .. tostring(currentVersion))
+        end
+        
+        -- Merge new state into existing state
+        local newState = cjson.decode(ARGV[2])
+        for k, v in pairs(newState) do
+          decoded[k] = v
+        end
+        
+        -- Increment version
+        decoded.version = currentVersion + 1
+        decoded.updated_at = ARGV[3]
+        
+        redis.call('setex', KEYS[1], 86400, cjson.encode(decoded))
+        return tostring(decoded.version)
+      `;
+
+      // Execute Lua script atomically
+      const result = await this.redis.eval(script, 1, key, expectedVersion.toString(), JSON.stringify(newState), timestamp);
+
+      return {
+        success: true,
+        newVersion: parseInt(result as string, 10),
+      };
+    } catch (error: any) {
+      const errorMessage = typeof error === 'string' ? error : error?.message || String(error);
+
+      if (errorMessage.includes('NOT_FOUND')) {
+        return {
+          success: false,
+          error: {
+            code: 'NOT_FOUND',
+            message: `Execution state not found for ${executionId}`,
+          },
+        };
+      }
+
+      if (errorMessage.includes('CONFLICT')) {
+        const match = errorMessage.match(/CONFLICT:(\d+)/);
+        const currentVersion = match ? parseInt(match[1], 10) : undefined;
+        return {
+          success: false,
+          currentVersion,
+          error: {
+            code: 'CONFLICT',
+            message: `Version conflict - expected ${expectedVersion}, got ${currentVersion ?? 'unknown'}`,
+          },
+        };
+      }
+
+      return {
+        success: false,
+        error: {
+          code: 'OPERATION_FAILED',
+          message: `Failed to update state atomically: ${errorMessage}`,
+        },
+      };
+    }
+  }
+
+  /**
+   * Gets the current version of an execution state.
+   * Used for OCC version tracking.
+   */
+  async getStateVersion(executionId: string): Promise<number | null> {
+    const taskState = await this.getTaskState(executionId);
+    if (!taskState) return null;
+    return taskState.context.version as number ?? 1;
+  }
+
+  /**
+   * Initializes or resets version tracking for an execution.
+   */
+  async initializeVersion(executionId: string): Promise<number> {
+    const key = this.buildTaskKey(executionId);
+    const timestamp = new Date().toISOString();
+
+    const initialState = {
+      version: 1,
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+
+    await this.updateTaskContext(executionId, initialState);
+    return 1;
+  }
 }
 
 // ============================================================================

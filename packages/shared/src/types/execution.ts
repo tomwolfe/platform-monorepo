@@ -85,6 +85,8 @@ export const ExecutionStateSchema = z.object({
     total_tokens: 0,
   }),
   latency_ms: z.number().int().nonnegative().default(0),
+  // OCC Version field for optimistic concurrency control
+  version: z.number().int().positive().default(1),
 });
 
 export type ExecutionState = z.infer<typeof ExecutionStateSchema>;

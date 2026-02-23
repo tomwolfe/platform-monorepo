@@ -69,7 +69,7 @@ export default function TraceViewerPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedEntry, setSelectedEntry] = useState<TraceEntry | null>(null);
-  const [viewMode, setViewMode] = useState<"waterfall" | "list" | "json">("waterfall");
+  const [viewMode, setViewMode] = useState<"waterfall" | "list" | "json" | "gantt">("waterfall");
 
   useEffect(() => {
     if (traceId) {
@@ -210,6 +210,12 @@ export default function TraceViewerPage() {
                     Waterfall
                   </button>
                   <button
+                    onClick={() => setViewMode("gantt")}
+                    className={`px-4 py-2 rounded ${viewMode === "gantt" ? "bg-blue-600" : "bg-gray-700 hover:bg-gray-600"}`}
+                  >
+                    📊 Gantt
+                  </button>
+                  <button
                     onClick={() => setViewMode("list")}
                     className={`px-4 py-2 rounded ${viewMode === "list" ? "bg-blue-600" : "bg-gray-700 hover:bg-gray-600"}`}
                   >
@@ -258,6 +264,10 @@ export default function TraceViewerPage() {
               <WaterfallView trace={trace} getPhaseColor={getPhaseColor} getEventStatus={getEventStatus} formatDuration={formatDuration} setSelectedEntry={setSelectedEntry} />
             )}
 
+            {viewMode === "gantt" && (
+              <GanttView trace={trace} getPhaseColor={getPhaseColor} getEventStatus={getEventStatus} formatDuration={formatDuration} formatTimestamp={formatTimestamp} setSelectedEntry={setSelectedEntry} />
+            )}
+
             {viewMode === "list" && (
               <ListView trace={trace} getPhaseColor={getPhaseColor} getEventStatus={getEventStatus} formatDuration={formatDuration} formatTimestamp={formatTimestamp} setSelectedEntry={setSelectedEntry} />
             )}
@@ -301,7 +311,7 @@ function WaterfallView({ trace, getPhaseColor, getEventStatus, formatDuration, s
           const entryTime = new Date(entry.timestamp || trace.started_at).getTime();
           const offset = ((entryTime - startTime) / totalTime) * 100;
           const width = Math.max((entry.latency_ms || 0) / totalTime * 100, 0.5);
-          
+
           return (
             <div
               key={index}
@@ -329,6 +339,268 @@ function WaterfallView({ trace, getPhaseColor, getEventStatus, formatDuration, s
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// SAGA GANTT CHART VIEW
+// Shows hand-off times between QStash triggers and lambda execution
+// Highlights idle time where system was waiting for queue trigger
+// ============================================================================
+
+interface GanttSegment {
+  stepId: string;
+  phase: string;
+  startTime: number;
+  endTime: number;
+  duration: number;
+  type: "execution" | "handoff" | "idle" | "checkpoint";
+  status: "success" | "error" | "pending";
+  entry?: TraceEntry;
+  metadata?: {
+    qstashTrigger?: boolean;
+    coldStart?: boolean;
+    checkpointCreated?: boolean;
+    idleReason?: string;
+  };
+}
+
+function GanttView({ trace, getPhaseColor, getEventStatus, formatDuration, formatTimestamp, setSelectedEntry }: any) {
+  const entries = trace.entries || [];
+  const startTime = new Date(trace.started_at).getTime();
+  const endTime = trace.ended_at ? new Date(trace.ended_at).getTime() : Date.now();
+  const totalTime = endTime - startTime;
+
+  // Build Gantt segments from trace entries
+  const segments: GanttSegment[] = [];
+  let lastEndTime = startTime;
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    const entryTime = new Date(entry.timestamp || trace.started_at).getTime();
+    const duration = entry.latency_ms || 0;
+
+    // Detect idle time (gap between previous step end and this step start)
+    if (i > 0 && entryTime > lastEndTime + 500) { // >500ms gap considered idle
+      const idleDuration = entryTime - lastEndTime;
+      segments.push({
+        stepId: `idle-${i}`,
+        phase: "system",
+        startTime: lastEndTime,
+        endTime: entryTime,
+        duration: idleDuration,
+        type: "idle",
+        status: "pending",
+        metadata: {
+          idleReason: "Waiting for QStash trigger / Lambda cold start",
+        },
+      });
+    }
+
+    // Detect checkpoint events
+    if (entry.event.includes("checkpoint") || entry.event.includes("yield")) {
+      segments.push({
+        stepId: entry.step_id || `checkpoint-${i}`,
+        phase: "system",
+        startTime: entryTime,
+        endTime: entryTime + (entry.latency_ms || 200),
+        duration: entry.latency_ms || 200,
+        type: "checkpoint",
+        status: entry.error ? "error" : "success",
+        entry,
+        metadata: {
+          checkpointCreated: true,
+        },
+      });
+    }
+
+    // Detect QStash handoff events
+    if (entry.event.includes("qstash") || entry.event.includes("trigger") || entry.event.includes("dispatch")) {
+      segments.push({
+        stepId: entry.step_id || `handoff-${i}`,
+        phase: "system",
+        startTime: entryTime,
+        endTime: entryTime + (entry.latency_ms || 100),
+        duration: entry.latency_ms || 100,
+        type: "handoff",
+        status: entry.error ? "error" : "success",
+        entry,
+        metadata: {
+          qstashTrigger: true,
+        },
+      });
+    }
+
+    // Regular execution step
+    if (entry.phase === "execution" || entry.step_id) {
+      const isColdStart = i === 0 || entries[i - 1]?.phase === "system";
+      segments.push({
+        stepId: entry.step_id || `step-${i}`,
+        phase: entry.phase || "execution",
+        startTime: entryTime,
+        endTime: entryTime + duration,
+        duration,
+        type: "execution",
+        status: entry.error ? "error" : "success",
+        entry,
+        metadata: {
+          coldStart: isColdStart,
+        },
+      });
+    }
+
+    lastEndTime = Math.max(lastEndTime, entryTime + duration);
+  }
+
+  // Calculate statistics
+  const totalExecutionTime = segments.filter(s => s.type === "execution").reduce((sum, s) => sum + s.duration, 0);
+  const totalIdleTime = segments.filter(s => s.type === "idle").reduce((sum, s) => sum + s.duration, 0);
+  const totalHandoffTime = segments.filter(s => s.type === "handoff" || s.type === "checkpoint").reduce((sum, s) => sum + s.duration, 0);
+  const coldStartCount = segments.filter(s => s.metadata?.coldStart).length;
+
+  return (
+    <div className="space-y-6">
+      {/* Gantt Statistics */}
+      <div className="bg-gray-800 rounded-lg p-4">
+        <h4 className="text-sm font-semibold text-gray-400 mb-3">Saga Performance Breakdown</h4>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="bg-green-900/20 border border-green-700 rounded-lg p-3">
+            <div className="text-xs text-gray-400 mb-1">Execution Time</div>
+            <div className="text-lg font-mono text-green-400">{formatDuration(totalExecutionTime)}</div>
+            <div className="text-xs text-gray-500 mt-1">{((totalExecutionTime / totalTime) * 100).toFixed(1)}% of total</div>
+          </div>
+          <div className="bg-yellow-900/20 border border-yellow-700 rounded-lg p-3">
+            <div className="text-xs text-gray-400 mb-1">Idle Time</div>
+            <div className="text-lg font-mono text-yellow-400">{formatDuration(totalIdleTime)}</div>
+            <div className="text-xs text-gray-500 mt-1">{((totalIdleTime / totalTime) * 100).toFixed(1)}% of total</div>
+          </div>
+          <div className="bg-blue-900/20 border border-blue-700 rounded-lg p-3">
+            <div className="text-xs text-gray-400 mb-1">Handoff Time</div>
+            <div className="text-lg font-mono text-blue-400">{formatDuration(totalHandoffTime)}</div>
+            <div className="text-xs text-gray-500 mt-1">{((totalHandoffTime / totalTime) * 100).toFixed(1)}% of total</div>
+          </div>
+          <div className="bg-purple-900/20 border border-purple-700 rounded-lg p-3">
+            <div className="text-xs text-gray-400 mb-1">Cold Starts</div>
+            <div className="text-lg font-mono text-purple-400">{coldStartCount}</div>
+            <div className="text-xs text-gray-500 mt-1">~{((coldStartCount * 1500) / 1000).toFixed(1)}s estimated penalty</div>
+          </div>
+          <div className="bg-gray-900 border border-gray-700 rounded-lg p-3">
+            <div className="text-xs text-gray-400 mb-1">Total Duration</div>
+            <div className="text-lg font-mono text-gray-300">{formatDuration(totalTime)}</div>
+            <div className="text-xs text-gray-500 mt-1">End-to-end</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Gantt Chart */}
+      <div className="bg-gray-800 rounded-lg p-6">
+        <h3 className="text-lg font-semibold mb-4">Saga Execution Gantt Chart</h3>
+
+        {/* Legend */}
+        <div className="flex flex-wrap gap-4 mb-4 text-xs">
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-green-600 rounded"></div>
+            <span className="text-gray-400">Execution</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-yellow-600 rounded"></div>
+            <span className="text-gray-400">Idle (waiting)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-blue-600 rounded"></div>
+            <span className="text-gray-400">Handoff (QStash)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-orange-600 rounded"></div>
+            <span className="text-gray-400">Checkpoint</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-purple-600 rounded"></div>
+            <span className="text-gray-400">Cold Start</span>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          {segments.map((segment, index) => {
+            const offset = ((segment.startTime - startTime) / totalTime) * 100;
+            const width = Math.max((segment.duration / totalTime) * 100, 0.3);
+
+            let bgColor = "bg-green-600";
+            if (segment.type === "idle") bgColor = "bg-yellow-600";
+            else if (segment.type === "handoff") bgColor = "bg-blue-600";
+            else if (segment.type === "checkpoint") bgColor = "bg-orange-600";
+
+            if (segment.metadata?.coldStart) {
+              bgColor = "bg-purple-600";
+            }
+
+            if (segment.status === "error") {
+              bgColor = "bg-red-600";
+            }
+
+            return (
+              <div
+                key={index}
+                className="relative flex items-center gap-3 py-2 cursor-pointer hover:bg-gray-700/50 rounded px-2"
+                onClick={() => segment.entry && setSelectedEntry(segment.entry)}
+                title={segment.metadata?.idleReason || `${segment.phase}: ${formatDuration(segment.duration)}`}
+              >
+                <div className="w-32 text-xs text-gray-400 font-mono truncate">
+                  {segment.stepId}
+                </div>
+                <div className="flex-1 relative h-8 bg-gray-900 rounded overflow-hidden">
+                  <div
+                    className={`absolute h-full ${bgColor} opacity-80 hover:opacity-100 transition flex items-center px-2`}
+                    style={{
+                      left: `${offset}%`,
+                      width: `${width}%`,
+                      minWidth: "4px",
+                    }}
+                  >
+                    {width > 5 && (
+                      <span className="text-xs text-white font-medium truncate">
+                        {formatDuration(segment.duration)}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Cold start indicator */}
+                  {segment.metadata?.coldStart && (
+                    <div
+                      className="absolute h-full w-1 bg-purple-400 opacity-60"
+                      style={{ left: `${offset}%` }}
+                      title="Cold start detected"
+                    />
+                  )}
+                </div>
+                <div className="w-20 text-xs text-gray-400 text-right">
+                  {segment.type}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Bottleneck Analysis */}
+        {totalIdleTime > totalTime * 0.2 && (
+          <div className="mt-6 bg-yellow-900/20 border border-yellow-700 rounded-lg p-4">
+            <h4 className="text-sm font-semibold text-yellow-400 mb-2">⚠️ Performance Bottleneck Detected</h4>
+            <p className="text-xs text-gray-300">
+              Idle time accounts for {((totalIdleTime / totalTime) * 100).toFixed(1)}% of total execution time.
+              This suggests Lambda cold starts or QStash trigger latency is impacting performance.
+            </p>
+            <div className="mt-3 text-xs text-gray-400">
+              <strong>Recommendations:</strong>
+              <ul className="list-disc list-inside mt-1 space-y-1">
+                <li>Enable Lambda Provisioned Concurrency for frequently-used routes</li>
+                <li>Implement pre-warming triggers when Step N is 80% complete</li>
+                <li>Increase adaptive batching to reduce QStash handoffs</li>
+              </ul>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -2,6 +2,24 @@ import { SignJWT, jwtVerify, CompactSign, compactVerify } from 'jose';
 
 const INTERNAL_SYSTEM_KEY = process.env.INTERNAL_SYSTEM_KEY;
 
+// Export asymmetric JWT functions for Zero-Trust authentication
+export {
+  generateServiceKeyPair,
+  getSigningPrivateKey,
+  getVerificationPublicKey,
+  registerPublicKey,
+  getRegisteredPublicKey,
+  signAsymmetricJWT,
+  verifyAsymmetricJWT,
+  exportKeyPairForDistribution,
+  generateKeyFingerprint,
+  generateSatelliteSetupInstructions,
+  verifyHybridJWT,
+  type KeyPair,
+  type AsymmetricJWTPayload,
+  type AsymmetricJWTOptions,
+} from './asymmetric-jwt';
+
 function getSecret() {
   if (!INTERNAL_SYSTEM_KEY) {
     if (process.env.NODE_ENV === 'production') {

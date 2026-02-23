@@ -1,9 +1,11 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import * as tablestackSchema from './schema/tablestack';
+import * as pgvectorSchema from './schema/pgvector';
 
 export const schema = {
   ...tablestackSchema,
+  ...pgvectorSchema,
 };
 
 // Re-export all schema items for convenience
@@ -37,6 +39,25 @@ export {
   ordersRelations,
   orderItemsRelations,
 } from './schema/tablestack';
+
+// Re-export pgvector items (semanticMemories is defined here, not in tablestack)
+export {
+  semanticMemories,
+  semanticMemoriesRelations,
+  cosineSimilarity,
+  innerProduct,
+  l2Distance,
+  l1Distance,
+  VECTOR_DIMENSIONS,
+  ENABLE_PGVECTOR_SQL,
+  CREATE_SEMANTIC_MEMORIES_SQL,
+  CREATE_RECENT_MEMORIES_VIEW_SQL,
+  type VectorDimensionSize,
+  type SemanticMemory,
+  type NewSemanticMemory,
+  type SemanticMemorySearchQuery,
+  type SemanticMemorySearchResult,
+} from './schema/pgvector';
 
 const databaseUrl = process.env.DATABASE_URL!;
 

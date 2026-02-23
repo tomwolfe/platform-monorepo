@@ -109,7 +109,7 @@ import {
 export const ToolCapabilitySchema = z.object({
   name: z.string(),
   description: z.string(),
-  inputSchema: z.any(),
+  inputSchema: z.record(z.string(), z.unknown()),
   requires_confirmation: z.boolean().default(false),
 });
 
@@ -709,8 +709,193 @@ export * from './bridge';
 // Phase 6: Event Schema Registry (Nervous System Hardening)
 export * from './schemas/event-registry';
 
-export type ToolInput = Record<string, unknown>;
+// ============================================================================
+// STRICTLY TYPED TOOL REGISTRY - ELIMINATES ALL `any` TYPES
+// Uses Zod's infer capability for type-safe tool execution
+// ============================================================================
+
+/**
+ * Helper type to extract input type from a Zod schema
+ * Usage: ZodInfer<typeof SomeSchema>
+ */
+export type ZodInfer<T extends z.ZodType> = z.infer<T>;
+
+/**
+ * Map of all tool names to their Zod schemas
+ * This is the source of truth for type-safe tool execution
+ */
+export interface AllToolsMap {
+  // TableStack
+  getAvailability: typeof GetAvailabilitySchema;
+  bookTable: typeof BookTableSchema;
+  getLiveOperationalState: typeof GetLiveOperationalStateSchema;
+  // Table Management
+  get_table_availability: typeof GetTableAvailabilitySchema;
+  get_table_layout: typeof GetTableLayoutSchema;
+  get_reservation: typeof GetReservationSchema;
+  list_reservations: typeof ListReservationsSchema;
+  check_table_conflicts: typeof CheckTableConflictsSchema;
+  create_reservation: typeof CreateReservationSchema;
+  update_reservation: typeof UpdateReservationSchema;
+  cancel_reservation: typeof CancelReservationSchema;
+  add_to_waitlist: typeof AddToWaitlistSchema;
+  update_waitlist_status: typeof UpdateWaitlistStatusSchema;
+  validate_reservation: typeof ValidateReservationSchema;
+  // OpenDelivery
+  calculateQuote: typeof CalculateQuoteSchema;
+  getDriverLocation: typeof GetDriverLocationSchema;
+  // Delivery Fulfillment
+  calculate_delivery_quote: typeof CalculateDeliveryQuoteSchema;
+  fulfill_intent: typeof IntentFulfillmentSchema;
+  get_fulfillment_status: typeof GetFulfillmentStatusSchema;
+  cancel_fulfillment: typeof CancelFulfillmentSchema;
+  update_fulfillment: typeof UpdateFulfillmentSchema;
+  validate_fulfillment: typeof ValidateFulfillmentSchema;
+  // Mobility
+  request_ride: typeof MobilityRequestSchema;
+  get_route_estimate: typeof RouteEstimateSchema;
+  // Booking
+  reserve_restaurant: typeof TableReservationSchema;
+  // Communication
+  send_comm: typeof CommunicationSchema;
+  // Context
+  get_weather_data: typeof WeatherDataSchema;
+  // Parallel Execution
+  resolve_dependencies: typeof DependencyResolverInputSchema;
+  execute_parallel: typeof ParallelExecutionSchema;
+}
+
+/**
+ * Type for tool input parameters - strictly inferred from Zod schema
+ * NO MORE `any` - parameters are now type-safe based on tool name
+ */
+export type ToolInput<TToolName extends keyof AllToolsMap = keyof AllToolsMap> = 
+  TToolName extends keyof AllToolsMap 
+    ? z.infer<AllToolsMap[TToolName]> 
+    : never;
+
+/**
+ * Type for tool output (remains flexible as outputs vary)
+ */
 export type ToolOutput = {
   content: Array<{ type: string; text: string }>;
   isError?: boolean;
 };
+
+/**
+ * Typed tool executor interface
+ * Ensures execute() is strictly typed to the Zod schema associated with that tool name
+ * 
+ * @example
+ * const executor: TypedToolExecutor = { ... };
+ * // TypeScript will enforce that parameters match the schema for 'bookTable'
+ * await executor.execute('bookTable', { restaurantId, tableId, guestName, guestEmail, partySize, startTime });
+ */
+export interface TypedToolExecutor {
+  execute<TToolName extends keyof AllToolsMap>(
+    toolName: TToolName,
+    parameters: ToolInput<TToolName>,
+    timeoutMs?: number,
+    signal?: AbortSignal
+  ): Promise<{
+    success: boolean;
+    output?: unknown;
+    error?: string;
+    latency_ms: number;
+    compensation?: {
+      toolName: string;
+      parameters?: Record<string, unknown>;
+    };
+  }>;
+}
+
+/**
+ * Tool definition with strictly typed schema
+ */
+export interface ToolDefinition<TSchema extends z.ZodType> {
+  name: string;
+  description: string;
+  schema: TSchema;
+  requires_confirmation?: boolean;
+}
+
+/**
+ * Type-safe tool registry entry
+ */
+export interface TypedToolEntry<TToolName extends keyof AllToolsMap> {
+  name: TToolName;
+  description: string;
+  schema: AllToolsMap[TToolName];
+  requires_confirmation?: boolean;
+}
+
+/**
+ * Helper type to extract tool name from a tool definition
+ */
+type ExtractToolName<T> = T extends { name: infer N } ? N : never;
+
+/**
+ * Helper type to get all tool names from the registry
+ */
+type AllToolNames = {
+  [K1 in keyof McpToolRegistry]: {
+    [K2 in keyof McpToolRegistry[K1]]: ExtractToolName<McpToolRegistry[K1][K2]>;
+  }[keyof McpToolRegistry[K1]];
+}[keyof McpToolRegistry];
+
+/**
+ * Helper function to get typed tool entry
+ * Provides type-safe access to tool definitions
+ */
+export function getTypedToolEntry<TToolName extends keyof AllToolsMap>(
+  toolName: TToolName
+): TypedToolEntry<TToolName> | undefined {
+  // Search through TOOLS registry using type-safe iteration
+  const categories = Object.keys(TOOLS) as Array<keyof typeof TOOLS>;
+  
+  for (const category of categories) {
+    const categoryTools = TOOLS[category];
+    const toolKeys = Object.keys(categoryTools) as Array<keyof typeof categoryTools>;
+    
+    for (const key of toolKeys) {
+      const tool = categoryTools[key];
+      if (tool.name === toolName) {
+        return tool as unknown as TypedToolEntry<TToolName>;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Helper function to validate tool parameters at runtime with strict typing
+ * Returns validated parameters or throws ZodError
+ */
+export function validateToolParams<TToolName extends keyof AllToolsMap>(
+  toolName: TToolName,
+  params: unknown
+): ToolInput<TToolName> {
+  const tool = getTypedToolEntry(toolName);
+  if (!tool) {
+    throw new Error(`Unknown tool: ${toolName}`);
+  }
+  return tool.schema.parse(params) as ToolInput<TToolName>;
+}
+
+/**
+ * Generate a schema hash for version-pinned checkpoints
+ * Used to detect schema evolution during saga execution
+ */
+export async function generateSchemaHash(schema: z.ZodType): Promise<string> {
+  // Serialize schema to JSON string (Zod schemas have toJSON())
+  const schemaJson = JSON.stringify(schema._def);
+  
+  // Generate SHA-256 hash
+  const encoder = new TextEncoder();
+  const data = encoder.encode(schemaJson);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  
+  return hashHex.substring(0, 16); // Use 16 chars for brevity
+}

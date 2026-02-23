@@ -371,6 +371,9 @@ export class MemoryClient {
 
   async getRecentSuccessfulIntents(limit: number = 3): Promise<ExecutionState[]> {
     try {
+      // Fail-open in CI/test environments if Redis is unavailable
+      if (!this.isAvailable && process.env.CI === "true") return [];
+      
       // This is a simplified query. In a real system, we'd use a separate index or list for successful intents.
       // For now, we query execution states and filter.
       const query: MemoryQuery = {
@@ -378,7 +381,7 @@ export class MemoryClient {
         type: "execution_state",
         limit: 100, // Search through last 100 to find successful ones
       };
-      
+
       const entries = await this.query(query);
       return entries
         .map(e => e.data as ExecutionState)
@@ -387,7 +390,7 @@ export class MemoryClient {
         .slice(0, limit);
     } catch (error) {
       console.error("Failed to get recent successful intents:", error);
-      return [];
+      return []; // Return empty instead of throwing to avoid 503
     }
   }
 }

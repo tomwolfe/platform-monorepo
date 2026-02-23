@@ -74,7 +74,8 @@ export function wrapWithPrefix(obj: any, prefix: string): any {
           if (prop === 'eval') {
             const [script, keys, ...rest] = args;
             if (Array.isArray(keys)) {
-              const prefixedKeys = keys.map(k => prefix + k);
+              // Only prefix if it's not already prefixed
+              const prefixedKeys = keys.map(k => k.startsWith(prefix) ? k : prefix + k);
               return target.eval(script, prefixedKeys, ...rest);
             }
           }

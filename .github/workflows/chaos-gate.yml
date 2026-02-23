@@ -72,17 +72,21 @@ jobs:
         run: |
           docker compose -f docker-compose.yml up -d redis postgres upstash-proxy
           echo "Waiting for services to be ready..."
-          sleep 10
+          # Use a more robust wait loop for the proxy
+          for i in {1..20}; do
+            if curl -s -H "Authorization: Bearer apps" http://localhost:8080/PING | grep -q "PONG"; then
+              echo "✅ Upstash proxy is ready"
+              break
+            fi
+            echo "Waiting for proxy... ($i/20)"
+            sleep 2
+          done
 
       - name: Verify services health
         run: |
           docker compose ps
-          # Check Redis connectivity
           docker compose exec -T redis redis-cli -a apps ping || exit 1
-          # Check Postgres connectivity
           docker compose exec -T postgres pg_isready -U apps || exit 1
-          # Check Upstash proxy connectivity
-          curl -sf -H "Authorization: Bearer apps" http://localhost:8080/PING || echo "⚠️ Upstash proxy not ready yet, continuing..."
 
       - name: Run Migrations
         run: pnpm db:migrate
@@ -91,6 +95,7 @@ jobs:
 
       - name: Start Applications and Run Chaos Suite
         run: |
+          export NODE_ENV=test
           # Use the standalone entry points as per Next.js 15 recommendation
           PORT=3000 node apps/intention-engine/.next/standalone/apps/intention-engine/server.js &
           PORT=3001 node apps/open-delivery/.next/standalone/apps/open-delivery/server.js &

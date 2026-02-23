@@ -14,6 +14,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { Redis } from '@upstash/redis';
 
 // ============================================================================
 // CIRCUIT BREAKER STATE
@@ -491,4 +492,307 @@ export function createCircuitBreakerRegistry(
   config?: Partial<CircuitBreakerConfig>
 ): CircuitBreakerRegistry {
   return new CircuitBreakerRegistry(config);
+}
+
+// ============================================================================
+// COST-BASED CIRCUIT BREAKER
+// Prevents "Budget Bleed" from runaway LLM calls or logic loops
+// ============================================================================
+
+export interface CostCircuitBreakerConfig {
+  /** Maximum cost per execution in USD (default: $1.00) */
+  maxCostPerExecution: number;
+  /** Maximum cost per user per day in USD (default: $5.00) */
+  maxCostPerUserPerDay: number;
+  /** Cost threshold for warning (default: 80% of max) */
+  warningThreshold: number;
+  /** Blacklist duration in hours when daily limit exceeded (default: 24h) */
+  blacklistDurationHours: number;
+  /** Enable debug logging */
+  debug: boolean;
+}
+
+const DEFAULT_COST_CONFIG: CostCircuitBreakerConfig = {
+  maxCostPerExecution: 1.00, // $1.00 per execution
+  maxCostPerUserPerDay: 5.00, // $5.00 per user per day
+  warningThreshold: 0.80, // 80% of limit
+  blacklistDurationHours: 24,
+  debug: false,
+};
+
+export interface CostTracking {
+  executionId: string;
+  userId: string;
+  currentCost: number;
+  dailyCost: number;
+  lastUpdated: number;
+}
+
+export class CostCircuitBreaker {
+  private config: CostCircuitBreakerConfig;
+  private redis: Redis;
+  private executionCosts: Map<string, number> = new Map();
+
+  constructor(redis: Redis, config: Partial<CostCircuitBreakerConfig> = {}) {
+    this.redis = redis;
+    this.config = { ...DEFAULT_COST_CONFIG, ...config };
+  }
+
+  /**
+   * Build Redis key for user daily cost
+   */
+  private buildUserDailyCostKey(userId: string): string {
+    const today = new Date().toISOString().split('T')[0];
+    return `cost:daily:${userId}:${today}`;
+  }
+
+  /**
+   * Build Redis key for user blacklist status
+   */
+  private buildUserBlacklistKey(userId: string): string {
+    return `cost:blacklist:${userId}`;
+  }
+
+  /**
+   * Build Redis key for execution cost
+   */
+  private buildExecutionCostKey(executionId: string): string {
+    return `cost:execution:${executionId}`;
+  }
+
+  /**
+   * Check if user is blacklisted
+   */
+  async isUserBlacklisted(userId: string): Promise<boolean> {
+    const blacklistKey = this.buildUserBlacklistKey(userId);
+    const blacklisted = await this.redis.get<string>(blacklistKey);
+    return blacklisted === 'true';
+  }
+
+  /**
+   * Get current cost for an execution
+   */
+  async getExecutionCost(executionId: string): Promise<number> {
+    const key = this.buildExecutionCostKey(executionId);
+    const cost = await this.redis.get<number>(key);
+    return cost || 0;
+  }
+
+  /**
+   * Get daily cost for a user
+   */
+  async getUserDailyCost(userId: string): Promise<number> {
+    const key = this.buildUserDailyCostKey(userId);
+    const cost = await this.redis.get<number>(key);
+    return cost || 0;
+  }
+
+  /**
+   * Assert that adding a cost won't exceed budget
+   * 
+   * @param executionId - Execution identifier
+   * @param userId - User identifier
+   * @param additionalCost - Cost to add in USD
+   * @throws Error if budget would be exceeded
+   */
+  async assertBudgetSafety(
+    executionId: string,
+    userId: string,
+    additionalCost: number
+  ): Promise<{
+    allowed: boolean;
+    reason?: string;
+    currentExecutionCost: number;
+    currentDailyCost: number;
+    projectedDailyCost: number;
+  }> {
+    const [currentExecutionCost, currentDailyCost, isBlacklisted] = await Promise.all([
+      this.getExecutionCost(executionId),
+      this.getUserDailyCost(userId),
+      this.isUserBlacklisted(userId),
+    ]);
+
+    // Check if user is blacklisted
+    if (isBlacklisted) {
+      return {
+        allowed: false,
+        reason: `User ${userId} is blacklisted due to exceeding daily budget`,
+        currentExecutionCost,
+        currentDailyCost,
+        projectedDailyCost: currentDailyCost + additionalCost,
+      };
+    }
+
+    const projectedExecutionCost = currentExecutionCost + additionalCost;
+    const projectedDailyCost = currentDailyCost + additionalCost;
+
+    // Check execution budget
+    if (projectedExecutionCost > this.config.maxCostPerExecution) {
+      return {
+        allowed: false,
+        reason: `Execution would exceed budget ($${projectedExecutionCost.toFixed(4)} > $${this.config.maxCostPerExecution.toFixed(2)})`,
+        currentExecutionCost,
+        currentDailyCost,
+        projectedDailyCost,
+      };
+    }
+
+    // Check daily budget
+    if (projectedDailyCost > this.config.maxCostPerUserPerDay) {
+      return {
+        allowed: false,
+        reason: `User would exceed daily budget ($${projectedDailyCost.toFixed(4)} > $${this.config.maxCostPerUserPerDay.toFixed(2)})`,
+        currentExecutionCost,
+        currentDailyCost,
+        projectedDailyCost,
+      };
+    }
+
+    // Check warning threshold
+    if (projectedDailyCost > this.config.maxCostPerUserPerDay * this.config.warningThreshold) {
+      console.warn(
+        `[CostCircuitBreaker] User ${userId} approaching daily budget: ` +
+        `$${projectedDailyCost.toFixed(4)} / $${this.config.maxCostPerUserPerDay.toFixed(2)} ` +
+        `(${((projectedDailyCost / this.config.maxCostPerUserPerDay) * 100).toFixed(1)}%)`
+      );
+    }
+
+    return {
+      allowed: true,
+      currentExecutionCost,
+      currentDailyCost,
+      projectedDailyCost,
+    };
+  }
+
+  /**
+   * Track cost for an execution
+   */
+  async trackCost(
+    executionId: string,
+    userId: string,
+    cost: number
+  ): Promise<void> {
+    const executionKey = this.buildExecutionCostKey(executionId);
+    const userDailyKey = this.buildUserDailyCostKey(userId);
+    const now = Date.now();
+
+    // Update execution cost
+    await this.redis.setex(executionKey, 86400, cost);
+
+    // Update daily cost (increment)
+    const currentDailyCost = await this.getUserDailyCost(userId);
+    const newDailyCost = currentDailyCost + cost;
+    await this.redis.setex(userDailyKey, 86400, newDailyCost);
+
+    // Check if daily budget exceeded
+    if (newDailyCost > this.config.maxCostPerUserPerDay) {
+      await this.blacklistUser(userId);
+    }
+
+    if (this.config.debug) {
+      console.log(
+        `[CostCircuitBreaker] Tracked $${cost.toFixed(4)} for execution ${executionId}, ` +
+        `user daily: $${newDailyCost.toFixed(4)}`
+      );
+    }
+  }
+
+  /**
+   * Blacklist a user for exceeding budget
+   */
+  private async blacklistUser(userId: string): Promise<void> {
+    const blacklistKey = this.buildUserBlacklistKey(userId);
+    const ttlSeconds = this.config.blacklistDurationHours * 60 * 60;
+
+    await this.redis.setex(blacklistKey, ttlSeconds, 'true');
+
+    console.warn(
+      `[CostCircuitBreaker] User ${userId} blacklisted for ${this.config.blacklistDurationHours}h ` +
+      `due to exceeding daily budget`
+    );
+
+    // Emit alert to Ably for monitoring
+    try {
+      const { RealtimeService } = require('../realtime');
+      await RealtimeService.publish('system:alerts', 'cost_budget_exceeded', {
+        userId,
+        blacklistDurationHours: this.config.blacklistDurationHours,
+        maxDailyCost: this.config.maxCostPerUserPerDay,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('[CostCircuitBreaker] Failed to emit alert:', error);
+    }
+  }
+
+  /**
+   * Reset execution cost (call when execution completes)
+   */
+  async resetExecution(executionId: string): Promise<void> {
+    const key = this.buildExecutionCostKey(executionId);
+    await this.redis.del(key);
+  }
+
+  /**
+   * Get cost statistics for a user
+   */
+  async getUserStats(userId: string): Promise<{
+    dailyCost: number;
+    isBlacklisted: boolean;
+    blacklistExpiresIn?: number;
+    budgetRemaining: number;
+    budgetUsedPercent: number;
+  }> {
+    const [dailyCost, isBlacklisted] = await Promise.all([
+      this.getUserDailyCost(userId),
+      this.isUserBlacklisted(userId),
+    ]);
+
+    const blacklistKey = this.buildUserBlacklistKey(userId);
+    const ttl = await this.redis.ttl(blacklistKey);
+
+    return {
+      dailyCost,
+      isBlacklisted,
+      blacklistExpiresIn: ttl > 0 ? ttl : undefined,
+      budgetRemaining: Math.max(0, this.config.maxCostPerUserPerDay - dailyCost),
+      budgetUsedPercent: (dailyCost / this.config.maxCostPerUserPerDay) * 100,
+    };
+  }
+
+  /**
+   * Manual blacklist (for admin intervention)
+   */
+  async manualBlacklist(userId: string, durationHours: number = 24): Promise<void> {
+    const blacklistKey = this.buildUserBlacklistKey(userId);
+    const ttlSeconds = durationHours * 60 * 60;
+
+    await this.redis.setex(blacklistKey, ttlSeconds, 'true');
+
+    console.warn(
+      `[CostCircuitBreaker] User ${userId} manually blacklisted for ${durationHours}h`
+    );
+  }
+
+  /**
+   * Remove blacklist (for admin intervention)
+   */
+  async removeBlacklist(userId: string): Promise<void> {
+    const blacklistKey = this.buildUserBlacklistKey(userId);
+    await this.redis.del(blacklistKey);
+
+    console.log(`[CostCircuitBreaker] Removed blacklist for user ${userId}`);
+  }
+}
+
+// ============================================================================
+// COST-BASED CIRCUIT BREAKER FACTORY
+// ============================================================================
+
+export function createCostCircuitBreaker(
+  redis: Redis,
+  config?: Partial<CostCircuitBreakerConfig>
+): CostCircuitBreaker {
+  return new CostCircuitBreaker(redis, config);
 }

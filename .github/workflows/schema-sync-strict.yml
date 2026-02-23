@@ -1,0 +1,162 @@
+name: Schema Sync Validation - Strict Mode
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'packages/database/src/schema/**'
+      - 'packages/mcp-protocol/src/schemas/**'
+      - 'packages/mcp-protocol/src/tools/**'
+      - 'scripts/validate-schema-sync.ts'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'packages/database/src/schema/**'
+      - 'packages/mcp-protocol/src/schemas/**'
+      - 'packages/mcp-protocol/src/tools/**'
+      - 'scripts/validate-schema-sync.ts'
+  workflow_dispatch:
+
+jobs:
+  validate-schema-sync:
+    name: Validate Schema Sync (Strict)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.15.9
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run strict schema sync validation
+        id: validate
+        run: |
+          pnpm validate:schema-sync:strict --json schema-sync-report.json
+        continue-on-error: true
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: schema-sync-report
+          path: schema-sync-report.json
+          retention-days: 7
+
+      - name: Check validation result
+        run: |
+          if [ "${{ steps.validate.outcome }}" == "failure" ]; then
+            echo "::error::Schema validation failed! Run 'pnpm validate:schema-sync:strict' locally to see details."
+            exit 1
+          fi
+
+  validate-schema-sync-full:
+    name: Validate All Schema Mappings
+    runs-on: ubuntu-latest
+    needs: validate-schema-sync
+    if: always() && needs.validate-schema-sync.result == 'success'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.15.9
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Run comprehensive schema validation
+        run: |
+          echo "Running comprehensive schema validation..."
+          pnpm tsx scripts/validate-schema-sync.ts --strict
+
+      - name: Validate environment schema
+        run: |
+          echo "Validating environment variables..."
+          pnpm validate:env
+
+  report-schema-status:
+    name: Report Schema Status
+    runs-on: ubuntu-latest
+    needs: [validate-schema-sync, validate-schema-sync-full]
+    if: always()
+
+    steps:
+      - name: Download validation report
+        uses: actions/download-artifact@v4
+        if: always()
+        with:
+          name: schema-sync-report
+          path: ./report
+        continue-on-error: true
+
+      - name: Display schema status
+        run: |
+          if [ -f ./report/schema-sync-report.json ]; then
+            echo "## Schema Validation Report" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat ./report/schema-sync-report.json >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No validation report found" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Comment on PR (if applicable)
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const fs = require('fs');
+            let report = { success: true, summary: { ok: 0, warnings: 0, errors: 0 } };
+            
+            try {
+              const reportPath = './report/schema-sync-report.json';
+              if (fs.existsSync(reportPath)) {
+                report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+              }
+            } catch (error) {
+              console.error('Failed to read report:', error);
+            }
+
+            const status = report.success ? '✅' : '❌';
+            const summary = report.summary || {};
+            
+            const comment = `
+            ### ${status} Schema Sync Validation
+
+            | Status | Count |
+            |--------|-------|
+            | OK     | ${summary.ok || 0} |
+            | Warnings | ${summary.warnings || 0} |
+            | Errors | ${summary.errors || 0} |
+
+            ${report.success ? '**All schemas are in sync!**' : '**Schema validation failed!** Please review the errors above.'}
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });

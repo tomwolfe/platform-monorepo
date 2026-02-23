@@ -1,13 +1,14 @@
 /**
  * Schema Sync Validator
- * 
+ *
  * CI check that validates TOOLS registry schemas against DB_REFLECTED_SCHEMAS.
  * Ensures database schema changes are reflected in MCP tool definitions.
- * 
- * Usage: 
+ *
+ * Usage:
  *   pnpm tsx scripts/validate-schema-sync.ts
  *   pnpm tsx scripts/validate-schema-sync.ts --strict (fail on warnings)
- * 
+ *   pnpm tsx scripts/validate-schema-sync.ts --json (output JSON for CI)
+ *
  * Exit codes:
  *   0 - All schemas in sync
  *   1 - Validation errors found
@@ -17,6 +18,8 @@
 import { z } from 'zod';
 import { DB_REFLECTED_SCHEMAS, TOOLS } from '../packages/mcp-protocol/src/index';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { writeFileSync } from 'fs';
+import { join } from 'path';
 
 interface ValidationResult {
   toolName: string;
@@ -210,12 +213,15 @@ function validateToolAgainstDB(
 /**
  * Main validation function
  */
-async function validateSchemaSync(strictMode: boolean = false): Promise<number> {
+async function validateSchemaSync(
+  strictMode: boolean = false,
+  jsonOutput?: string
+): Promise<number> {
   console.log('🔍 Schema Sync Validator\n');
   console.log('Validating TOOLS registry against DB_REFLECTED_SCHEMAS...\n');
-  
+
   const results: ValidationResult[] = [];
-  
+
   // Define expected mappings between tools and DB schemas
   const toolToDbMappings: Array<{ toolPath: string; toolName: string; dbSchema: string }> = [
     { toolPath: 'tableManagement.createReservation', toolName: 'create_reservation', dbSchema: 'createReservation' },
@@ -225,17 +231,17 @@ async function validateSchemaSync(strictMode: boolean = false): Promise<number> 
     { toolPath: 'tableManagement.createReservation', toolName: 'create_reservation', dbSchema: 'reservations' },
     { toolPath: 'tableManagement.getTableLayout', toolName: 'get_table_layout', dbSchema: 'tables' },
   ];
-  
+
   // Validate each mapping
   for (const mapping of toolToDbMappings) {
     // Navigate to tool in TOOLS registry
     const pathParts = mapping.toolPath.split('.');
     let toolDef: any = TOOLS;
-    
+
     for (const part of pathParts) {
       toolDef = toolDef?.[part];
     }
-    
+
     if (!toolDef) {
       results.push({
         toolName: mapping.toolName,
@@ -244,19 +250,19 @@ async function validateSchemaSync(strictMode: boolean = false): Promise<number> 
       });
       continue;
     }
-    
+
     const result = validateToolAgainstDB(mapping.toolName, toolDef, mapping.dbSchema);
     results.push(result);
   }
-  
+
   // Print results
   console.log('─'.repeat(80));
   console.log('');
-  
+
   const errors = results.filter(r => r.status === 'error');
   const warnings = results.filter(r => r.status === 'warning');
   const ok = results.filter(r => r.status === 'ok');
-  
+
   if (ok.length > 0) {
     console.log(`✅ ${ok.length} schema(s) in sync:\n`);
     for (const result of ok) {
@@ -264,7 +270,7 @@ async function validateSchemaSync(strictMode: boolean = false): Promise<number> 
     }
     console.log('');
   }
-  
+
   if (warnings.length > 0) {
     console.log(`⚠️  ${warnings.length} warning(s):\n`);
     for (const result of warnings) {
@@ -278,7 +284,7 @@ async function validateSchemaSync(strictMode: boolean = false): Promise<number> 
     }
     console.log('');
   }
-  
+
   if (errors.length > 0) {
     console.log(`❌ ${errors.length} error(s):\n`);
     for (const result of errors) {
@@ -290,27 +296,50 @@ async function validateSchemaSync(strictMode: boolean = false): Promise<number> 
     }
     console.log('');
   }
-  
+
   // Summary
   console.log('─'.repeat(80));
   console.log(`\nSummary: ${ok.length} OK, ${warnings.length} warnings, ${errors.length} errors\n`);
-  
+
+  // Write JSON output if requested (for CI)
+  if (jsonOutput) {
+    const report = {
+      timestamp: new Date().toISOString(),
+      strictMode,
+      summary: {
+        total: results.length,
+        ok: ok.length,
+        warnings: warnings.length,
+        errors: errors.length,
+      },
+      results,
+      success: errors.length === 0 && (strictMode ? warnings.length === 0 : true),
+    };
+
+    try {
+      writeFileSync(jsonOutput, JSON.stringify(report, null, 2));
+      console.log(`📄 JSON report written to: ${jsonOutput}\n`);
+    } catch (error) {
+      console.error(`Failed to write JSON report: ${error}`);
+    }
+  }
+
   // Determine exit code
   if (errors.length > 0) {
     console.log('❌ Schema validation FAILED\n');
     return 1;
   }
-  
+
   if (warnings.length > 0 && strictMode) {
     console.log('⚠️  Schema validation completed with warnings (strict mode)\n');
     return 2;
   }
-  
+
   if (warnings.length > 0) {
     console.log('⚠️  Schema validation completed with warnings\n');
     return 0; // Warnings don't fail CI in non-strict mode
   }
-  
+
   console.log('✅ All schemas are in sync!\n');
   return 0;
 }
@@ -318,8 +347,10 @@ async function validateSchemaSync(strictMode: boolean = false): Promise<number> 
 // CLI entry point
 const args = process.argv.slice(2);
 const strictMode = args.includes('--strict');
+const jsonOutputIndex = args.findIndex(arg => arg === '--json');
+const jsonOutput = jsonOutputIndex !== -1 ? (args[jsonOutputIndex + 1] || 'schema-sync-report.json') : undefined;
 
-validateSchemaSync(strictMode)
+validateSchemaSync(strictMode, jsonOutput)
   .then(exitCode => {
     process.exit(exitCode);
   })

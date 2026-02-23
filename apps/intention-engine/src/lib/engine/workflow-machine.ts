@@ -1584,6 +1584,11 @@ export class WorkflowMachine {
 
   /**
    * Execute compensation for failed saga
+   * 
+   * ENHANCEMENT (Task 2 & 4):
+   * - Treats compensation as its own retryable mini-workflow
+   * - Emits SAGA_MANUAL_INTERVENTION_REQUIRED to Ably if compensation fails
+   * - Implements retry logic for compensation actions
    */
   private async executeCompensation(): Promise<WorkflowResult> {
     console.log(
@@ -1595,6 +1600,12 @@ export class WorkflowMachine {
 
     let compensated = 0;
     let failed = 0;
+    const compensationFailures: Array<{
+      stepId: string;
+      compensationTool: string;
+      error: string;
+      attempts: number;
+    }> = [];
 
     // Execute compensations in reverse order
     for (let i = this.compensationsRegistered.length - 1; i >= 0; i--) {
@@ -1605,29 +1616,106 @@ export class WorkflowMachine {
         continue; // Only compensate completed steps
       }
 
-      try {
-        const result = await this.toolExecutor.execute(
-          comp.compensationTool,
-          comp.parameters,
-          30000
-        );
+      // MULTI-STEP COMPENSATION: Retry logic for compensation actions
+      const MAX_COMPENSATION_ATTEMPTS = 3;
+      let compensationSuccess = false;
+      let lastError: string | null = null;
 
-        if (result.success) {
-          compensated++;
+      for (let attempt = 1; attempt <= MAX_COMPENSATION_ATTEMPTS; attempt++) {
+        try {
           console.log(
-            `[WorkflowMachine] Compensation successful for step ${comp.stepId}: ${comp.compensationTool}`
+            `[WorkflowMachine] Compensation attempt ${attempt}/${MAX_COMPENSATION_ATTEMPTS} for step ${comp.stepId}: ${comp.compensationTool}`
           );
-        } else {
-          failed++;
+
+          // Apply exponential backoff for retries
+          if (attempt > 1) {
+            const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+            await new Promise(resolve => setTimeout(resolve, backoffMs));
+          }
+
+          const result = await this.toolExecutor.execute(
+            comp.compensationTool,
+            comp.parameters,
+            30000
+          );
+
+          if (result.success) {
+            compensationSuccess = true;
+            compensated++;
+            console.log(
+              `[WorkflowMachine] Compensation successful for step ${comp.stepId}: ${comp.compensationTool}`
+            );
+            break; // Exit retry loop
+          } else {
+            lastError = result.error || "Unknown error";
+            console.warn(
+              `[WorkflowMachine] Compensation attempt ${attempt} failed for step ${comp.stepId}: ${result.error}`
+            );
+          }
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : String(error);
           console.error(
-            `[WorkflowMachine] Compensation failed for step ${comp.stepId}: ${result.error}`
+            `[WorkflowMachine] Compensation attempt ${attempt} error for step ${comp.stepId}:`,
+            lastError
           );
         }
-      } catch (error) {
+      }
+
+      if (!compensationSuccess) {
         failed++;
+        compensationFailures.push({
+          stepId: comp.stepId,
+          compensationTool: comp.compensationTool,
+          error: lastError || "Unknown error",
+          attempts: MAX_COMPENSATION_ATTEMPTS,
+        });
         console.error(
-          `[WorkflowMachine] Compensation error for step ${comp.stepId}:`,
-          error instanceof Error ? error.message : String(error)
+          `[WorkflowMachine] Compensation exhausted after ${MAX_COMPENSATION_ATTEMPTS} attempts for step ${comp.stepId}`
+        );
+      }
+    }
+
+    // HUMAN-IN-THE-LOOP: Emit alert if compensation fails
+    if (failed > 0) {
+      console.error(
+        `[WorkflowMachine] ${failed} compensations failed. Emitting SAGA_MANUAL_INTERVENTION_REQUIRED event.`
+      );
+
+      try {
+        await RealtimeService.publishNervousSystemEvent(
+          "SAGA_MANUAL_INTERVENTION_REQUIRED",
+          {
+            workflowId: this.workflowId,
+            executionId: this.executionId,
+            intentId: this.intentId,
+            failedCompensations: compensationFailures,
+            successfulCompensations: compensated,
+            totalCompensations: this.compensationsRegistered.length,
+            requiresHumanIntervention: true,
+            interventionReason: "Compensation actions exhausted all retry attempts",
+            timestamp: new Date().toISOString(),
+            traceId: this.traceId,
+          },
+          this.traceId
+        );
+
+        // Also publish to system alerts channel for monitoring dashboards
+        await RealtimeService.publish('system:alerts', 'saga_compensation_failed', {
+          workflowId: this.workflowId,
+          executionId: this.executionId,
+          failedCompensations: compensationFailures,
+          severity: 'HIGH',
+          requiresAction: true,
+          timestamp: new Date().toISOString(),
+        });
+
+        console.log(
+          `[WorkflowMachine] Published SAGA_MANUAL_INTERVENTION_REQUIRED event for ${this.executionId}`
+        );
+      } catch (publishError) {
+        console.error(
+          `[WorkflowMachine] Failed to publish intervention event:`,
+          publishError
         );
       }
     }
@@ -1643,10 +1731,26 @@ export class WorkflowMachine {
         },
       });
     } else {
-      this.state = setExecutionError(
-        this.state,
-        `${failed} compensations failed`
-      );
+      // Store compensation failure details in state for audit
+      this.state = applyStateUpdate(this.state, {
+        status: "FAILED",
+        context: {
+          ...this.state.context,
+          compensationStatus: "PARTIALLY_COMPENSATED",
+          compensatedSteps: compensated,
+          failedCompensations: failed,
+          compensationFailures: compensationFailures,
+          requiresHumanIntervention: true,
+        },
+        error: {
+          code: "COMPENSATION_FAILED",
+          message: `${failed} compensations failed after ${MAX_COMPENSATION_ATTEMPTS} attempts each. Manual intervention required.`,
+          details: {
+            failedCompensations: compensationFailures,
+            successfulCompensations: compensated,
+          },
+        },
+      });
     }
 
     // Publish compensation event

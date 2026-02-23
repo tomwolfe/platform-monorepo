@@ -61,10 +61,16 @@ export type MemoryEntryInput = Omit<MemoryEntry, "key" | "created_at" | "expires
 export class MemoryClient {
   private redis: Redis;
   private namespace: string;
+  private isAvailable: boolean;
 
   constructor(namespace: string = MEMORY_CONFIG.default_namespace) {
     this.redis = redis;
     this.namespace = namespace;
+    // Check if Redis is actually available
+    this.isAvailable = !!redis;
+    if (!this.isAvailable) {
+      console.warn('[MemoryClient] Redis client not available. Degrading to stateless mode.');
+    }
   }
 
   // ========================================================================
@@ -93,16 +99,16 @@ export class MemoryClient {
 
   async store(entry: MemoryEntryInput): Promise<MemoryEntry> {
     const timestamp = new Date().toISOString();
-    
+
     // Generate key
     const key = this.buildKey(entry.type, entry.namespace);
-    
+
     // Calculate TTL
     const ttlSeconds = entry.ttl_seconds ?? MEMORY_CONFIG.ttl_by_type[entry.type] ?? MEMORY_CONFIG.default_ttl_seconds;
-    
+
     // Validate TTL doesn't exceed maximum
     const effectiveTtl = Math.min(ttlSeconds, MEMORY_CONFIG.max_ttl_seconds);
-    
+
     // Calculate expiration
     const expiresAt = effectiveTtl > 0
       ? new Date(Date.now() + effectiveTtl * 1000).toISOString()
@@ -118,6 +124,12 @@ export class MemoryClient {
     });
 
     try {
+      // RESILIENCE FIX: Gracefully handle Redis unavailability
+      if (!this.isAvailable) {
+        console.warn('[MemoryClient] Redis unavailable, skipping store operation in stateless mode.');
+        return completeEntry; // Return entry without persisting
+      }
+
       // Store in Redis with TTL
       if (effectiveTtl > 0) {
         await this.redis.setex(key, effectiveTtl, JSON.stringify(completeEntry));
@@ -143,9 +155,15 @@ export class MemoryClient {
   // ========================================================================
 
   async retrieve(key: string): Promise<MemoryEntry | null> {
+    // RESILIENCE FIX: Gracefully handle Redis unavailability
+    if (!this.isAvailable) {
+      console.warn('[MemoryClient] Redis unavailable, returning null in stateless mode.');
+      return null;
+    }
+
     try {
       const data = await this.redis.get<string>(key);
-      
+
       if (!data) {
         return null;
       }
@@ -473,17 +491,11 @@ let defaultMemoryClient: MemoryClient | null = null;
 
 /**
  * Get Memory Client - Enhanced with explicit Redis availability check
- * 
- * @throws Error if Redis is not available
- * @returns MemoryClient instance
+ *
+ * @returns MemoryClient instance (may operate in degraded mode if Redis unavailable)
  */
 export function getMemoryClient(): MemoryClient {
   if (!defaultMemoryClient) {
-    // Check if redis is available
-    if (!redis) {
-      console.error('[MemoryClient] CRITICAL: Redis client is not available. Memory operations will fail.');
-      throw new Error('Redis client not available. Check UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN environment variables.');
-    }
     defaultMemoryClient = new MemoryClient();
   }
   return defaultMemoryClient;

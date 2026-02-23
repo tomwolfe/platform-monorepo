@@ -22,8 +22,8 @@ env:
   INTERNAL_SYSTEM_KEY: 'ci-test-internal-key-change-in-production'
   # Database URL for local postgres
   DATABASE_URL: 'postgresql://apps:apps@localhost:5432/apps'
-  # Redis URL for local redis
-  UPSTASH_REDIS_REST_URL: 'redis://localhost:6379'
+  # Redis URL for local redis (using http for @upstash/redis SDK compatibility)
+  UPSTASH_REDIS_REST_URL: 'http://localhost:6379'
   UPSTASH_REDIS_REST_TOKEN: 'apps'
 
 jobs:

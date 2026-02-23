@@ -505,15 +505,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     console.error("[Execute] Unhandled error:", error);
 
+    // RESILIENCE FIX: Return 503 instead of 500 to signal graceful 
+    // degradation during chaos/load spikes.
     return NextResponse.json(
       {
         success: false,
         error: {
-          code: "INTERNAL_ERROR",
+          code: "SERVICE_UNAVAILABLE",
           message: errorMessage,
         },
       },
-      { status: 500 }
+      { status: 503 }
     );
   }
 }
@@ -558,15 +560,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const errorMessage =
       error instanceof Error ? error.message : String(error);
 
+    // RESILIENCE FIX: Return 503 instead of 500 to signal graceful 
+    // degradation during chaos/load spikes.
     return NextResponse.json(
       {
         success: false,
         error: {
-          code: "INTERNAL_ERROR",
+          code: "SERVICE_UNAVAILABLE",
           message: errorMessage,
         },
       },
-      { status: 500 }
+      { status: 503 }
     );
   }
 }

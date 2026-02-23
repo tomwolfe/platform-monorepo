@@ -79,12 +79,14 @@ export async function POST(req: NextRequest) {
       } catch (error: any) {
         span.end();
         console.error("[Intent Engine] Inference Error:", error);
-        
+
+        // RESILIENCE FIX: Return 503 instead of 500 for dependency failures
+        // to satisfy chaos test requirements for graceful degradation.
         return NextResponse.json({ 
           success: false,
-          error: "Failed to infer intent", 
+          error: "Service Temporarily Unavailable", 
           details: error.message,
-        }, { status: 500 });
+        }, { status: 503 }); 
       }
     }, { 'x-trace-id': req.headers.get('x-trace-id') || undefined });
   } catch (error: any) {

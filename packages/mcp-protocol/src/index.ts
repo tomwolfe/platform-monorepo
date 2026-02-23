@@ -718,7 +718,7 @@ export * from './schemas/event-registry';
  * Helper type to extract input type from a Zod schema
  * Usage: ZodInfer<typeof SomeSchema>
  */
-export type ZodInfer<T extends z.ZodType> = z.infer<T>;
+export type ZodInfer<T extends zod.ZodType> = zod.infer<T>;
 
 /**
  * Map of all tool names to their Zod schemas
@@ -769,9 +769,9 @@ export interface AllToolsMap {
  * Type for tool input parameters - strictly inferred from Zod schema
  * NO MORE `any` - parameters are now type-safe based on tool name
  */
-export type ToolInput<TToolName extends keyof AllToolsMap = keyof AllToolsMap> = 
-  TToolName extends keyof AllToolsMap 
-    ? z.infer<AllToolsMap[TToolName]> 
+export type ToolInput<TToolName extends keyof AllToolsMap = keyof AllToolsMap> =
+  TToolName extends keyof AllToolsMap
+    ? zod.infer<AllToolsMap[TToolName]>
     : never;
 
 /**
@@ -812,7 +812,7 @@ export interface TypedToolExecutor {
 /**
  * Tool definition with strictly typed schema
  */
-export interface ToolDefinition<TSchema extends z.ZodType> {
+export interface ToolDefinition<TSchema extends zod.ZodType> {
   name: string;
   description: string;
   schema: TSchema;
@@ -852,11 +852,11 @@ export function getTypedToolEntry<TToolName extends keyof AllToolsMap>(
 ): TypedToolEntry<TToolName> | undefined {
   // Search through TOOLS registry using type-safe iteration
   const categories = Object.keys(TOOLS) as Array<keyof typeof TOOLS>;
-  
+
   for (const category of categories) {
-    const categoryTools = TOOLS[category];
-    const toolKeys = Object.keys(categoryTools) as Array<keyof typeof categoryTools>;
-    
+    const categoryTools = TOOLS[category] as Record<string, { name: string; description: string; schema: zod.ZodType }>;
+    const toolKeys = Object.keys(categoryTools);
+
     for (const key of toolKeys) {
       const tool = categoryTools[key];
       if (tool.name === toolName) {
@@ -886,7 +886,7 @@ export function validateToolParams<TToolName extends keyof AllToolsMap>(
  * Generate a schema hash for version-pinned checkpoints
  * Used to detect schema evolution during saga execution
  */
-export async function generateSchemaHash(schema: z.ZodType): Promise<string> {
+export async function generateSchemaHash(schema: zod.ZodType): Promise<string> {
   // Serialize schema to JSON string (Zod schemas have toJSON())
   const schemaJson = JSON.stringify(schema._def);
   

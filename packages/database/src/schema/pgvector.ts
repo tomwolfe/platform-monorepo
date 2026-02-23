@@ -29,7 +29,6 @@ import {
   jsonb,
   index,
   uniqueIndex,
-  pgExtension,
   vector,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';

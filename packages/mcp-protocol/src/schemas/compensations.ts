@@ -15,17 +15,17 @@ export interface CompensationDefinition {
   /** The tool name to execute for compensation */
   toolName: string;
   /** How to map parameters from the original step to the compensation */
-  parameterMapper: 
-    | "use_booking_id" 
-    | "use_order_id" 
-    | "use_reservation_id" 
-    | "use_fulfillment_id" 
+  parameterMapper:
+    | "use_booking_id"
+    | "use_order_id"
+    | "use_reservation_id"
+    | "use_fulfillment_id"
     | "use_ride_id"
     | "identity";
   /** Whether the compensation requires confirmation (should be false for auto-compensation) */
   requiresConfirmation: boolean;
   /** Optional: Custom parameter mapping function for complex compensations */
-  customMapper?: (originalParams: ToolInput, stepResult?: unknown) => Record<string, unknown>;
+  customMapper?: (originalParams: Record<string, unknown>, stepResult?: unknown) => Record<string, unknown>;
 }
 
 /**
@@ -63,7 +63,7 @@ export const COMPENSATIONS: Record<string, CompensationDefinition> = {
     customMapper: (originalParams, stepResult) => {
       // For updates, we would need to store the original state to restore it
       // This is a placeholder - production implementation would need state snapshot
-      return { reservationId: originalParams.reservationId };
+      return { reservationId: (originalParams as Record<string, unknown>).reservationId };
     },
   },
 
@@ -129,8 +129,8 @@ export const COMPENSATIONS: Record<string, CompensationDefinition> = {
     requiresConfirmation: false,
     // Would need to set status to 'removed'
     customMapper: (originalParams) => {
-      return { 
-        reservationId: originalParams.reservationId,
+      return {
+        reservationId: (originalParams as Record<string, unknown>).reservationId,
         status: "removed"
       };
     },
@@ -206,13 +206,13 @@ export function getCompensation(toolName: string): CompensationDefinition | unde
 
 /**
  * Map parameters from original step to compensation
- * 
+ *
  * CRITICAL: This function must handle all parameter mapper types defined in CompensationDefinition.
  * Each mapper extracts the necessary ID from either the original parameters or the step result.
  */
 export function mapCompensationParameters(
   toolName: string,
-  originalParams: ToolInput,
+  originalParams: Record<string, unknown>,
   stepResult?: unknown
 ): Record<string, unknown> {
   const compensation = COMPENSATIONS[toolName];
@@ -232,12 +232,12 @@ export function mapCompensationParameters(
     }
 
     case "use_reservation_id": {
-      const reservationId = originalParams.reservationId as string | undefined;
+      const reservationId = (originalParams as Record<string, unknown>).reservationId as string | undefined;
       return reservationId ? { reservationId } : {};
     }
 
     case "use_order_id": {
-      const orderId = originalParams.order_id as string | undefined;
+      const orderId = (originalParams as Record<string, unknown>).order_id as string | undefined;
       return orderId ? { orderId } : {};
     }
 
@@ -248,16 +248,16 @@ export function mapCompensationParameters(
 
     case "use_ride_id": {
       // Extract ride ID from step result (returned by request_ride / mobility_request)
-      const rideId = 
+      const rideId =
         (stepResult as Record<string, unknown>)?.ride_id as string | undefined ||
         (stepResult as Record<string, unknown>)?.order_id as string | undefined;
-      
+
       // If no ride_id in result, try to construct from original params
       if (!rideId) {
-        const pickup = originalParams.pickup_location as string | undefined;
-        const destination = originalParams.destination_location as string | undefined;
-        const service = originalParams.service as string | undefined;
-        
+        const pickup = (originalParams as Record<string, unknown>).pickup_location as string | undefined;
+        const destination = (originalParams as Record<string, unknown>).destination_location as string | undefined;
+        const service = (originalParams as Record<string, unknown>).service as string | undefined;
+
         // Return original params for manual cancellation
         return {
           service,
@@ -265,7 +265,7 @@ export function mapCompensationParameters(
           destination_location: destination,
         };
       }
-      
+
       return { ride_id: rideId };
     }
 

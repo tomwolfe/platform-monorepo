@@ -213,7 +213,7 @@ async function buildToolExecutor(traceId?: string): Promise<DurableToolExecutor>
       try {
         // Try MCP manager first with parameter aliasing
         const result = await Promise.race([
-          manager.executeTool(toolName, parameters),
+          manager.executeTool(toolName, parameters as Record<string, unknown>),
           new Promise<ToolCallResult>((_, reject) => {
             signal?.addEventListener('abort', () => {
               reject(new Error('AbortError: Tool call cancelled'));

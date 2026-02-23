@@ -83,7 +83,7 @@ export class RegistryManager {
 
                 try {
                   // Pass trace_id in params if available in context
-                  const paramsWithTrace = {
+                  const paramsWithTrace: Record<string, unknown> = {
                     ...params,
                     _trace_id: context.executionId
                   };

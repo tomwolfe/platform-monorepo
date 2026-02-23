@@ -86,7 +86,7 @@ export class MCPClient {
    * Vercel Hobby Tier: Implements AbortController timeout protection (8s limit).
    * Parameter Mapping: Applies PARAMETER_ALIASES to bridge LLM hallucinations.
    */
-  async callTool(name: string, args: ToolInput, signal?: AbortSignal): Promise<ToolOutput> {
+  async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolOutput> {
     return this.circuitBreaker.execute(async () => {
       return this.withRetry(async (attemptAbortSignal: AbortSignal) => {
         // Create AbortController for this tool call with timeout
@@ -156,7 +156,7 @@ export class MCPClient {
    * Applies parameter aliases to bridge LLM naming conventions to tool-specific requirements.
    * Uses both shared aliases from @repo/mcp-protocol and tool-specific mappings.
    */
-  private applyParameterAliases(name: string, args: ToolInput): ToolInput {
+  private applyParameterAliases(name: string, args: Record<string, unknown>): Record<string, unknown> {
     // Tool-specific aliases (could be extended per-tool if needed)
     const toolSpecificAliases: Record<string, string> = {
       "reservation_time": "time",
@@ -183,7 +183,7 @@ export class MCPClient {
       ...toolSpecificAliases,
     };
 
-    const mappedArgs: ToolInput = { ...args };
+    const mappedArgs: Record<string, unknown> = { ...args };
 
     for (const [alias, primary] of Object.entries(allAliases)) {
       if (mappedArgs[alias] !== undefined && mappedArgs[primary] === undefined) {

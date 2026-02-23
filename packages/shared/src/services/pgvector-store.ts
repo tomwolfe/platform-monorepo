@@ -66,6 +66,25 @@ export class PGVectorStore implements VectorStore {
   }
 
   // ========================================================================
+  // INTERFACE IMPLEMENTATIONS
+  // ========================================================================
+
+  /**
+   * Initialize the vector index (no-op for pgvector - schema managed by migrations)
+   */
+  async initialize(): Promise<void> {
+    // pgvector schema is managed by Drizzle migrations
+    // No runtime initialization needed
+  }
+
+  /**
+   * Reset/clear the index (use with caution!)
+   */
+  async reset(): Promise<void> {
+    await this.clearAll();
+  }
+
+  // ========================================================================
   // VECTOR OPERATIONS
   // ========================================================================
 
@@ -73,7 +92,7 @@ export class PGVectorStore implements VectorStore {
    * Add a vector entry to the store
    * Can be used within a transaction for ACID consistency
    */
-  async addVector(entry: VectorEntry): Promise<string> {
+  async addVector(entry: Omit<VectorEntry, "id">): Promise<string> {
     const id = crypto.randomUUID();
 
     // Validate embedding dimensions
@@ -164,7 +183,7 @@ export class PGVectorStore implements VectorStore {
       .limit(limit);
 
     // Convert to VectorSearchResult format
-    return results.map((result, index) => ({
+    return results.map((result: { entry: typeof semanticMemories.$inferSelect; similarity: number }, index: number) => ({
       id: result.entry.id,
       score: result.similarity,
       metadata: {
@@ -199,6 +218,7 @@ export class PGVectorStore implements VectorStore {
     const entry = results[0];
 
     return {
+      id: entry.id,
       userId: entry.userId,
       intentType: entry.intentType,
       rawText: entry.rawText,
@@ -251,7 +271,6 @@ export class PGVectorStore implements VectorStore {
       .update(semanticMemories)
       .set({
         metadata,
-        updatedAt: new Date(),
       })
       .where(eq(semanticMemories.id, id));
 
@@ -310,7 +329,7 @@ export class PGVectorStore implements VectorStore {
    * Add multiple vectors in batch
    * More efficient than individual inserts
    */
-  async addVectors(entries: VectorEntry[]): Promise<string[]> {
+  async addVectors(entries: Array<Omit<VectorEntry, "id">>): Promise<string[]> {
     const ids: string[] = [];
 
     // Process in batches of 100 to avoid overwhelming the database

@@ -112,8 +112,8 @@ export class ParameterAliaser {
    * Apply parameter aliases to tool input
    * If LLM provides `venueId` but tool expects `restaurant_id`, fix it
    */
-  applyAliases(parameters: ToolInput, targetSchema?: any): ToolInput {
-    const resolved: ToolInput = { ...parameters };
+  applyAliases(parameters: Record<string, unknown>, targetSchema?: any): Record<string, unknown> {
+    const resolved: Record<string, unknown> = { ...parameters };
     let aliasApplied = false;
 
     for (const [alias, primary] of Object.entries(this.aliases)) {
@@ -334,7 +334,7 @@ export class DynamicMcpClientManager {
    */
   async executeTool(
     toolName: string,
-    parameters: ToolInput,
+    parameters: Record<string, unknown>,
     serverName?: string
   ): Promise<ToolCallResult> {
     // Find the tool in registry
@@ -526,7 +526,7 @@ export async function getMcpClients(): Promise<{
  */
 export async function executeTool(
   toolName: string,
-  parameters: ToolInput,
+  parameters: Record<string, unknown>,
   serverName?: string
 ): Promise<ToolCallResult> {
   const manager = getManager();

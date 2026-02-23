@@ -14,8 +14,10 @@ env:
   NODE_VERSION: "24"
   REDIS_URL: ${{ secrets.REDIS_URL }}
   # Clerk test keys for CI build
-  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY || 'pk_test_test' }}
-  CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY || 'sk_test_test' }}
+  # Use a valid-format test key that passes Clerk's validation
+  # Format: pk_test_ followed by base58-encoded string
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY || 'pk_test_Y2xlcmsuZXhhbXBsZS5jb20k' }}
+  CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY || 'sk_test_Y2xlcmsuZXhhbXBsZS5jb20k' }}
   # Internal system key for QStash
   INTERNAL_SYSTEM_KEY: 'ci-test-internal-key-change-in-production'
   # Database URL for local postgres

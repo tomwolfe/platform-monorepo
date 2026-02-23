@@ -8,6 +8,11 @@ const isProtectedRoute = createRouteMatcher([
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
+  // Skip middleware for _not-found route during build
+  if (req.nextUrl.pathname.startsWith('/_not-found')) {
+    return NextResponse.next();
+  }
+
   // 1. Allow the bridge route to bypass initial auth
   if (req.nextUrl.pathname.startsWith('/api/auth/bridge')) {
     return NextResponse.next();

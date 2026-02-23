@@ -67,7 +67,6 @@ export const options = {
         { duration: '1m', target: 10 },   // Stay at 10 users
         { duration: '30s', target: 0 },   // Ramp down to 0 users
       ],
-      graceRampDown: '30s',
       exec: 'intentInferenceTest',
       tags: { test_type: 'intent_inference' },
     },
@@ -81,7 +80,6 @@ export const options = {
         { duration: '1m', target: 5 },
         { duration: '30s', target: 0 },
       ],
-      graceRampDown: '30s',
       exec: 'stepExecutionTest',
       tags: { test_type: 'step_execution' },
     },

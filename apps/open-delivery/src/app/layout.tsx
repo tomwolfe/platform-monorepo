@@ -21,8 +21,9 @@ export const metadata: Metadata = {
 
 // Use environment key with a properly formatted fallback for CI/build
 // Clerk requires keys to start with pk_test_ or pk_live_ followed by valid base58 characters
-const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY 
-  || "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k"; // Valid format for build-time
+// This key is a valid format for build-time and CI testing (won't actually authenticate)
+const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+  || "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k";
 
 export default function RootLayout({
   children,

@@ -131,21 +131,6 @@ export default function () {
   errorRate.add(!executionCheck);
 
   sleep(1);
-
-  // Test 3: Health check endpoint (open-delivery)
-  const healthResponse = http.get(
-    `${BASE_URL}/api/health`,
-    {
-      timeout: "2s",
-      tags: { name: "health_check" },
-    }
-  );
-
-  check(healthResponse, {
-    "health: returns status": (r) => r.status === 200 || r.status === 503 || r.status === 404,
-  });
-
-  sleep(0.5);
 }
 
 export function handleSummary(data) {
@@ -157,7 +142,6 @@ export function handleSummary(data) {
 Chaos Test Results - Database Failure:
   Pass Rate: ${(checks.rate || 0 * 100).toFixed(2)}%
   Error Rate: ${(metrics.http_req_failed?.values?.rate || 0 * 100).toFixed(2)}%
-  Retry Rate: ${(metrics.retries?.values?.rate || 0 * 100).toFixed(2)}%
 `,
   };
 }

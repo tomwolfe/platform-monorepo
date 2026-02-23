@@ -79,17 +79,24 @@ jobs:
           # Start intention-engine in background
           cd apps/intention-engine && pnpm dev &
           INTENTION_PID=$!
-          
-          # Start open-delivery in background  
+
+          # Start open-delivery in background
           cd apps/open-delivery && pnpm dev &
           OPENDELIVER_PID=$!
-          
-          # Wait for apps to be ready
+
+          # Wait for applications to be ready (poll for up to 60 seconds)
           echo "Waiting for applications to start..."
-          sleep 15
-          
-          # Verify apps are running
-          curl -f http://localhost:3000/api/health || echo "Health check failed, but continuing..."
+          for i in {1..30}; do
+            if curl -sf http://localhost:3000 > /dev/null 2>&1; then
+              echo "✅ Application is ready after $((i * 2)) seconds"
+              break
+            fi
+            echo "Waiting for application... ($i/30)"
+            sleep 2
+          done
+
+          # Verify apps are running (root page should load)
+          curl -f http://localhost:3000 || echo "⚠️ Health check failed, but continuing..."
         env:
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
           CLERK_SECRET_KEY: ${{ env.CLERK_SECRET_KEY }}

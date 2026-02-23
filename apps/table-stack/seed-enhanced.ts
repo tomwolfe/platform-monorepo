@@ -1,6 +1,5 @@
 import 'dotenv/config';
-import { db, restaurants, restaurantTables, users, restaurantReservations, restaurantWaitlist } from "@repo/database";
-import { eq } from 'drizzle-orm';
+import { db, restaurants, restaurantTables, users, restaurantReservations, restaurantWaitlist, eq } from "@repo/database";
 
 /**
  * Enhanced Seed Script
@@ -64,7 +63,7 @@ async function seed() {
   // ==========================================================================
   // RESTAURANT TABLES
   // ==========================================================================
-  
+
   console.log('\n🪑  Creating tables...');
 
   await db.delete(restaurantTables).where(eq(restaurantTables.restaurantId, restaurant.id));

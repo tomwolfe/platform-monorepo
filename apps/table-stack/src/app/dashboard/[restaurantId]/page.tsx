@@ -1,6 +1,4 @@
-import { db } from "@repo/database";
-import { restaurants, restaurantReservations, restaurantWaitlist } from "@repo/database";
-import { eq, desc } from 'drizzle-orm';
+import { db, restaurants, restaurantReservations, restaurantWaitlist, eq, desc } from "@repo/database";
 import { notFound, redirect } from 'next/navigation';
 import { currentUser } from '@clerk/nextjs/server';
 import FloorPlan from '@/components/dashboard/FloorPlan';

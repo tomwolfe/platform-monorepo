@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from "@repo/database";
 import { restaurants } from "@repo/database";
-import { eq } from 'drizzle-orm';
+import { eq } from '@repo/database';
 import { validateRequest } from '@/lib/auth';
 
 export const runtime = 'edge';

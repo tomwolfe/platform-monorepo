@@ -5,7 +5,7 @@ import { signBridgeToken } from '@repo/auth';
 import { redirect } from 'next/navigation';
 import { currentUser } from '@clerk/nextjs/server';
 import { revalidatePath } from 'next/cache';
-import { eq, and } from 'drizzle-orm';
+import { eq, and } from '@repo/database';
 import { z } from 'zod';
 import Ably from 'ably';
 import { NotifyService } from '@/lib/notifications';

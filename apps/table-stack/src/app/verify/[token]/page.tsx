@@ -1,6 +1,6 @@
 import { db } from "@repo/database";
 import { restaurantReservations } from "@repo/database";
-import { eq } from 'drizzle-orm';
+import { eq } from '@repo/database';
 import { notFound } from 'next/navigation';
 import { NotifyService } from '@/lib/notifications';
 

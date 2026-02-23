@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from "@repo/database";
 import { restaurantTables, restaurantReservations, restaurants } from "@repo/database";
-import { and, eq, gte, or, sql } from 'drizzle-orm';
+import { and, eq, gte, or, sql } from '@repo/database';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
 import { validateRequest } from '@/lib/auth';

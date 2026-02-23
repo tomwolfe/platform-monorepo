@@ -1,8 +1,6 @@
 "use server";
 
-import { db } from "@repo/database";
-import { restaurants, restaurantReservations, restaurantWaitlist } from "@repo/database";
-import { eq } from "drizzle-orm";
+import { db, restaurants, restaurantReservations, restaurantWaitlist, eq } from "@repo/database";
 import { revalidatePath } from "next/cache";
 import { NotifyService } from "@/lib/notifications";
 

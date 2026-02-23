@@ -4,14 +4,14 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { 
+import {
   CHECK_AVAILABILITY_TOOL,
   BOOK_RESERVATION_TOOL,
   DISCOVER_RESTAURANT_TOOL,
   TOOL_METADATA
 } from "@repo/mcp-protocol";
-import { db, restaurants, restaurantTables, restaurantReservations } from "@repo/database";
-import { and, eq, gte, or, sql } from 'drizzle-orm';
+import { db, restaurants, restaurantTables, restaurantReservations, eq, gte, or, and } from "@repo/database";
+import { sql } from 'drizzle-orm';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
 

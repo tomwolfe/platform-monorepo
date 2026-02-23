@@ -1,6 +1,6 @@
 import { db } from "@repo/database";
 import { restaurants, restaurantProducts, inventoryLevels } from "@repo/database";
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc } from '@repo/database';
 import { notFound, redirect } from 'next/navigation';
 import { currentUser } from '@clerk/nextjs/server';
 import { getMenuItems } from '../actions';

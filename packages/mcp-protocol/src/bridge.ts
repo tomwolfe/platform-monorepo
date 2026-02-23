@@ -24,69 +24,73 @@ import { z } from 'zod';
 // AUTO-GENERATED SCHEMAS FROM DRIZZLE
 // ============================================================================
 
+// Type assertion workaround for drizzle-zod type incompatibility
+// See: https://github.com/drizzle-team/drizzle-orm/issues/2666
+const asTable = <T extends Record<string, any>>(table: T) => table as any;
+
 // Select schemas (for reading from DB)
-export const RestaurantSchema = createSelectSchema(restaurants);
-export const ReservationSchema = createSelectSchema(restaurantReservations);
-export const TableSchema = createSelectSchema(restaurantTables);
-export const WaitlistSchema = createSelectSchema(restaurantWaitlist);
-export const RestaurantProductSchema = createSelectSchema(restaurantProducts);
-export const InventoryLevelSchema = createSelectSchema(inventoryLevels);
-export const GuestProfileSchema = createSelectSchema(guestProfiles);
+export const RestaurantSchema = createSelectSchema(asTable(restaurants));
+export const ReservationSchema = createSelectSchema(asTable(restaurantReservations));
+export const TableSchema = createSelectSchema(asTable(restaurantTables));
+export const WaitlistSchema = createSelectSchema(asTable(restaurantWaitlist));
+export const RestaurantProductSchema = createSelectSchema(asTable(restaurantProducts));
+export const InventoryLevelSchema = createSelectSchema(asTable(inventoryLevels));
+export const GuestProfileSchema = createSelectSchema(asTable(guestProfiles));
 
 // Insert schemas (for creating new records)
-export const CreateRestaurantSchema = createInsertSchema(restaurants).omit({
+export const CreateRestaurantSchema = createInsertSchema(asTable(restaurants)).omit({
   id: true,
   createdAt: true,
   claimToken: true,
 });
 
-export const CreateReservationDBSchema = createInsertSchema(restaurantReservations).omit({
+export const CreateReservationDBSchema = createInsertSchema(asTable(restaurantReservations)).omit({
   id: true,
   createdAt: true,
   verificationToken: true,
 });
 
-export const CreateTableSchema = createInsertSchema(restaurantTables).omit({
+export const CreateTableSchema = createInsertSchema(asTable(restaurantTables)).omit({
   id: true,
   updatedAt: true,
 });
 
-export const AddToWaitlistDBSchema = createInsertSchema(restaurantWaitlist).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
-
-export const CreateRestaurantProductSchema = createInsertSchema(restaurantProducts).omit({
+export const AddToWaitlistDBSchema = createInsertSchema(asTable(restaurantWaitlist)).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
 });
 
-export const CreateInventoryLevelSchema = createInsertSchema(inventoryLevels).omit({
+export const CreateRestaurantProductSchema = createInsertSchema(asTable(restaurantProducts)).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const CreateInventoryLevelSchema = createInsertSchema(asTable(inventoryLevels)).omit({
   id: true,
   updatedAt: true,
 });
 
-export const CreateGuestProfileSchema = createInsertSchema(guestProfiles).omit({
+export const CreateGuestProfileSchema = createInsertSchema(asTable(guestProfiles)).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
 });
 
 // Update schemas (partial - all fields optional)
-export const UpdateReservationDBSchema = createInsertSchema(restaurantReservations).partial().omit({
+export const UpdateReservationDBSchema = createInsertSchema(asTable(restaurantReservations)).partial().omit({
   id: true,
   createdAt: true,
 });
 
-export const UpdateTableDBSchema = createInsertSchema(restaurantTables).partial().omit({
+export const UpdateTableDBSchema = createInsertSchema(asTable(restaurantTables)).partial().omit({
   id: true,
   restaurantId: true,
   updatedAt: true,
 });
 
-export const UpdateWaitlistDBSchema = createInsertSchema(restaurantWaitlist).partial().omit({
+export const UpdateWaitlistDBSchema = createInsertSchema(asTable(restaurantWaitlist)).partial().omit({
   id: true,
   createdAt: true,
   updatedAt: true,

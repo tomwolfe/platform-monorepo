@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from "@repo/database";
+import { db, eq, lt, and } from "@repo/database";
 import { restaurantReservations, restaurantTables } from "@repo/database";
-import { and, eq, lt } from 'drizzle-orm';
 
 export const runtime = 'edge';
 
@@ -14,7 +13,7 @@ export async function GET(req: NextRequest) {
   try {
     const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
     const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000);
-    
+
     // 1. Remove expired unverified restaurantReservations
     const deletedReservations = await db.delete(restaurantReservations)
       .where(

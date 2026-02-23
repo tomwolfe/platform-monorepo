@@ -151,16 +151,16 @@ export class PGVectorStore implements VectorStore {
     const conditions = [];
 
     if (userId) {
-      conditions.push(eq(semanticMemories.userId, userId));
+      conditions.push(eq(semanticMemories.userId as any, userId));
     }
 
     if (filter) {
       // Add metadata filters
       if (filter.intentType) {
-        conditions.push(eq(semanticMemories.intentType, filter.intentType as string));
+        conditions.push(eq(semanticMemories.intentType as any, filter.intentType as string));
       }
       if (filter.restaurantId) {
-        conditions.push(eq(semanticMemories.restaurantId, filter.restaurantId as string));
+        conditions.push(eq(semanticMemories.restaurantId as any, filter.restaurantId as string));
       }
     }
 
@@ -179,7 +179,7 @@ export class PGVectorStore implements VectorStore {
           ? and(...conditions, sql`${similarityExpr} >= ${minScore}`)
           : sql`${similarityExpr} >= ${minScore}`
       )
-      .orderBy(desc(similarityExpr))
+      .orderBy(desc(similarityExpr as any))
       .limit(limit);
 
     // Convert to VectorSearchResult format
@@ -210,7 +210,7 @@ export class PGVectorStore implements VectorStore {
     const results = await db
       .select()
       .from(semanticMemories)
-      .where(eq(semanticMemories.id, id))
+      .where(eq(semanticMemories.id as any, id))
       .limit(1);
 
     if (results.length === 0) return null;
@@ -240,7 +240,7 @@ export class PGVectorStore implements VectorStore {
   async deleteVector(id: string): Promise<boolean> {
     const result = await db
       .delete(semanticMemories)
-      .where(eq(semanticMemories.id, id));
+      .where(eq(semanticMemories.id as any, id));
 
     const deleted = result.rowCount || 0;
     console.log(`[PGVectorStore] Deleted vector ${id} (${deleted} rows)`);
@@ -253,7 +253,7 @@ export class PGVectorStore implements VectorStore {
   async deleteByUserId(userId: string): Promise<number> {
     const result = await db
       .delete(semanticMemories)
-      .where(eq(semanticMemories.userId, userId));
+      .where(eq(semanticMemories.userId as any, userId));
 
     const deleted = result.rowCount || 0;
     console.log(`[PGVectorStore] Deleted ${deleted} vectors for user ${userId}`);
@@ -272,7 +272,7 @@ export class PGVectorStore implements VectorStore {
       .set({
         metadata,
       })
-      .where(eq(semanticMemories.id, id));
+      .where(eq(semanticMemories.id as any, id));
 
     const updated = result.rowCount || 0;
     console.log(`[PGVectorStore] Updated metadata for vector ${id} (${updated} rows)`);
@@ -301,14 +301,14 @@ export class PGVectorStore implements VectorStore {
 
     // Get unique users
     const usersResult = await db
-      .select({ count: sql<number>`count(distinct ${semanticMemories.userId})` })
+      .select({ count: sql<number>`count(distinct ${semanticMemories.userId as any})` })
       .from(semanticMemories);
 
     const uniqueUsers = usersResult[0]?.count || 0;
 
     // Get unique restaurants
     const restaurantsResult = await db
-      .select({ count: sql<number>`count(distinct ${semanticMemories.restaurantId})` })
+      .select({ count: sql<number>`count(distinct ${semanticMemories.restaurantId as any})` })
       .from(semanticMemories);
 
     const uniqueRestaurants = restaurantsResult[0]?.count || 0;

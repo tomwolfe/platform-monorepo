@@ -1,7 +1,5 @@
-import { db } from "@repo/database";
-import { restaurants } from "@repo/database";
+import { db, restaurants, eq } from "@repo/database";
 import { currentUser } from '@clerk/nextjs/server';
-import { eq } from 'drizzle-orm';
 import { redirect } from 'next/navigation';
 
 export default async function DashboardRootPage() {

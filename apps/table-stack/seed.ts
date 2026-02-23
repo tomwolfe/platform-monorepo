@@ -1,6 +1,5 @@
 import 'dotenv/config';
-import { db, restaurants, restaurantTables, restaurantProducts, inventoryLevels } from "@repo/database";
-import { eq } from 'drizzle-orm';
+import { db, restaurants, restaurantTables, restaurantProducts, inventoryLevels, eq } from "@repo/database";
 
 async function seed() {
   console.log('🌱 Seeding demo restaurant...');

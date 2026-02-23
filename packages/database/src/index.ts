@@ -81,5 +81,56 @@ if (wrappedClient && neonClient) {
 export const db = wrappedClient ? drizzle(wrappedClient as any, { schema }) : (null as any);
 
 export type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
-export { eq, and, gt, sql } from 'drizzle-orm';
+
+// Re-export sql directly
+export { sql } from 'drizzle-orm';
+
+// Import drizzle-orm comparison functions with aliases
+import {
+  eq as drizzleEq,
+  lt as drizzleLt,
+  gt as drizzleGt,
+  gte as drizzleGte,
+  lte as drizzleLte,
+  desc as drizzleDesc,
+  and as drizzleAnd,
+  or as drizzleOr,
+  ne as drizzleNe,
+  isNull as drizzleIsNull,
+  isNotNull as drizzleIsNotNull,
+  inArray as drizzleInArray,
+  notInArray as drizzleNotInArray,
+  like as drizzleLike,
+  notLike as drizzleNotLike,
+  ilike as drizzleIlike,
+  notIlike as drizzleNotIlike,
+  exists as drizzleExists,
+  notExists as drizzleNotExists,
+  between as drizzleBetween,
+  notBetween as drizzleNotBetween,
+} from 'drizzle-orm';
+
+// Wrapper functions with type assertions to handle drizzle-orm type compatibility
+export const eq = (col: any, value: any) => drizzleEq(col as any, value);
+export const lt = (col: any, value: any) => drizzleLt(col as any, value);
+export const gt = (col: any, value: any) => drizzleGt(col as any, value);
+export const gte = (col: any, value: any) => drizzleGte(col as any, value);
+export const lte = (col: any, value: any) => drizzleLte(col as any, value);
+export const desc = (col: any) => drizzleDesc(col as any);
+export const and = (...conditions: any[]) => drizzleAnd(...conditions as any);
+export const or = (...conditions: any[]) => drizzleOr(...conditions as any);
+export const ne = (col: any, value: any) => drizzleNe(col as any, value);
+export const isNull = (col: any) => drizzleIsNull(col as any);
+export const isNotNull = (col: any) => drizzleIsNotNull(col as any);
+export const inArray = (col: any, values: any) => drizzleInArray(col as any, values as any);
+export const notInArray = (col: any, values: any) => drizzleNotInArray(col as any, values as any);
+export const like = (col: any, value: any) => drizzleLike(col as any, value as any);
+export const notLike = (col: any, value: any) => drizzleNotLike(col as any, value as any);
+export const ilike = (col: any, value: any) => drizzleIlike(col as any, value as any);
+export const notIlike = (col: any, value: any) => drizzleNotIlike(col as any, value as any);
+export const exists = (subquery: any) => drizzleExists(subquery as any);
+export const notExists = (subquery: any) => drizzleNotExists(subquery as any);
+export const between = (col: any, min: any, max: any) => drizzleBetween(col as any, min as any, max as any);
+export const notBetween = (col: any, min: any, max: any) => drizzleNotBetween(col as any, min as any, max as any);
+
 export * from './schema/tablestack';

@@ -7,4 +7,6 @@ export default defineConfig({
   dbCredentials: {
     url: process.env.DATABASE_URL!,
   },
+  // Use standard pg driver for migrations (not @neondatabase/serverless which only works with remote instances)
+  driver: 'pg',
 });

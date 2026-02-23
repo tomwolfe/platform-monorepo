@@ -22,8 +22,8 @@ env:
   INTERNAL_SYSTEM_KEY: 'ci-test-internal-key-change-in-production'
   # Database URL for local postgres
   DATABASE_URL: 'postgresql://apps:apps@localhost:5432/apps'
-  # Redis URL for local redis (using http for @upstash/redis SDK compatibility)
-  UPSTASH_REDIS_REST_URL: 'http://localhost:6379'
+  # Redis URL for local redis (using upstash-proxy for @upstash/redis SDK compatibility)
+  UPSTASH_REDIS_REST_URL: 'http://localhost:8080'
   UPSTASH_REDIS_REST_TOKEN: 'apps'
 
 jobs:
@@ -62,7 +62,7 @@ jobs:
 
       - name: Start test infrastructure (Docker Compose)
         run: |
-          docker compose -f docker-compose.yml up -d redis postgres
+          docker compose -f docker-compose.yml up -d redis postgres upstash-proxy
           echo "Waiting for services to be ready..."
           sleep 10
 
@@ -73,36 +73,47 @@ jobs:
           docker compose exec -T redis redis-cli -a apps ping || exit 1
           # Check Postgres connectivity
           docker compose exec -T postgres pg_isready -U apps || exit 1
+          # Check Upstash proxy connectivity
+          curl -sf http://localhost:8080/ping || echo "⚠️ Upstash proxy not ready yet, continuing..."
 
       - name: Run Migrations
         run: pnpm db:migrate
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
 
-      - name: Start applications
+      - name: Start Applications and Run Chaos Suite
         run: |
-          # Start intention-engine on port 3000 in background
-          cd apps/intention-engine && pnpm dev -- -p 3000 &
-          INTENTION_PID=$!
+          # Use production servers for stability during load/chaos tests
+          cd apps/intention-engine && pnpm start -- -p 3000 &
+          cd apps/open-delivery && pnpm start -- -p 3001 &
 
-          # Start open-delivery on port 3001 in background (avoid port conflict)
-          cd apps/open-delivery && pnpm dev -- -p 3001 &
-          OPENDELIVER_PID=$!
-
-          # Wait for intention-engine to be ready (poll for up to 60 seconds)
           echo "Waiting for intention-engine to start..."
+          READY=0
           for i in {1..30}; do
             if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
-              echo "✅ intention-engine is ready after $((i * 2)) seconds"
+              echo "✅ intention-engine is ready"
+              READY=1
               break
             fi
             echo "Waiting for intention-engine... ($i/30)"
             sleep 2
           done
 
-          # Verify intention-engine health endpoint
-          curl -sf http://localhost:3000/api/health || echo "⚠️ Health check failed, but continuing..."
+          if [ "$READY" -eq 0 ]; then
+            echo "❌ intention-engine failed to start"
+            exit 1
+          fi
+
+          echo "🔬 Running Latency Spike Chaos Test..."
+          k6 run --summary-export=k6-results-latency.json k6/scripts/chaos-latency.js
+
+          echo "🔬 Running Redis Failure Chaos Test..."
+          k6 run --summary-export=k6-results-redis.json k6/scripts/chaos-redis-failure.js
+
+          echo "🔬 Running Database Connection Chaos Test..."
+          k6 run --summary-export=k6-results-db.json k6/scripts/chaos-db-connection.js
         env:
+          BASE_URL: http://localhost:3000
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
           CLERK_SECRET_KEY: ${{ env.CLERK_SECRET_KEY }}
           DATABASE_URL: ${{ env.DATABASE_URL }}
@@ -111,50 +122,6 @@ jobs:
           INTERNAL_SYSTEM_KEY: ${{ env.INTERNAL_SYSTEM_KEY }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY || 'test-key' }}
           HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY || 'test-key' }}
-
-      - name: Install k6
-        run: |
-          sudo gpg -k
-          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
-          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
-          sudo apt-get update
-          sudo apt-get install k6
-
-      - name: Run Chaos Suite - Latency Spike Test
-        run: |
-          echo "🔬 Running Latency Spike Chaos Test..."
-          k6 run --summary-export=k6-results-latency.json \
-            k6/scripts/chaos-latency.js || {
-              echo "❌ Latency spike test failed - resilience regression detected"
-              exit 1
-            }
-        env:
-          BASE_URL: http://localhost:3000
-        continue-on-error: false
-
-      - name: Run Chaos Suite - Redis Failure Test
-        run: |
-          echo "🔬 Running Redis Failure Chaos Test..."
-          k6 run --summary-export=k6-results-redis.json \
-            k6/scripts/chaos-redis-failure.js || {
-              echo "❌ Redis failure test failed - resilience regression detected"
-              exit 1
-            }
-        env:
-          BASE_URL: http://localhost:3000
-        continue-on-error: false
-
-      - name: Run Chaos Suite - Database Connection Test
-        run: |
-          echo "🔬 Running Database Connection Chaos Test..."
-          k6 run --summary-export=k6-results-db.json \
-            k6/scripts/chaos-db-connection.js || {
-              echo "❌ Database connection test failed - resilience regression detected"
-              exit 1
-            }
-        env:
-          BASE_URL: http://localhost:3000
-        continue-on-error: false
 
       - name: Upload k6 results
         uses: actions/upload-artifact@v4
@@ -195,5 +162,5 @@ jobs:
         if: always()
         run: |
           # Kill background processes
-          pkill -f "pnpm dev" || true
+          pkill -f "pnpm start" || true
           docker compose -f docker-compose.yml down

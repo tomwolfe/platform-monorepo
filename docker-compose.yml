@@ -48,6 +48,24 @@ services:
       - apps-network
 
   # ─────────────────────────────────────────────────────────────
+  # Upstash REST Proxy (for @upstash/redis SDK compatibility)
+  # Provides HTTP REST interface to Redis for Upstash SDK parity
+  # ─────────────────────────────────────────────────────────────
+  upstash-proxy:
+    image: upstash/rest-server:latest
+    container_name: apps-upstash-proxy
+    restart: unless-stopped
+    environment:
+      - REDIS_URL=redis://:apps@redis:6379
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - apps-network
+
+  # ─────────────────────────────────────────────────────────────
   # QStash Emulator (Local message queue parity)
   # QStash doesn't have an official emulator, so we use Redis Streams
   # as a compatible alternative for local development

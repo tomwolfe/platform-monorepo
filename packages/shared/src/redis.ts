@@ -70,8 +70,18 @@ export function wrapWithPrefix(obj: any, prefix: string): any {
             ]);
           }
 
-          // Optimized prefixing for hot paths
-          if (typeof args[0] === 'string' && !['info', 'ping', 'echo', 'quit'].includes(prop as string)) {
+          // FIX: Correctly prefix keys in Lua script evaluation (eval)
+          if (prop === 'eval') {
+            const [script, keys, ...rest] = args;
+            if (Array.isArray(keys)) {
+              const prefixedKeys = keys.map(k => prefix + k);
+              return target.eval(script, prefixedKeys, ...rest);
+            }
+          }
+
+          // Optimized prefixing for hot paths - skip eval as it's handled above
+          if (typeof args[0] === 'string' &&
+              !['info', 'ping', 'echo', 'quit', 'eval'].includes(prop as string)) {
             args[0] = prefix + args[0];
 
             // Handle multiple keys in del, exists, etc.

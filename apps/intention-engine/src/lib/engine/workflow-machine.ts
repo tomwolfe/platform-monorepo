@@ -2134,6 +2134,7 @@ export class WorkflowMachine {
         next_step_index: checkpoint.nextStepIndex,
         workflow_id: this.workflowId,
         compensations_registered: checkpoint.sagaContext?.compensationsRegistered,
+        tool_versions: checkpoint.toolVersions,
       });
 
       console.log(

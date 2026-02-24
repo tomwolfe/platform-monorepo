@@ -59,17 +59,33 @@ interface ExecutionTrace {
     timestamp: string;
   }>;
   clockSkewDelta?: number;
+  // ENHANCEMENT: State-Diff Trace Viewer
+  stateDiffs?: Array<{
+    stepId: string;
+    timestamp: string;
+    previousState?: Record<string, any>;
+    newState?: Record<string, any>;
+    addedKeys: string[];
+    removedKeys: string[];
+    changedKeys: Array<{
+      key: string;
+      oldValue: any;
+      newValue: any;
+    }>;
+    unchangedKeys: string[];
+  }>;
 }
 
 export default function TraceViewerPage() {
   const searchParams = useSearchParams();
   const traceId = searchParams.get("traceId");
-  
+
   const [trace, setTrace] = useState<ExecutionTrace | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedEntry, setSelectedEntry] = useState<TraceEntry | null>(null);
-  const [viewMode, setViewMode] = useState<"waterfall" | "list" | "json" | "gantt">("waterfall");
+  const [viewMode, setViewMode] = useState<"waterfall" | "list" | "json" | "gantt" | "statediff">("waterfall");
+  const [includeStateDiffs, setIncludeStateDiffs] = useState(false);
 
   useEffect(() => {
     if (traceId) {
@@ -80,15 +96,16 @@ export default function TraceViewerPage() {
   const fetchTrace = async (id: string) => {
     setLoading(true);
     setError(null);
-    
+
     try {
-      const res = await fetch(`/api/debug/traces/${id}`);
-      
+      const url = `/api/debug/traces/${id}${includeStateDiffs ? '?includeStateDiffs=true' : ''}`;
+      const res = await fetch(url);
+
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || "Failed to fetch trace");
       }
-      
+
       const data = await res.json();
       setTrace(data);
     } catch (err: any) {
@@ -216,6 +233,12 @@ export default function TraceViewerPage() {
                     📊 Gantt
                   </button>
                   <button
+                    onClick={() => setViewMode("statediff")}
+                    className={`px-4 py-2 rounded ${viewMode === "statediff" ? "bg-blue-600" : "bg-gray-700 hover:bg-gray-600"}`}
+                  >
+                    🔀 State Diff
+                  </button>
+                  <button
                     onClick={() => setViewMode("list")}
                     className={`px-4 py-2 rounded ${viewMode === "list" ? "bg-blue-600" : "bg-gray-700 hover:bg-gray-600"}`}
                   >
@@ -228,6 +251,29 @@ export default function TraceViewerPage() {
                     JSON
                   </button>
                 </div>
+              </div>
+
+              {/* State-Diff Toggle */}
+              <div className="flex items-center gap-3 mt-4 p-3 bg-gray-900 rounded-lg border border-gray-700">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={includeStateDiffs}
+                    onChange={(e) => {
+                      setIncludeStateDiffs(e.target.checked);
+                      if (traceId) fetchTrace(traceId);
+                    }}
+                    className="w-4 h-4 rounded border-gray-600 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-gray-300">
+                    Include State Diffs (Redux DevTools style)
+                  </span>
+                </label>
+                {includeStateDiffs && (
+                  <span className="text-xs text-green-400 ml-auto">
+                    ✓ State diffs enabled
+                  </span>
+                )}
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -266,6 +312,10 @@ export default function TraceViewerPage() {
 
             {viewMode === "gantt" && (
               <GanttView trace={trace} getPhaseColor={getPhaseColor} getEventStatus={getEventStatus} formatDuration={formatDuration} formatTimestamp={formatTimestamp} setSelectedEntry={setSelectedEntry} />
+            )}
+
+            {viewMode === "statediff" && (
+              <StateDiffView trace={trace} formatTimestamp={formatTimestamp} />
             )}
 
             {viewMode === "list" && (
@@ -732,6 +782,128 @@ function EntryDetails({ entry, onClose }: { entry: TraceEntry; onClose: () => vo
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// STATE DIFF VIEW - Redux DevTools Style
+// Shows exactly which state keys changed during each step
+// ============================================================================
+
+function StateDiffView({ trace, formatTimestamp }: { trace: ExecutionTrace; formatTimestamp: (iso: string) => string }) {
+  const stateDiffs = trace.stateDiffs || [];
+
+  if (stateDiffs.length === 0) {
+    return (
+      <div className="bg-gray-800 rounded-lg p-6">
+        <h3 className="text-lg font-semibold mb-4">🔀 State Diff Viewer</h3>
+        <div className="text-center py-12 text-gray-400">
+          <p className="mb-2">No state diffs available</p>
+          <p className="text-sm">
+            Enable "Include State Diffs" checkbox and reload the trace to see state changes
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-gray-800 rounded-lg p-6">
+        <h3 className="text-lg font-semibold mb-2">🔀 State Diff Viewer (Redux DevTools Style)</h3>
+        <p className="text-sm text-gray-400 mb-4">
+          Shows exactly which state keys changed during each step. Green = added/changed, Red = removed.
+        </p>
+      </div>
+
+      {stateDiffs.map((diff, index) => (
+        <div key={index} className="bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
+          {/* Header */}
+          <div className="bg-gray-900 px-4 py-3 border-b border-gray-700">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-mono text-gray-500">#{index + 1}</span>
+                <span className="font-mono text-sm text-blue-400">Step: {diff.stepId}</span>
+              </div>
+              <span className="text-xs text-gray-500">{formatTimestamp(diff.timestamp)}</span>
+            </div>
+          </div>
+
+          {/* Diff Content */}
+          <div className="p-4 space-y-4">
+            {/* Added Keys */}
+            {diff.addedKeys.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs font-semibold text-green-400">+ ADDED ({diff.addedKeys.length})</span>
+                </div>
+                <div className="space-y-1">
+                  {diff.addedKeys.map((key, i) => (
+                    <div key={i} className="bg-green-900/20 border border-green-700 rounded px-3 py-2 font-mono text-xs text-green-300">
+                      + {key}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Removed Keys */}
+            {diff.removedKeys.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs font-semibold text-red-400">- REMOVED ({diff.removedKeys.length})</span>
+                </div>
+                <div className="space-y-1">
+                  {diff.removedKeys.map((key, i) => (
+                    <div key={i} className="bg-red-900/20 border border-red-700 rounded px-3 py-2 font-mono text-xs text-red-300">
+                      - {key}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Changed Keys */}
+            {diff.changedKeys.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs font-semibold text-yellow-400">~ CHANGED ({diff.changedKeys.length})</span>
+                </div>
+                <div className="space-y-2">
+                  {diff.changedKeys.map((change, i) => (
+                    <div key={i} className="bg-yellow-900/20 border border-yellow-700 rounded px-3 py-2">
+                      <div className="font-mono text-xs text-yellow-300 mb-2">~ {change.key}</div>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="bg-red-900/30 rounded p-2">
+                          <div className="text-red-400 mb-1">Before:</div>
+                          <pre className="font-mono text-red-300 whitespace-pre-wrap break-all">
+                            {typeof change.oldValue === 'object' ? JSON.stringify(change.oldValue, null, 2) : String(change.oldValue)}
+                          </pre>
+                        </div>
+                        <div className="bg-green-900/30 rounded p-2">
+                          <div className="text-green-400 mb-1">After:</div>
+                          <pre className="font-mono text-green-300 whitespace-pre-wrap break-all">
+                            {typeof change.newValue === 'object' ? JSON.stringify(change.newValue, null, 2) : String(change.newValue)}
+                          </pre>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Summary */}
+            <div className="pt-3 border-t border-gray-700">
+              <div className="flex items-center gap-4 text-xs text-gray-500">
+                <span>Unchanged: {diff.unchangedKeys.length}</span>
+                <span>Total keys: {diff.unchangedKeys.length + diff.addedKeys.length + diff.removedKeys.length + diff.changedKeys.length}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

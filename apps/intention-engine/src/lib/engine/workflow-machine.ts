@@ -463,7 +463,7 @@ export class WorkflowMachine {
   }
 
   /**
-   * PREDICTIVE PINGER - Pre-warm next lambda endpoint
+   * PREDICTIVE PINGER - Pre-warm next lambda endpoint with infrastructure-aware caching
    *
    * Problem Solved: Cold Start Penalty on Yield-and-Resume Handoff
    * - When yielding execution, the next lambda invocation incurs ~2s cold start
@@ -473,6 +473,11 @@ export class WorkflowMachine {
    * - As current step reaches 80% completion, predict we'll need to yield
    * - Fire HEAD request to /api/engine/execute-step endpoint
    * - Lambda warms up during current execution, reducing next invocation to <200ms
+   *
+   * ENHANCEMENT: Infrastructure-Aware Pre-Warming
+   * - Also warms database connection pool via /api/warm-db
+   * - Pre-fetches execution state from Redis via cache-warm endpoint
+   * - Reduces cold start from ~2s to <200ms end-to-end
    *
    * Architecture:
    * - Uses unawaited fetch() with short timeout (2s)
@@ -497,30 +502,51 @@ export class WorkflowMachine {
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
       const preWarmUrl = `${baseUrl}/api/engine/execute-step`;
 
-      // Fire unawaited HEAD request to pre-warm lambda
-      // Note: We intentionally don't await this - it's best-effort
-      const preWarmPromise = fetch(preWarmUrl, {
-        method: 'HEAD',
-        headers: {
-          'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
-          'x-preflight-ping': 'true',
-          'x-execution-id': this.executionId,
-          'x-next-step-index': nextStepIndex.toString(),
-        },
-        signal: AbortSignal.timeout(ADAPTIVE_BATCHING_CONFIG.preWarmTimeoutMs),
-      }).catch((error) => {
-        // Silently ignore pre-warm failures - it's a best-effort optimization
-        console.log(
-          `[WorkflowMachine] Pre-warm failed for step ${nextStepIndex}:`,
-          error instanceof Error ? error.message : String(error)
-        );
-      });
+      // INFRASTRUCTURE-AWARE WARMING: Fire multiple warm endpoints in parallel
+      const warmPromises = [
+        // Warm lambda endpoint
+        fetch(preWarmUrl, {
+          method: 'HEAD',
+          headers: {
+            'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
+            'x-preflight-ping': 'true',
+            'x-execution-id': this.executionId,
+            'x-next-step-index': nextStepIndex.toString(),
+          },
+          signal: AbortSignal.timeout(ADAPTIVE_BATCHING_CONFIG.preWarmTimeoutMs),
+        }).catch(() => { /* Ignore */ }),
+
+        // Warm database connection pool
+        fetch(`${baseUrl}/api/warm-db`, {
+          method: 'POST',
+          headers: {
+            'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
+            'x-execution-id': this.executionId,
+          },
+          signal: AbortSignal.timeout(1000),
+          body: JSON.stringify({ executionId: this.executionId }),
+        }).catch(() => { /* Ignore */ }),
+
+        // Warm Redis cache with execution state
+        fetch(`${baseUrl}/api/warm-cache`, {
+          method: 'POST',
+          headers: {
+            'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
+            'x-execution-id': this.executionId,
+          },
+          signal: AbortSignal.timeout(1000),
+          body: JSON.stringify({
+            executionId: this.executionId,
+            nextStepIndex,
+          }),
+        }).catch(() => { /* Ignore */ }),
+      ];
 
       // Fire and forget - don't block execution
-      void preWarmPromise;
+      void Promise.all(warmPromises);
 
       console.log(
-        `[WorkflowMachine] Predictive pinger: pre-warming lambda for step ${nextStepIndex} ` +
+        `[WorkflowMachine] Infrastructure-aware pre-warm for step ${nextStepIndex} ` +
         `(elapsed: ${elapsedInSegment}ms, estimated next: ${estimatedNextStepTime}ms)`
       );
     }

@@ -867,6 +867,281 @@ export class MemoryClient {
     await this.updateTaskContext(executionId, initialState);
     return 1;
   }
+
+  // ========================================================================
+  // LOGIC-DRIFT PROTECTION - Git SHA Pinning for Checkpoints
+  // Prevents "Logic Drift" when code deploys during saga execution
+  // ========================================================================
+
+  /**
+   * LOGIC-DRIFT PROTECTION: Store checkpoint with Git commit SHA pinning.
+   *
+   * Problem: A saga yields at Step 3. You deploy new code that changes Step 4.
+   * The saga resumes but follows a code path that wasn't intended when it started.
+   *
+   * Solution: Pin the Git commit SHA in the checkpoint. On resume, if current SHA
+   * differs from checkpoint SHA, trigger a "Shadow Dry-Run" to ensure compatibility.
+   *
+   * @param executionId - The execution ID
+   * @param checkpointData - The checkpoint data to store
+   * @param options - Optional metadata (git SHA, logic version)
+   * @returns Stored checkpoint with version
+   */
+  async storeCheckpointWithLogicVersion(
+    executionId: string,
+    checkpointData: {
+      state: Partial<ExecutionState>;
+      nextStepIndex: number;
+      segmentNumber: number;
+      reason: string;
+    },
+    options?: {
+      gitSha?: string;
+      logicVersion?: string;
+      toolVersions?: Record<string, { version: string; schemaHash: string }>;
+    }
+  ): Promise<{
+    success: boolean;
+    checkpointId: string;
+    version: number;
+  }> {
+    const timestamp = new Date().toISOString();
+    const checkpointKey = `${this.namespace}${MEMORY_CONFIG.key_separator}checkpoint${MEMORY_CONFIG.key_separator}${executionId}`;
+    const gitSha = options?.gitSha || process.env.VERCEL_GIT_COMMIT_SHA || 'unknown';
+    const logicVersion = options?.logicVersion || process.env.NEXT_PUBLIC_APP_VERSION || '1.0.0';
+
+    const checkpoint = {
+      execution_id: executionId,
+      checkpoint_at: timestamp,
+      git_sha: gitSha,
+      logic_version: logicVersion,
+      tool_versions: options?.toolVersions || {},
+      ...checkpointData,
+      version: 1,
+    };
+
+    try {
+      // Store checkpoint with 7-day TTL (for long-running sagas)
+      await this.redis.setex(checkpointKey, 86400 * 7, JSON.stringify(checkpoint));
+
+      console.log(
+        `[MemoryClient] Stored checkpoint for ${executionId} ` +
+        `[SHA: ${gitSha.substring(0, 7)}, Version: ${logicVersion}]`
+      );
+
+      return {
+        success: true,
+        checkpointId: checkpointKey,
+        version: 1,
+      };
+    } catch (error) {
+      console.error(`[MemoryClient] Failed to store checkpoint:`, error);
+      throw {
+        code: "CHECKPOINT_STORE_FAILED",
+        message: `Failed to store checkpoint: ${error}`,
+        details: { executionId, gitSha, logicVersion },
+        recoverable: false,
+        timestamp,
+      };
+    }
+  }
+
+  /**
+   * LOGIC-DRIFT PROTECTION: Load checkpoint and check for logic version mismatch.
+   *
+   * @param executionId - The execution ID
+   * @param currentGitSha - Current deployment's Git SHA
+   * @returns Checkpoint data with drift detection result
+   */
+  async loadCheckpointWithDriftDetection(
+    executionId: string,
+    currentGitSha?: string
+  ): Promise<{
+    checkpoint: any | null;
+    hasDrift: boolean;
+    driftDetails?: {
+      checkpointSha: string;
+      currentSha: string;
+      checkpointLogicVersion: string;
+      currentLogicVersion: string;
+      recommendation: 'PROCEED' | 'SHADOW_DRY_RUN' | 'MANUAL_REVIEW';
+    };
+  }> {
+    const checkpointKey = `${this.namespace}${MEMORY_CONFIG.key_separator}checkpoint${MEMORY_CONFIG.key_separator}${executionId}`;
+    const currentSha = currentGitSha || process.env.VERCEL_GIT_COMMIT_SHA || 'unknown';
+    const currentLogicVersion = process.env.NEXT_PUBLIC_APP_VERSION || '1.0.0';
+
+    try {
+      const checkpointJson = await this.redis.get<string>(checkpointKey);
+      if (!checkpointJson) {
+        return { checkpoint: null, hasDrift: false };
+      }
+
+      const checkpoint = JSON.parse(checkpointJson);
+      const checkpointSha = checkpoint.git_sha || 'unknown';
+      const checkpointLogicVersion = checkpoint.logic_version || '1.0.0';
+
+      // Detect logic drift
+      const hasDrift = checkpointSha !== currentSha;
+
+      let recommendation: 'PROCEED' | 'SHADOW_DRY_RUN' | 'MANUAL_REVIEW' = 'PROCEED';
+      if (hasDrift) {
+        // Major version change or completely different SHA = manual review
+        const majorVersionChanged =
+          checkpointLogicVersion.split('.')[0] !== currentLogicVersion.split('.')[0];
+        recommendation = majorVersionChanged ? 'MANUAL_REVIEW' : 'SHADOW_DRY_RUN';
+      }
+
+      return {
+        checkpoint,
+        hasDrift,
+        driftDetails: hasDrift ? {
+          checkpointSha,
+          currentSha,
+          checkpointLogicVersion,
+          currentLogicVersion,
+          recommendation,
+        } : undefined,
+      };
+    } catch (error) {
+      console.error(`[MemoryClient] Failed to load checkpoint:`, error);
+      return {
+        checkpoint: null,
+        hasDrift: false,
+      };
+    }
+  }
+
+  // ========================================================================
+  // FINANCIAL CORRELATION - Token-to-Outcome ROI Tracking
+  // Detects "Value Leaks" where agent spends on failed outcomes
+  // ========================================================================
+
+  /**
+   * FINANCIAL CORRELATION: Log token cost outcome for ROI tracking.
+   *
+   * Problem: You have cost-aware circuit breaker, but lack "ROI Tracking."
+   * Solution: Log exact USD cost of every successful vs. failed outcome.
+   * This detects "Value Leaks" - where agent spends $0.10 on a $5 delivery that fails.
+   *
+   * @param executionId - The execution ID
+   * @param outcomeData - Outcome data including cost and result
+   */
+  async logFinancialOutcome(
+    executionId: string,
+    outcomeData: {
+      outcome: 'SUCCESS' | 'FAILURE' | 'COMPENSATED' | 'TIMEOUT';
+      totalCostUsd: number;
+      totalTokens: number;
+      businessValueUsd?: number; // e.g., order value, delivery fee
+      stepId?: string;
+      errorCode?: string;
+      timestamp?: string;
+    }
+  ): Promise<void> {
+    const financialKey = `${this.namespace}${MEMORY_CONFIG.key_separator}financial_outcomes${MEMORY_CONFIG.key_separator}${executionId}`;
+    const timestamp = outcomeData.timestamp || new Date().toISOString();
+
+    const financialRecord = {
+      execution_id: executionId,
+      outcome: outcomeData.outcome,
+      total_cost_usd: outcomeData.totalCostUsd,
+      total_tokens: outcomeData.totalTokens,
+      business_value_usd: outcomeData.businessValueUsd || 0,
+      roi: outcomeData.businessValueUsd
+        ? ((outcomeData.businessValueUsd - outcomeData.totalCostUsd) / outcomeData.totalCostUsd).toFixed(2)
+        : null,
+      step_id: outcomeData.stepId,
+      error_code: outcomeData.errorCode,
+      timestamp,
+    };
+
+    try {
+      // Store financial outcome with 30-day TTL for analytics
+      await this.redis.setex(financialKey, 86400 * 30, JSON.stringify(financialRecord));
+
+      // Also append to global financial log (sorted set by timestamp for time-series queries)
+      const globalLogKey = `${this.namespace}${MEMORY_CONFIG.key_separator}financial_log_global`;
+      await this.redis.zadd(globalLogKey, {
+        member: executionId,
+        score: Date.now(),
+      });
+
+      // Log value leak detection
+      if (outcomeData.outcome === 'FAILURE' || outcomeData.outcome === 'COMPENSATED') {
+        const valueLeak = outcomeData.totalCostUsd > 0;
+        if (valueLeak) {
+          console.warn(
+            `[FinancialOutcome] VALUE LEAK DETECTED: ${executionId} ` +
+            `spent $${outcomeData.totalCostUsd.toFixed(4)} on ${outcomeData.outcome.toLowerCase()}` +
+            (outcomeData.businessValueUsd ? ` (business value: $${outcomeData.businessValueUsd.toFixed(2)})` : '')
+          );
+        }
+      }
+
+      console.log(
+        `[FinancialOutcome] Logged ${outcomeData.outcome} for ${executionId}: ` +
+        `$${outcomeData.totalCostUsd.toFixed(4)} / ${outcomeData.totalTokens} tokens` +
+        (financialRecord.roi ? `, ROI: ${financialRecord.roi}` : '')
+      );
+    } catch (error) {
+      console.error(`[FinancialOutcome] Failed to log financial outcome:`, error);
+      // Non-critical - don't throw, just log
+    }
+  }
+
+  /**
+   * FINANCIAL CORRELATION: Query financial outcomes for analytics.
+   *
+   * @param options - Query options (time range, outcome type, etc.)
+   * @returns Array of financial outcome records
+   */
+  async queryFinancialOutcomes(options?: {
+    startTime?: number;
+    endTime?: number;
+    outcomeType?: 'SUCCESS' | 'FAILURE' | 'COMPENSATED' | 'TIMEOUT';
+    limit?: number;
+  }): Promise<Array<{
+    execution_id: string;
+    outcome: string;
+    total_cost_usd: number;
+    business_value_usd?: number;
+    roi?: string | null;
+    timestamp: string;
+  }>> {
+    const globalLogKey = `${this.namespace}${MEMORY_CONFIG.key_separator}financial_log_global`;
+    const limit = options?.limit || 100;
+
+    try {
+      // Get execution IDs from sorted set
+      const startScore = options?.startTime || 0;
+      const endScore = options?.endTime || Date.now();
+
+      const executionIds = await this.redis.zrange(
+        globalLogKey,
+        startScore,
+        endScore,
+        { byScore: true, offset: 0, count: limit }
+      );
+
+      const outcomes: any[] = [];
+      for (const executionId of executionIds) {
+        const financialKey = `${this.namespace}${MEMORY_CONFIG.key_separator}financial_outcomes${MEMORY_CONFIG.key_separator}${executionId}`;
+        const data = await this.redis.get<string>(financialKey);
+        if (data) {
+          const record = JSON.parse(data);
+          if (!options?.outcomeType || record.outcome === options.outcomeType) {
+            outcomes.push(record);
+          }
+        }
+      }
+
+      return outcomes;
+    } catch (error) {
+      console.error(`[FinancialOutcome] Failed to query financial outcomes:`, error);
+      return [];
+    }
+  }
 }
 
 // ============================================================================

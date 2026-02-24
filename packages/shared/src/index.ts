@@ -22,6 +22,7 @@ export * from './services/pgvector-store';
 export * from './services/semantic-vector-store-pg';
 export * from './services/outbox-listener';
 export * from './services/state-diff-viewer';
+export * from './services/serverless-pubsub-bridge';
 export * from './outbox-relay';
 // Export tracing constants (not the AsyncLocalStorage functions)
 export { IDEMPOTENCY_KEY_HEADER } from './tracing';
@@ -52,3 +53,4 @@ export {
 } from './services/llm-failure-triage';
 export * from './services/privacy-gateway';
 export * from './services/dry-run-simulator';
+export * from './services/shadow-dry-run';

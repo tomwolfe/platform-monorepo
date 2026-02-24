@@ -42,8 +42,6 @@ const errorRate = new Rate('error_rate');
 // ============================================================================
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
-const TEST_USER_ID = __ENV.TEST_USER_ID || 'k6-test-user';
-const CLERK_ID = __ENV.CLERK_ID || 'test_clerk_id';
 
 // Performance budgets (thresholds)
 export const thresholds = {
@@ -139,24 +137,21 @@ export function teardown(data) {
  * Measures latency of intent parsing and planning
  */
 export function intentInferenceTest() {
+  const vuId = __VU;
+  const iterId = __ITER;
+  const uniqueUserId = `user-vu-${vuId}-iter-${iterId}`;
+
   const startTime = Date.now();
   requestsTotal.add(1);
 
   const payload = JSON.stringify({
-    messages: [
-      {
-        role: 'user',
-        content: 'Book a table for 4 people at an Italian restaurant tomorrow at 7pm',
-      },
-    ],
-    userLocation: { lat: 40.7128, lng: -74.0060 },
+    text: 'Book a table for 4 people at an Italian restaurant tomorrow at 7pm',
   });
 
   const params = {
     headers: {
       'Content-Type': 'application/json',
-      'X-Test-User-Id': TEST_USER_ID,
-      'X-Clerk-Id': CLERK_ID,
+      'X-Clerk-Id': uniqueUserId,
     },
     tags: { endpoint: 'intent_inference' },
     timeout: '10s',
@@ -202,6 +197,10 @@ export function intentInferenceTest() {
  * Measures latency of individual step execution
  */
 export function stepExecutionTest() {
+  const vuId = __VU;
+  const iterId = __ITER;
+  const uniqueUserId = `user-vu-${vuId}-iter-${iterId}`;
+
   const startTime = Date.now();
   requestsTotal.add(1);
 
@@ -253,6 +252,10 @@ export function stepExecutionTest() {
  * Measures end-to-end chat response latency
  */
 export function chatResponseTest() {
+  const vuId = __VU;
+  const iterId = __ITER;
+  const uniqueUserId = `user-vu-${vuId}-iter-${iterId}`;
+
   const startTime = Date.now();
   requestsTotal.add(1);
 
@@ -268,8 +271,7 @@ export function chatResponseTest() {
   const params = {
     headers: {
       'Content-Type': 'application/json',
-      'X-Test-User-Id': TEST_USER_ID,
-      'X-Clerk-Id': CLERK_ID,
+      'X-Clerk-Id': uniqueUserId,
     },
     tags: { endpoint: 'chat_response' },
     timeout: '10s',

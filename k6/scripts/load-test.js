@@ -41,7 +41,6 @@ export const options = {
 };
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
-const TEST_USER_ID = __ENV.TEST_USER_ID || 'load-test-user';
 
 const testScenarios = [
   {
@@ -67,72 +66,84 @@ const testScenarios = [
 ];
 
 export default function () {
-  // Weighted random scenario selection
+  const vuId = __VU;
+  const iterId = __ITER;
+  const uniqueUserId = `user-vu-${vuId}-iter-${iterId}`;
+
   const scenario = selectWeightedScenario();
-  
+
   try {
-    scenario.fn();
+    scenario.fn(uniqueUserId);
   } catch (error) {
     errorRate.add(1);
     console.error(`Scenario ${scenario.name} failed:`, error);
   }
-  
+
   sleep(0.5);
 }
 
-function chatSimple() {
+function chatSimple(userId) {
   const payload = JSON.stringify({
     messages: [{ role: 'user', content: 'Hello!' }],
   });
-  
+
   const res = http.post(`${BASE_URL}/api/chat`, payload, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Clerk-Id': userId,
+    },
     tags: { scenario: 'chat_simple' },
   });
-  
+
   check(res, {
     'chat_simple status 200': (r) => r.status === 200,
   });
-  
+
   errorRate.add(res.status !== 200);
   latencyP95.add(res.timings.duration);
 }
 
-function chatComplex() {
+function chatComplex(userId) {
   const payload = JSON.stringify({
     messages: [
       { role: 'user', content: 'I want to book a table for 4 at an Italian restaurant tomorrow at 7pm, then get a ride there' },
     ],
     userLocation: { lat: 40.7128, lng: -74.0060 },
   });
-  
+
   const res = http.post(`${BASE_URL}/api/chat`, payload, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Clerk-Id': userId,
+    },
     tags: { scenario: 'chat_complex' },
   });
-  
+
   check(res, {
     'chat_complex status 200': (r) => r.status === 200,
   });
-  
+
   errorRate.add(res.status !== 200);
   latencyP95.add(res.timings.duration);
 }
 
-function intentParse() {
+function intentParse(userId) {
   const payload = JSON.stringify({
-    messages: [{ role: 'user', content: 'Search for pizza places nearby' }],
+    text: 'Search for pizza places nearby',
   });
-  
+
   const res = http.post(`${BASE_URL}/api/intent`, payload, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Clerk-Id': userId,
+    },
     tags: { scenario: 'intent_parse' },
   });
-  
+
   check(res, {
     'intent_parse status 200': (r) => r.status === 200,
   });
-  
+
   errorRate.add(res.status !== 200);
   latencyP95.add(res.timings.duration);
 }
@@ -141,11 +152,11 @@ function healthCheck() {
   const res = http.get(`${BASE_URL}/api/health`, {
     tags: { scenario: 'health_check' },
   });
-  
+
   check(res, {
     'health_check status 200': (r) => r.status === 200,
   });
-  
+
   errorRate.add(res.status !== 200);
 }
 

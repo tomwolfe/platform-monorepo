@@ -23,6 +23,8 @@
     "uuid": "^11.0.0",
     "quickjs-emscripten": "^0.32.0",
     "@octokit/rest": "^21.0.0",
+    "@ai-sdk/openai": "^3.0.25",
+    "ai": "^6.0.69",
     "@repo/auth": "workspace:*",
     "@repo/mcp-protocol": "workspace:*",
     "@repo/database": "workspace:*"

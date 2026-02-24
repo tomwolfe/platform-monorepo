@@ -406,6 +406,4 @@ export function createSequencedPublisher(scope: string) {
 // ============================================================================
 // EXPORTS
 // ============================================================================
-
-export { SequenceIdService };
-export type { SequenceIdEvent, OrderedEventBufferConfig };
+// Note: Types are already exported inline via their declarations above

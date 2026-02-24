@@ -68,14 +68,6 @@ export type { AtomicUpdateResult, AtomicUpdateOptions } from './services/occ-reb
 
 // Semantic versioning enforcement with compatibility adapters
 export * from './services/semantic-versioning';
-export type { 
-  SemVer, 
-  ChangeType, 
-  SchemaDiff, 
-  CompatibilityAdapter, 
-  RegisteredAdapter,
-  CompatibilityResult,
-} from './services/semantic-versioning';
 
 // Automated repair agent for self-healing DLQ
 export * from './services/repair-agent';

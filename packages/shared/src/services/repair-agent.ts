@@ -421,7 +421,18 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
           },
         },
         plan: stateSnapshot.plan,
-        checkpointMetadata: checkpointMetadata || {},
+        checkpointMetadata: checkpointMetadata ? {
+          orchestratorGitSha: checkpointMetadata.orchestratorGitSha || "unknown",
+          toolVersions: checkpointMetadata.toolVersions ? Object.fromEntries(
+            Object.entries(checkpointMetadata.toolVersions).map(([key, value]) => [
+              key,
+              { version: value.version, schemaHash: value.schemaHash }
+            ])
+          ) : {},
+        } : {
+          orchestratorGitSha: "unknown",
+          toolVersions: {},
+        },
         currentMetadata: {
           orchestratorGitSha: process.env.VERCEL_GIT_COMMIT_SHA || "unknown",
           toolVersions: {},
@@ -431,7 +442,7 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
       return {
         passed: dryRunResult.recommendation !== "BLOCK_RESUME",
         divergencePercentage: dryRunResult.divergencePercentage,
-        warnings: dryRunResult.warnings || [],
+        warnings: [],
       };
     } catch (error) {
       console.error(`[RepairAgent] Shadow dry-run failed:`, error);

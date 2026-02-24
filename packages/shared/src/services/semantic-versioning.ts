@@ -223,8 +223,8 @@ export const SchemaAnalyzer = {
    * Get field type as string representation
    */
   getFieldType(fieldSchema: z.ZodType): string {
-    const def = fieldSchema._def;
-    
+    const def = fieldSchema._def as z.ZodTypeDef & { typeName?: string };
+
     if (def.typeName === "ZodString") return "string";
     if (def.typeName === "ZodNumber") return "number";
     if (def.typeName === "ZodBoolean") return "boolean";
@@ -236,7 +236,7 @@ export const SchemaAnalyzer = {
     if (def.typeName === "ZodUnion") return "union";
     if (def.typeName === "ZodDate") return "date";
     if (def.typeName === "ZodRecord") return "record";
-    
+
     return "unknown";
   },
 
@@ -244,12 +244,12 @@ export const SchemaAnalyzer = {
    * Check if field is required
    */
   isRequired(fieldSchema: z.ZodType): boolean {
-    const def = fieldSchema._def;
-    
+    const def = fieldSchema._def as z.ZodTypeDef & { typeName?: string };
+
     // Optional and nullable fields are not required
     if (def.typeName === "ZodOptional") return false;
     if (def.typeName === "ZodNullable") return false;
-    
+
     return true;
   },
 
@@ -887,13 +887,4 @@ export function createSemanticVersioningService(options?: {
 // ============================================================================
 // EXPORTS
 // ============================================================================
-
-export type { 
-  SemVer, 
-  ChangeType, 
-  SchemaDiff, 
-  CompatibilityAdapter, 
-  RegisteredAdapter,
-  CompatibilityResult,
-  AdapterQuery,
-};
+// Note: Types are already exported inline via their declarations above

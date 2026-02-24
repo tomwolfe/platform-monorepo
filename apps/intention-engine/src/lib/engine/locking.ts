@@ -73,6 +73,9 @@ export interface LockMetadata {
   ttlSeconds: number;
   operation?: string;
   traceId?: string;
+  // Re-entrancy support
+  reentrancyDepth?: number;
+  reentrancyToken?: string;
 }
 
 export interface LockResult {
@@ -81,6 +84,9 @@ export interface LockResult {
   metadata?: LockMetadata;
   error?: string;
   wasStale?: boolean;
+  // Re-entrancy info
+  isReentrant?: boolean;
+  reentrancyDepth?: number;
 }
 
 export class Lock {
@@ -88,16 +94,21 @@ export class Lock {
   private ownerId: string;
   private lockMetadata: LockMetadata;
   private released = false;
+  private reentrancyToken: string;
 
   constructor(lockKey: string, ownerId: string, metadata: LockMetadata) {
     this.lockKey = lockKey;
     this.ownerId = ownerId;
     this.lockMetadata = metadata;
+    this.reentrancyToken = metadata.reentrancyToken || `${ownerId}:${Date.now()}`;
   }
 
   /**
    * Release the lock
    * Only the owner can release the lock
+   * 
+   * Re-entrancy support: Decrements depth counter instead of releasing
+   * if lock was acquired multiple times by same execution context
    */
   async release(): Promise<boolean> {
     if (this.released) {
@@ -112,12 +123,31 @@ export class Lock {
       return false;
     }
 
+    // Check re-entrancy depth
+    const currentDepth = this.lockMetadata.reentrancyDepth || 1;
+    
+    if (currentDepth > 1) {
+      // Decrement depth instead of releasing
+      const newDepth = currentDepth - 1;
+      this.lockMetadata.reentrancyDepth = newDepth;
+      
+      // Update metadata
+      const metadataKey = `${this.lockKey}:meta`;
+      await redis.setex(metadataKey, this.lockMetadata.ttlSeconds, JSON.stringify(this.lockMetadata));
+      
+      console.log(
+        `[Lock] Decremented re-entrancy depth ${this.lockKey} (${currentDepth} -> ${newDepth})`
+      );
+      return true;
+    }
+
+    // Depth is 1, actually release the lock
     await redis.del(this.lockKey);
     await redis.del(`${this.lockKey}:meta`);
-    
+
     // PERFORMANCE FIX: Remove from O(1) registry
     await removeLockFromRegistry(this.lockKey);
-    
+
     this.released = true;
 
     console.log(`[Lock] Released ${this.lockKey} (owner: ${this.ownerId})`);
@@ -163,13 +193,57 @@ export class Lock {
 
 export namespace LockingService {
   /**
-   * Acquire a lock with deadlock prevention
+   * Generate a re-entrancy token for lock re-acquisition
+   */
+  function generateReentrancyToken(executionId: string, ownerId: string): string {
+    return `reentrant:${executionId}:${ownerId}`;
+  }
+
+  /**
+   * Check if a lock acquisition is re-entrant (same execution context)
+   */
+  async function isReentrantAcquisition(
+    lockKey: string,
+    executionId: string,
+    reentrancyToken: string
+  ): Promise<{ isReentrant: boolean; currentDepth: number }> {
+    const metadataKey = `${lockKey}:meta`;
+    const existingMetadata = await redis.get(metadataKey);
+
+    if (!existingMetadata) {
+      return { isReentrant: false, currentDepth: 0 };
+    }
+
+    try {
+      const parsed = JSON.parse(existingMetadata as string) as LockMetadata;
+      
+      // Check if this is the same execution context
+      if (parsed.reentrancyToken === reentrancyToken) {
+        return {
+          isReentrant: true,
+          currentDepth: parsed.reentrancyDepth || 1,
+        };
+      }
+
+      return { isReentrant: false, currentDepth: 0 };
+    } catch {
+      return { isReentrant: false, currentDepth: 0 };
+    }
+  }
+
+  /**
+   * Acquire a lock with deadlock prevention and re-entrancy support
    *
    * Features:
    * - Unique owner ID for each acquisition attempt
    * - Metadata stored alongside lock for debugging
    * - Automatic stale lock recovery
    * - TTL-based expiration (prevents permanent deadlocks)
+   * - RE-ENTRANCY: Same execution context can re-acquire lock
+   *
+   * Re-entrancy Use Case:
+   * - A resumed saga needs to re-acquire its own lock after yielding
+   * - Prevents self-deadlock when nested operations use same lock key
    */
   export async function acquireLock(
     lockKey: string,
@@ -178,6 +252,8 @@ export namespace LockingService {
       operation?: string;
       traceId?: string;
       recoverStale?: boolean;
+      executionId?: string; // For re-entrancy tracking
+      reentrancyToken?: string; // For re-entrancy tracking
     }
   ): Promise<LockResult> {
     const {
@@ -185,15 +261,60 @@ export namespace LockingService {
       operation,
       traceId,
       recoverStale = true,
+      executionId,
+      reentrancyToken,
     } = options || {};
 
     const ownerId = randomUUID();
+    const effectiveReentrancyToken = reentrancyToken || (executionId ? generateReentrancyToken(executionId, ownerId) : undefined);
+    
+    // Check for re-entrant acquisition
+    if (executionId && effectiveReentrancyToken) {
+      const reentrantCheck = await isReentrantAcquisition(lockKey, executionId, effectiveReentrancyToken);
+      
+      if (reentrantCheck.isReentrant) {
+        // Re-entrant acquisition - increment depth
+        const newDepth = reentrantCheck.currentDepth + 1;
+        
+        const metadata: LockMetadata = {
+          ownerId,
+          acquiredAt: new Date().toISOString(),
+          ttlSeconds,
+          operation,
+          traceId,
+          reentrancyDepth: newDepth,
+          reentrancyToken: effectiveReentrancyToken,
+        };
+
+        // Update lock TTL
+        await redis.setex(lockKey, ttlSeconds, ownerId);
+        
+        // Update metadata
+        const metadataKey = `${lockKey}:meta`;
+        await redis.setex(metadataKey, ttlSeconds, JSON.stringify(metadata));
+
+        console.log(
+          `[Lock] Re-entrant acquisition ${lockKey} (depth: ${newDepth}, owner: ${ownerId.slice(0, 8)}...)`
+        );
+
+        return {
+          acquired: true,
+          lockKey,
+          metadata,
+          isReentrant: true,
+          reentrancyDepth: newDepth,
+        };
+      }
+    }
+
     const metadata: LockMetadata = {
       ownerId,
       acquiredAt: new Date().toISOString(),
       ttlSeconds,
       operation,
       traceId,
+      reentrancyToken: effectiveReentrancyToken,
+      reentrancyDepth: 1,
     };
 
     try {

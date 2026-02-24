@@ -38,3 +38,17 @@ export * from './services/circuit-breaker';
 export * from './services/anomaly-detector';
 export * from './services/security-correlator';
 export * from './services/dlq-monitoring';
+// Note: llm-failure-triage exports are qualified to avoid FailureReason conflict
+export { 
+  getLLMFailureTriageService, 
+  createLLMFailureTriageService,
+  LLMFailureTriageService,
+  FailureReasonSchema,
+  TriageResultSchema,
+  type FailureReason,
+  type TriageResult,
+  type TriageContext,
+  type FailureTriageService,
+} from './services/llm-failure-triage';
+export * from './services/privacy-gateway';
+export * from './services/dry-run-simulator';

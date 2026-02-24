@@ -58,9 +58,11 @@ import {
   IDEMPOTENT_TOOLS,
 } from "@repo/mcp-protocol";
 import { DB_REFLECTED_SCHEMAS } from "@repo/mcp-protocol";
-import { NormalizationService, createFailoverPolicyEngine, FailoverPolicyEngine } from "@repo/shared";
+import { NormalizationService, createFailoverPolicyEngine, FailoverPolicyEngine, getLLMFailureTriageService, createLLMFailureTriageService } from "@repo/shared";
 import { verifyPlan, DEFAULT_SAFETY_POLICY, SafetyPolicy } from "./verifier";
 import { redis } from "../redis-client";
+import { generateObject } from "ai";
+import { openai } from "@ai-sdk/openai";
 
 // ============================================================================
 // LLM CIRCUIT BREAKER CONFIGURATION
@@ -259,6 +261,7 @@ export class WorkflowMachine {
   private idempotencyService?: IdempotencyService;
   private safetyPolicy: SafetyPolicy;
   private failoverPolicyEngine: FailoverPolicyEngine;
+  private llmTriageService: ReturnType<typeof getLLMFailureTriageService>;
   private compensationsRegistered: Array<{
     stepId: string;
     compensationTool: string;
@@ -288,6 +291,7 @@ export class WorkflowMachine {
     this.idempotencyService = options?.idempotencyService;
     this.safetyPolicy = options?.safetyPolicy || DEFAULT_SAFETY_POLICY;
     this.failoverPolicyEngine = createFailoverPolicyEngine();
+    this.llmTriageService = getLLMFailureTriageService({ generateObjectFn: generateObject, openaiProvider: openai });
 
     // Initialize or load state
     if (options?.initialState) {
@@ -1379,8 +1383,38 @@ export class WorkflowMachine {
       };
     }
 
-    // Map error message to failure reason
-    const failureReason = this.mapErrorToFailureReason(error, errorCode);
+    // Map error message to failure reason using LLM-powered triage
+    const triageContext = {
+      error: error || 'Unknown error',
+      toolName: step.tool_name,
+      toolDescription: step.description,
+      parameters,
+      errorCode,
+    };
+
+    const triageResult = await this.llmTriageService.triageFailure(triageContext);
+
+    console.log(
+      `[WorkflowMachine] LLM Triage: ${triageResult.category} (confidence: ${triageResult.confidence.toFixed(2)}, ` +
+      `recoverable: ${triageResult.isRecoverable}) - ${triageResult.explanation}`
+    );
+
+    if (!triageResult.isRecoverable) {
+      return {
+        shouldRetry: false,
+        suggestions: [{
+          type: 'llm_triage',
+          value: {
+            category: triageResult.category,
+            explanation: triageResult.explanation,
+            suggestedAction: triageResult.suggestedAction,
+          },
+          confidence: triageResult.confidence,
+        }],
+      };
+    }
+
+    const failureReason = triageResult.category;
 
     if (!failureReason) {
       return { shouldRetry: false };

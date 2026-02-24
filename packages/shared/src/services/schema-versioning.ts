@@ -2,9 +2,15 @@
  * Schema Versioning Service for Jitter-Proof Checkpoints
  *
  * Implements version-pinned checkpoints to handle schema evolution during saga execution.
- * When a saga yields, it stores the schema_hash of every tool in the plan.
- * On resume, if the current tool's hash has changed, the system triggers an automatic
- * REFLECTING state to allow the LLM to map old parameters to the new schema.
+ * When a saga yields, it stores the schema_hash of every tool in the plan PLUS the git commit SHA.
+ * On resume, if the current tool's hash has changed OR the git commit differs, the system detects
+ * "Logic Drift" and can trigger an automatic REFLECTING state.
+ *
+ * Features:
+ * - Tool schema versioning (hash-based)
+ * - Orchestrator version pinning (git commit SHA)
+ * - Drift detection for both tool and orchestrator changes
+ * - Parameter mapping suggestions for schema evolution
  *
  * @package @repo/shared
  * @since 1.0.0
@@ -33,12 +39,15 @@ export type ToolVersionRecord = z.infer<typeof ToolVersionRecordSchema>;
 
 /**
  * Schema versioning metadata attached to checkpoints
+ * Now includes orchestrator version (git commit SHA) for logic pinning
  */
 export const SchemaVersioningMetadataSchema = z.object({
   // Map of tool names to their version records at checkpoint time
   toolVersions: z.record(z.string(), ToolVersionRecordSchema),
   // Schema registry version used when checkpoint was created
   registryVersion: z.string(),
+  // Git commit SHA of the orchestrator when checkpoint was created
+  orchestratorGitSha: z.string().optional(),
   // Timestamp when versioning metadata was created
   capturedAt: z.string().datetime(),
 });
@@ -47,6 +56,7 @@ export type SchemaVersioningMetadata = z.infer<typeof SchemaVersioningMetadataSc
 
 /**
  * Schema drift detection result
+ * Now includes orchestrator drift detection
  */
 export const SchemaDriftResultSchema = z.object({
   hasDrift: z.boolean(),
@@ -56,6 +66,9 @@ export const SchemaDriftResultSchema = z.object({
     newHash: z.string(),
     severity: z.enum(["minor", "major", "breaking"]),
   })),
+  hasOrchestratorDrift: z.boolean(),
+  oldOrchestratorSha: z.string().optional(),
+  newOrchestratorSha: z.string().optional(),
   requiresReflection: z.boolean(),
   recommendation: z.string(),
 });
@@ -107,12 +120,27 @@ export class SchemaVersioningService {
   }
 
   /**
-   * Get current registry version (based on git commit or timestamp)
+   * Get current registry version (based on git commit SHA)
    */
   private getRegistryVersion(): string {
-    // In production, this would be based on git commit hash
-    // For now, use a simple version string
-    return process.env.SCHEMA_REGISTRY_VERSION || `v${Date.now()}`;
+    // Use git commit SHA for orchestrator version pinning
+    // In Vercel: VERCEL_GIT_COMMIT_SHA
+    // In GitHub Actions: GITHUB_SHA
+    // Fallback to timestamp for local development
+    return process.env.VERCEL_GIT_COMMIT_SHA 
+      || process.env.GITHUB_SHA 
+      || process.env.SCHEMA_REGISTRY_VERSION 
+      || `v${Date.now()}`;
+  }
+
+  /**
+   * Get current git commit SHA for logic pinning
+   */
+  private getGitCommitSha(): string {
+    return process.env.VERCEL_GIT_COMMIT_SHA 
+      || process.env.GITHUB_SHA 
+      || process.env.GIT_COMMIT_SHA 
+      || 'unknown';
   }
 
   // ========================================================================
@@ -229,6 +257,7 @@ export class SchemaVersioningService {
   /**
    * Capture schema versioning metadata for a checkpoint
    * Called when a saga yields to persist state
+   * Includes orchestrator git commit SHA for logic pinning
    */
   async captureCheckpointMetadata(
     executionId: string,
@@ -247,6 +276,7 @@ export class SchemaVersioningService {
     const metadata: SchemaVersioningMetadata = {
       toolVersions,
       registryVersion: this.currentRegistryVersion,
+      orchestratorGitSha: this.getGitCommitSha(),
       capturedAt: new Date().toISOString(),
     };
 
@@ -260,7 +290,7 @@ export class SchemaVersioningService {
 
     console.log(
       `[SchemaVersioning] Captured checkpoint metadata for ${executionId} ` +
-      `with ${Object.keys(toolVersions).length} tools`
+      `with ${Object.keys(toolVersions).length} tools (orchestrator: ${metadata.orchestratorGitSha})`
     );
 
     return metadata;
@@ -289,6 +319,7 @@ export class SchemaVersioningService {
 
   /**
    * Detect schema drift between checkpoint and current state
+   * Also detects orchestrator logic drift (git commit changes)
    * Called when a saga resumes from checkpoint
    */
   async detectDrift(
@@ -302,6 +333,7 @@ export class SchemaVersioningService {
       return {
         hasDrift: false,
         driftedTools: [],
+        hasOrchestratorDrift: false,
         requiresReflection: false,
         recommendation: "No checkpoint metadata found - assuming no drift",
       };
@@ -341,16 +373,31 @@ export class SchemaVersioningService {
       }
     }
 
-    const hasDrift = driftedTools.length > 0;
-    const requiresReflection = driftedTools.some(t => t.severity === "breaking" || t.severity === "major");
+    // Check for orchestrator logic drift
+    const currentGitSha = this.getGitCommitSha();
+    const hasOrchestratorDrift = checkpointMetadata.orchestratorGitSha 
+      && checkpointMetadata.orchestratorGitSha !== 'unknown'
+      && currentGitSha !== 'unknown'
+      && checkpointMetadata.orchestratorGitSha !== currentGitSha;
+
+    const hasDrift = driftedTools.length > 0 || hasOrchestratorDrift;
+    const requiresReflection = driftedTools.some(t => t.severity === "breaking" || t.severity === "major") || hasOrchestratorDrift;
 
     let recommendation = "No schema drift detected - safe to resume";
     if (hasDrift) {
+      const reasons = [];
+      if (driftedTools.length > 0) {
+        reasons.push(`Tool schema changes: ${driftedTools.map(t => t.toolName).join(", ")}`);
+      }
+      if (hasOrchestratorDrift) {
+        reasons.push(`Orchestrator logic change: ${checkpointMetadata.orchestratorGitSha} -> ${currentGitSha}`);
+      }
+      
       if (requiresReflection) {
-        recommendation = `Schema drift detected: ${driftedTools.map(t => t.toolName).join(", ")}. ` +
-          "Trigger REFLECTING state for parameter mapping.";
+        recommendation = `Logic drift detected (${reasons.join("; ")}). ` +
+          "Trigger REFLECTING state for parameter mapping or logic re-evaluation.";
       } else {
-        recommendation = `Minor schema drift detected: ${driftedTools.map(t => t.toolName).join(", ")}. ` +
+        recommendation = `Minor drift detected (${reasons.join("; ")}). ` +
           "Can resume with caution - monitor for errors.";
       }
     }
@@ -358,7 +405,10 @@ export class SchemaVersioningService {
     return {
       hasDrift,
       driftedTools,
-      requiresReflection,
+      hasOrchestratorDrift: !!hasOrchestratorDrift,
+      oldOrchestratorSha: checkpointMetadata.orchestratorGitSha,
+      newOrchestratorSha: currentGitSha,
+      requiresReflection: !!requiresReflection,
       recommendation,
     };
   }

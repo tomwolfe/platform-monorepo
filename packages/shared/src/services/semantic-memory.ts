@@ -23,6 +23,7 @@ import {
   type VectorSearchResult,
   type VectorSearchQuery,
 } from "./vector-store";
+import { getPrivacyGateway, type PrivacyGatewayConfig } from "./privacy-gateway";
 
 // ============================================================================
 // SCHEMAS
@@ -258,6 +259,8 @@ export interface SemanticVectorStoreConfig {
   embeddingService: EmbeddingService;
   indexName?: string;
   ttlSeconds?: number;
+  privacyConfig?: PrivacyGatewayConfig;
+  enablePiiScrubbing?: boolean;
 }
 
 export class SemanticVectorStore {
@@ -265,48 +268,91 @@ export class SemanticVectorStore {
   private embeddingService: EmbeddingService;
   private indexName: string;
   private ttlSeconds?: number;
+  private privacyGateway: ReturnType<typeof getPrivacyGateway> | null = null;
+  private enablePiiScrubbing: boolean;
 
   constructor(config: SemanticVectorStoreConfig) {
     this.vectorStore = config.vectorStore;
     this.embeddingService = config.embeddingService;
     this.indexName = config.indexName || "semantic_memory";
     this.ttlSeconds = config.ttlSeconds;
+    this.enablePiiScrubbing = config.enablePiiScrubbing ?? true;
+    
+    if (this.enablePiiScrubbing) {
+      this.privacyGateway = getPrivacyGateway();
+    }
   }
 
   /**
    * Add a new memory entry to the vector store
-   * 
+   *
+   * FEATURES:
+   * - PII scrubbing before storage (GDPR/CCPA compliance)
+   * - Vector store contains INTENT only, not identity
+   * - Privacy Gateway tokenizes sensitive data
+   *
    * PERFORMANCE: Upstash Vector provides O(log N) insertion and search
    * vs O(N) brute-force in Redis fallback
    */
   async addEntry(entry: Omit<SemanticMemoryEntry, "embedding">): Promise<SemanticMemoryEntry> {
-    // Generate embedding
-    const textForEmbedding = this.buildEmbeddingText(entry);
+    // PII SCRUBBING - Privacy Gateway integration
+    let scrubbedEntry = entry;
+    let privacyMetadata: Record<string, unknown> = { ...entry.metadata };
+    
+    if (this.enablePiiScrubbing && this.privacyGateway) {
+      const scrubbingResult = this.privacyGateway.scrubMemoryEntry(
+        entry.rawText,
+        entry.parameters
+      );
+      
+      scrubbedEntry = {
+        ...entry,
+        rawText: scrubbingResult.scrubbedText,
+        parameters: scrubbingResult.scrubbedParameters,
+      };
+      
+      // Store privacy metadata (without PII)
+      privacyMetadata = {
+        ...privacyMetadata,
+        piiScrubbed: true,
+        piiEntitiesDetected: scrubbingResult.detectedPii.map((p: { type: string }) => p.type),
+        piiCount: scrubbingResult.detectedPii.length,
+      };
+      
+      console.log(
+        `[PrivacyGateway] Scrubbed ${scrubbingResult.detectedPii.length} PII entities ` +
+        `from memory entry ${entry.id}`
+      );
+    }
+
+    // Generate embedding from scrubbed text
+    const textForEmbedding = this.buildEmbeddingText(scrubbedEntry);
     const embedding = await this.embeddingService.generateEmbedding(textForEmbedding);
 
     const completeEntry: SemanticMemoryEntry = {
-      ...entry,
+      ...scrubbedEntry,
       embedding,
+      metadata: privacyMetadata,
     };
 
-    // Add to vector store
+    // Add to vector store (with scrubbed data only)
     await this.vectorStore.addVector({
-      userId: entry.userId,
-      intentType: entry.intentType,
-      rawText: entry.rawText,
-      parameters: entry.parameters,
+      userId: scrubbedEntry.userId,
+      intentType: scrubbedEntry.intentType,
+      rawText: scrubbedEntry.rawText,
+      parameters: scrubbedEntry.parameters,
       embedding,
-      timestamp: entry.timestamp,
-      executionId: entry.executionId,
-      restaurantId: entry.restaurantId,
-      restaurantSlug: entry.restaurantSlug,
-      restaurantName: entry.restaurantName,
-      outcome: entry.outcome,
-      metadata: entry.metadata,
+      timestamp: scrubbedEntry.timestamp,
+      executionId: scrubbedEntry.executionId,
+      restaurantId: scrubbedEntry.restaurantId,
+      restaurantSlug: scrubbedEntry.restaurantSlug,
+      restaurantName: scrubbedEntry.restaurantName,
+      outcome: scrubbedEntry.outcome,
+      metadata: privacyMetadata,
     });
 
     console.log(
-      `[VectorStore] Added entry ${entry.id} for user ${entry.userId} ` +
+      `[VectorStore] Added scrubbed entry ${completeEntry.id} for user ${completeEntry.userId} ` +
       `(using ${this.vectorStore.constructor.name})`
     );
     return completeEntry;

@@ -122,6 +122,296 @@ export async function signInternalToken(payload: Record<string, unknown> = {}, e
     .sign(secret);
 }
 
+// ============================================================================
+// SCOPED JWT FOR TOOL-LEVEL PERMISSIONS
+// Zero-Trust Security: Least Privilege Access
+// ============================================================================
+
+/**
+ * Scoped tool permission definition
+ */
+export interface ToolPermission {
+  /** Tool name (e.g., 'book_table', 'check_availability') */
+  toolName: string;
+  /** Allowed actions (e.g., ['read', 'write', 'delete']) */
+  actions: string[];
+  /** Optional: Resource constraints (e.g., restaurant IDs, user IDs) */
+  resources?: string[];
+  /** Optional: Parameter constraints (e.g., max party size) */
+  parameterConstraints?: Record<string, unknown>;
+}
+
+/**
+ * Scoped JWT payload with tool-level permissions
+ */
+export interface ScopedJWTPayload {
+  /** User/service ID */
+  sub?: string;
+  /** Issuer service */
+  iss: string;
+  /** Audience service */
+  aud: string;
+  /** Expiration time */
+  exp: number;
+  /** Issued at */
+  iat: number;
+  /** Granted tool permissions */
+  permissions: ToolPermission[];
+  /** Optional: Execution context */
+  executionId?: string;
+  /** Optional: Request trace ID */
+  traceId?: string;
+  /** Optional: Scope string (space-separated permissions) */
+  scope?: string;
+  /** Index signature for JWT compatibility */
+  [key: string]: unknown;
+}
+
+/**
+ * Sign a scoped JWT with tool-level permissions
+ *
+ * Zero-Trust Security:
+ * - Each token grants only specific tool access
+ * - Prevents lateral movement if a service is compromised
+ * - Short TTL (default: 5 minutes) limits exposure window
+ *
+ * @param payload - Token payload with permissions
+ * @param options - JWT options
+ * @returns Signed scoped JWT
+ *
+ * @example
+ * // Orchestrator calls table-stack with scoped token
+ * const token = await signScopedJWT(
+ *   {
+ *     permissions: [
+ *       { toolName: 'check_availability', actions: ['read'] },
+ *       { toolName: 'book_table', actions: ['write'], resources: ['restaurant-123'] },
+ *     ],
+ *     executionId: 'exec-456',
+ *   },
+ *   { issuer: 'intention-engine', audience: 'table-stack' }
+ * );
+ */
+export async function signScopedJWT(
+  payload: {
+    permissions: ToolPermission[];
+    executionId?: string;
+    traceId?: string;
+    sub?: string;
+  },
+  options: {
+    issuer: string;
+    audience: string;
+    expiresIn?: string;
+  }
+): Promise<string> {
+  const secret = getSecret();
+  const { issuer, audience, expiresIn = '5m' } = options;
+
+  // Build scope string for quick permission checks
+  const scope = payload.permissions
+    .map(p => `${p.toolName}:${p.actions.join(',')}`)
+    .join(' ');
+
+  const jwtPayload: ScopedJWTPayload = {
+    sub: payload.sub,
+    iss: issuer,
+    aud: audience,
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + parseExpiresIn(expiresIn),
+    permissions: payload.permissions,
+    executionId: payload.executionId,
+    traceId: payload.traceId,
+    scope,
+  };
+
+  return await new SignJWT(jwtPayload)
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime(expiresIn)
+    .sign(secret);
+}
+
+/**
+ * Verify a scoped JWT and extract permissions
+ *
+ * @param token - Scoped JWT to verify
+ * @param expectedIssuer - Expected issuer claim
+ * @param expectedAudience - Expected audience claim
+ * @returns Decoded payload with permissions if valid, null if invalid
+ */
+export async function verifyScopedJWT(
+  token: string,
+  expectedIssuer: string,
+  expectedAudience: string
+): Promise<ScopedJWTPayload | null> {
+  const secret = getSecret();
+
+  try {
+    const { payload } = await jwtVerify(token, secret, {
+      issuer: expectedIssuer,
+      audience: expectedAudience,
+      algorithms: ['HS256'],
+    });
+    return payload as ScopedJWTPayload;
+  } catch (error) {
+    console.warn(`[Auth] Scoped JWT verification failed:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+/**
+ * Check if a scoped JWT has permission to call a specific tool
+ *
+ * @param payload - Verified JWT payload
+ * @param toolName - Tool name to check
+ * @param action - Action to check (default: 'execute')
+ * @param resourceId - Optional resource ID to check against constraints
+ * @returns True if permission is granted
+ */
+export function hasToolPermission(
+  payload: ScopedJWTPayload,
+  toolName: string,
+  action: string = 'execute',
+  resourceId?: string
+): boolean {
+  const permission = payload.permissions.find(p => p.toolName === toolName);
+
+  if (!permission) {
+    return false;
+  }
+
+  // Check action
+  if (!permission.actions.includes(action) && !permission.actions.includes('*')) {
+    return false;
+  }
+
+  // Check resource constraint if provided
+  if (resourceId && permission.resources) {
+    if (!permission.resources.includes(resourceId) && !permission.resources.includes('*')) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Check if a scoped JWT has parameter constraints
+ *
+ * @param payload - Verified JWT payload
+ * @param toolName - Tool name to check
+ * @param parameters - Actual parameters from the request
+ * @returns True if parameters satisfy constraints
+ */
+export function satisfiesParameterConstraints(
+  payload: ScopedJWTPayload,
+  toolName: string,
+  parameters: Record<string, unknown>
+): boolean {
+  const permission = payload.permissions.find(p => p.toolName === toolName);
+
+  if (!permission?.parameterConstraints) {
+    return true; // No constraints = allowed
+  }
+
+  // Check each constraint
+  for (const [key, constraintValue] of Object.entries(permission.parameterConstraints)) {
+    const actualValue = parameters[key];
+
+    // Handle numeric constraints (e.g., max party size)
+    if (typeof constraintValue === 'number' && typeof actualValue === 'number') {
+      if (actualValue > constraintValue) {
+        return false;
+      }
+    }
+
+    // Handle string constraints (e.g., allowed cuisine types)
+    if (typeof constraintValue === 'string' && typeof actualValue === 'string') {
+      if (actualValue !== constraintValue) {
+        return false;
+      }
+    }
+
+    // Handle array constraints (e.g., allowed values)
+    if (Array.isArray(constraintValue) && !constraintValue.includes(actualValue)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Create a scoped token for tool execution
+ *
+ * Convenience wrapper for common use case
+ *
+ * @param caller - Calling service name
+ * @param callee - Target service name
+ * @param toolName - Tool to call
+ * @param actions - Allowed actions
+ * @param options - Additional options
+ * @returns Signed scoped JWT
+ */
+export async function createToolScopedToken(
+  caller: string,
+  callee: string,
+  toolName: string,
+  actions: string[] = ['execute'],
+  options: {
+    executionId?: string;
+    traceId?: string;
+    resources?: string[];
+    expiresIn?: string;
+  } = {}
+): Promise<string> {
+  return signScopedJWT(
+    {
+      permissions: [
+        {
+          toolName,
+          actions,
+          resources: options.resources,
+        },
+      ],
+      executionId: options.executionId,
+      traceId: options.traceId,
+    },
+    {
+      issuer: caller,
+      audience: callee,
+      expiresIn: options.expiresIn,
+    }
+  );
+}
+
+/**
+ * Parse expiresIn string to seconds
+ */
+function parseExpiresIn(expiresIn: string): number {
+  const match = expiresIn.match(/^(\d+)([smhd])$/);
+  if (!match) {
+    return 300; // Default 5 minutes
+  }
+
+  const value = parseInt(match[1], 10);
+  const unit = match[2];
+
+  switch (unit) {
+    case 's':
+      return value;
+    case 'm':
+      return value * 60;
+    case 'h':
+      return value * 60 * 60;
+    case 'd':
+      return value * 60 * 60 * 24;
+    default:
+      return 300;
+  }
+}
+
 /**
  * verifyInternalToken - Unified verification for internal tokens
  */

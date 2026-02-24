@@ -14,10 +14,14 @@ export * from './services/schema-evolution';
 export * from './services/schema-versioning';
 export * from './services/heartbeat';
 export * from './services/parameter-aliaser';
+export * from './services/autonomous-schema-evolution';
 export * from './services/qstash';
 export * from './services/qstash-webhook';
 export * from './services/vector-store';
 export * from './services/pgvector-store';
+export * from './services/semantic-vector-store-pg';
+export * from './services/outbox-listener';
+export * from './services/state-diff-viewer';
 export * from './outbox-relay';
 // Export tracing constants (not the AsyncLocalStorage functions)
 export { IDEMPOTENCY_KEY_HEADER } from './tracing';

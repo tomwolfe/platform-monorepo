@@ -56,3 +56,52 @@ export {
 export * from './services/privacy-gateway';
 export * from './services/dry-run-simulator';
 export * from './services/shadow-dry-run';
+
+// Phase 4: Perfect Grade Enhancements (100/100)
+// Causal ordering with sequence IDs
+export * from './services/sequence-id';
+export type { SequenceIdEvent, OrderedEventBufferConfig } from './services/sequence-id';
+
+// OCC with automated rebase for ghost update prevention
+export * from './services/occ-rebase';
+export type { AtomicUpdateResult, AtomicUpdateOptions } from './services/occ-rebase';
+
+// Semantic versioning enforcement with compatibility adapters
+export * from './services/semantic-versioning';
+export type { 
+  SemVer, 
+  ChangeType, 
+  SchemaDiff, 
+  CompatibilityAdapter, 
+  RegisteredAdapter,
+  CompatibilityResult,
+} from './services/semantic-versioning';
+
+// Automated repair agent for self-healing DLQ
+export * from './services/repair-agent';
+export type { 
+  ZombieSaga, 
+  RepairAnalysis, 
+  FailureType, 
+  SuggestedFix, 
+  RepairResult,
+} from './services/repair-agent';
+
+// Redlock algorithm for distributed locking
+export * from './services/redlock';
+export type { 
+  RedlockResource, 
+  RedlockConfig, 
+  RedlockLock, 
+  ReleaseResult, 
+  ExtendResult,
+  AcquireResult,
+} from './services/redlock';
+
+// Consumer-driven contract testing for tools
+export * from './services/contract-testing';
+export type { 
+  ToolExecutionTrace, 
+  ToolContract, 
+  ContractTestResult,
+} from './services/contract-testing';

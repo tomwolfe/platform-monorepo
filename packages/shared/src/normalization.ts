@@ -236,9 +236,9 @@ export class NormalizationService {
             message: e.message,
             code: e.code,
           })),
-        }).then(event => {
+        }).then(eventId => {
           result.mismatchRecorded = true;
-          result.mismatchEventId = event.id;
+          result.mismatchEventId = eventId;
         }).catch(err => {
           console.warn("[NormalizationService] Failed to record mismatch:", err);
         });

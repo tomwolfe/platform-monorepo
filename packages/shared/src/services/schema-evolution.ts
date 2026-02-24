@@ -32,6 +32,18 @@ export const ProposedSchemaChangeSchema = z.object({
   createdAt: z.string(),
   status: z.enum(['pending', 'approved', 'rejected', 'applied']),
   metadata: z.record(z.unknown()).optional(),
+  toolName: z.string().optional(),
+  intentType: z.string().optional(),
+  proposedFields: z.array(z.object({
+    name: z.string(),
+    type: z.enum(['string', 'number', 'boolean', 'object', 'array', 'datetime']),
+    required: z.boolean(),
+    description: z.string().optional(),
+    defaultValue: z.unknown().optional(),
+    validation: z.record(z.unknown()).optional(),
+  })).optional(),
+  deprecatedFields: z.array(z.string()).optional(),
+  reason: z.string().optional(),
 });
 
 export type ProposedSchemaChange = z.infer<typeof ProposedSchemaChangeSchema>;
@@ -408,7 +420,7 @@ This PR adds the alias to the PARAMETER_ALIASES registry in \`packages/mcp-proto
 
     const aliases: AliasUsageRecord[] = [];
     for (const key of aliasKeys) {
-      const data = await this.redis.get<string>(key);
+      const data = await this.redis.get<string>(key as string);
       if (data) {
         aliases.push(JSON.parse(data) as AliasUsageRecord);
       }

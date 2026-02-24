@@ -22,6 +22,7 @@ import {
   ExecutionTrace,
   EngineErrorSchema,
 } from "./types";
+import type { TaskState, TaskStatus } from "@repo/shared";
 
 // ============================================================================
 // MEMORY CONFIGURATION
@@ -391,6 +392,72 @@ export class MemoryClient {
     } catch (error) {
       console.error("Failed to get recent successful intents:", error);
       return []; // Return empty instead of throwing to avoid 503
+    }
+  }
+
+  // ========================================================================
+  // TASK STATE METHODS
+  // Methods for TaskState management (durable execution)
+  // ========================================================================
+
+  async getTaskState(executionId: string): Promise<TaskState | null> {
+    const key = `${this.namespace}:task:${executionId}`;
+
+    try {
+      const data = await this.redis.get<string>(key);
+      if (!data) return null;
+      return JSON.parse(data) as TaskState;
+    } catch (error) {
+      console.error(`Failed to get task state for ${executionId}:`, error);
+      return null;
+    }
+  }
+
+  async createTaskState(taskState: TaskState): Promise<void> {
+    const key = `${this.namespace}:task:${taskState.execution_id}`;
+
+    try {
+      await this.redis.setex(key, 86400, JSON.stringify(taskState));
+    } catch (error) {
+      console.error(`Failed to create task state for ${taskState.execution_id}:`, error);
+      throw error;
+    }
+  }
+
+  async transitionTaskState(
+    executionId: string,
+    toStatus: TaskStatus,
+    reason?: string
+  ): Promise<boolean> {
+    const key = `${this.namespace}:task:${executionId}`;
+
+    try {
+      const currentState = await this.getTaskState(executionId);
+      if (!currentState) return false;
+
+      const transition = {
+        from_status: currentState.status,
+        to_status: toStatus,
+        timestamp: new Date().toISOString(),
+        reason,
+      };
+
+      const updatedState: TaskState = {
+        ...currentState,
+        status: toStatus,
+        transitions: [...currentState.transitions, transition],
+        updated_at: new Date().toISOString(),
+      };
+
+      if (toStatus === "completed") {
+        updatedState.completed_at = new Date().toISOString();
+      }
+
+      await this.redis.setex(key, 86400, JSON.stringify(updatedState));
+      return true;
+    } catch (error) {
+      console.error(`Failed to transition task state for ${executionId}:`, error);
+      return false;
     }
   }
 }

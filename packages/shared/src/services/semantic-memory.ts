@@ -300,11 +300,11 @@ export class SemanticVectorStore {
     let privacyMetadata: Record<string, unknown> = { ...entry.metadata };
     
     if (this.enablePiiScrubbing && this.privacyGateway) {
-      const scrubbingResult = this.privacyGateway.scrubMemoryEntry(
+      const scrubbingResult = await this.privacyGateway.scrubMemoryEntry(
         entry.rawText,
         entry.parameters
       );
-      
+
       scrubbedEntry = {
         ...entry,
         rawText: scrubbingResult.scrubbedText,

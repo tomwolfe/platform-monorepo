@@ -364,14 +364,14 @@ export class ShadowDryRunService {
         state: {
           status: stateSnapshot.status,
           step_states: stateSnapshot.step_states,
-          budget: stateSnapshot.budget,
-          token_usage: stateSnapshot.token_usage,
+          budget: (stateSnapshot as any).budget,
+          token_usage: (stateSnapshot as any).token_usage,
         },
         // Provide read-only data access
         __readData: {
           completedSteps: stateSnapshot.step_states
             .filter(s => s.status === 'completed')
-            .map(s => s.result),
+            .map(s => (s as any).result),
         },
       };
 

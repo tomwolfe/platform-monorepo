@@ -220,9 +220,19 @@ export class MigrationGeneratorService {
         };
       }
 
+      // Validate that proposedFields exists
+      if (!proposal.proposedFields || proposal.proposedFields.length === 0) {
+        return {
+          success: false,
+          error: 'No proposed fields to migrate',
+          warnings: [],
+          affectedColumns: [],
+        };
+      }
+
       // SECURITY FIX: Validate all field names BEFORE generating migration
       const validationErrors: string[] = [];
-      
+
       for (const field of proposal.proposedFields) {
         const validation = validateFieldName(field.name);
         if (!validation.valid) {
@@ -271,8 +281,8 @@ export class MigrationGeneratorService {
       // Create migration file name
       const fileName = this.generateMigrationFileName(proposal, tableName);
 
-      // Determine affected columns
-      const affectedColumns: Array<{ name: string; type: string; action: 'add' | 'remove' | 'modify' }> = proposal.proposedFields.map(field => ({
+      // Determine affected columns (proposedFields already validated above)
+      const affectedColumns: Array<{ name: string; type: string; action: 'add' | 'remove' | 'modify' }> = proposal.proposedFields!.map(field => ({
         name: field.name,
         type: TYPE_MAPPING[field.type]?.postgresType || "TEXT",
         action: "add",
@@ -349,7 +359,7 @@ export class MigrationGeneratorService {
     };
 
     // Check direct tool mapping
-    if (proposal.toolName in toolToTableMap) {
+    if (proposal.toolName && proposal.toolName in toolToTableMap) {
       return toolToTableMap[proposal.toolName];
     }
 
@@ -365,7 +375,7 @@ export class MigrationGeneratorService {
       GUEST: "guest_profiles",
     };
 
-    if (proposal.intentType in intentToTableMap) {
+    if (proposal.intentType && proposal.intentType in intentToTableMap) {
       return intentToTableMap[proposal.intentType];
     }
 
@@ -377,7 +387,7 @@ export class MigrationGeneratorService {
    */
   private generateMigrationContent(proposal: ProposedSchemaChange, tableName: string): string {
     const timestamp = new Date().toISOString();
-    const columns = proposal.proposedFields.map(field => this.generateColumnDefinition(field)).join("\n");
+    const columns = proposal.proposedFields!.map(field => this.generateColumnDefinition(field)).join("\n");
     
     return `/**
  * Migration: ${proposal.reason}
@@ -397,12 +407,12 @@ ${columns}
 
 export async function up(db: any): Promise<void> {
   // Add new columns
-${proposal.proposedFields.map(field => this.generateUpMigrationStatement(tableName, field)).join("\n")}
+${proposal.proposedFields!.map(field => this.generateUpMigrationStatement(tableName, field)).join("\n")}
 }
 
 export async function down(db: any): Promise<void> {
   // Rollback: Remove columns
-${proposal.proposedFields.map(field => this.generateDownMigrationStatement(tableName, field)).join("\n")}
+${proposal.proposedFields!.map(field => this.generateDownMigrationStatement(tableName, field)).join("\n")}
 ${proposal.deprecatedFields?.map(field => `  // Note: Field ${field} was already deprecated`).join("\n") || ""}
 }
 `;
@@ -499,7 +509,7 @@ ${proposal.deprecatedFields?.map(field => `  await db.execute(sql\`ALTER TABLE $
 
 export async function down(db: any): Promise<void> {
   // Re-remove proposed columns
-${proposal.proposedFields.map(field => `  await db.execute(sql\`ALTER TABLE ${tableName} DROP COLUMN ${field.name}\`);`).join("\n")}
+${proposal.proposedFields!.map(field => `  await db.execute(sql\`ALTER TABLE ${tableName} DROP COLUMN ${field.name}\`);`).join("\n")}
 }
 `;
   }
@@ -509,8 +519,8 @@ ${proposal.proposedFields.map(field => `  await db.execute(sql\`ALTER TABLE ${ta
    */
   private generateSqlPreview(proposal: ProposedSchemaChange, tableName: string): string {
     const statements: string[] = [];
-    
-    for (const field of proposal.proposedFields) {
+
+    for (const field of proposal.proposedFields!) {
       const typeInfo = TYPE_MAPPING[field.type] || TYPE_MAPPING.string;
       let statement = `ALTER TABLE ${tableName} ADD COLUMN ${field.name} ${typeInfo.postgresType}`;
       
@@ -539,9 +549,9 @@ ${proposal.proposedFields.map(field => `  await db.execute(sql\`ALTER TABLE ${ta
    */
   private generateMigrationFileName(proposal: ProposedSchemaChange, tableName: string): string {
     const timestamp = Date.now();
-    const action = proposal.proposedFields.length > 0 ? "add" : "remove";
-    const fields = proposal.proposedFields.slice(0, 3).map(f => f.name).join("_");
-    
+    const action = proposal.proposedFields!.length > 0 ? "add" : "remove";
+    const fields = proposal.proposedFields!.slice(0, 3).map(f => f.name).join("_");
+
     return `${timestamp}_${action}_${fields}_${tableName}.ts`;
   }
 
@@ -550,28 +560,28 @@ ${proposal.proposedFields.map(field => `  await db.execute(sql\`ALTER TABLE ${ta
    */
   private generateWarnings(proposal: ProposedSchemaChange, tableName: string): string[] {
     const warnings: string[] = [];
-    
+
     // Check for required fields without defaults
-    const requiredWithoutDefault = proposal.proposedFields.filter(
+    const requiredWithoutDefault = proposal.proposedFields!.filter(
       f => f.required && f.defaultValue === undefined
     );
-    
+
     if (requiredWithoutDefault.length > 0) {
       warnings.push(
         `Required fields without defaults will require manual data migration: ${requiredWithoutDefault.map(f => f.name).join(", ")}`
       );
     }
-    
+
     // Check for large tables (would need concurrent migration)
     if (!this.isConcurrentSafeMigration(proposal)) {
       warnings.push("This migration will lock the table during execution. Consider running during low-traffic period.");
     }
-    
+
     // Check for many fields
-    if (proposal.proposedFields.length > 5) {
-      warnings.push(`Adding ${proposal.proposedFields.length} columns at once. Consider splitting into separate migrations.`);
+    if (proposal.proposedFields!.length > 5) {
+      warnings.push(`Adding ${proposal.proposedFields!.length} columns at once. Consider splitting into separate migrations.`);
     }
-    
+
     return warnings;
   }
 
@@ -581,9 +591,9 @@ ${proposal.proposedFields.map(field => `  await db.execute(sql\`ALTER TABLE ${ta
   private isConcurrentSafeMigration(proposal: ProposedSchemaChange): boolean {
     // Adding nullable columns is concurrent-safe
     // Adding required columns or modifying existing columns is NOT concurrent-safe
-    const hasRequiredFields = proposal.proposedFields.some(f => f.required);
+    const hasRequiredFields = proposal.proposedFields!.some(f => f.required);
     const hasModifications = proposal.deprecatedFields && proposal.deprecatedFields.length > 0;
-    
+
     return !hasRequiredFields && !hasModifications;
   }
 
@@ -593,9 +603,9 @@ ${proposal.proposedFields.map(field => `  await db.execute(sql\`ALTER TABLE ${ta
   private estimateMigrationDuration(proposal: ProposedSchemaChange): number {
     // Rough estimate: 100ms per column + 1ms per row
     // This is very approximate and would need actual table stats for accuracy
-    const baseTime = 100 * proposal.proposedFields.length;
+    const baseTime = 100 * proposal.proposedFields!.length;
     const estimatedRows = 10000; // Would need to fetch actual row count
-    
+
     return baseTime + estimatedRows;
   }
 

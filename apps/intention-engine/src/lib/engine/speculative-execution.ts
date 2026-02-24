@@ -28,6 +28,14 @@
 import { Intent, IntentType, PlanStep } from "./types";
 import { redis } from "../redis-client";
 import { RealtimeService } from "@repo/shared";
+import { db } from "@repo/database";
+import { eq, and, gte, lte, sql } from "drizzle-orm";
+import {
+  restaurants,
+  restaurantTables,
+  restaurantReservations,
+  users,
+} from "@repo/database/schema";
 
 // ============================================================================
 // CONFIGURATION
@@ -502,33 +510,380 @@ export class SpeculativeExecutor {
   }
 
   // ============================================================================
-  // HELPER METHODS (Placeholder implementations)
-  // In production, these would call actual services
+  // HELPER METHODS - Actual Database Queries
   // ============================================================================
 
+  /**
+   * Fetch user preferences from database
+   */
   private async fetchUserPreferences(userId: string): Promise<unknown> {
-    // Placeholder - would fetch from database
-    return { userId, preferences: {} };
+    try {
+      const [user] = await db
+        .select({
+          id: users.id,
+          name: users.name,
+          email: users.email,
+          role: users.role,
+          lastInteractionContext: users.lastInteractionContext,
+        })
+        .from(users)
+        .where(eq(users.clerkId, userId))
+        .limit(1);
+
+      if (!user) {
+        return { userId, preferences: null, found: false };
+      }
+
+      // Fetch user's upcoming reservations
+      const upcomingReservations = await db
+        .select({
+          id: restaurantReservations.id,
+          restaurantId: restaurantReservations.restaurantId,
+          guestName: restaurantReservations.guestName,
+          partySize: restaurantReservations.partySize,
+          startTime: restaurantReservations.startTime,
+          endTime: restaurantReservations.endTime,
+          status: restaurantReservations.status,
+        })
+        .from(restaurantReservations)
+        .where(
+          and(
+            eq(restaurantReservations.guestEmail, user.email),
+            gte(restaurantReservations.startTime, new Date())
+          )
+        )
+        .limit(5);
+
+      return {
+        userId,
+        preferences: {
+          name: user.name,
+          email: user.email,
+          lastInteractionContext: user.lastInteractionContext,
+        },
+        upcomingReservations,
+        found: true,
+      };
+    } catch (error) {
+      console.warn('[SpeculativeExec] Failed to fetch user preferences:', error);
+      return { userId, preferences: null, found: false, error: 'Failed to fetch' };
+    }
   }
 
+  /**
+   * Fetch nearby restaurant availability
+   */
   private async fetchNearbyAvailability(location: { lat: number; lng: number }): Promise<unknown> {
-    // Placeholder - would fetch restaurant availability
-    return { location, availability: [] };
+    try {
+      // Find restaurants within ~10km using Haversine formula
+      const nearbyRestaurants = await db
+        .select({
+          id: restaurants.id,
+          name: restaurants.name,
+          slug: restaurants.slug,
+          lat: restaurants.lat,
+          lng: restaurants.lng,
+          address: restaurants.address,
+          openingTime: restaurants.openingTime,
+          closingTime: restaurants.closingTime,
+          daysOpen: restaurants.daysOpen,
+        })
+        .from(restaurants)
+        .where(sql`
+          lat IS NOT NULL AND lng IS NOT NULL
+          AND 6371 * acos(
+            cos(radians(${location.lat})) * cos(radians(lat::float)) *
+            cos(radians(lng::float) - radians(${location.lng})) +
+            sin(radians(${location.lat})) * sin(radians(lat::float))
+          ) <= 10
+        `)
+        .limit(10);
+
+      // For each restaurant, check current availability
+      const availabilityPromises = nearbyRestaurants.map(async (restaurant) => {
+        const now = new Date();
+        const todayEnd = new Date(now);
+        todayEnd.setHours(23, 59, 59, 999);
+
+        const existingReservations = await db
+          .select({
+            tableId: restaurantReservations.tableId,
+            startTime: restaurantReservations.startTime,
+            endTime: restaurantReservations.endTime,
+            partySize: restaurantReservations.partySize,
+          })
+          .from(restaurantReservations)
+          .where(
+            and(
+              eq(restaurantReservations.restaurantId, restaurant.id!),
+              gte(restaurantReservations.startTime, now),
+              lte(restaurantReservations.startTime, todayEnd)
+            )
+          )
+          .limit(50);
+
+        // Get table capacity
+        const tables = await db
+          .select({
+            id: restaurantTables.id,
+            tableNumber: restaurantTables.tableNumber,
+            minCapacity: restaurantTables.minCapacity,
+            maxCapacity: restaurantTables.maxCapacity,
+            status: restaurantTables.status,
+          })
+          .from(restaurantTables)
+          .where(eq(restaurantTables.restaurantId, restaurant.id!))
+          .limit(20);
+
+        return {
+          restaurant: {
+            id: restaurant.id,
+            name: restaurant.name,
+            slug: restaurant.slug,
+          },
+          tables,
+          existingReservations,
+          isOpen: this.isRestaurantOpen(restaurant, now),
+        };
+      });
+
+      const availability = await Promise.allSettled(availabilityPromises);
+      const results = availability
+        .filter((r): r is PromiseFulfilledResult<unknown> => r.status === 'fulfilled')
+        .map((r) => r.value);
+
+      return { location, availability: results, found: true };
+    } catch (error) {
+      console.warn('[SpeculativeExec] Failed to fetch nearby availability:', error);
+      return { location, availability: [], found: false, error: 'Failed to fetch' };
+    }
   }
 
+  /**
+   * Fetch restaurant state
+   */
   private async fetchRestaurantState(restaurantRef: string): Promise<unknown> {
-    // Placeholder - would fetch restaurant state
-    return { restaurantRef, state: {} };
+    try {
+      // Try to find by slug or ID
+      const [restaurant] = await db
+        .select({
+          id: restaurants.id,
+          name: restaurants.name,
+          slug: restaurants.slug,
+          openingTime: restaurants.openingTime,
+          closingTime: restaurants.closingTime,
+          daysOpen: restaurants.daysOpen,
+          timezone: restaurants.timezone,
+        })
+        .from(restaurants)
+        .where(
+          sql`slug = ${restaurantRef} OR id = ${restaurantRef}::uuid`
+        )
+        .limit(1);
+
+      if (!restaurant) {
+        return { restaurantRef, state: null, found: false };
+      }
+
+      const now = new Date();
+
+      // Get current table status
+      const tables = await db
+        .select({
+          id: restaurantTables.id,
+          tableNumber: restaurantTables.tableNumber,
+          minCapacity: restaurantTables.minCapacity,
+          maxCapacity: restaurantTables.maxCapacity,
+          status: restaurantTables.status,
+          isActive: restaurantTables.isActive,
+        })
+        .from(restaurantTables)
+        .where(eq(restaurantTables.restaurantId, restaurant.id!))
+        .limit(20);
+
+      // Get today's reservations
+      const todayStart = new Date(now);
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(now);
+      todayEnd.setHours(23, 59, 59, 999);
+
+      const reservations = await db
+        .select({
+          id: restaurantReservations.id,
+          guestName: restaurantReservations.guestName,
+          partySize: restaurantReservations.partySize,
+          startTime: restaurantReservations.startTime,
+          endTime: restaurantReservations.endTime,
+          status: restaurantReservations.status,
+          tableId: restaurantReservations.tableId,
+        })
+        .from(restaurantReservations)
+        .where(
+          and(
+            eq(restaurantReservations.restaurantId, restaurant.id!),
+            gte(restaurantReservations.startTime, todayStart),
+            lte(restaurantReservations.startTime, todayEnd)
+          )
+        )
+        .limit(50);
+
+      return {
+        restaurantRef,
+        state: {
+          restaurant,
+          tables,
+          reservations,
+          isOpen: this.isRestaurantOpen(restaurant, now),
+          currentTime: now.toISOString(),
+        },
+        found: true,
+      };
+    } catch (error) {
+      console.warn('[SpeculativeExec] Failed to fetch restaurant state:', error);
+      return { restaurantRef, state: null, found: false, error: 'Failed to fetch' };
+    }
   }
 
+  /**
+   * Search restaurants by location
+   */
   private async searchRestaurants(location: { lat: number; lng: number }): Promise<unknown> {
-    // Placeholder - would search restaurants
-    return { location, results: [] };
+    try {
+      // Use Haversine formula for proximity search
+      const searchResults = await db
+        .select({
+          id: restaurants.id,
+          name: restaurants.name,
+          slug: restaurants.slug,
+          address: restaurants.address,
+          lat: restaurants.lat,
+          lng: restaurants.lng,
+          openingTime: restaurants.openingTime,
+          closingTime: restaurants.closingTime,
+          daysOpen: restaurants.daysOpen,
+          distance: sql<number>`
+            6371 * acos(
+              cos(radians(${location.lat})) * cos(radians(lat::float)) *
+              cos(radians(lng::float) - radians(${location.lng})) +
+              sin(radians(${location.lat})) * sin(radians(lat::float))
+            )
+          `,
+        })
+        .from(restaurants)
+        .where(sql`
+          lat IS NOT NULL AND lng IS NOT NULL
+          AND 6371 * acos(
+            cos(radians(${location.lat})) * cos(radians(lat::float)) *
+            cos(radians(lng::float) - radians(${location.lng})) +
+            sin(radians(${location.lat})) * sin(radians(lat::float))
+          ) <= 20
+        `)
+        .orderBy(sql`distance`)
+        .limit(15);
+
+      const now = new Date();
+      const resultsWithStatus = searchResults.map((r) => ({
+        ...r,
+        isOpen: this.isRestaurantOpen(r, now),
+        distanceKm: Math.round(r.distance * 10) / 10,
+      }));
+
+      return { location, results: resultsWithStatus, found: true };
+    } catch (error) {
+      console.warn('[SpeculativeExec] Failed to search restaurants:', error);
+      return { location, results: [], found: false, error: 'Failed to fetch' };
+    }
   }
 
+  /**
+   * Fetch user reservations
+   */
   private async fetchUserReservations(userId: string): Promise<unknown> {
-    // Placeholder - would fetch user reservations
-    return { userId, reservations: [] };
+    try {
+      const [user] = await db
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.clerkId, userId))
+        .limit(1);
+
+      if (!user) {
+        return { userId, reservations: [], found: false };
+      }
+
+      const reservations = await db
+        .select({
+          id: restaurantReservations.id,
+          restaurantId: restaurantReservations.restaurantId,
+          guestName: restaurantReservations.guestName,
+          partySize: restaurantReservations.partySize,
+          startTime: restaurantReservations.startTime,
+          endTime: restaurantReservations.endTime,
+          status: restaurantReservations.status,
+          isVerified: restaurantReservations.isVerified,
+          restaurant: {
+            name: restaurants.name,
+            address: restaurants.address,
+          },
+        })
+        .from(restaurantReservations)
+        .leftJoin(restaurants, eq(restaurantReservations.restaurantId, restaurants.id))
+        .where(
+          and(
+            eq(restaurantReservations.guestEmail, user.email),
+            gte(restaurantReservations.startTime, new Date())
+          )
+        )
+        .orderBy(restaurantReservations.startTime)
+        .limit(10);
+
+      return {
+        userId,
+        reservations: reservations.map((r) => ({
+          ...r,
+          restaurant: r.restaurant ? {
+            name: r.restaurant.name,
+            address: r.restaurant.address,
+          } : null,
+        })),
+        found: true,
+      };
+    } catch (error) {
+      console.warn('[SpeculativeExec] Failed to fetch user reservations:', error);
+      return { userId, reservations: [], found: false, error: 'Failed to fetch' };
+    }
+  }
+
+  /**
+   * Check if restaurant is currently open
+   */
+  private isRestaurantOpen(
+    restaurant: { openingTime?: string | null; closingTime?: string | null; daysOpen?: string | null },
+    checkTime: Date
+  ): boolean {
+    if (!restaurant.openingTime || !restaurant.closingTime) {
+      return true; // Assume open if no hours set
+    }
+
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const currentDay = dayNames[checkTime.getDay()];
+
+    if (!restaurant.daysOpen) {
+      return true;
+    }
+
+    const daysOpen = restaurant.daysOpen.toLowerCase().split(',');
+    if (!daysOpen.includes(currentDay)) {
+      return false;
+    }
+
+    const currentTime = checkTime.getHours() * 60 + checkTime.getMinutes();
+    const [openHour, openMin] = restaurant.openingTime.split(':').map(Number);
+    const [closeHour, closeMin] = restaurant.closingTime.split(':').map(Number);
+
+    const openMinutes = openHour * 60 + openMin;
+    const closeMinutes = closeHour * 60 + closeMin;
+
+    return currentTime >= openMinutes && currentTime <= closeMinutes;
   }
 
   private extractRestaurantMentions(text: string): string[] {

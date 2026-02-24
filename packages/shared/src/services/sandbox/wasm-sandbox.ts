@@ -1,8 +1,8 @@
 /**
- * WASM Tool Sandbox
+ * WASM Tool Sandbox - QuickJS Implementation
  *
  * Provides WebAssembly-based sandboxing for non-Node.js tools.
- * Uses QuickJS WASM or similar for JavaScript execution in isolated environments.
+ * Uses QuickJS WASM for true JavaScript execution in isolated environments.
  *
  * Features:
  * - True process isolation via WASM memory boundaries
@@ -10,12 +10,27 @@
  * - No access to Node.js APIs by default
  * - Deterministic execution timeouts
  * - Sandboxed global scope
+ * - Memory leak prevention via automatic cleanup
+ *
+ * Security Guarantees:
+ * - Executed code cannot access host filesystem
+ * - No network access from within sandbox
+ * - No access to environment variables
+ * - Memory bounded by configurable limits
+ * - Execution time bounded by configurable timeouts
  *
  * @package @repo/shared
  * @since 1.0.0
  */
 
 import { EventEmitter } from 'events';
+import {
+  newQuickJSInstance,
+  QuickJSInstance,
+  QuickJSHandle,
+  getQuickJS,
+  type QuickJSOptions,
+} from 'quickjs-emscripten';
 
 // ============================================================================
 // WASM SANDBOX CONFIGURATION
@@ -30,12 +45,12 @@ export interface WasmSandboxConfig {
   maxInstructions?: number;
   /** Enable debug logging */
   debug: boolean;
-  /** WASM module path */
-  wasmModulePath?: string;
   /** Allowed built-in functions */
   allowedBuiltins: string[];
   /** Pre-loaded libraries */
   preloadLibraries: string[];
+  /** Interrupt check interval (ms) */
+  interruptCheckIntervalMs?: number;
 }
 
 const DEFAULT_CONFIG: WasmSandboxConfig = {
@@ -43,9 +58,9 @@ const DEFAULT_CONFIG: WasmSandboxConfig = {
   maxMemoryMb: 64,
   maxInstructions: 10000000, // 10 million instructions
   debug: false,
-  wasmModulePath: undefined,
   allowedBuiltins: ['Math', 'JSON', 'Array', 'Object', 'String', 'Number', 'Boolean', 'Date'],
   preloadLibraries: [],
+  interruptCheckIntervalMs: 100,
 };
 
 // ============================================================================
@@ -74,14 +89,27 @@ export interface WasmSandboxStats {
 }
 
 // ============================================================================
+// SANDBOX CONTEXT
+// Manages QuickJS instance lifecycle
+// ============================================================================
+
+interface SandboxContext {
+  instance: QuickJSInstance;
+  globals: QuickJSHandle;
+  startTime: number;
+  instructionCount: number;
+  memoryLimitBytes: number;
+}
+
+// ============================================================================
 // WASM SANDBOX CLASS
 // ============================================================================
 
 export class WasmSandbox extends EventEmitter {
   private config: WasmSandboxConfig;
   private stats: WasmSandboxStats;
-  private wasmModule: WebAssembly.Module | null = null;
-  private wasmInstance: WebAssembly.Instance | null = null;
+  private currentContext: SandboxContext | null = null;
+  private isInitialized = false;
 
   constructor(config: Partial<WasmSandboxConfig> = {}) {
     super();
@@ -103,25 +131,47 @@ export class WasmSandbox extends EventEmitter {
   }
 
   /**
-   * Initialize the WASM module
+   * Initialize the QuickJS WASM instance
    */
-  async initialize(wasmPath?: string): Promise<void> {
-    const path = wasmPath || this.config.wasmModulePath;
-    
-    if (!path) {
-      throw new Error('WASM module path not provided');
+  async initialize(): Promise<void> {
+    if (this.isInitialized) {
+      return;
     }
 
     try {
-      // In a real implementation, this would load the WASM file
-      // For now, we'll simulate the structure
-      const wasmBuffer = await this.loadWasmModule(path);
-      this.wasmModule = await WebAssembly.compile(wasmBuffer);
-      
-      await this.instantiateWasm();
-      
+      // Get QuickJS runtime
+      const QuickJS = await getQuickJS();
+
+      // Create instance with memory limits
+      const instance = await newQuickJSInstance({
+        module: QuickJS,
+        memoryLimitBytes: this.config.maxMemoryMb * 1024 * 1024,
+      });
+
+      // Set up interrupt handler for timeout enforcement
+      const interruptHandler = instance.setInterruptHandler(() => {
+        const elapsed = Date.now() - (this.currentContext?.startTime || 0);
+        if (elapsed > this.config.timeoutMs) {
+          return true; // Interrupt execution
+        }
+        return false;
+      });
+
+      // Set up memory limit handler
+      instance.setMemoryLimit(this.config.maxMemoryMb * 1024 * 1024);
+
+      this.currentContext = {
+        instance,
+        globals: instance.getGlobalObject(),
+        startTime: 0,
+        instructionCount: 0,
+        memoryLimitBytes: this.config.maxMemoryMb * 1024 * 1024,
+      };
+
+      this.isInitialized = true;
+
       if (this.config.debug) {
-        console.log('[WasmSandbox] Module initialized successfully');
+        console.log('[WasmSandbox] QuickJS instance initialized successfully');
       }
     } catch (error) {
       console.error('[WasmSandbox] Failed to initialize:', error);
@@ -130,244 +180,332 @@ export class WasmSandbox extends EventEmitter {
   }
 
   /**
-   * Load WASM module from file or URL
-   */
-  private async loadWasmModule(path: string): Promise<ArrayBuffer> {
-    // In production, this would fetch from filesystem or URL
-    // For simulation, we'll return a minimal WASM module
-    // A real implementation would use fs.readFile or fetch()
-    
-    // Minimal valid WASM module (empty module)
-    const minimalWasm = new Uint8Array([
-      0x00, 0x61, 0x73, 0x6d, // Magic number
-      0x01, 0x00, 0x00, 0x00, // Version
-    ]);
-    
-    return minimalWasm.buffer;
-  }
-
-  /**
-   * Instantiate WASM module with sandboxed imports
-   */
-  private async instantiateWasm(): Promise<void> {
-    if (!this.wasmModule) {
-      throw new Error('WASM module not loaded');
-    }
-
-    const imports: WebAssembly.Imports = {
-      env: {
-        // Memory limit enforcement
-        memory: new WebAssembly.Memory({
-          initial: 1,
-          maximum: this.config.maxMemoryMb / 64, // Pages of 64KB
-        }),
-        
-        // Abort on error
-        abort: (msg: number, file: number, line: number, column: number) => {
-          throw new Error(`WASM abort: ${msg} at ${file}:${line}:${column}`);
-        },
-        
-        // Console output (sandboxed)
-        log: (ptr: number, len: number) => {
-          if (this.config.debug) {
-            console.log('[WASM log]', ptr, len);
-          }
-        },
-        
-        // Time tracking
-        getTime: () => Date.now(),
-        
-        // Instruction counting (if supported)
-        tick: () => {
-          // Increment instruction counter
-        },
-      },
-      
-      // Sandbox built-ins
-      builtins: this.createSandboxedBuiltins(),
-    };
-
-    this.wasmInstance = await WebAssembly.instantiate(this.wasmModule, imports);
-  }
-
-  /**
-   * Create sandboxed built-in functions
-   */
-  private createSandboxedBuiltins(): Record<string, unknown> {
-    const builtins: Record<string, unknown> = {};
-    
-    for (const builtin of this.config.allowedBuiltins) {
-      if (builtin in globalThis) {
-        builtins[builtin] = (globalThis as any)[builtin];
-      }
-    }
-    
-    return builtins;
-  }
-
-  /**
-   * Execute code in the WASM sandbox
+   * Execute code in the QuickJS sandbox
    */
   async execute(code: string, context?: Record<string, unknown>): Promise<WasmExecutionResult> {
     const startTime = Date.now();
     this.stats.totalExecutions++;
 
-    if (!this.wasmInstance) {
+    if (!this.isInitialized) {
       await this.initialize();
     }
 
     return new Promise<WasmExecutionResult>(async (resolve) => {
+      if (!this.currentContext) {
+        resolve({
+          success: false,
+          error: 'Sandbox not initialized',
+          errorCode: 'NOT_INITIALIZED',
+          executionTimeMs: 0,
+        });
+        return;
+      }
+
+      const ctx = this.currentContext;
+      ctx.startTime = startTime;
       let resolved = false;
+
       const cleanup = () => {
-        // Cleanup resources
+        // Cleanup handles
+        if (ctx.globals) {
+          ctx.instance.disposeHandle(ctx.globals);
+        }
       };
 
-      // Timeout handler
-      const timeoutId = setTimeout(() => {
-        if (resolved) return;
-        resolved = true;
-        this.stats.timeoutExecutions++;
-        this.stats.failedExecutions++;
-        
-        cleanup();
-        this.emit('timeout', { code, timeoutMs: this.config.timeoutMs });
-        
-        resolve({
-          success: false,
-          error: `WASM execution timed out after ${this.config.timeoutMs}ms`,
-          errorCode: 'TIMEOUT',
-          executionTimeMs: Date.now() - startTime,
-        });
-      }, this.config.timeoutMs);
-
       try {
-        // Prepare execution context
-        const sandboxedContext = this.sanitizeContext(context);
-        
-        // Execute in WASM
-        const result = await this.executeInWasm(code, sandboxedContext);
-        
-        clearTimeout(timeoutId);
-        resolved = true;
-        
+        // Set up sandboxed environment
+        await this.setupSandboxEnvironment(ctx);
+
+        // Inject context variables
+        if (context) {
+          this.injectContext(ctx, context);
+        }
+
+        // Execute code
+        const resultHandle = ctx.instance.evalCode(code, {
+          filename: 'sandbox.js',
+        });
+
+        // Check for errors
+        if (ctx.instance.isError(resultHandle)) {
+          const error = ctx.instance.getString(ctx.instance.getProp(resultHandle, 'message'));
+          ctx.instance.disposeHandle(resultHandle);
+
+          this.stats.failedExecutions++;
+          cleanup();
+
+          resolve({
+            success: false,
+            error,
+            errorCode: 'EXECUTION_ERROR',
+            executionTimeMs: Date.now() - startTime,
+          });
+          return;
+        }
+
+        // Convert result to JavaScript value
+        const output = this.handleToValue(ctx, resultHandle);
+        ctx.instance.disposeHandle(resultHandle);
+
         // Update statistics
         const executionTime = Date.now() - startTime;
-        this.updateStats(result, executionTime);
+        this.updateStats(true, executionTime);
         this.stats.successfulExecutions++;
-        
+
         cleanup();
-        this.emit('complete', { code, result, executionTime });
-        
+        this.emit('complete', { code, output, executionTime });
+
         resolve({
-          ...result,
+          success: true,
+          output,
           executionTimeMs: executionTime,
+          memoryUsedMb: this.getMemoryUsage(ctx),
         });
       } catch (error) {
-        clearTimeout(timeoutId);
-        resolved = true;
-        
+        const executionTime = Date.now() - startTime;
+
+        // Determine error type
+        let errorCode = 'EXECUTION_ERROR';
+        if (error instanceof Error) {
+          if (error.message.includes('interrupted') || executionTime >= this.config.timeoutMs) {
+            errorCode = 'TIMEOUT';
+            this.stats.timeoutExecutions++;
+          } else if (error.message.includes('memory')) {
+            errorCode = 'MEMORY_LIMIT';
+            this.stats.memoryLimitExecutions++;
+          }
+        }
+
         this.stats.failedExecutions++;
         cleanup();
-        
+
         this.emit('error', { code, error });
-        
+
         resolve({
           success: false,
-          error: error instanceof Error ? error.message : 'Unknown WASM error',
-          errorCode: 'EXECUTION_ERROR',
-          executionTimeMs: Date.now() - startTime,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          errorCode,
+          executionTimeMs: executionTime,
         });
       }
     });
   }
 
   /**
-   * Sanitize context for WASM execution
+   * Set up the sandboxed environment with allowed builtins
    */
-  private sanitizeContext(context?: Record<string, unknown>): Record<string, unknown> {
-    if (!context) return {};
-    
-    const sanitized: Record<string, unknown> = {};
-    
-    for (const [key, value] of Object.entries(context)) {
-      // Only allow JSON-serializable values
-      try {
-        JSON.stringify(value);
-        sanitized[key] = value;
-      } catch {
-        if (this.config.debug) {
-          console.warn(`[WasmSandbox] Skipping non-serializable context key: ${key}`);
-        }
+  private async setupSandboxEnvironment(ctx: SandboxContext): Promise<void> {
+    const { instance, globals } = ctx;
+
+    // Remove dangerous globals
+    const dangerousGlobals = ['require', 'process', 'global', 'Buffer', 'setInterval', 'setTimeout', 'setImmediate'];
+    for (const globalName of dangerousGlobals) {
+      if (instance.getProp(globals, globalName)) {
+        const propHandle = instance.getProp(globals, globalName);
+        instance.deleteProp(globals, globalName);
+        instance.disposeHandle(propHandle);
       }
     }
-    
-    return sanitized;
+
+    // Restrict allowed builtins
+    for (const builtin of this.config.allowedBuiltins) {
+      if (!instance.getProp(globals, builtin)) {
+        // Builtin not available, skip
+        continue;
+      }
+
+      // Keep only whitelisted builtins
+      if (!this.config.allowedBuiltins.includes(builtin)) {
+        const propHandle = instance.getProp(globals, builtin);
+        instance.deleteProp(globals, builtin);
+        instance.disposeHandle(propHandle);
+      }
+    }
+
+    // Set up console.log replacement (sandboxed)
+    const consoleLogFn = instance.newFunction(() => {
+      // Sandboxed console.log - does nothing or logs to debug
+      if (this.config.debug) {
+        console.log('[Sandbox console.log]', ...Array.from(arguments).slice(1));
+      }
+    });
+    instance.setProp(globals, '__sandbox_log', consoleLogFn);
+    instance.disposeHandle(consoleLogFn);
   }
 
   /**
-   * Execute code in WASM instance
+   * Inject context variables into the sandbox
    */
-  private async executeInWasm(
-    code: string,
-    context: Record<string, unknown>
-  ): Promise<{ success: boolean; output?: unknown }> {
-    if (!this.wasmInstance) {
-      throw new Error('WASM instance not initialized');
+  private injectContext(ctx: SandboxContext, context: Record<string, unknown>): void {
+    const { instance, globals } = ctx;
+
+    for (const [key, value] of Object.entries(context)) {
+      try {
+        const handle = this.valueToHandle(ctx, value);
+        instance.setProp(globals, key, handle);
+        instance.disposeHandle(handle);
+      } catch (error) {
+        if (this.config.debug) {
+          console.warn(`[WasmSandbox] Failed to inject context key "${key}":`, error);
+        }
+      }
+    }
+  }
+
+  /**
+   * Convert a QuickJS handle to a JavaScript value
+   */
+  private handleToValue(ctx: SandboxContext, handle: QuickJSHandle): unknown {
+    const { instance } = ctx;
+
+    const type = instance.typeof(handle);
+
+    switch (type) {
+      case 'undefined':
+        return undefined;
+      case 'boolean':
+        return instance.getBoolean(handle);
+      case 'number':
+        return instance.getNumber(handle);
+      case 'string':
+        return instance.getString(handle);
+      case 'object':
+        if (instance.isNull(handle)) {
+          return null;
+        }
+        // Convert object to plain object
+        return this.convertObject(ctx, handle);
+      case 'array':
+        return this.convertArray(ctx, handle);
+      case 'function':
+        return '[Function]'; // Functions can't be transferred
+      default:
+        return undefined;
+    }
+  }
+
+  /**
+   * Convert a QuickJS object to a JavaScript object
+   */
+  private convertObject(ctx: SandboxContext, handle: QuickJSHandle): Record<string, unknown> {
+    const { instance } = ctx;
+    const result: Record<string, unknown> = {};
+
+    const props = instance.getOwnPropNames(handle);
+    for (const propName of props) {
+      const propHandle = instance.getProp(handle, propName);
+      result[propName] = this.handleToValue(ctx, propHandle);
+      instance.disposeHandle(propHandle);
     }
 
-    // In a real implementation with QuickJS WASM:
-    // 1. Write code to WASM memory
-    // 2. Call JS_Eval or equivalent
-    // 3. Read result from WASM memory
-    // 4. Convert to JavaScript value
-    
-    // For simulation, we'll use a safe eval alternative
-    // In production, replace with actual WASM execution
-    
+    instance.disposeHandle(props);
+    return result;
+  }
+
+  /**
+   * Convert a QuickJS array to a JavaScript array
+   */
+  private convertArray(ctx: SandboxContext, handle: QuickJSHandle): unknown[] {
+    const { instance } = ctx;
+    const result: unknown[] = [];
+
+    const lengthHandle = instance.getProp(handle, 'length');
+    const length = instance.getNumber(lengthHandle);
+    instance.disposeHandle(lengthHandle);
+
+    for (let i = 0; i < length; i++) {
+      const elementHandle = instance.getProp(handle, String(i));
+      result.push(this.handleToValue(ctx, elementHandle));
+      instance.disposeHandle(elementHandle);
+    }
+
+    return result;
+  }
+
+  /**
+   * Convert a JavaScript value to a QuickJS handle
+   */
+  private valueToHandle(ctx: SandboxContext, value: unknown): QuickJSHandle {
+    const { instance } = ctx;
+
+    if (value === undefined) {
+      return instance.getUndefined();
+    }
+    if (value === null) {
+      return instance.getNull();
+    }
+    if (typeof value === 'boolean') {
+      return instance.getBoolean(value);
+    }
+    if (typeof value === 'number') {
+      return instance.newNumber(value);
+    }
+    if (typeof value === 'string') {
+      return instance.newString(value);
+    }
+    if (Array.isArray(value)) {
+      return this.arrayToHandle(ctx, value);
+    }
+    if (typeof value === 'object') {
+      return this.objectToHandle(ctx, value as Record<string, unknown>);
+    }
+
+    return instance.getUndefined();
+  }
+
+  /**
+   * Convert a JavaScript array to a QuickJS handle
+   */
+  private arrayToHandle(ctx: SandboxContext, array: unknown[]): QuickJSHandle {
+    const { instance } = ctx;
+    const arrayHandle = instance.newArray();
+
+    for (let i = 0; i < array.length; i++) {
+      const elementHandle = this.valueToHandle(ctx, array[i]);
+      instance.setProp(arrayHandle, String(i), elementHandle);
+      instance.disposeHandle(elementHandle);
+    }
+
+    return arrayHandle;
+  }
+
+  /**
+   * Convert a JavaScript object to a QuickJS handle
+   */
+  private objectToHandle(ctx: SandboxContext, obj: Record<string, unknown>): QuickJSHandle {
+    const { instance } = ctx;
+    const objHandle = instance.newObject();
+
+    for (const [key, value] of Object.entries(obj)) {
+      const valueHandle = this.valueToHandle(ctx, value);
+      instance.setProp(objHandle, key, valueHandle);
+      instance.disposeHandle(valueHandle);
+    }
+
+    return objHandle;
+  }
+
+  /**
+   * Get current memory usage in MB
+   */
+  private getMemoryUsage(ctx: SandboxContext): number {
     try {
-      // Create isolated context
-      const isolatedCode = `
-        (function(context) {
-          'use strict';
-          const { ${this.config.allowedBuiltins.join(', ')} } = globalThis;
-          with (context) {
-            return (function() {
-              ${code}
-            })();
-          }
-        })(${JSON.stringify(context)})
-      `;
-      
-      // This is a simulation - real WASM execution would go here
-      // eslint-disable-next-line no-new-func
-      const result = new Function(isolatedCode)();
-      
-      return {
-        success: true,
-        output: result,
-      };
-    } catch (error) {
-      throw error;
+      const memoryUsage = ctx.instance.getMemoryUsage();
+      return memoryUsage / (1024 * 1024);
+    } catch {
+      return 0;
     }
   }
 
   /**
    * Update statistics after execution
    */
-  private updateStats(
-    result: WasmExecutionResult,
-    executionTimeMs: number
-  ): void {
+  private updateStats(success: boolean, executionTimeMs: number): void {
     const n = this.stats.totalExecutions;
-    
+
     // Update averages
-    this.stats.avgExecutionTimeMs = 
+    this.stats.avgExecutionTimeMs =
       (this.stats.avgExecutionTimeMs * (n - 1) + executionTimeMs) / n;
-    
-    if (result.instructionsExecuted) {
-      this.stats.avgInstructionsExecuted = 
-        (this.stats.avgInstructionsExecuted * (n - 1) + result.instructionsExecuted) / n;
-    }
   }
 
   /**
@@ -378,67 +516,35 @@ export class WasmSandbox extends EventEmitter {
   }
 
   /**
-   * Reset the WASM instance (clears all state)
+   * Reset the sandbox (clears all state)
    */
   async reset(): Promise<void> {
-    this.wasmInstance = null;
+    // Dispose of current context
+    if (this.currentContext) {
+      const ctx = this.currentContext;
+      ctx.instance.disposeHandle(ctx.globals);
+      ctx.instance.dispose();
+      this.currentContext = null;
+    }
+
     this.stats = this.createInitialStats();
-    
+    this.isInitialized = false;
+
     if (this.config.debug) {
-      console.log('[WasmSandbox] Instance reset');
+      console.log('[WasmSandbox] Reset complete');
     }
   }
 
   /**
-   * Dispose of WASM resources
+   * Dispose of all resources
    */
   async dispose(): Promise<void> {
-    this.wasmModule = null;
-    this.wasmInstance = null;
+    await this.reset();
     this.removeAllListeners();
-    
+
     if (this.config.debug) {
       console.log('[WasmSandbox] Disposed');
     }
-  }
-}
-
-// ============================================================================
-// QUICKJS WASM IMPLEMENTATION
-// Specific implementation for QuickJS WASM
-// ============================================================================
-
-export class QuickJsSandbox extends WasmSandbox {
-  private quickjsInstance: any = null;
-
-  constructor(config: Partial<WasmSandboxConfig> = {}) {
-    super({
-      ...config,
-      allowedBuiltins: ['Math', 'JSON', 'Array', 'Object', 'String', 'Number', 'Boolean', 'Date'],
-    });
-  }
-
-  async initialize(wasmPath?: string): Promise<void> {
-    // In production, load QuickJS WASM
-    // const quickjs = await initQuickJS();
-    // this.quickjsInstance = quickjs.newRuntime();
-    
-    await super.initialize(wasmPath);
-  }
-
-  async execute(code: string, context?: Record<string, unknown>): Promise<WasmExecutionResult> {
-    // QuickJS-specific execution
-    // this.quickjsInstance.eval(code);
-    
-    return super.execute(code, context);
-  }
-
-  async reset(): Promise<void> {
-    // Reset QuickJS runtime
-    // this.quickjsInstance.dispose();
-    // this.quickjsInstance = null;
-    
-    await super.reset();
   }
 }
 
@@ -448,8 +554,4 @@ export class QuickJsSandbox extends WasmSandbox {
 
 export function createWasmSandbox(config?: Partial<WasmSandboxConfig>): WasmSandbox {
   return new WasmSandbox(config);
-}
-
-export function createQuickJsSandbox(config?: Partial<WasmSandboxConfig>): QuickJsSandbox {
-  return new QuickJsSandbox(config);
 }

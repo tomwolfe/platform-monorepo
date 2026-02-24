@@ -63,6 +63,7 @@ import { verifyPlan, DEFAULT_SAFETY_POLICY, SafetyPolicy } from "./verifier";
 import { redis } from "../redis-client";
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
+import { captureStateDiffOnSave } from "./state-diff-viewer";
 
 // ============================================================================
 // LLM CIRCUIT BREAKER CONFIGURATION
@@ -479,6 +480,11 @@ export class WorkflowMachine {
    * - Pre-fetches execution state from Redis via cache-warm endpoint
    * - Reduces cold start from ~2s to <200ms end-to-end
    *
+   * ENHANCEMENT: Pre-Warm Hints
+   * - Passes a "hint" to the next lambda about what data to pre-load
+   * - E.g., "DB_RESERVATION_LOAD" tells the next lambda to pre-fetch reservation data
+   * - Enables proactive data loading before the next segment starts
+   *
    * Architecture:
    * - Uses unawaited fetch() with short timeout (2s)
    * - No impact on current execution if pre-warm fails
@@ -493,51 +499,68 @@ export class WorkflowMachine {
   ): Promise<void> {
     // Check if we're approaching the predictive pinger threshold
     const timeRemaining = ADAPTIVE_BATCHING_CONFIG.vercelHardTimeoutMs - elapsedInSegment;
-    const estimatedNextStepTime = this.estimateStepLatency(
-      this.plan?.steps[nextStepIndex]?.tool_name || 'unknown'
-    );
+    const nextStep = this.plan?.steps[nextStepIndex];
+    const estimatedNextStepTime = this.estimateStepLatency(nextStep?.tool_name || 'unknown');
 
     // Only pre-warm if we predict the next step will push us over the threshold
     if (elapsedInSegment + estimatedNextStepTime > ADAPTIVE_BATCHING_CONFIG.vercelHardTimeoutMs * ADAPTIVE_BATCHING_CONFIG.predictivePingerThreshold) {
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
       const preWarmUrl = `${baseUrl}/api/engine/execute-step`;
 
+      // ENHANCEMENT: Generate pre-warm hint based on next step's tool type
+      const preWarmHint = this.generatePreWarmHint(nextStep?.tool_name || '');
+
       // INFRASTRUCTURE-AWARE WARMING: Fire multiple warm endpoints in parallel
       const warmPromises = [
-        // Warm lambda endpoint
+        // Warm lambda endpoint WITH PRE-WARM HINT
         fetch(preWarmUrl, {
-          method: 'HEAD',
+          method: 'POST',
           headers: {
             'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
             'x-preflight-ping': 'true',
             'x-execution-id': this.executionId,
             'x-next-step-index': nextStepIndex.toString(),
+            'x-pre-warm-hint': preWarmHint,
+            'Content-Type': 'application/json',
           },
           signal: AbortSignal.timeout(ADAPTIVE_BATCHING_CONFIG.preWarmTimeoutMs),
+          body: JSON.stringify({
+            executionId: this.executionId,
+            hint: preWarmHint,
+            nextStepIndex,
+            nextToolName: nextStep?.tool_name,
+          }),
         }).catch(() => { /* Ignore */ }),
 
-        // Warm database connection pool
+        // Warm database connection pool WITH HINT
         fetch(`${baseUrl}/api/warm-db`, {
           method: 'POST',
           headers: {
             'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
             'x-execution-id': this.executionId,
+            'x-pre-warm-hint': preWarmHint,
           },
           signal: AbortSignal.timeout(1000),
-          body: JSON.stringify({ executionId: this.executionId }),
+          body: JSON.stringify({
+            executionId: this.executionId,
+            hint: preWarmHint,
+          }),
         }).catch(() => { /* Ignore */ }),
 
-        // Warm Redis cache with execution state
+        // Warm Redis cache with execution state AND HINT
         fetch(`${baseUrl}/api/warm-cache`, {
           method: 'POST',
           headers: {
             'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
             'x-execution-id': this.executionId,
+            'x-pre-warm-hint': preWarmHint,
           },
           signal: AbortSignal.timeout(1000),
           body: JSON.stringify({
             executionId: this.executionId,
             nextStepIndex,
+            hint: preWarmHint,
+            nextToolName: nextStep?.tool_name,
           }),
         }).catch(() => { /* Ignore */ }),
       ];
@@ -547,9 +570,54 @@ export class WorkflowMachine {
 
       console.log(
         `[WorkflowMachine] Infrastructure-aware pre-warm for step ${nextStepIndex} ` +
-        `(elapsed: ${elapsedInSegment}ms, estimated next: ${estimatedNextStepTime}ms)`
+        `(elapsed: ${elapsedInSegment}ms, estimated next: ${estimatedNextStepTime}ms, hint: ${preWarmHint})`
       );
     }
+  }
+
+  /**
+   * Generate a pre-warm hint based on tool type
+   *
+   * Pre-warm hints tell the next lambda what data to pre-load:
+   * - DB_RESERVATION_LOAD: Pre-fetch reservation data
+   * - DB_USER_LOAD: Pre-fetch user preferences
+   * - DB_PAYMENT_LOAD: Pre-fetch payment gateway connection
+   * - DB_SEARCH_LOAD: Pre-fetch search indexes
+   * - GENERIC: Generic warm-up
+   *
+   * @param toolName - Tool name to generate hint for
+   * @returns Pre-warm hint string
+   */
+  private generatePreWarmHint(toolName: string): string {
+    const toolType = toolName.toLowerCase();
+
+    // Reservation/booking operations
+    if (toolType.includes('book') || toolType.includes('reserve') || toolType.includes('reservation')) {
+      return 'DB_RESERVATION_LOAD';
+    }
+
+    // User-related operations
+    if (toolType.includes('user') || toolType.includes('profile') || toolType.includes('preference')) {
+      return 'DB_USER_LOAD';
+    }
+
+    // Payment operations
+    if (toolType.includes('payment') || toolType.includes('charge') || toolType.includes('refund')) {
+      return 'DB_PAYMENT_LOAD';
+    }
+
+    // Search operations
+    if (toolType.includes('search') || toolType.includes('find') || toolType.includes('lookup')) {
+      return 'DB_SEARCH_LOAD';
+    }
+
+    // Cancellation operations
+    if (toolType.includes('cancel') || toolType.includes('delete') || toolType.includes('remove')) {
+      return 'DB_CANCELLATION_LOAD';
+    }
+
+    // Default generic warm-up
+    return 'GENERIC';
   }
 
   /**
@@ -770,6 +838,10 @@ export class WorkflowMachine {
               console.log(
                 `[WorkflowMachine] Step ${stepId} (${readySteps[i].tool_name}) completed: ${stepResult.stepState.status}`
               );
+
+              // ENHANCEMENT: Capture state diff after step completion
+              // This enables visual saga gantt chart for post-mortem debugging
+              await captureStateDiffOnSave(this.state, false);
             } else {
               console.error(
                 `[WorkflowMachine] Step ${stepId} failed with exception:`,
@@ -1967,6 +2039,10 @@ export class WorkflowMachine {
       } : undefined,
       toolVersions,
     };
+
+    // ENHANCEMENT: Capture state diff before saving checkpoint
+    // This enables visual saga gantt chart for post-mortem debugging
+    await captureStateDiffOnSave(this.state, true);
 
     // Save checkpoint to Redis
     await this.saveCheckpoint(checkpoint);

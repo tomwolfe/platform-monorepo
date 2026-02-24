@@ -48,6 +48,7 @@ import { Redis } from '@upstash/redis';
 import { getRedisClient, ServiceNamespace } from '../redis';
 import type { ExecutionState } from '../types/execution';
 import { z } from 'zod';
+import { createWasmSandbox, WasmSandbox } from './sandbox/wasm-sandbox';
 
 // Define Plan and PlanStep locally to avoid circular dependencies
 interface PlanStep {
@@ -129,9 +130,24 @@ export interface ShadowStateSnapshot {
 
 export class ShadowDryRunService {
   private config: Required<ShadowDryRunConfig>;
+  private wasmSandbox: WasmSandbox | null = null;
 
   constructor(config: ShadowDryRunConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+  }
+
+  /**
+   * Get or create the WASM sandbox instance
+   */
+  private async getWasmSandbox(): Promise<WasmSandbox> {
+    if (!this.wasmSandbox) {
+      this.wasmSandbox = createWasmSandbox({
+        timeoutMs: 3000, // 3s timeout for dry-run
+        maxMemoryMb: 32, // 32MB limit
+        debug: this.config.enableDetailedLogging,
+      });
+    }
+    return this.wasmSandbox;
   }
 
   // ========================================================================
@@ -321,23 +337,219 @@ export class ShadowDryRunService {
   }
 
   /**
-   * Simulate step execution (dry-run mode)
+   * Simulate step execution in WASM sandbox
    *
-   * In a real implementation, this would:
-   * 1. Clone the state snapshot
-   * 2. Execute the step logic in an isolated sandbox
-   * 3. Return the simulated output without side effects
+   * Executes step logic in an isolated QuickJS environment:
+   * 1. Clones the state snapshot
+   * 2. Executes the step logic in WASM sandbox
+   * 3. Returns the simulated output without side effects
    *
-   * For now, returns a heuristic-based simulation
+   * This provides true isolation - no access to Node.js APIs,
+   * filesystem, network, or environment variables.
    */
   private async simulateStepExecution(
     step: PlanStep,
     stateSnapshot: ExecutionState
   ): Promise<unknown> {
-    // Heuristic simulation based on tool type
-    // In production, this would execute actual logic in a sandbox
+    try {
+      const sandbox = await this.getWasmSandbox();
 
+      // Prepare sandbox context with step parameters and state
+      const context = {
+        step: {
+          id: step.id,
+          tool_name: step.tool_name,
+          parameters: step.parameters,
+        },
+        state: {
+          status: stateSnapshot.status,
+          step_states: stateSnapshot.step_states,
+          budget: stateSnapshot.budget,
+          token_usage: stateSnapshot.token_usage,
+        },
+        // Provide read-only data access
+        __readData: {
+          completedSteps: stateSnapshot.step_states
+            .filter(s => s.status === 'completed')
+            .map(s => s.result),
+        },
+      };
+
+      // Generate sandboxed execution code based on tool type
+      const executionCode = this.generateSandboxedExecutionCode(step);
+
+      // Execute in WASM sandbox
+      const result = await sandbox.execute(executionCode, context);
+
+      if (!result.success) {
+        throw new Error(result.error || 'Sandbox execution failed');
+      }
+
+      return result.output;
+    } catch (error) {
+      console.warn(
+        `[ShadowDryRun] WASM sandbox execution failed for ${step.tool_name}, ` +
+        `falling back to heuristic simulation:`,
+        error instanceof Error ? error.message : String(error)
+      );
+
+      // Fallback to heuristic simulation if WASM fails
+      return this.heuristicSimulation(step, stateSnapshot);
+    }
+  }
+
+  /**
+   * Generate sandboxed execution code for a step
+   *
+   * This creates a pure JavaScript function that simulates the tool's logic
+   * without side effects. The code runs in QuickJS isolation.
+   */
+  private generateSandboxedExecutionCode(step: PlanStep): string {
     const toolType = step.tool_name.toLowerCase();
+    const params = step.parameters;
+
+    // Booking/Reservation simulation
+    if (toolType.includes('book') || toolType.includes('reserve')) {
+      return `
+        (function(context) {
+          const { step, state, __readData } = context;
+          const params = step.parameters || {};
+          
+          // Simulate booking logic
+          const availableTables = __readData.completedSteps
+            .filter(r => r && r.tables)
+            .flatMap(r => r.tables)
+            .filter(t => t.status === 'vacant');
+          
+          const partySize = params.partySize || params.guests || 2;
+          const suitableTable = availableTables.find(
+            t => t.minCapacity <= partySize && t.maxCapacity >= partySize
+          );
+          
+          return {
+            success: true,
+            bookingId: 'sim_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+            status: 'confirmed',
+            tableId: suitableTable ? suitableTable.id : null,
+            partySize: partySize,
+            timestamp: new Date().toISOString(),
+            simulated: true
+          };
+        })(context)
+      `;
+    }
+
+    // Cancellation simulation
+    if (toolType.includes('cancel')) {
+      return `
+        (function(context) {
+          const { step, state, __readData } = context;
+          const params = step.parameters || {};
+          
+          // Find the reservation to cancel
+          const reservationId = params.reservationId || params.id;
+          const reservation = __readData.completedSteps
+            .flatMap(r => r.reservations || [])
+            .find(r => r.id === reservationId);
+          
+          if (!reservation) {
+            return {
+              success: false,
+              error: 'Reservation not found',
+              simulated: true
+            };
+          }
+          
+          return {
+            success: true,
+            cancelled: true,
+            reservationId: reservationId,
+            refundAmount: reservation.depositAmount || 0,
+            timestamp: new Date().toISOString(),
+            simulated: true
+          };
+        })(context)
+      `;
+    }
+
+    // Payment simulation
+    if (toolType.includes('payment') || toolType.includes('charge')) {
+      return `
+        (function(context) {
+          const { step, state, __readData } = context;
+          const params = step.parameters || {};
+          
+          const amount = params.amount || 0;
+          const currency = params.currency || 'USD';
+          
+          if (amount <= 0) {
+            return {
+              success: false,
+              error: 'Invalid amount',
+              simulated: true
+            };
+          }
+          
+          return {
+            success: true,
+            transactionId: 'sim_txn_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+            status: 'processed',
+            amount: amount,
+            currency: currency,
+            timestamp: new Date().toISOString(),
+            simulated: true
+          };
+        })(context)
+      `;
+    }
+
+    // Search/Lookup simulation
+    if (toolType.includes('search') || toolType.includes('get') || toolType.includes('find')) {
+      return `
+        (function(context) {
+          const { step, state, __readData } = context;
+          const params = step.parameters || {};
+          
+          // Return cached data from previous steps
+          const relevantData = __readData.completedSteps
+            .filter(r => r && typeof r === 'object')
+            .map(r => ({ source: 'cache', data: r }));
+          
+          return {
+            success: true,
+            results: relevantData,
+            count: relevantData.length,
+            timestamp: new Date().toISOString(),
+            simulated: true
+          };
+        })(context)
+      `;
+    }
+
+    // Default simulation
+    return `
+      (function(context) {
+        const { step, state, __readData } = context;
+        return {
+          success: true,
+          output: 'Simulated output for ' + step.tool_name,
+          parameters: step.parameters,
+          timestamp: new Date().toISOString(),
+          simulated: true
+        };
+      })(context)
+    `;
+  }
+
+  /**
+   * Fallback heuristic simulation (used if WASM sandbox fails)
+   */
+  private heuristicSimulation(
+    step: PlanStep,
+    stateSnapshot: ExecutionState
+  ): unknown {
+    const toolType = step.tool_name.toLowerCase();
+    const params = step.parameters;
 
     // Simulate based on tool patterns
     if (toolType.includes('book') || toolType.includes('reserve')) {
@@ -346,6 +558,7 @@ export class ShadowDryRunService {
         bookingId: `simulated_${crypto.randomUUID()}`,
         status: 'confirmed',
         timestamp: new Date().toISOString(),
+        simulated: true,
       };
     }
 
@@ -355,6 +568,7 @@ export class ShadowDryRunService {
         cancelled: true,
         refundAmount: 0,
         timestamp: new Date().toISOString(),
+        simulated: true,
       };
     }
 
@@ -363,7 +577,9 @@ export class ShadowDryRunService {
         success: true,
         transactionId: `simulated_txn_${crypto.randomUUID()}`,
         status: 'processed',
-        amount: step.parameters.amount as number || 0,
+        amount: params.amount as number || 0,
+        timestamp: new Date().toISOString(),
+        simulated: true,
       };
     }
 
@@ -372,6 +588,7 @@ export class ShadowDryRunService {
       success: true,
       output: `Simulated output for ${step.tool_name}`,
       timestamp: new Date().toISOString(),
+      simulated: true,
     };
   }
 

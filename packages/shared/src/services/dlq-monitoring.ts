@@ -5,11 +5,12 @@
  * sagas that are stuck in incomplete states due to failed compensations or
  * missed continuation events.
  *
- * Key Features:
- * - Scans execution states for sagas inactive > 5 minutes
- * - Attempts automatic "Cold Reboot" of recoverable sagas
- * - Alerts humans for sagas that require manual intervention
- * - Tracks DLQ metrics for observability
+ * KEY FEATURE: Integrated Repair Agent for Self-Healing
+ * - When a zombie saga is detected, the Repair Agent analyzes the failure
+ * - Uses LLM-powered diagnosis to determine root cause
+ * - Generates and validates fix payloads using Shadow Dry-Run
+ * - Auto-repairs fixable sagas without human intervention
+ * - Only escalates truly unfixable sagas to humans
  *
  * @package @repo/shared
  * @since 1.0.0
@@ -17,6 +18,7 @@
 
 import { Redis } from "@upstash/redis";
 import { RealtimeService } from "../realtime";
+import { createRepairAgent, type ZombieSaga as RepairZombieSaga, type RepairResult } from "./repair-agent";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -57,6 +59,7 @@ export interface ReconciliationResult {
   scanned: number;
   zombieSagasDetected: number;
   autoRecovered: number;
+  autoRepaired?: number; // Number repaired by Repair Agent
   escalatedToHuman: number;
   errors: Array<{
     executionId: string;
@@ -231,16 +234,24 @@ export class DLQMonitoringService {
 
   /**
    * Attempt to recover a zombie saga
-   * 
+   *
+   * SELF-HEALING: Uses Repair Agent for intelligent recovery
+   *
    * Recovery strategies:
-   * 1. If saga was executing: Resume from last checkpoint
-   * 2. If saga was compensating: Retry compensation
-   * 3. If recovery attempts exhausted: Escalate to human
+   * 1. Repair Agent analyzes failure using LLM-powered diagnosis
+   * 2. If fixable, generates and validates fix payload (Shadow Dry-Run)
+   * 3. Auto-repairs if validation passes
+   * 4. Falls back to simple resume for non-failed sagas
+   * 5. Escalates to human if repair fails or is unsafe
+   *
+   * @param zombie - Zombie saga to recover
+   * @returns Recovery result with action taken
    */
   async recoverZombieSaga(zombie: ZombieSaga): Promise<{
     success: boolean;
-    action: "RESUMED" | "COMPENSATION_RETRIED" | "ESCALATED" | "SKIPPED";
+    action: "AUTO_REPAIRED" | "RESUMED" | "COMPENSATION_RETRIED" | "ESCALATED" | "SKIPPED";
     message?: string;
+    repairResult?: RepairResult;
   }> {
     try {
       // Check if already escalated
@@ -253,7 +264,80 @@ export class DLQMonitoringService {
         };
       }
 
-      // Increment recovery attempts
+      // SELF-HEALING: Use Repair Agent for failed sagas
+      if (zombie.stepStates.some(s => s.status === "failed")) {
+        console.log(
+          `[DLQ] Invoking Repair Agent for failed saga ${zombie.executionId}`
+        );
+
+        const repairAgent = createRepairAgent({
+          redis: this.redis,
+          maxAutoRepairAttempts: this.config.maxRecoveryAttempts,
+          debug: this.config.debug,
+        });
+
+        // Convert ZombieSaga to RepairAgent's ZombieSaga format
+        const repairZombie: RepairZombieSaga = {
+          executionId: zombie.executionId,
+          workflowId: zombie.workflowId,
+          intentId: zombie.intentId,
+          userId: zombie.userId,
+          status: zombie.status,
+          lastActivityAt: zombie.lastActivityAt,
+          inactiveDurationMs: zombie.inactiveDurationMs,
+          stepStates: zombie.stepStates,
+          compensationsRegistered: zombie.compensationsRegistered,
+          requiresHumanIntervention: zombie.requiresHumanIntervention,
+          recoveryAttempts: zombie.recoveryAttempts,
+          failureContext: zombie.stepStates.find(s => s.status === "failed")?.error,
+        };
+
+        // Attempt repair
+        const repairResult = await repairAgent.analyzeAndRepair(repairZombie);
+
+        if (repairResult.success && repairResult.action === "AUTO_REPAIRED") {
+          console.log(
+            `[DLQ] ✅ Auto-repaired saga ${zombie.executionId} ` +
+            `(${repairResult.repairAnalysis?.failureType}, ` +
+            `confidence: ${(repairResult.repairAnalysis?.confidence || 0).toFixed(2)})`
+          );
+
+          return {
+            success: true,
+            action: "AUTO_REPAIRED",
+            message: `Auto-repaired: ${repairResult.repairAnalysis?.rootCause}`,
+            repairResult,
+          };
+        }
+
+        // Repair failed or was escalated
+        if (repairResult.action === "ESCALATED") {
+          console.log(
+            `[DLQ] ⚠️ Repair Agent escalated saga ${zombie.executionId}: ` +
+            repairResult.escalationReason
+          );
+
+          await this.escalateToHuman(
+            zombie,
+            repairResult.escalationReason || "Repair Agent could not safely fix"
+          );
+
+          return {
+            success: false,
+            action: "ESCALATED",
+            message: repairResult.escalationReason,
+            repairResult,
+          };
+        }
+
+        // Repair attempted but didn't auto-repair (e.g., dry-run failed)
+        console.log(
+          `[DLQ] ⚠️ Repair Agent couldn't auto-repair ${zombie.executionId}, ` +
+          `falling back to standard recovery`
+        );
+      }
+
+      // Increment recovery attempts for standard recovery
       const dlqKey = this.buildDLQKey(zombie.executionId);
       const recoveryAttempts = zombie.recoveryAttempts + 1;
       await this.redis.setex(dlqKey, 86400 * 7, {
@@ -272,7 +356,7 @@ export class DLQMonitoringService {
         score: Date.now(),
       });
 
-      // Determine recovery strategy
+      // Determine recovery strategy for non-failed sagas
       if (zombie.status === "COMPENSATING" || zombie.stepStates.some(s => s.status === "failed")) {
         // Retry compensation
         return await this.retryCompensation(zombie);
@@ -419,7 +503,9 @@ export class DLQMonitoringService {
 
   /**
    * Run full reconciliation cycle
-   * 
+   *
+   * SELF-HEALING: Tracks Repair Agent auto-repairs separately
+   *
    * This should be called periodically (e.g., every 5 minutes) via cron
    */
   async runReconciliation(): Promise<ReconciliationResult> {
@@ -429,13 +515,17 @@ export class DLQMonitoringService {
     const zombieSagas = await this.scanForZombieSagas();
     const errors: Array<{ executionId: string; error: string }> = [];
     let autoRecovered = 0;
+    let autoRepaired = 0; // Track Repair Agent auto-repairs
     let escalatedToHuman = 0;
 
     for (const zombie of zombieSagas) {
       try {
         const result = await this.recoverZombieSaga(zombie);
-        
-        if (result.action === "RESUMED" || result.action === "COMPENSATION_RETRIED") {
+
+        if (result.action === "AUTO_REPAIRED") {
+          autoRepaired++;
+          autoRecovered++; // Count as recovered
+        } else if (result.action === "RESUMED" || result.action === "COMPENSATION_RETRIED") {
           autoRecovered++;
         } else if (result.action === "ESCALATED") {
           escalatedToHuman++;
@@ -453,7 +543,8 @@ export class DLQMonitoringService {
     console.log(
       `[DLQ] Reconciliation complete in ${duration}ms: ` +
       `${zombieSagas.length} zombie sagas detected, ` +
-      `${autoRecovered} auto-recovered, ` +
+      `${autoRepaired} auto-repaired by Repair Agent, ` +
+      `${autoRecovered - autoRepaired} auto-recovered (standard), ` +
       `${escalatedToHuman} escalated to human`
     );
 

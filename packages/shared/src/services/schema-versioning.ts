@@ -375,10 +375,10 @@ export class SchemaVersioningService {
 
     // Check for orchestrator logic drift
     const currentGitSha = this.getGitCommitSha();
-    const hasOrchestratorDrift = checkpointMetadata.orchestratorGitSha 
+    const hasOrchestratorDrift = !!(checkpointMetadata.orchestratorGitSha
       && checkpointMetadata.orchestratorGitSha !== 'unknown'
       && currentGitSha !== 'unknown'
-      && checkpointMetadata.orchestratorGitSha !== currentGitSha;
+      && checkpointMetadata.orchestratorGitSha !== currentGitSha);
 
     const hasDrift = driftedTools.length > 0 || hasOrchestratorDrift;
     const requiresReflection = driftedTools.some(t => t.severity === "breaking" || t.severity === "major") || hasOrchestratorDrift;

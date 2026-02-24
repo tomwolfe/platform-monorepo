@@ -21,7 +21,6 @@
  */
 
 import { z } from "zod";
-import { NormalizationService } from "../normalization";
 import { getTypedToolEntry, type AllToolsMap } from "@repo/mcp-protocol";
 
 // Plan and PlanStep types (simplified for shared package)
@@ -32,6 +31,7 @@ interface PlanStep {
   parameters: Record<string, unknown>;
   depends_on?: string[];
   state?: string;
+  step_number?: number; // Added for step index tracking
 }
 
 interface Plan {
@@ -291,12 +291,12 @@ export class DryRunSimulationService {
     const findings: SimulationFinding[] = [];
 
     // 1. Validate parameters against schema
-    const validationFindings = this.validateParameters(step);
+    const validationFindings = this.validateParameters(step, stepIndex);
     findings.push(...validationFindings);
 
     // 2. Check idempotency (if enabled)
     if (this.config.enableIdempotencyCheck && options?.existingExecutions) {
-      const idempotencyFindings = this.checkIdempotency(step, executionId, options.existingExecutions);
+      const idempotencyFindings = this.checkIdempotency(step, executionId, options.existingExecutions, stepIndex);
       findings.push(...idempotencyFindings);
     }
 
@@ -333,16 +333,17 @@ export class DryRunSimulationService {
   /**
    * Validate step parameters against tool schema
    */
-  private validateParameters(step: PlanStep): SimulationFinding[] {
+  private validateParameters(step: PlanStep, stepIndex?: number): SimulationFinding[] {
     const findings: SimulationFinding[] = [];
+    const index = stepIndex ?? step.step_number ?? 0;
 
     try {
       const tool = getTypedToolEntry(step.tool_name as keyof AllToolsMap);
-      
+
       if (!tool) {
         findings.push({
           severity: "ERROR",
-          stepIndex: step.id,
+          stepIndex: index,
           toolName: step.tool_name,
           category: "SCHEMA_MISMATCH",
           message: `Tool "${step.tool_name}" not found in registry`,
@@ -351,24 +352,34 @@ export class DryRunSimulationService {
         return findings;
       }
 
-      // Normalize parameters
-      const normalizedParams = NormalizationService.normalize(step.tool_name, step.parameters);
+      // Simple parameter validation - check if required fields are present
+      const schema = tool.schema;
+      if (schema && "shape" in schema) {
+        const shape = schema.shape as Record<string, { _def?: { required?: boolean } }>;
+        const requiredFields = Object.entries(shape)
+          .filter(([_, field]) => field._def?.required !== false)
+          .map(([field]) => field);
 
-      if (!normalizedParams.success) {
-        findings.push({
-          severity: "ERROR",
-          stepIndex: step.id,
-          toolName: step.tool_name,
-          category: "PARAM_VALIDATION",
-          message: `Parameter validation failed: ${normalizedParams.error.message}`,
-          details: { errors: normalizedParams.error.errors },
-          suggestion: "Fix parameter mismatches before execution",
-        });
+        const missingFields = requiredFields.filter(
+          field => !(field in (step.parameters || {}))
+        );
+
+        if (missingFields.length > 0) {
+          findings.push({
+            severity: "ERROR",
+            stepIndex: index,
+            toolName: step.tool_name,
+            category: "PARAM_VALIDATION",
+            message: `Missing required parameters: ${missingFields.join(", ")}`,
+            details: { missingFields },
+            suggestion: "Provide all required parameters before execution",
+          });
+        }
       }
     } catch (error) {
       findings.push({
         severity: "ERROR",
-        stepIndex: step.id,
+        stepIndex: index,
         toolName: step.tool_name,
         category: "SCHEMA_MISMATCH",
         message: `Schema validation error: ${error instanceof Error ? error.message : "Unknown error"}`,
@@ -385,9 +396,11 @@ export class DryRunSimulationService {
   private checkIdempotency(
     step: PlanStep,
     executionId: string,
-    existingExecutions: Set<string>
+    existingExecutions: Set<string>,
+    stepIndex?: number
   ): SimulationFinding[] {
     const findings: SimulationFinding[] = [];
+    const index = stepIndex ?? step.step_number ?? 0;
 
     // Generate idempotency key (simplified - in production use full hash)
     const idempotencyKey = `${executionId}:${step.id}:${step.tool_name}`;
@@ -395,7 +408,7 @@ export class DryRunSimulationService {
     if (existingExecutions.has(idempotencyKey)) {
       findings.push({
         severity: "INFO",
-        stepIndex: step.id,
+        stepIndex: index,
         toolName: step.tool_name,
         category: "IDEMPOTENCY_CONFLICT",
         message: `Step would be skipped due to idempotency (already executed)`,
@@ -436,24 +449,24 @@ export class DryRunSimulationService {
     // Build dependency graph
     const stepMap = new Map(steps.map((s, i) => [s.id, { step: s, index: i }]));
 
-    for (const [stepId, { step }] of stepMap.entries()) {
+    for (const [stepId, { step, index }] of stepMap.entries()) {
       if (step.depends_on) {
         for (const depId of step.depends_on) {
           const depEntry = stepMap.get(depId);
-          
+
           if (!depEntry) {
             findings.push({
               severity: "CRITICAL",
-              stepIndex: step.id,
+              stepIndex: index,
               toolName: step.tool_name,
               category: "DEPENDENCY_CONFLICT",
               message: `Step depends on "${depId}" which doesn't exist in plan`,
               suggestion: "Fix dependency references",
             });
-          } else if (depEntry.index >= stepMap.get(stepId)!.index) {
+          } else if (depEntry.index >= index) {
             findings.push({
               severity: "ERROR",
-              stepIndex: step.id,
+              stepIndex: index,
               toolName: step.tool_name,
               category: "DEPENDENCY_CONFLICT",
               message: `Step depends on "${depId}" which comes AFTER it in the plan`,

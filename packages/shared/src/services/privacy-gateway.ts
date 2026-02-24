@@ -307,19 +307,22 @@ export class PrivacyGatewayService {
     scrubbedText: string;
     scrubbedParameters: Record<string, unknown>;
     tokenMap: Record<string, string>;
+    detectedPii: DetectedPii[];
   } {
     // Scrub raw text
     const textResult = this.scrub(rawText);
-    
+
     // Scrub parameters
     const scrubbedParameters: Record<string, unknown> = {};
     const allTokenMaps: Record<string, string> = { ...textResult.tokenMap };
+    const allDetectedPii: DetectedPii[] = [...textResult.detectedPii];
 
     for (const [key, value] of Object.entries(parameters || {})) {
       if (typeof value === "string") {
         const result = this.scrub(value);
         scrubbedParameters[key] = result.scrubbedText;
         Object.assign(allTokenMaps, result.tokenMap);
+        allDetectedPii.push(...result.detectedPii);
       } else {
         scrubbedParameters[key] = value;
       }
@@ -329,6 +332,7 @@ export class PrivacyGatewayService {
       scrubbedText: textResult.scrubbedText,
       scrubbedParameters,
       tokenMap: allTokenMaps,
+      detectedPii: allDetectedPii,
     };
   }
 

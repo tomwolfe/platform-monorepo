@@ -10,7 +10,9 @@ export * from './realtime';
 export * from './state-machine';
 export * from './policies/failover-policy';
 export * from './services/semantic-memory';
-export * from './services/schema-evolution';
+// Schema evolution - export from main file only (autonomous-schema-evolution re-exports)
+export { SchemaEvolutionService, getSchemaEvolutionService, createSchemaEvolutionService } from './services/schema-evolution';
+export type { AliasUsageRecord, MismatchEvent, SchemaEvolutionConfig } from './services/schema-evolution';
 export * from './services/schema-versioning';
 export * from './services/heartbeat';
 export * from './services/parameter-aliaser';

@@ -176,7 +176,7 @@ async function testSemanticVectorStore() {
       },
       timestamp: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
       executionId: "exec_001",
-      outcome: "success" as const,
+      outcome: "success",
     },
     {
       id: "mem_002",
@@ -190,7 +190,7 @@ async function testSemanticVectorStore() {
       },
       timestamp: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
       executionId: "exec_002",
-      outcome: "failed" as const,
+      outcome: "failed",
     },
     {
       id: "mem_003",
@@ -203,7 +203,7 @@ async function testSemanticVectorStore() {
       },
       timestamp: new Date(Date.now() - 1000 * 60 * 120).toISOString(),
       executionId: "exec_003",
-      outcome: "success" as const,
+      outcome: "success",
     },
   ];
 
@@ -276,8 +276,10 @@ console.log("=".repeat(80) + "\n");
 
 async function testSchemaEvolution() {
   const schemaEvolution = createSchemaEvolutionService({
-    mismatchThreshold: 3, // Lower threshold for testing
-    eventTtlSeconds: 3600, // 1 hour for testing
+    autoPrThreshold: 3, // Lower threshold for testing
+    autoCreatePrs: false, // Disable auto-PRs for testing
+    githubRepo: 'test-repo',
+    branchPrefix: 'test-schema/',
   });
 
   // Test Case 1: Record Mismatches

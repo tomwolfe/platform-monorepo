@@ -14,6 +14,27 @@
  */
 
 import { Redis } from '@upstash/redis';
+import { z } from 'zod';
+
+// ============================================================================
+// COMPATIBILITY TYPES FOR MIGRATION-GENERATOR
+// These types are expected by migration-generator.ts
+// ============================================================================
+
+export const ProposedSchemaChangeSchema = z.object({
+  id: z.string(),
+  changeType: z.enum(['ADD_COLUMN', 'REMOVE_COLUMN', 'MODIFY_COLUMN', 'ADD_INDEX', 'REMOVE_INDEX']),
+  tableName: z.string(),
+  columnName: z.string().optional(),
+  columnType: z.string().optional(),
+  indexName: z.string().optional(),
+  indexColumns: z.string().optional(),
+  createdAt: z.string(),
+  status: z.enum(['pending', 'approved', 'rejected', 'applied']),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+export type ProposedSchemaChange = z.infer<typeof ProposedSchemaChangeSchema>;
 
 export interface AliasUsageRecord {
   id: string;
@@ -389,7 +410,7 @@ This PR adds the alias to the PARAMETER_ALIASES registry in \`packages/mcp-proto
     for (const key of aliasKeys) {
       const data = await this.redis.get<string>(key);
       if (data) {
-        aliases.push(JSON.parse(data));
+        aliases.push(JSON.parse(data) as AliasUsageRecord);
       }
     }
 
@@ -406,7 +427,7 @@ This PR adds the alias to the PARAMETER_ALIASES registry in \`packages/mcp-proto
     for (const eventId of eventIds) {
       const data = await this.redis.get<string>(`schema:mismatch:${eventId}`);
       if (data) {
-        events.push(JSON.parse(data));
+        events.push(JSON.parse(data) as MismatchEvent);
       }
     }
 
@@ -468,4 +489,15 @@ export function getSchemaEvolutionService(redis?: Redis): SchemaEvolutionService
     schemaEvolutionServiceInstance = new SchemaEvolutionService(redisClient);
   }
   return schemaEvolutionServiceInstance;
+}
+
+/**
+ * Factory function for creating SchemaEvolutionService instances (useful for testing)
+ * @param config - Optional configuration overrides
+ * @returns A new SchemaEvolutionService instance
+ */
+export function createSchemaEvolutionService(config?: Partial<SchemaEvolutionConfig>): SchemaEvolutionService {
+  const { getRedisClient, ServiceNamespace } = require('../redis');
+  const redis = getRedisClient(ServiceNamespace.SHARED);
+  return new SchemaEvolutionService(redis, config);
 }

@@ -590,7 +590,36 @@ export function getMemoryClientSafe(): MemoryClient | null {
 // Convenience exports
 // ============================================================================
 
-export async function saveExecutionState(state: ExecutionState): Promise<MemoryEntry> {
+/**
+ * Save execution state with OCC protection against race conditions.
+ * This is the preferred method for saving state in production.
+ *
+ * @param state - Execution state to save
+ * @param useOCC - Enable OCC with automatic retry (default: true)
+ * @param options - OCC options
+ */
+export async function saveExecutionState(
+  state: ExecutionState,
+  useOCC: boolean = true,
+  options?: {
+    maxRetries?: number;
+    baseDelayMs?: number;
+    debug?: boolean;
+  }
+): Promise<MemoryEntry | { success: boolean; version?: number; attempts: number; error?: string }> {
+  // Use OCC-aware save for production safety
+  if (useOCC) {
+    const { getMemoryClient } = require('@repo/shared');
+    const sharedMemory = getMemoryClient();
+
+    return sharedMemory.saveStateWithOCC(
+      state.execution_id,
+      state,
+      options
+    );
+  }
+
+  // Fallback to simple save (for testing/development)
   const storage = new ExecutionStateStorage();
   return storage.saveState(state);
 }

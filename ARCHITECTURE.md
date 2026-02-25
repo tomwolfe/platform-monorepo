@@ -13,6 +13,71 @@ This codebase represents a **Staff-Level Engineering achievement** that solves t
 3. **Transactional Outbox Pattern**: Ensures data consistency between Postgres (business data) and Redis (saga cache)
 4. **LLM Circuit Breaker**: Prevents budget bleed from recursive correction loops
 5. **Parameter-Hashed Idempotency**: Prevents double-execution when LLM sends varying parameters on retry
+6. **Optimistic Concurrency Control (OCC)**: Prevents "Ghost Re-plan" race condition with atomic compare-and-swap and automatic rebase
+
+### Critical Fixes Implemented (v1.1.0)
+
+#### 1. Optimistic Concurrency Control (OCC) ✅ **NEW**
+
+**Problem Solved: "Ghost Re-plan" Race Condition**
+- QStash retry and user follow-up can arrive at the same millisecond
+- Both lambdas read state, modify it, and write back independently
+- Last-write-wins causes split-brain state corruption
+
+**Solution: Atomic Compare-and-Swap with Automatic Rebase**
+- Each state write includes a `version` field
+- Lua script performs atomic CAS: `IF current_version == expected_version THEN update AND increment_version`
+- On CONFLICT: reload state, re-apply delta, retry with exponential backoff
+- Max 3 retry attempts before failing to prevent infinite loops
+- Backoff uses exponential delay (100ms, 200ms, 400ms) with 30% jitter
+
+**Implementation:**
+- `packages/shared/src/services/occ-rebase.ts` - `AtomicStateRebaser` class
+- `packages/shared/src/redis/memory.ts` - `MemoryClient.saveStateWithOCC()`
+- `apps/intention-engine/src/lib/engine/memory.ts` - `saveExecutionState()` with OCC enabled by default
+
+**Lua Script (Atomic CAS):**
+```lua
+local current = redis.call('GET', KEYS[1])
+local currentVersion = decoded.version or 0
+
+if currentVersion ~= tonumber(ARGV[1]) then
+  return redis.error_reply('CONFLICT:' .. tostring(currentVersion))
+end
+
+-- Merge and increment version
+decoded.version = currentVersion + 1
+redis.call('SET', KEYS[1], cjson.encode(decoded))
+return tostring(decoded.version)
+```
+
+**Usage:**
+```typescript
+// Automatic OCC with retry (default)
+await saveExecutionState(state);
+
+// Custom retry configuration
+await memory.saveStateWithOCC(executionId, stateUpdate, {
+  maxRetries: 3,
+  baseDelayMs: 100,
+  debug: true,
+});
+
+// Direct AtomicStateRebaser usage
+const rebaser = createAtomicStateRebaser<TestState>(key);
+const result = await rebaser.update(
+  (state) => ({ counter: state.counter + 1 }),
+  { maxRetries: 3 }
+);
+
+if (result.succeededViaRebase) {
+  console.log(`Resolved conflict after ${result.rebaseAttempts} retries`);
+}
+```
+
+**Testing:**
+- `packages/shared/src/services/__tests__/occ.test.ts` - Comprehensive OCC tests
+- Tests conflict resolution, exponential backoff, max retries, and edge cases
 
 ## 📐 System Architecture
 
@@ -273,7 +338,19 @@ sequenceDiagram
 
 ## 🚀 Critical Fixes Implemented
 
-### 1. Transactional Outbox Pattern ✅
+### 1. Optimistic Concurrency Control (OCC) ✅
+
+**Problem**: "Ghost Re-plan" race condition - QStash retry and user follow-up can arrive simultaneously, causing split-brain state with last-write-wins.
+
+**Solution**: Atomic compare-and-swap with automatic rebase on conflict. Lua script performs version check, exponential backoff with jitter, max 3 retries.
+
+**Files Modified**:
+- `packages/shared/src/services/occ-rebase.ts` - New `AtomicStateRebaser` class with Lua scripts
+- `packages/shared/src/redis/memory.ts` - Added `saveStateWithOCC()` and `updateStateAtomically()`
+- `apps/intention-engine/src/lib/engine/memory.ts` - Updated `saveExecutionState()` to use OCC by default
+- `packages/shared/src/services/__tests__/occ.test.ts` - Comprehensive OCC tests
+
+### 2. Transactional Outbox Pattern ✅
 
 **Problem**: Split-brain state risk when Redis write and Postgres write are separate operations.
 
@@ -284,7 +361,7 @@ sequenceDiagram
 - `packages/database/src/index.ts` - Exported outbox schema
 - `packages/shared/src/outbox.ts` - New OutboxService implementation
 
-### 2. Semantic Search Scalability ✅
+### 3. Semantic Search Scalability ✅
 
 **Problem**: `redis.keys()` is O(N) and blocks Redis event loop, causing timeout cascades at >10k memories.
 
@@ -293,7 +370,7 @@ sequenceDiagram
 **Files Modified**:
 - `packages/shared/src/services/semantic-memory.ts` - Added `scanForKeys()` method, replaced `keys()` calls
 
-### 3. Parameter-Hashed Idempotency ✅
+### 4. Parameter-Hashed Idempotency ✅
 
 **Problem**: LLM may send slightly different parameters on retry (whitespace, time format), causing duplicate execution.
 
@@ -303,7 +380,7 @@ sequenceDiagram
 - `packages/shared/src/idempotency.ts` - Added `generateParamsHash()`, `normalizeValue()` methods
 - `apps/intention-engine/src/lib/engine/workflow-machine.ts` - Updated to pass parameters to `isDuplicate()`
 
-### 4. LLM Circuit Breaker ✅
+### 5. LLM Circuit Breaker ✅
 
 **Problem**: FailoverPolicyEngine can trigger recursive LLM calls, burning entire token budget in seconds.
 
@@ -312,7 +389,7 @@ sequenceDiagram
 **Files Modified**:
 - `apps/intention-engine/src/lib/engine/workflow-machine.ts` - Added `isCircuitBreakerOpen()`, `recordCorrectionAttempt()`, `resetCircuitBreaker()` methods
 
-### 5. User-Friendly Error Messages ✅
+### 6. User-Friendly Error Messages ✅
 
 **Problem**: Raw error messages are not user-friendly.
 
@@ -321,7 +398,7 @@ sequenceDiagram
 **Files Modified**:
 - `packages/shared/src/policies/failover-policy.ts` - Added message templates
 
-### 6. Short-Lived JWTs for Internal Communication ✅
+### 7. Short-Lived JWTs for Internal Communication ✅
 
 **Problem**: Static `INTERNAL_SYSTEM_KEY` means if one lambda is compromised, attacker has access to entire system.
 
@@ -330,7 +407,7 @@ sequenceDiagram
 **Files Modified**:
 - `packages/auth/src/index.ts` - Added JWT functions
 
-### 7. Time Provider Abstraction ✅
+### 8. Time Provider Abstraction ✅
 
 **Problem**: Tests relying on real `setTimeout` are slow, flaky, and expensive.
 
@@ -354,13 +431,18 @@ packages/
 └── shared/               # Shared services
     ├── src/
     │   ├── outbox.ts           # Transactional outbox
+    │   ├── occ-rebase.ts       # Optimistic Concurrency Control with automatic rebase
     │   ├── idempotency.ts      # Idempotency with param hashing
     │   ├── time-provider.ts    # Time abstraction for testing
+    │   ├── redis/
+    │   │   └── memory.ts       # MemoryClient with OCC-aware saveStateWithOCC()
     │   ├── redis.ts            # Redis client wrapper
     │   ├── policies/
     │   │   └── failover-policy.ts  # Failover policy engine
     │   └── services/
-    │       └── semantic-memory.ts  # Vector store
+    │       ├── semantic-memory.ts  # Vector store
+    │       └── __tests__/
+    │           └── occ.test.ts     # OCC integration tests
 ```
 
 ## 🧪 Testing Strategy

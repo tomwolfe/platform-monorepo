@@ -869,6 +869,196 @@ export class MemoryClient {
   }
 
   // ========================================================================
+  // OCC-AWARE STATE SAVE WITH AUTOMATIC RETRY
+  // Prevents "Ghost Re-plan" race condition with automatic rebase
+  // ========================================================================
+
+  /**
+   * Save execution state with OCC and automatic retry on conflict.
+   *
+   * PROBLEM SOLVED: Ghost Re-plan Race Condition
+   * - QStash retry and user follow-up can arrive simultaneously
+   * - Both lambdas read state, modify it, and write back
+   * - Last-write-wins causes split-brain state
+   *
+   * SOLUTION: Optimistic Concurrency Control with Automatic Rebase
+   * - Each write includes version check
+   * - On CONFLICT: reload state, re-apply update, retry
+   * - Exponential backoff with jitter to prevent thundering herd
+   * - Max 3 retry attempts before failing
+   *
+   * @param executionId - The execution ID
+   * @param stateUpdate - Partial state update to apply
+   * @param options - OCC options
+   * @returns Result with success status and final version
+   *
+   * @example
+   * const result = await memory.saveStateWithOCC(executionId, {
+   *   status: 'COMPLETED',
+   *   step_states: [...oldStepStates, newStep]
+   * });
+   *
+   * if (result.success) {
+   *   console.log(`Saved state at version ${result.version}`);
+   * } else {
+   *   console.log(`Failed after ${result.attempts} attempts: ${result.error}`);
+   * }
+   */
+  async saveStateWithOCC(
+    executionId: string,
+    stateUpdate: Partial<ExecutionState> & { version?: number },
+    options?: {
+      /** Maximum retry attempts (default: 3) */
+      maxRetries?: number;
+      /** Base delay for backoff in ms (default: 100) */
+      baseDelayMs?: number;
+      /** Enable debug logging */
+      debug?: boolean;
+    }
+  ): Promise<{
+    success: boolean;
+    version?: number;
+    attempts: number;
+    error?: string;
+  }> {
+    const maxRetries = options?.maxRetries ?? 3;
+    const baseDelayMs = options?.baseDelayMs ?? 100;
+    const debug = options?.debug ?? false;
+    const key = this.buildTaskKey(executionId);
+
+    let attempts = 0;
+    let lastError: string | undefined;
+
+    while (attempts <= maxRetries) {
+      try {
+        // Load current state
+        const currentState = await this.redis.get<any>(key);
+
+        if (!currentState) {
+          return {
+            success: false,
+            attempts,
+            error: 'State does not exist',
+          };
+        }
+
+        const currentVersion = currentState.version || 0;
+        const expectedVersion = stateUpdate.version ?? currentVersion;
+
+        // Check if we need to reload (version mismatch)
+        if (expectedVersion !== currentVersion && attempts > 0) {
+          if (debug) {
+            console.log(
+              `[MemoryClient:OCC] Version changed during retry for ${executionId}: ` +
+              `expected ${expectedVersion}, got ${currentVersion}`
+            );
+          }
+        }
+
+        // Merge update into current state
+        const mergedState = {
+          ...currentState,
+          ...stateUpdate,
+          version: currentVersion + 1,
+          updated_at: new Date().toISOString(),
+        };
+
+        // Attempt atomic compare-and-swap
+        const casResult = await this.updateStateAtomically(
+          executionId,
+          mergedState,
+          currentVersion
+        );
+
+        if (casResult.success) {
+          if (debug && attempts > 0) {
+            console.log(
+              `[MemoryClient:OCC] Successfully saved state for ${executionId} ` +
+              `at version ${casResult.newVersion} after ${attempts} retry attempts`
+            );
+          }
+
+          return {
+            success: true,
+            version: casResult.newVersion,
+            attempts,
+          };
+        }
+
+        // Conflict detected
+        if (casResult.error?.code === 'CONFLICT') {
+          attempts++;
+
+          if (attempts > maxRetries) {
+            return {
+              success: false,
+              attempts,
+              error: `Max OCC retries exceeded (${maxRetries})`,
+            };
+          }
+
+          // Exponential backoff with jitter
+          const exponentialDelay = baseDelayMs * Math.pow(2, attempts);
+          const jitter = Math.random() * 0.3 * exponentialDelay;
+          const delay = Math.min(exponentialDelay + jitter, 1000);
+
+          if (debug) {
+            console.log(
+              `[MemoryClient:OCC] Conflict detected for ${executionId}, ` +
+              `retrying in ${delay.toFixed(0)}ms (attempt ${attempts}/${maxRetries})`
+            );
+          }
+
+          await this.sleep(delay);
+        } else {
+          // Other error
+          lastError = casResult.error?.message;
+          attempts++;
+
+          if (attempts > maxRetries) {
+            return {
+              success: false,
+              attempts,
+              error: lastError,
+            };
+          }
+        }
+
+      } catch (error: any) {
+        lastError = error?.message || String(error);
+        attempts++;
+
+        if (attempts > maxRetries) {
+          return {
+            success: false,
+            attempts,
+            error: lastError,
+          };
+        }
+
+        // Backoff before retry
+        const exponentialDelay = baseDelayMs * Math.pow(2, attempts);
+        const jitter = Math.random() * 0.3 * exponentialDelay;
+        const delay = Math.min(exponentialDelay + jitter, 1000);
+        await this.sleep(delay);
+      }
+    }
+
+    return {
+      success: false,
+      attempts,
+      error: lastError || 'Unknown error',
+    };
+  }
+
+  /**
+   * Sleep helper for backoff
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // ========================================================================
   // LOGIC-DRIFT PROTECTION - Git SHA Pinning for Checkpoints
   // Prevents "Logic Drift" when code deploys during saga execution
   // ========================================================================

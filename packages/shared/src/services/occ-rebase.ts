@@ -42,7 +42,7 @@ import { getRedisClient, ServiceNamespace } from "../redis";
 // TYPE DEFINITIONS
 // ============================================================================
 
-export interface AtomicUpdateResult<T> {
+export interface AtomicUpdateResult<T extends { version?: number }> {
   /** Whether the update was successful */
   success: boolean;
   /** The updated state (if successful) */
@@ -83,13 +83,15 @@ const DEFAULT_OPTIONS: AtomicUpdateOptions = {
 
 /**
  * Lua script for atomic compare-and-swap operation
- * 
+ *
  * KEYS[1] = state key
  * ARGV[1] = expected version (or "any" for first write)
  * ARGV[2] = new state JSON
  * ARGV[3] = new version
- * 
+ *
  * Returns: { success: 0|1, currentVersion: number, currentState: string }
+ *
+ * COMPATIBILITY: Uses 'version' field (not '_version') to match ExecutionState schema
  */
 const ATOMIC_CAS_SCRIPT = `
 local key = KEYS[1]
@@ -104,7 +106,7 @@ local currentState = nil
 
 if current then
   local decoded = cjson.decode(current)
-  currentVersion = decoded._version or 0
+  currentVersion = decoded.version or decoded._version or 0
   currentState = current
 end
 
@@ -121,14 +123,16 @@ return { 1, newVersion, newState }
 
 /**
  * Lua script for atomic state update with delta application
- * 
+ *
  * This script applies a delta to the current state atomically
- * 
+ *
  * KEYS[1] = state key
  * ARGV[1] = delta JSON (partial state update)
  * ARGV[2] = new version
- * 
+ *
  * Returns: { success: 1, version: number, state: string }
+ *
+ * COMPATIBILITY: Uses 'version' field (not '_version') to match ExecutionState schema
  */
 const ATOMIC_DELTA_SCRIPT = `
 local key = KEYS[1]
@@ -149,8 +153,12 @@ for k, v in pairs(delta) do
   currentState[k] = v
 end
 
--- Update version
-currentState._version = newVersion
+-- Update version (support both 'version' and '_version' for backwards compatibility)
+if currentState.version then
+  currentState.version = newVersion
+else
+  currentState._version = newVersion
+end
 
 -- Save updated state
 local newState = cjson.encode(currentState)
@@ -163,7 +171,7 @@ return { 1, newVersion, newState }
 // ATOMIC STATE REBASER
 // ============================================================================
 
-export class AtomicStateRebaser<T extends { _version?: number }> {
+export class AtomicStateRebaser<T extends { version?: number }> {
   private key: string;
   private debug: boolean;
   private redis: Redis;
@@ -221,14 +229,14 @@ export class AtomicStateRebaser<T extends { _version?: number }> {
           };
         }
 
-        const currentVersion = currentState._version || 0;
+        const currentVersion = currentState.version || 0;
 
         // Apply update function
         const updates = updateFn(currentState);
         const newState: T = {
           ...currentState,
           ...updates,
-          _version: currentVersion + 1,
+          version: currentVersion + 1,
         };
 
         // Attempt atomic compare-and-swap
@@ -326,7 +334,7 @@ export class AtomicStateRebaser<T extends { _version?: number }> {
     currentVersion: number;
     overwrittenState?: T;
   }> {
-    const newVersion = (newState._version || 0);
+    const newVersion = (newState.version || 0);
 
     try {
       const result = await this.redis.eval(
@@ -388,7 +396,7 @@ export class AtomicStateRebaser<T extends { _version?: number }> {
           };
         }
 
-        const currentVersion = currentState._version || 0;
+        const currentVersion = currentState.version || 0;
         const newVersion = currentVersion + 1;
 
         // Apply delta atomically via Lua script
@@ -437,7 +445,7 @@ export class AtomicStateRebaser<T extends { _version?: number }> {
         }
 
         rebaseAttempts++;
-        
+
         if (rebaseAttempts > opts.maxRetries!) {
           return {
             success: false,
@@ -479,7 +487,7 @@ export class AtomicStateRebaser<T extends { _version?: number }> {
 /**
  * Create an atomic state rebaser for a key
  */
-export function createAtomicStateRebaser<T extends { _version?: number }>(
+export function createAtomicStateRebaser<T extends { version?: number }>(
   key: string,
   debug?: boolean,
   redis?: Redis
@@ -492,7 +500,7 @@ export function createAtomicStateRebaser<T extends { _version?: number }>(
  *
  * Convenience function for one-off updates
  */
-export async function atomicUpdateState<T extends { _version?: number }>(
+export async function atomicUpdateState<T extends { version?: number }>(
   key: string,
   updateFn: (currentState: T) => Partial<T>,
   options?: AtomicUpdateOptions & { redis?: Redis }

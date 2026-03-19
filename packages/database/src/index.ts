@@ -118,6 +118,7 @@ import {
   notExists as drizzleNotExists,
   between as drizzleBetween,
   notBetween as drizzleNotBetween,
+  type SQL,
 } from 'drizzle-orm';
 
 // Wrapper functions with type assertions to handle drizzle-orm type compatibility
@@ -142,3 +143,33 @@ export const exists = (subquery: any) => drizzleExists(subquery as any);
 export const notExists = (subquery: any) => drizzleNotExists(subquery as any);
 export const between = (col: any, min: any, max: any) => drizzleBetween(col as any, min as any, max as any);
 export const notBetween = (col: any, min: any, max: any) => drizzleNotBetween(col as any, min as any, max as any);
+
+// ============================================================================
+// WEB3 PAYMENT TYPES
+// Type helpers for crypto payment handling with numeric precision
+// ============================================================================
+
+import type { InferSelectModel as DrizzleInferSelectModel } from 'drizzle-orm';
+import { orders } from './schema/tablestack';
+
+/**
+ * CryptoAmount - String representation of token amounts in smallest units
+ * - For ETH: Wei (18 decimals) - e.g., "1000000000000000000" = 1 ETH
+ * - For USDC: Atomic units (6 decimals) - e.g., "1000000" = 1 USDC
+ * 
+ * Use viem's formatUnits() to convert to human-readable format
+ * Use viem's parseUnits() to convert from human-readable format
+ */
+export type CryptoAmount = string;
+
+/**
+ * OrderWithCryptoPayment - Extended order type with Web3 payment fields
+ */
+export type OrderWithCryptoPayment = DrizzleInferSelectModel<typeof orders> & {
+  paymentTxHash: string | null;
+  walletAddress: string | null;
+  paymentCurrency: string | null;
+  subtotal: CryptoAmount;
+  tip: CryptoAmount;
+  total: CryptoAmount;
+};

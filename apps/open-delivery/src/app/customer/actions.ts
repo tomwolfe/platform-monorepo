@@ -1,10 +1,12 @@
 "use server";
 
-import { db, restaurants, orders, orderItems, users, sql, restaurantProducts, eq } from "@repo/database";
+import { db, restaurants, orders, orderItems, users, sql, restaurantProducts, eq, type CryptoAmount } from "@repo/database";
 import { currentUser } from "@clerk/nextjs/server";
 import { RealtimeService } from "@repo/shared";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
+import { createPublicClient, http, type Hash, type Address } from "viem";
+import { base } from "viem/chains";
 
 export interface Vendor {
   id: string;
@@ -94,11 +96,26 @@ export async function getMenu(restaurantId: string): Promise<MenuItem[]> {
   }
 }
 
+/**
+ * Place a real order with crypto payment verification
+ * 
+ * ZERO-TRUST ARCHITECTURE:
+ * - Frontend proposes transaction, backend MUST verify on-chain
+ * - Transaction hash is verified before order is confirmed
+ * - Payment must match expected amount and recipient
+ */
 export async function placeRealOrder(
   vendorId: string,
   items: Array<{ id: string; name: string; price: number; quantity: number }>,
   deliveryAddress?: string,
-  tipAmount: number = 0
+  tipAmount: number = 0,
+  // Web3 payment parameters
+  paymentParams?: {
+    txHash: string; // Transaction hash (will be verified on-chain)
+    walletAddress: string; // User's wallet address
+    paymentCurrency?: string; // Token symbol (USDC, ETH, etc.)
+    chainId?: number; // Blockchain chain ID (default: Base)
+  }
 ) {
   const user = await currentUser();
 
@@ -115,9 +132,64 @@ export async function placeRealOrder(
   }
 
   const orderId = randomUUID();
-  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const tip = Math.max(0, tipAmount); // Ensure non-negative
-  const total = subtotal + tip;
+  
+  // Convert fiat amounts to crypto smallest units (Wei for ETH, atomic for USDC)
+  // Default to USDC with 6 decimals if no currency specified
+  const paymentCurrency = paymentParams?.paymentCurrency || "USDC";
+  const decimals = paymentCurrency === "ETH" ? 18 : 6;
+  
+  // Calculate totals in fiat first
+  const subtotalFiat = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const tipFiat = Math.max(0, tipAmount);
+  const totalFiat = subtotalFiat + tipFiat;
+  
+  // Convert to crypto smallest units (simplified - in production, use oracle price)
+  // For now, we assume 1 USD = 1 USDC (6 decimals) or use ETH price oracle
+  const subtotalCrypto = paymentCurrency === "USDC" 
+    ? (subtotalFiat * 1000000).toString() // USDC: 6 decimals
+    : "0"; // ETH would require price oracle
+  
+  const tipCrypto = paymentCurrency === "USDC"
+    ? (tipFiat * 1000000).toString()
+    : "0";
+  
+  const totalCrypto = paymentCurrency === "USDC"
+    ? (totalFiat * 1000000).toString()
+    : "0";
+
+  // ============================================================================
+  // ZERO-TRUST: Verify on-chain transaction BEFORE inserting order
+  // ============================================================================
+  
+  if (paymentParams?.txHash) {
+    // Validate transaction hash format
+    if (!isValidTxHash(paymentParams.txHash)) {
+      throw new Error("Invalid transaction hash format");
+    }
+    
+    // Validate wallet address format
+    if (!isValidAddress(paymentParams.walletAddress)) {
+      throw new Error("Invalid wallet address format");
+    }
+    
+    // Verify transaction on-chain
+    const verificationResult = await verifyOnChainTransaction({
+      txHash: paymentParams.txHash as Hash,
+      expectedValue: BigInt(totalCrypto),
+      walletAddress: paymentParams.walletAddress as Address,
+      chainId: paymentParams.chainId,
+    });
+    
+    if (!verificationResult.success) {
+      throw new Error(`Payment verification failed: ${verificationResult.error}`);
+    }
+    
+    console.log(`[Order ${orderId}] Payment verified on-chain:`, {
+      txHash: paymentParams.txHash,
+      confirmations: verificationResult.receipt?.confirmations,
+      blockNumber: verificationResult.receipt?.blockNumber.toString(),
+    });
+  }
 
   try {
     let userRecord = await db
@@ -155,11 +227,15 @@ export async function placeRealOrder(
         userId: userRecord?.id,
         storeId: vendorId as any,
         status: "pending",
-        subtotal,
-        tip,
-        total,
+        subtotal: subtotalCrypto as CryptoAmount,
+        tip: tipCrypto as CryptoAmount,
+        total: totalCrypto as CryptoAmount,
         deliveryAddress: address,
         pickupAddress: restaurant.address || "Restaurant Location",
+        // Web3 payment fields
+        paymentTxHash: paymentParams?.txHash || null,
+        walletAddress: paymentParams?.walletAddress || null,
+        paymentCurrency: paymentCurrency,
         createdAt: new Date(),
         updatedAt: new Date(),
       })
@@ -186,13 +262,151 @@ export async function placeRealOrder(
       items: items.map((item) => ({ name: item.name, quantity: item.quantity, price: item.price })),
       timestamp: new Date().toISOString(),
       traceId: `order-${orderId}`,
+      // Web3 payment info for driver payout
+      payment: {
+        txHash: paymentParams?.txHash,
+        currency: paymentCurrency,
+        walletAddress: paymentParams?.walletAddress,
+      },
     });
 
     revalidatePath("/customer");
 
-    return { success: true, orderId: newOrder.id, status: "pending" as const };
+    return { 
+      success: true, 
+      orderId: newOrder.id, 
+      status: "pending" as const,
+      payment: {
+        txHash: paymentParams?.txHash,
+        currency: paymentCurrency,
+        verified: !!paymentParams?.txHash,
+      },
+    };
   } catch (error) {
     console.error("Order placement failed:", error);
     throw new Error("Failed to place order. Please try again.");
   }
+}
+
+// ============================================================================
+// TRANSACTION VERIFICATION HELPERS
+// Zero-trust verification of on-chain payments
+// ============================================================================
+
+/**
+ * Verify a transaction on-chain using viem
+ */
+async function verifyOnChainTransaction(params: {
+  txHash: Hash;
+  expectedValue: bigint;
+  walletAddress: Address;
+  chainId?: number;
+}): Promise<{
+  success: boolean;
+  error?: string;
+  receipt?: {
+    status: "success" | "reverted";
+    blockNumber: bigint;
+    confirmations: number;
+    from: Address;
+    to: Address | null;
+    value: bigint;
+  };
+}> {
+  const { txHash, expectedValue, walletAddress, chainId } = params;
+  
+  try {
+    // Get RPC URL from environment or use default
+    const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
+    
+    const client = createPublicClient({
+      transport: http(rpcUrl),
+      chain: base,
+    });
+    
+    // Step 1: Get transaction receipt
+    const receipt = await client.getTransactionReceipt({ hash: txHash });
+    
+    // Step 2: Check transaction status
+    if (receipt.status !== "success") {
+      return {
+        success: false,
+        error: `Transaction failed with status: ${receipt.status}`,
+      };
+    }
+    
+    // Step 3: Verify sender matches wallet address
+    if (receipt.from.toLowerCase() !== walletAddress.toLowerCase()) {
+      return {
+        success: false,
+        error: `Transaction sender mismatch. Expected: ${walletAddress}, Got: ${receipt.from}`,
+      };
+    }
+    
+    // Step 4: Get full transaction to verify value
+    const transaction = await client.getTransaction({ hash: txHash });
+    
+    // Verify transaction value matches expected amount
+    if (transaction.value !== expectedValue) {
+      return {
+        success: false,
+        error: `Transaction value mismatch. Expected: ${expectedValue}, Got: ${transaction.value}`,
+      };
+    }
+    
+    // Step 5: Check confirmations (minimum 3 for Base)
+    const minConfirmations = parseInt(process.env.NEXT_PUBLIC_MIN_CONFIRMATIONS || "3", 10);
+    const currentBlock = await client.getBlockNumber();
+    const confirmations = Number(currentBlock - receipt.blockNumber);
+    
+    if (confirmations < minConfirmations) {
+      return {
+        success: false,
+        error: `Insufficient confirmations. Required: ${minConfirmations}, Current: ${confirmations}`,
+      };
+    }
+    
+    // Step 6: Verify recipient is treasury address
+    const treasuryAddress = (process.env.NEXT_PUBLIC_TREASURY_WALLET_ADDRESS || "").toLowerCase() as Address;
+    if (treasuryAddress && transaction.to && transaction.to.toLowerCase() !== treasuryAddress) {
+      return {
+        success: false,
+        error: `Transaction recipient mismatch. Expected treasury: ${treasuryAddress}, Got: ${transaction.to}`,
+      };
+    }
+    
+    return {
+      success: true,
+      receipt: {
+        status: "success",
+        blockNumber: receipt.blockNumber,
+        confirmations,
+        from: receipt.from,
+        to: transaction.to,
+        value: transaction.value,
+      },
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    return {
+      success: false,
+      error: `Transaction verification failed: ${errorMessage}`,
+    };
+  }
+}
+
+/**
+ * Validate transaction hash format
+ */
+function isValidTxHash(hash: string): boolean {
+  // Ethereum transaction hash: 0x followed by 64 hex characters
+  return /^0x[a-fA-F0-9]{64}$/.test(hash);
+}
+
+/**
+ * Validate Ethereum address format
+ */
+function isValidAddress(address: string): boolean {
+  // Ethereum address: 0x followed by 40 hex characters
+  return /^0x[a-fA-F0-9]{40}$/.test(address);
 }

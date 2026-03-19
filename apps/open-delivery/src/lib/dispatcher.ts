@@ -40,7 +40,14 @@ export interface OrderIntent {
   customerId: string;
   items: Array<{ name: string; quantity: number; weight?: number }>;
   priority: "standard" | "express" | "urgent";
-  priceDetails?: { total: number };
+  // CRYPTO PAYMENT SUPPORT - priceDetails now uses strings for token amounts
+  priceDetails?: { 
+    total: number | string; // Can be fiat (number) or crypto smallest units (string)
+    basePay?: number | string;
+    tip?: number | string;
+    currency?: string; // Token symbol (USDC, ETH, etc.)
+    decimals?: number; // Token decimals
+  };
   specialInstructions?: string;
   traceId?: string;
 }

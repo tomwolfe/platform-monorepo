@@ -37,6 +37,15 @@ export const FailureReasonSchema = z.enum([
   "TABLE_UNAVAILABLE",
   "KITCHEN_OVERLOADED",
   "PAYMENT_FAILED",
+  // CRYPTO-SPECIFIC FAILURE REASONS
+  "INSUFFICIENT_FUNDS",
+  "TX_REJECTED",
+  "RPC_TIMEOUT",
+  "TX_FAILED",
+  "INVALID_TX_HASH",
+  "WALLET_DISCONNECTED",
+  "TOKEN_NOT_SUPPORTED",
+  // END CRYPTO
   "DELIVERY_UNAVAILABLE",
   "TIME_SLOT_UNAVAILABLE",
   "PARTY_SIZE_TOO_LARGE",
@@ -56,6 +65,15 @@ export const USER_FRIENDLY_MESSAGES: Record<string, string> = {
   TABLE_UNAVAILABLE: "That table isn't available at this time. Would you like to try a different time?",
   KITCHEN_OVERLOADED: "The kitchen is experiencing high volume. Would you like to try a later time?",
   PAYMENT_FAILED: "Your card was declined. Would you like to try a different payment method?",
+  // CRYPTO-SPECIFIC MESSAGES
+  INSUFFICIENT_FUNDS: "Your wallet doesn't have enough tokens for this transaction. Would you like to add more funds or try a different payment method?",
+  TX_REJECTED: "The transaction was rejected by your wallet. Would you like to try again?",
+  RPC_TIMEOUT: "The blockchain network is experiencing high traffic. Would you like to retry?",
+  TX_FAILED: "The transaction failed on-chain. Your funds are safe. Would you like to try again?",
+  INVALID_TX_HASH: "The transaction hash is invalid. Please verify the transaction and try again.",
+  WALLET_DISCONNECTED: "Your wallet is disconnected. Please connect your wallet to continue.",
+  TOKEN_NOT_SUPPORTED: "This token isn't supported for payment. Would you like to use USDC or ETH instead?",
+  // END CRYPTO
   DELIVERY_UNAVAILABLE: "Delivery isn't available to your location. Would you like to try pickup instead?",
   TIME_SLOT_UNAVAILABLE: "That time slot isn't available. Would you like to try a different time?",
   PARTY_SIZE_TOO_LARGE: "That party size requires special handling. Shall I call the manager?",

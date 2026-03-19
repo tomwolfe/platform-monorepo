@@ -332,6 +332,17 @@ export const ExecutionStateSchema = z.object({
     token_limit: z.number().int().positive().default(50000),
     cost_limit_usd: z.number().positive().default(0.50), // Hard $0.50 cap per saga
     current_cost_usd: z.number().nonnegative().default(0),
+    // CRYPTO PAYMENT SUPPORT - Token-based budget tracking
+    crypto_budget: z.object({
+      // Token budget in smallest units (Wei for ETH, atomic for USDC)
+      token_amount: z.string().default("0"),
+      // Token symbol (USDC, ETH, etc.)
+      token_symbol: z.string().default("USDC"),
+      // Token decimals for conversion (6 for USDC, 18 for ETH)
+      token_decimals: z.number().int().nonnegative().default(6),
+      // USD equivalent for guardrail comparison
+      usd_equivalent: z.number().nonnegative().default(0),
+    }).optional(),
   }).default({
     token_limit: 50000,
     cost_limit_usd: 0.50,

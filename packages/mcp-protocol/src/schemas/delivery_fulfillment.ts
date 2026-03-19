@@ -24,6 +24,7 @@ export const DeliveryItemSchema = z.object({
   }).optional().describe("Dimensions in cm (for vehicle capacity)"),
   requiresRefrigeration: z.boolean().default(false).describe("Whether item needs cold storage"),
   fragile: z.boolean().default(false).describe("Whether item requires careful handling"),
+  price: z.string().optional().describe("Item price in token smallest unit (Wei for ETH, atomic units for USDC)"),
 });
 
 /**
@@ -60,12 +61,13 @@ export const DeliveryQuoteResultSchema = z.object({
   quoteId: z.string().uuid().describe("Unique identifier for this quote"),
   validUntil: z.string().datetime().describe("Quote expiration time"),
   price: z.object({
-    base: z.number().nonnegative().describe("Base delivery fee"),
-    distance: z.number().nonnegative().describe("Distance-based fee"),
-    weight: z.number().nonnegative().describe("Weight-based fee"),
-    priority: z.number().nonnegative().describe("Priority surcharge"),
-    total: z.number().nonnegative().describe("Total price"),
-    currency: z.string().default("USD").describe("Currency code"),
+    base: z.string().describe("Base delivery fee in token smallest unit"),
+    distance: z.string().describe("Distance-based fee in token smallest unit"),
+    weight: z.string().describe("Weight-based fee in token smallest unit"),
+    priority: z.string().describe("Priority surcharge in token smallest unit"),
+    total: z.string().describe("Total price in token smallest unit"),
+    currency: z.string().default("USDC").describe("Token symbol (USDC, ETH, etc.)"),
+    decimals: z.number().int().nonnegative().default(6).describe("Token decimals (6 for USDC, 18 for ETH)"),
   }),
   estimatedTime: z.object({
     pickupMinutes: z.number().int().nonnegative().describe("Estimated minutes until pickup"),
@@ -97,15 +99,19 @@ export const IntentFulfillmentSchema = z.object({
   deliveryAddress: DeliveryAddressSchema.describe("Delivery location"),
   items: z.array(DeliveryItemSchema).min(1).describe("Items to deliver"),
   priceDetails: z.object({
-    basePay: z.number().nonnegative().describe("Base pay for driver"),
-    tip: z.number().nonnegative().default(0).describe("Customer tip"),
-    total: z.number().nonnegative().describe("Total price"),
-    currency: z.string().default("USD"),
+    basePay: z.string().describe("Base pay for driver in token smallest unit"),
+    tip: z.string().describe("Customer tip in token smallest unit"),
+    total: z.string().describe("Total price in token smallest unit"),
+    currency: z.string().default("USDC").describe("Token symbol (USDC, ETH, etc.)"),
+    decimals: z.number().int().nonnegative().default(6).describe("Token decimals"),
   }),
   priority: z.boolean().default(false).describe("Priority delivery flag"),
   scheduledPickupTime: z.string().datetime().optional().describe("Scheduled pickup time"),
   specialInstructions: z.string().max(1000).optional().describe("Special instructions for driver"),
   callbackUrl: z.string().url().optional().describe("Webhook URL for status updates"),
+  // Web3 payment fields
+  walletAddress: z.string().optional().describe("Customer's wallet address (EIP-55 format)"),
+  txHash: z.string().optional().describe("On-chain transaction hash for payment"),
 });
 
 /**
@@ -121,6 +127,7 @@ export const FulfillmentResultSchema = z.object({
     phone: z.string().describe("Driver phone"),
     vehicleType: z.string().describe("Vehicle type"),
     rating: z.number().min(1).max(5).optional().describe("Driver rating"),
+    walletAddress: z.string().optional().describe("Driver's wallet address for crypto payouts"),
   }).optional().describe("Assigned driver (if matched)"),
   estimatedTimes: z.object({
     driverArrival: z.string().datetime().optional().describe("When driver will arrive at pickup"),
@@ -131,6 +138,11 @@ export const FulfillmentResultSchema = z.object({
     url: z.string().url().optional().describe("Customer tracking URL"),
     code: z.string().optional().describe("Tracking code"),
   }),
+  payment: z.object({
+    txHash: z.string().optional().describe("Payment transaction hash"),
+    currency: z.string().default("USDC").describe("Payment token"),
+    status: z.enum(["pending", "confirmed", "failed"]).optional().describe("Payment status"),
+  }).optional(),
   createdAt: z.string().datetime(),
 });
 

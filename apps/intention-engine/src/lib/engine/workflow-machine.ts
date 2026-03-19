@@ -1919,6 +1919,18 @@ export class WorkflowMachine {
    * @param parameters - Resolved parameters
    * @returns Risk assessment with level and reason
    */
+  /**
+   * RISK ASSESSMENT - Evaluate financial and operational risk of a step
+   *
+   * Returns risk level (LOW, MEDIUM, HIGH, CRITICAL) based on:
+   * - Financial impact (payment amounts, crypto value)
+   * - Irreversibility (bookings, charges)
+   * - Scale (party size, large orders)
+   *
+   * @param step - Plan step to assess
+   * @param parameters - Resolved parameters for the step
+   * @returns Risk assessment with level, reason, and optional amount
+   */
   private assessStepRisk(
     step: PlanStep,
     parameters: Record<string, unknown>
@@ -1926,10 +1938,46 @@ export class WorkflowMachine {
     level: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
     reason: string;
     amount?: number;
+    cryptoAmount?: string;
+    tokenSymbol?: string;
   } {
     const toolName = step.tool_name.toLowerCase();
 
-    // CRITICAL: Payment-related actions
+    // CRITICAL: Crypto/Web3 payment-related actions
+    if (
+      toolName.includes("crypto") ||
+      toolName.includes("web3") ||
+      toolName.includes("blockchain") ||
+      toolName.includes("tx") ||
+      toolName.includes("transaction") ||
+      (toolName.includes("payment") && parameters.txHash)
+    ) {
+      const cryptoAmount = (parameters.total as string) || (parameters.token_amount as string) || "0";
+      const tokenSymbol = (parameters.currency as string) || (parameters.token_symbol as string) || "USDC";
+      const usdValue = (parameters.usd_equivalent as number) || 0;
+
+      // CRITICAL: High-value crypto transactions (> $1000 USD equivalent)
+      if (usdValue > 1000) {
+        return {
+          level: "CRITICAL",
+          reason: `High-value crypto transaction ($${usdValue.toFixed(2)} USD) requires explicit confirmation`,
+          amount: usdValue,
+          cryptoAmount,
+          tokenSymbol,
+        };
+      }
+
+      // HIGH: Standard crypto payment requires confirmation
+      return {
+        level: "HIGH",
+        reason: `Crypto payment of ${cryptoAmount} ${tokenSymbol} requires on-chain verification`,
+        amount: usdValue,
+        cryptoAmount,
+        tokenSymbol,
+      };
+    }
+
+    // CRITICAL: Traditional payment-related actions
     if (
       toolName.includes("payment") ||
       toolName.includes("charge") ||

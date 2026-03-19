@@ -13,10 +13,14 @@ import {
   X,
   Menu,
   DollarSign,
+  Wallet,
 } from "lucide-react";
 import { getRealVendors, placeRealOrder, getMenu, Vendor, MenuItem } from "./actions";
 import { useUser } from "@clerk/nextjs";
 import { reverseGeocode } from "@repo/shared/utils/geo";
+import { ConnectWallet } from "@/components/ConnectWallet";
+import { CryptoCheckout } from "@/components/CryptoCheckout";
+import { useAccount } from "wagmi";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +44,7 @@ interface CartItem extends MenuItem {
 
 export default function CustomerDashboard() {
   const { isLoaded, isSignedIn } = useUser();
+  const { isConnected: isWalletConnected } = useAccount();
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [activeOrder, setActiveOrder] = useState<OrderStatus | null>(null);
   const [isLoadingVendors, setIsLoadingVendors] = useState(true);
@@ -54,6 +59,9 @@ export default function CustomerDashboard() {
   const [cityLabel, setCityLabel] = useState("Detecting location...");
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [tip, setTip] = useState(5.0); // Default $5 tip
+  
+  // Web3 checkout state
+  const [showCryptoCheckout, setShowCryptoCheckout] = useState(false);
 
   useEffect(() => {
     if ("geolocation" in navigator) {
@@ -200,7 +208,14 @@ export default function CustomerDashboard() {
     });
   }, []);
 
-  const handleCheckout = useCallback(async () => {
+  const handleCheckout = useCallback(() => {
+    if (!selectedVendor || cart.length === 0) return;
+    
+    // Show crypto checkout modal instead of placing order directly
+    setShowCryptoCheckout(true);
+  }, [selectedVendor, cart]);
+
+  const handleCryptoCheckoutComplete = useCallback(async (result: { orderId: string; txHash?: string }) => {
     if (!selectedVendor || cart.length === 0) return;
 
     setIsPlacingOrder(true);
@@ -213,15 +228,29 @@ export default function CustomerDashboard() {
         price: item.price,
         quantity: item.quantity,
       }));
-      const result = await placeRealOrder(selectedVendor.id, orderItems, deliveryAddress || undefined, tip);
+      
+      // Place order with Web3 payment params
+      const placeOrderResult = await placeRealOrder(
+        selectedVendor.id, 
+        orderItems, 
+        deliveryAddress || undefined, 
+        tip,
+        {
+          txHash: result.txHash || "",
+          walletAddress: "", // Will be populated by the component
+          paymentCurrency: "USDC",
+          chainId: 8453, // Base mainnet
+        }
+      );
 
       setActiveOrder({
-        orderId: result.orderId,
+        orderId: placeOrderResult.orderId,
         status: "pending",
         vendor: selectedVendor.name,
         total: cart.reduce((sum, item) => sum + item.price * item.quantity, 0) + tip,
         events: [{ timestamp: new Date().toISOString(), event: "order_created" }],
       });
+      setShowCryptoCheckout(false);
       setShowMenuModal(false);
       setCart([]);
       setTip(5.0); // Reset tip for next order
@@ -281,11 +310,14 @@ export default function CustomerDashboard() {
         <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
           <Package className="text-blue-600" /> OpenDeliver
         </h1>
-        <div className="bg-white px-4 py-2 rounded-full shadow-sm flex items-center gap-2">
-          <MapPin size={18} className="text-red-500" />
-          <span className="text-sm font-medium">
-            {cityLabel}
-          </span>
+        <div className="flex items-center gap-4">
+          <div className="bg-white px-4 py-2 rounded-full shadow-sm flex items-center gap-2">
+            <MapPin size={18} className="text-red-500" />
+            <span className="text-sm font-medium">
+              {cityLabel}
+            </span>
+          </div>
+          <ConnectWallet />
         </div>
       </header>
 
@@ -619,19 +651,42 @@ export default function CustomerDashboard() {
                         </div>
                       </div>
                     </div>
-                    <button
-                      onClick={handleCheckout}
-                      disabled={isPlacingOrder || cart.length === 0}
-                      className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >
-                      {isPlacingOrder ? (
-                        <>
-                          Processing <Loader2 className="animate-spin h-4 w-4" />
-                        </>
-                      ) : (
-                        "Place Order"
-                      )}
-                    </button>
+                    
+                    {/* Crypto Checkout or Traditional Checkout */}
+                    {showCryptoCheckout ? (
+                      <CryptoCheckout
+                        cart={cart}
+                        tip={tip}
+                        deliveryAddress={deliveryAddress}
+                        selectedVendor={selectedVendor}
+                        onCheckoutComplete={handleCryptoCheckoutComplete}
+                        onError={(err) => {
+                          setError(err);
+                          setShowCryptoCheckout(false);
+                        }}
+                        onCancel={() => setShowCryptoCheckout(false)}
+                      />
+                    ) : (
+                      <button
+                        onClick={handleCheckout}
+                        disabled={isPlacingOrder || cart.length === 0 || !isWalletConnected}
+                        className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        {isPlacingOrder ? (
+                          <>
+                            Processing <Loader2 className="animate-spin h-4 w-4" />
+                          </>
+                        ) : !isWalletConnected ? (
+                          <>
+                            <Wallet className="h-4 w-4" /> Connect Wallet to Pay
+                          </>
+                        ) : (
+                          <>
+                            Pay with Crypto
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

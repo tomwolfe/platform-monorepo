@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, timestamp, boolean, uniqueIndex, index, jsonb, pgEnum, doublePrecision } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, integer, timestamp, boolean, uniqueIndex, index, jsonb, pgEnum, doublePrecision, numeric } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 export const waitlistStatusEnum = pgEnum('waitlist_status', ['waiting', 'notified', 'seated']);
@@ -264,13 +264,19 @@ export const orders = pgTable('orders', {
   driverId: uuid('driver_id').references(() => drivers.id),
   storeId: uuid('store_id').references(() => restaurants.id),
   status: text('status').notNull().default('pending'), // pending, matched, preparing, pickup, transit, delivered, cancelled
-  subtotal: doublePrecision('subtotal').notNull().default(0), // Price of food/items
-  tip: doublePrecision('tip').notNull().default(0), // Driver incentive
-  total: doublePrecision('total').notNull().default(0), // subtotal + tip
+  // Crypto-safe numeric fields: stores raw token amounts as strings (Wei for ETH, smallest unit for other tokens)
+  // numeric(78, 0) supports up to 78 digits - sufficient for any token's smallest unit (e.g., 10^77 Wei)
+  subtotal: numeric('subtotal', { precision: 78, scale: 0 }).notNull().default('0'), // Price of food/items in token smallest unit
+  tip: numeric('tip', { precision: 78, scale: 0 }).notNull().default('0'), // Driver incentive in token smallest unit
+  total: numeric('total', { precision: 78, scale: 0 }).notNull().default('0'), // subtotal + tip in token smallest unit
   deliveryAddress: text('delivery_address').notNull(),
   pickupAddress: text('pickup_address'),
   specialInstructions: text('special_instructions'),
   priority: text('priority').default('standard'), // standard, express, urgent
+  // Web3 payment tracking
+  paymentTxHash: text('payment_tx_hash').unique(), // On-chain transaction hash
+  walletAddress: text('wallet_address'), // User's wallet address
+  paymentCurrency: text('payment_currency').default('USDC'), // Token symbol (USDC, ETH, etc.)
   matchedAt: timestamp('matched_at'),
   pickedUpAt: timestamp('picked_up_at'),
   deliveredAt: timestamp('delivered_at'),
@@ -284,6 +290,7 @@ export const orders = pgTable('orders', {
     driverIdIdx: index('orders_driver_id_idx').on(table.driverId),
     storeIdIdx: index('orders_store_id_idx').on(table.storeId),
     statusIdx: index('orders_status_idx').on(table.status),
+    paymentTxHashIdx: uniqueIndex('orders_payment_tx_hash_idx').on(table.paymentTxHash),
   };
 });
 

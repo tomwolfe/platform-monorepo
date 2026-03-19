@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { NervousSystemProvider, NervousSystemPulse } from "@repo/ui-theme";
+import { Web3Provider } from "@/components/Web3Provider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -37,7 +38,9 @@ export default function RootLayout({
           className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         >
           <NervousSystemProvider autoSubscribe={true}>
-            {children}
+            <Web3Provider>
+              {children}
+            </Web3Provider>
             <NervousSystemPulse includeProvider={false} />
           </NervousSystemProvider>
         </body>

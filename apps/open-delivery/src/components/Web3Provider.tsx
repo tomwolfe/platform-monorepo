@@ -39,9 +39,7 @@ const config = createConfig({
       appName: "OpenDeliver",
       appLogoUrl: "🚚",
     }),
-    metaMask({
-      injectProvider: true,
-    }),
+    metaMask(),
   ],
 });
 

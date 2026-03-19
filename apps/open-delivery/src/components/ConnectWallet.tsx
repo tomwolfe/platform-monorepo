@@ -56,15 +56,12 @@ export function ConnectWallet() {
     return (
       <div className="relative">
         <details className="group">
-          <summary className="list-none">
-            <button
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
-              disabled={status === "pending"}
-            >
+          <summary className="list-none cursor-pointer">
+            <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg">
               <Wallet className="h-4 w-4" />
               {status === "pending" ? "Connecting..." : "Connect Wallet"}
               <ChevronDown className="h-4 w-4 ml-1" />
-            </button>
+            </div>
           </summary>
           <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border z-50 overflow-hidden">
             <div className="p-4 border-b bg-gradient-to-r from-blue-50 to-indigo-50">

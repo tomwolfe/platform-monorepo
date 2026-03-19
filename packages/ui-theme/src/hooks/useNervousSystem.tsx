@@ -159,21 +159,41 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
 
     const connectToAbly = async () => {
       try {
-        // Direct Ably client initialization for browser compatibility
-        const apiKey = process.env.NEXT_PUBLIC_ABLY_API_KEY;
+        // Token-based authentication for secure browser access
+        const authResponse = await fetch("/api/ably/auth-general");
         
-        if (!apiKey) {
-          console.warn("[useNervousSystem] Ably API key not configured");
+        if (!authResponse.ok) {
+          const errorData = await authResponse.json().catch(() => ({}));
+          const errorMessage = errorData.error || "Authentication failed";
+          console.warn("[useNervousSystem] Ably authentication failed:", errorMessage);
           if (isMounted) {
             nervousSystemStore.publishUpdate({
               isConnected: false,
-              error: "Real-time updates unavailable",
+              error: "Real-time updates unavailable - please log in",
             });
           }
           return;
         }
 
-        ably = new Ably.Realtime({ key: apiKey });
+        const { tokenRequest } = await authResponse.json();
+
+        // Initialize Ably with token authentication
+        // The authCallback will be called when the token expires to get a new one
+        ably = new Ably.Realtime({
+          authCallback: async (callbackParams: any, callback: any) => {
+            try {
+              const response = await fetch("/api/ably/auth-general");
+              if (!response.ok) {
+                throw new Error("Token refresh failed");
+              }
+              const data = await response.json();
+              callback(data.tokenRequest);
+            } catch (err) {
+              console.error("[useNervousSystem] Token refresh failed:", err);
+              callback(null);
+            }
+          }
+        });
         globalAblyInstance = ably;
 
         // Subscribe to nervous system updates

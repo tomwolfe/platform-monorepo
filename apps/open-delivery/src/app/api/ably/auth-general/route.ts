@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
         const payload = await verifyInternalToken(bridgeCookie);
         if (payload) {
           userId = payload.clerkUserId as string;
-          userEmail = payload.email;
+          userEmail = payload.email as string | undefined;
         }
       }
     }

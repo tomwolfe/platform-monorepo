@@ -141,17 +141,17 @@ function StatusZone({
   );
 }
 
-export default function FloorPlan({ 
-  initialTables, 
-  restaurantReservations = [], 
-  onSave, 
+export default function FloorPlan({
+  initialTables,
+  restaurantReservations = [],
+  onSave,
   onStatusChange,
   onAdd,
   onDelete,
   onUpdateDetails,
-  restaurantId 
-}: { 
-  initialTables: RestaurantTable[], 
+  restaurantId
+}: {
+  initialTables: RestaurantTable[],
   restaurantReservations?: Reservation[],
   onSave: (tables: any[]) => Promise<void>,
   onStatusChange: (tableId: string, status: 'vacant' | 'occupied' | 'dirty') => Promise<void>,
@@ -165,18 +165,23 @@ export default function FloorPlan({
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [editingTable, setEditingTable] = useState<RestaurantTable | null>(null);
   const [listMode, setListMode] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     setTables(initialTables);
   }, [initialTables]);
 
   useEffect(() => {
-    if (!restaurantId) return;
+    if (!restaurantId || !mounted) return;
 
     const ably = new Ably.Realtime({ authUrl: '/api/ably/auth' });
     const channel = ably.channels.get(`restaurant:${restaurantId}`);
-    
+
     channel.subscribe('NEW_RESERVATION', (message) => {
       console.log('New reservation received:', message.data);
       router.refresh();
@@ -191,7 +196,7 @@ export default function FloorPlan({
       channel.unsubscribe();
       ably.close();
     };
-  }, [restaurantId, router]);
+  }, [restaurantId, mounted, router]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {

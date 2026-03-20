@@ -6,9 +6,14 @@ import { Bell, X } from 'lucide-react';
 
 export default function LiveView({ restaurantId }: { restaurantId: string }) {
   const [notification, setNotification] = useState<{ id: string; message: string } | null>(null);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    if (!restaurantId) return;
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!restaurantId || !mounted) return;
 
     const ably = new Ably.Realtime({ authUrl: '/api/ably/auth' });
     const channel = ably.channels.get(`merchant:${restaurantId}`);
@@ -18,7 +23,7 @@ export default function LiveView({ restaurantId }: { restaurantId: string }) {
         id: message.data.order_id,
         message: `Delivery Out: Order ${message.data.order_id} has been dispatched!`,
       });
-      
+
       // Auto-hide after 5 seconds
       setTimeout(() => {
         setNotification(null);
@@ -29,9 +34,9 @@ export default function LiveView({ restaurantId }: { restaurantId: string }) {
       channel.unsubscribe();
       ably.close();
     };
-  }, [restaurantId]);
+  }, [restaurantId, mounted]);
 
-  if (!notification) return null;
+  if (!mounted || !notification) return null;
 
   return (
     <div className="fixed bottom-4 right-4 z-[100]">
@@ -42,7 +47,7 @@ export default function LiveView({ restaurantId }: { restaurantId: string }) {
         <div className="flex-1">
           <p className="text-sm font-medium">{notification.message}</p>
         </div>
-        <button 
+        <button
           onClick={() => setNotification(null)}
           className="text-blue-200 hover:text-white transition-colors"
         >

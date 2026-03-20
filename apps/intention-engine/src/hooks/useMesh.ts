@@ -1,7 +1,14 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import * as Ably from 'ably';
 
 export function useMesh(onEvent: (name: string, data: any) => void) {
+  // Store the latest callback in a ref to avoid reconnecting Ably when the callback changes
+  const savedOnEvent = useRef(onEvent);
+
+  useEffect(() => {
+    savedOnEvent.current = onEvent;
+  }, [onEvent]);
+
   useEffect(() => {
     let ably: Ably.Realtime | null = null;
     let channel: Ably.RealtimeChannel | null = null;
@@ -26,11 +33,11 @@ export function useMesh(onEvent: (name: string, data: any) => void) {
       const listener = (message: any) => {
         if (!isMounted) return;
         console.log('[Mesh] Received real-time event:', message.name, message.data);
-        onEvent(message.name!, message.data);
+        savedOnEvent.current(message.name!, message.data);
       };
 
       channel.subscribe(listener);
-      
+
       // Store on channel object for cleanup
       (channel as any)._listener = listener;
     } catch (err) {
@@ -52,5 +59,5 @@ export function useMesh(onEvent: (name: string, data: any) => void) {
         console.warn('[Mesh] Cleanup error:', err);
       }
     };
-  }, [onEvent]);
+  }, []); // Empty dependency array ensures we only connect to Ably once
 }

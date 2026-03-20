@@ -68,6 +68,13 @@ export interface NervousSystemState {
 type UnsubscribeFn = () => void;
 type SubscribeFn = (onStoreChange: () => void) => UnsubscribeFn;
 
+// Cached server snapshot to satisfy React's caching requirement
+const SERVER_SNAPSHOT: NervousSystemState = {
+  activeSaga: null,
+  isConnected: false,
+  error: null,
+};
+
 function createNervousSystemStore(): {
   subscribe: SubscribeFn;
   getSnapshot: () => NervousSystemState;
@@ -95,11 +102,8 @@ function createNervousSystemStore(): {
     },
 
     getServerSnapshot: (): NervousSystemState => {
-      return {
-        activeSaga: null,
-        isConnected: false,
-        error: null,
-      };
+      // Return cached object to satisfy React's caching requirement
+      return SERVER_SNAPSHOT;
     },
 
     publishUpdate: (update: Partial<NervousSystemState>): void => {

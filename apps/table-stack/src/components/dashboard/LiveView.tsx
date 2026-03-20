@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Ably from 'ably';
+import { IconAfterMount } from '@/components/ui/IconWrapper';
 import { Bell, X } from 'lucide-react';
 
 export default function LiveView({ restaurantId }: { restaurantId: string }) {
@@ -43,7 +44,9 @@ export default function LiveView({ restaurantId }: { restaurantId: string }) {
     <div className="fixed bottom-4 right-4 z-[100]">
       <div className="bg-blue-600 text-white p-4 rounded-xl shadow-2xl flex items-center gap-4 max-w-sm transition-all animate-in fade-in slide-in-from-bottom-4">
         <div className="bg-blue-500 p-2 rounded-lg">
-          <Bell className="w-5 h-5 text-white" />
+          <IconAfterMount>
+            <Bell className="w-5 h-5 text-white" />
+          </IconAfterMount>
         </div>
         <div className="flex-1">
           <p className="text-sm font-medium">{notification.message}</p>
@@ -52,7 +55,9 @@ export default function LiveView({ restaurantId }: { restaurantId: string }) {
           onClick={() => setNotification(null)}
           className="text-blue-200 hover:text-white transition-colors"
         >
-          <X className="w-5 h-5" />
+          <IconAfterMount>
+            <X className="w-5 h-5" />
+          </IconAfterMount>
         </button>
       </div>
     </div>

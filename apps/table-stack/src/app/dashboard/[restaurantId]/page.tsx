@@ -4,6 +4,7 @@ import { currentUser } from '@clerk/nextjs/server';
 import FloorPlan from '@/components/dashboard/FloorPlan';
 import LiveView from '@/components/dashboard/LiveView';
 import { updateTablePositions, updateTableStatus, updateRestaurantSettings, addTable, deleteTable, updateTableDetails, deleteReservation, updateWaitlistStatus, regenerateApiKey, createStripeConnectAccount } from './actions';
+import { IconAfterMount } from '@/components/ui/IconWrapper';
 import { Trash2, Bell, UserCheck, CreditCard, Store, Utensils } from 'lucide-react';
 import { UserMenu } from '@/components/nav/UserMenu';
 import Link from 'next/link';
@@ -48,7 +49,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
   }
 
   return (
-    <div className="p-8 max-w-7xl mx-auto">
+    <div className="p-8 max-w-7xl mx-auto" suppressHydrationWarning>
       <LiveView restaurantId={restaurantInternalId} />
       <header className="mb-8 flex justify-between items-center">
         <div>
@@ -193,7 +194,9 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
         <Link href={`/dashboard/${restaurantId}/menu`} className="bg-amber-50 p-6 rounded-xl border border-amber-100 hover:shadow-md transition-shadow group">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-amber-900 font-semibold flex items-center gap-2">
-              <Utensils className="w-4 h-4" />
+              <IconAfterMount>
+                <Utensils className="w-4 h-4" />
+              </IconAfterMount>
               Menu Management
             </h3>
             <span className="text-amber-600 group-hover:translate-x-1 transition-transform">→</span>
@@ -204,7 +207,9 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
         <div className="bg-purple-50 p-6 rounded-xl border border-purple-100 md:col-span-1 flex justify-between items-center">
           <div>
             <h3 className="text-purple-900 font-semibold mb-2 flex items-center">
-              <CreditCard className="w-4 h-4 mr-2" />
+              <IconAfterMount>
+                <CreditCard className="w-4 h-4 mr-2" />
+              </IconAfterMount>
               Payouts & Deposits
             </h3>
             {restaurant.stripeAccountId ? (

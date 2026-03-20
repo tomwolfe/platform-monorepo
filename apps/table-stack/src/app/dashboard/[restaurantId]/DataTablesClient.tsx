@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { IconAfterMount } from '@/components/ui/IconWrapper';
 import { Bell, UserCheck, Trash2 } from 'lucide-react';
 
 interface WaitlistItem {
@@ -73,7 +74,9 @@ export function DataTablesClient({
                         await updateWaitlistStatus(w.id, restaurantInternalId, 'notified');
                       }} className="inline">
                         <button type="submit" title="Notify Guest" className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                          <Bell className="w-4 h-4" />
+                          <IconAfterMount>
+                            <Bell className="w-4 h-4" />
+                          </IconAfterMount>
                         </button>
                       </form>
                     )}
@@ -81,7 +84,9 @@ export function DataTablesClient({
                       await updateWaitlistStatus(w.id, restaurantInternalId, 'seated');
                     }} className="inline">
                       <button type="submit" title="Seat Guest" className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors">
-                        <UserCheck className="w-4 h-4" />
+                        <IconAfterMount>
+                          <UserCheck className="w-4 h-4" />
+                        </IconAfterMount>
                       </button>
                     </form>
                   </td>
@@ -128,7 +133,9 @@ export function DataTablesClient({
                       await deleteReservation(res.id, restaurantInternalId);
                     }} className="inline">
                       <button type="submit" className="text-red-600 hover:text-red-900 transition-colors">
-                        <Trash2 className="w-4 h-4" />
+                        <IconAfterMount>
+                          <Trash2 className="w-4 h-4" />
+                        </IconAfterMount>
                       </button>
                     </form>
                   </td>

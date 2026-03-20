@@ -128,6 +128,12 @@ const StepItem: React.FC<StepItemProps> = React.memo(({
   isActive,
   showTraceId,
 }) => {
+  const [mounted, setMounted] = useState(false);
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const statusColors: Record<StepStatus, string> = {
     completed: "border-green-500 bg-green-50",
     in_progress: "border-blue-500 bg-blue-50",
@@ -175,7 +181,7 @@ const StepItem: React.FC<StepItemProps> = React.memo(({
           </p>
         )}
         <p className="text-xs text-gray-400 mt-1">
-          {new Date(step.timestamp).toLocaleTimeString()}
+          {mounted ? new Date(step.timestamp).toLocaleTimeString() : step.timestamp.slice(11, 19)}
         </p>
       </div>
     </div>
@@ -256,6 +262,12 @@ export const StreamingProgressStepper: React.FC<ProgressStepperProps> = ({
   onComplete,
   onError,
 }) => {
+  const [mounted, setMounted] = useState(false);
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
+
   // Use Optimistic UI for instant feedback (React 19)
   const [optimisticSteps, setOptimisticSteps] = useOptimistic(
     initialSteps.map((step, index) => ({
@@ -263,7 +275,8 @@ export const StreamingProgressStepper: React.FC<ProgressStepperProps> = ({
       stepName: step.stepName,
       status: step.status,
       message: step.message || "",
-      timestamp: step.timestamp || new Date().toISOString(),
+      // Use a stable default timestamp to prevent hydration mismatch
+      timestamp: step.timestamp || "1970-01-01T00:00:00Z",
       traceId: undefined,
     })),
     (
@@ -286,7 +299,8 @@ export const StreamingProgressStepper: React.FC<ProgressStepperProps> = ({
             stepName: update.stepName || `Step ${update.stepIndex + 1}`,
             status: update.status || "pending",
             message: update.message || "",
-            timestamp: update.timestamp || new Date().toISOString(),
+            // Use stable timestamp for new steps during hydration
+            timestamp: update.timestamp || (mounted ? new Date().toISOString() : "1970-01-01T00:00:00Z"),
             traceId: update.traceId,
           } as StepState,
         ];

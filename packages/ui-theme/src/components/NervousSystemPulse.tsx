@@ -59,10 +59,16 @@ const NervousSystemPulseInternal: React.FC<NervousSystemPulseInternalProps> = ({
   const [isMinimized, setIsMinimized] = useState(true);
   const [isExpanded, setIsExpanded] = useState(false);
   const [lastActivity, setLastActivity] = useState(Date.now());
+  const [mounted, setMounted] = useState(false);
+
+  // Prevent hydration mismatch by waiting for client mount
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Auto-minimize after inactivity
   React.useEffect(() => {
-    if (!activeSaga) return;
+    if (!activeSaga || !mounted) return;
 
     const timer = setInterval(() => {
       if (Date.now() - lastActivity > autoMinimizeDelay) {
@@ -71,7 +77,7 @@ const NervousSystemPulseInternal: React.FC<NervousSystemPulseInternalProps> = ({
     }, 5000);
 
     return () => clearInterval(timer);
-  }, [activeSaga, lastActivity, autoMinimizeDelay]);
+  }, [activeSaga, lastActivity, autoMinimizeDelay, mounted]);
 
   // Reset activity timer on user interaction
   const handleUserInteraction = useCallback(() => {
@@ -80,7 +86,7 @@ const NervousSystemPulseInternal: React.FC<NervousSystemPulseInternalProps> = ({
   }, []);
 
   // Handle suggestion confirmation
-  const handleConfirm = useCallback(async () => {
+  const handleConfirmSuggestion = useCallback(async () => {
     if (!activeSaga?.failoverSuggestion) return;
 
     try {
@@ -104,8 +110,8 @@ const NervousSystemPulseInternal: React.FC<NervousSystemPulseInternalProps> = ({
     [onComplete, dismissSaga]
   );
 
-  // Don't render if no active saga
-  if (!activeSaga) return null;
+  // Don't render if not mounted or no active saga
+  if (!mounted || !activeSaga) return null;
 
   // Determine status color and icon
   const getStatusColor = () => {
@@ -256,7 +262,7 @@ const NervousSystemPulseInternal: React.FC<NervousSystemPulseInternalProps> = ({
             <Button
               size="sm"
               className="w-full bg-amber-600 hover:bg-amber-700 text-white"
-              onClick={handleConfirm}
+              onClick={handleConfirmSuggestion}
             >
               Confirm Alternative
             </Button>

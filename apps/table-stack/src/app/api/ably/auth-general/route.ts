@@ -41,23 +41,23 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 3. Generate Ably token with restricted permissions
+    // 3. Generate Ably signed token with restricted permissions
     const ably = new Ably.Rest({
       key: process.env.ABLY_API_KEY,
     });
 
-    // Create token request with capabilities limited to nervous-system channel
-    // Only allows subscribing to public updates, not publishing
-    const tokenRequestData = await ably.auth.createTokenRequest({
+    // Request a signed token (not just a token request)
+    // The client will use this signed token directly
+    const tokenDetails = await ably.auth.requestToken({
       clientId: userId,
       capability: {
         "nervous-system:updates": ["subscribe"],
       },
     });
 
-    // 4. Return token request for client to exchange
+    // 4. Return signed token for client to use
     return NextResponse.json({
-      tokenRequest: tokenRequestData,
+      token: tokenDetails.token,
       clientId: userId,
       email: userEmail,
     });

@@ -161,7 +161,7 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
       try {
         // Token-based authentication for secure browser access
         const authResponse = await fetch("/api/ably/auth-general");
-        
+
         if (!authResponse.ok) {
           const errorData = await authResponse.json().catch(() => ({}));
           const errorMessage = errorData.error || "Authentication failed";
@@ -175,11 +175,12 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
           return;
         }
 
-        const { tokenRequest } = await authResponse.json();
+        const { token } = await authResponse.json();
 
-        // Initialize Ably with token authentication
+        // Initialize Ably with the signed token
         // The authCallback will be called when the token expires to get a new one
         ably = new Ably.Realtime({
+          token: token,
           authCallback: async (callbackParams: any, callback: any) => {
             try {
               const response = await fetch("/api/ably/auth-general");
@@ -187,7 +188,7 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
                 throw new Error("Token refresh failed");
               }
               const data = await response.json();
-              callback(data.tokenRequest);
+              callback({ token: data.token });
             } catch (err) {
               console.error("[useNervousSystem] Token refresh failed:", err);
               callback(null);

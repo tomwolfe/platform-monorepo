@@ -4,7 +4,7 @@ import Ably from 'ably';
 /**
  * General-purpose Ably Authentication API Route for Intention Engine
  *
- * Provides token requests for any client to subscribe to nervous-system channels.
+ * Provides signed tokens for any client to subscribe to nervous-system channels.
  * Since intention-engine doesn't use Clerk, authentication is open but limited
  * to subscribe-only access.
  */
@@ -13,13 +13,16 @@ export async function GET(req: NextRequest) {
   if (!apiKey) {
     return NextResponse.json({ error: 'Ably API key not configured' }, { status: 500 });
   }
+  
+  // Debug: Log key format (first 10 chars only for security)
+  console.log("[Ably Auth] Key name:", apiKey.split(':')[0]?.slice(0, 10) + '...');
 
-  const client = new Ably.Rest(apiKey);
+  const ably = new Ably.Rest({ key: apiKey });
   
   try {
-    // Create token request with capabilities limited to nervous-system channel
-    // Only allows subscribing to public updates, not publishing
-    const tokenRequestData = await client.auth.createTokenRequest({
+    // Request a signed token (not just a token request)
+    // The client will use this signed token directly
+    const tokenDetails = await ably.auth.requestToken({
       clientId: 'intention-engine-client',
       capability: {
         "nervous-system:updates": ["subscribe"],
@@ -27,13 +30,13 @@ export async function GET(req: NextRequest) {
     });
     
     return NextResponse.json({
-      tokenRequest: tokenRequestData,
+      token: tokenDetails.token,
       clientId: 'intention-engine-client',
     });
   } catch (error) {
     console.error('Ably auth error:', error);
     return NextResponse.json(
-      { error: 'Failed to create token request' },
+      { error: 'Failed to create token' },
       { status: 500 }
     );
   }

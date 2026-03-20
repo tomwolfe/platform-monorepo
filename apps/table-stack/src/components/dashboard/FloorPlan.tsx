@@ -182,18 +182,30 @@ export default function FloorPlan({
     const ably = new Ably.Realtime({ authUrl: '/api/ably/auth' });
     const channel = ably.channels.get(`restaurant:${restaurantId}`);
 
-    channel.subscribe('NEW_RESERVATION', (message) => {
+    const newReservationListener = (message: any) => {
       console.log('New reservation received:', message.data);
       router.refresh();
-    });
+    };
 
-    channel.subscribe('RESERVATION_CANCELLED', (message) => {
+    const reservationCancelledListener = (message: any) => {
       console.log('Reservation cancelled received:', message.data);
       router.refresh();
-    });
+    };
+
+    channel.subscribe('NEW_RESERVATION', newReservationListener);
+    channel.subscribe('RESERVATION_CANCELLED', reservationCancelledListener);
 
     return () => {
-      channel.unsubscribe();
+      try {
+        channel.unsubscribe('NEW_RESERVATION', newReservationListener);
+      } catch {
+        // Ignore cleanup errors
+      }
+      try {
+        channel.unsubscribe('RESERVATION_CANCELLED', reservationCancelledListener);
+      } catch {
+        // Ignore cleanup errors
+      }
       ably.close();
     };
   }, [restaurantId, mounted, router]);

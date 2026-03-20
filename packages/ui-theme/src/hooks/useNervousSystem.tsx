@@ -154,8 +154,8 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
 
     let channel: any = null;
     let ably: any = null;
-    let subscription: any = null;
-    let failoverSubscription: any = null;
+    let stepListener: any = null;
+    let failoverListener: any = null;
     let isMounted = true;
 
     const connectToAbly = async () => {
@@ -172,7 +172,7 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
         // Handle connection state changes to catch disconnections
         const connectionStateListener = (stateChange: any) => {
           if (!isMounted) return;
-          
+
           if (stateChange.current === "closed" || stateChange.current === "failed") {
             console.warn("[useNervousSystem] Connection closed:", stateChange.reason?.message || "Unknown reason");
             nervousSystemStore.publishUpdate({
@@ -183,68 +183,66 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
             nervousSystemStore.publishUpdate({ isConnected: true, error: null });
           }
         };
-        
+
         ably.connection.on(connectionStateListener);
 
-        subscription = await channel.subscribe(
-          "ExecutionStepUpdate",
-          (message: any) => {
-            if (!isMounted) return;
+        stepListener = (message: any) => {
+          if (!isMounted) return;
 
-            const update = message.data?.data;
-            if (!update) return;
+          const update = message.data?.data;
+          if (!update) return;
 
-            // Convert execution update to saga format
-            const saga: ActiveSaga = {
-              id: update.executionId,
-              name: update.stepName || "Active Plan",
-              status: mapStatusToSagaStatus(update.status),
-              steps: [
-                {
-                  stepIndex: update.stepIndex,
-                  stepName: update.stepName,
-                  status: update.status,
-                  message: update.message,
-                },
-              ],
-              createdAt: update.timestamp,
-              updatedAt: new Date().toISOString(),
-              traceId: update.traceId,
-            };
+          // Convert execution update to saga format
+          const saga: ActiveSaga = {
+            id: update.executionId,
+            name: update.stepName || "Active Plan",
+            status: mapStatusToSagaStatus(update.status),
+            steps: [
+              {
+                stepIndex: update.stepIndex,
+                stepName: update.stepName,
+                status: update.status,
+                message: update.message,
+              },
+            ],
+            createdAt: update.timestamp,
+            updatedAt: new Date().toISOString(),
+            traceId: update.traceId,
+          };
 
-            nervousSystemStore.publishUpdate({
-              activeSaga: saga,
-              isConnected: true,
-              error: null,
-            });
-          }
-        );
+          nervousSystemStore.publishUpdate({
+            activeSaga: saga,
+            isConnected: true,
+            error: null,
+          });
+        };
 
-        // Also listen for failover suggestions
-        failoverSubscription = await channel.subscribe(
-          "FailoverSuggestion",
-          (message: any) => {
-            if (!isMounted) return;
+        failoverListener = (message: any) => {
+          if (!isMounted) return;
 
-            const suggestion = message.data?.data;
-            if (!suggestion) return;
+          const suggestion = message.data?.data;
+          if (!suggestion) return;
 
-            nervousSystemStore.publishUpdate({
-              activeSaga: state.activeSaga
-                ? {
-                    ...state.activeSaga,
-                    failoverSuggestion: {
-                      type: mapFailoverType(suggestion.action?.type),
-                      title: getFailoverTitle(suggestion),
-                      description: getFailoverDescription(suggestion),
-                      actionRequired: true,
-                      parameters: suggestion.action?.parameters,
-                    },
-                  }
-                : null,
-            });
-          }
-        );
+          const currentState = nervousSystemStore.getSnapshot();
+
+          nervousSystemStore.publishUpdate({
+            activeSaga: currentState.activeSaga
+              ? {
+                  ...currentState.activeSaga,
+                  failoverSuggestion: {
+                    type: mapFailoverType(suggestion.action?.type),
+                    title: getFailoverTitle(suggestion),
+                    description: getFailoverDescription(suggestion),
+                    actionRequired: true,
+                    parameters: suggestion.action?.parameters,
+                  },
+                }
+              : null,
+          });
+        };
+
+        await channel.subscribe("ExecutionStepUpdate", stepListener);
+        await channel.subscribe("FailoverSuggestion", failoverListener);
 
         if (isMounted) {
           nervousSystemStore.publishUpdate({ isConnected: true, error: null });
@@ -269,24 +267,24 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
 
     return () => {
       isMounted = false;
-      
+
       // Clean up subscriptions first
-      if (failoverSubscription && channel) {
+      if (failoverListener && channel) {
         try {
-          channel.unsubscribe(failoverSubscription);
+          channel.unsubscribe("FailoverSuggestion", failoverListener);
         } catch {
           // Ignore cleanup errors
         }
       }
-      
-      if (subscription && channel) {
+
+      if (stepListener && channel) {
         try {
-          channel.unsubscribe(subscription);
+          channel.unsubscribe("ExecutionStepUpdate", stepListener);
         } catch {
           // Ignore cleanup errors
         }
       }
-      
+
       // Close Ably connection properly
       if (ably) {
         try {
@@ -295,7 +293,7 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
           // Ignore cleanup errors
         }
       }
-      
+
       // Clear global reference
       globalAblyInstance = null;
     };

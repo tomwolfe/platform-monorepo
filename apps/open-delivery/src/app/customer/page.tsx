@@ -125,13 +125,14 @@ export default function CustomerDashboard() {
     if (!activeOrder) return;
     let ably: Ably.Realtime | null = null;
     let channel: Ably.RealtimeChannel | null = null;
+    let orderMatchedListener: any = null;
 
     const setupAbly = async () => {
       try {
         ably = new Ably.Realtime({ authUrl: "/api/ably/auth" });
         channel = ably.channels.get("nervous-system:updates");
 
-        channel.subscribe("order.matched", (msg) => {
+        orderMatchedListener = (msg: any) => {
           if (msg.data.orderId === activeOrder.orderId) {
             setActiveOrder((prev) =>
               prev
@@ -149,14 +150,25 @@ export default function CustomerDashboard() {
                 : null
             );
           }
-        });
+        };
+
+        channel.subscribe("order.matched", orderMatchedListener);
       } catch (e) {
         console.error("Ably connection failed", e);
       }
     };
     setupAbly();
     return () => {
-      ably?.close();
+      if (channel && orderMatchedListener) {
+        try {
+          channel.unsubscribe("order.matched", orderMatchedListener);
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+      if (ably) {
+        ably.close();
+      }
     };
   }, [activeOrder?.orderId]);
 

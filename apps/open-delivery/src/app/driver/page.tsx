@@ -157,9 +157,9 @@ export default function DriverDashboard() {
         channel = ably.channels.get('nervous-system:updates');
 
         // Listen for new delivery intents
-        channel.subscribe('delivery.intent_created', (msg) => {
+        const deliveryIntentListener = (msg: any) => {
           console.log('[Ably] New intent created:', msg.data);
-          
+
           // Optimistic update: prepend new order to list
           mutate((current) => {
             const newOrder: OrderIntent = {
@@ -173,24 +173,28 @@ export default function DriverDashboard() {
               timestamp: msg.data.timestamp,
               traceId: msg.data.traceId,
             };
-            
+
             // Avoid duplicates
             if (current?.some(o => o.orderId === newOrder.orderId)) {
               return current;
             }
             return [newOrder, ...(current || [])];
           }, false);
-        });
+        };
+        channel.subscribe('delivery.intent_created', deliveryIntentListener);
+        (channel as any)._deliveryIntentListener = deliveryIntentListener;
 
         // Listen for orders matched (taken by self or others)
-        channel.subscribe('order.matched', (msg) => {
+        const orderMatchedListener = (msg: any) => {
           console.log('[Ably] Order matched:', msg.data);
-          
+
           // Remove matched order from available list
-          mutate((current) => 
+          mutate((current) =>
             (current || []).filter(o => o.orderId !== msg.data.orderId)
           , false);
-        });
+        };
+        channel.subscribe('order.matched', orderMatchedListener);
+        (channel as any)._orderMatchedListener = orderMatchedListener;
 
         // Connection state monitoring
         ably.connection.on('connected', () => {
@@ -213,6 +217,16 @@ export default function DriverDashboard() {
 
     // Cleanup on unmount or when going offline
     return () => {
+      if (channel) {
+        try {
+          if ((channel as any)._deliveryIntentListener) {
+            channel.unsubscribe('delivery.intent_created', (channel as any)._deliveryIntentListener);
+          }
+          if ((channel as any)._orderMatchedListener) {
+            channel.unsubscribe('order.matched', (channel as any)._orderMatchedListener);
+          }
+        } catch (e) {}
+      }
       if (ably) {
         ably.close();
       }

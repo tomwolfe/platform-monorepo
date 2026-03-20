@@ -18,7 +18,7 @@ export default function LiveView({ restaurantId }: { restaurantId: string }) {
     const ably = new Ably.Realtime({ authUrl: '/api/ably/auth' });
     const channel = ably.channels.get(`merchant:${restaurantId}`);
 
-    channel.subscribe('delivery_dispatched', (message) => {
+    const deliveryListener = (message: any) => {
       setNotification({
         id: message.data.order_id,
         message: `Delivery Out: Order ${message.data.order_id} has been dispatched!`,
@@ -28,10 +28,16 @@ export default function LiveView({ restaurantId }: { restaurantId: string }) {
       setTimeout(() => {
         setNotification(null);
       }, 5000);
-    });
+    };
+
+    channel.subscribe('delivery_dispatched', deliveryListener);
 
     return () => {
-      channel.unsubscribe();
+      try {
+        channel.unsubscribe('delivery_dispatched', deliveryListener);
+      } catch {
+        // Ignore cleanup errors
+      }
       ably.close();
     };
   }, [restaurantId, mounted]);

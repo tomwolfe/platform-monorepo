@@ -327,14 +327,14 @@ export const StreamingProgressStepper: React.FC<ProgressStepperProps> = ({
   useEffect(() => {
     if (!autoSubscribe) return;
 
-    let subscription: any = null;
+    let listener: any = null;
     let ably: any = null;
 
     const connectToAbly = async () => {
       try {
         // Direct Ably initialization for browser compatibility
         const apiKey = process.env.NEXT_PUBLIC_ABLY_API_KEY;
-        
+
         if (!apiKey) {
           console.warn(
             "[StreamingProgressStepper] Ably not configured"
@@ -348,23 +348,22 @@ export const StreamingProgressStepper: React.FC<ProgressStepperProps> = ({
 
         const channel = ably.channels.get("nervous-system:updates");
 
-        subscription = await channel.subscribe(
-          "ExecutionStepUpdate",
-          (message: any) => {
-            const update = message.data?.data as StreamingStatusUpdate;
+        listener = (message: any) => {
+          const update = message.data?.data as StreamingStatusUpdate;
 
-            if (update && update.executionId === executionId) {
-              setOptimisticSteps({
-                stepIndex: update.stepIndex,
-                stepName: update.stepName,
-                status: update.status,
-                message: update.message,
-                timestamp: update.timestamp,
-                traceId: update.traceId,
-              });
-            }
+          if (update && update.executionId === executionId) {
+            setOptimisticSteps({
+              stepIndex: update.stepIndex,
+              stepName: update.stepName,
+              status: update.status,
+              message: update.message,
+              timestamp: update.timestamp,
+              traceId: update.traceId,
+            });
           }
-        );
+        };
+
+        await channel.subscribe("ExecutionStepUpdate", listener);
 
         setIsConnected(true);
         console.log(
@@ -383,12 +382,17 @@ export const StreamingProgressStepper: React.FC<ProgressStepperProps> = ({
     connectToAbly();
 
     return () => {
-      if (subscription && ably) {
+      if (listener && ably) {
         try {
-          ably.channels.get("nervous-system:updates").unsubscribe(subscription);
+          ably.channels.get("nervous-system:updates").unsubscribe("ExecutionStepUpdate", listener);
         } catch (err) {
           // Cleanup error, ignore
         }
+      }
+      if (ably) {
+        try {
+          ably.close();
+        } catch (err) {}
       }
     };
   }, [executionId, autoSubscribe, setOptimisticSteps]);

@@ -160,42 +160,9 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
 
     const connectToAbly = async () => {
       try {
-        // Token-based authentication for secure browser access
-        const authResponse = await fetch("/api/ably/auth-general");
-
-        if (!authResponse.ok) {
-          const errorData = await authResponse.json().catch(() => ({}));
-          const errorMessage = errorData.error || "Authentication failed";
-          console.warn("[useNervousSystem] Ably authentication failed:", errorMessage);
-          if (isMounted) {
-            nervousSystemStore.publishUpdate({
-              isConnected: false,
-              error: "Real-time updates unavailable - please log in",
-            });
-          }
-          return;
-        }
-
-        const { token } = await authResponse.json();
-
-        // Initialize Ably with the signed token
-        // The authCallback will be called when the token expires to get a new one
+        // Use authUrl for automatic token management (matches open-delivery/table-stack pattern)
         ably = new Ably.Realtime({
-          token: token,
-          authCallback: async (callbackParams: any, callback: any) => {
-            try {
-              const response = await fetch("/api/ably/auth-general");
-              if (!response.ok) {
-                throw new Error("Token refresh failed");
-              }
-              const data = await response.json();
-              callback({ token: data.token });
-            } catch (err) {
-              console.error("[useNervousSystem] Token refresh failed:", err);
-              // Don't pass null - just don't call callback with new token
-              // Ably will continue using the existing token
-            }
-          }
+          authUrl: "/api/ably/auth-general",
         });
         globalAblyInstance = ably;
 

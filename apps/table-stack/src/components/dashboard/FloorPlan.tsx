@@ -225,8 +225,8 @@ export default function FloorPlan({
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, delta, over } = event;
-    
-    if (over && ['vacant', 'occupied', 'dirty'].includes(over.id as string)) {
+
+    if (over &&['vacant', 'occupied', 'dirty'].includes(over.id as string)) {
       const newStatus = over.id as 'vacant' | 'occupied' | 'dirty';
       setTables((prev) =>
         prev.map((t) => (t.id === active.id ? { ...t, status: newStatus } : t))
@@ -247,6 +247,14 @@ export default function FloorPlan({
       );
     }
     setActiveTable(null);
+  }
+
+  if (!mounted) {
+    return (
+      <div className="w-full h-[600px] bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl flex items-center justify-center">
+        <p className="text-gray-400 font-medium">Loading floor plan...</p>
+      </div>
+    );
   }
 
   const handleUpdateDetails = async (e: React.FormEvent) => {

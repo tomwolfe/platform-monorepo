@@ -1,5 +1,4 @@
 import { ShoppingBag, Truck } from "lucide-react";
-import Link from "next/link";
 
 export default function Home() {
   return (
@@ -21,7 +20,7 @@ export default function Home() {
         </div>
 
         <div className="grid w-full max-w-2xl grid-cols-1 gap-6 md:grid-cols-2">
-          <Link
+          <a
             href="/customer"
             className="group flex flex-col gap-4 rounded-lg border border-neutral-200 bg-transparent p-6 text-left transition-colors hover:bg-neutral-100 dark:border-neutral-800 dark:hover:bg-neutral-900"
             aria-label="Navigate to the customer portal"
@@ -33,9 +32,9 @@ export default function Home() {
             <p className="text-neutral-600 dark:text-neutral-400">
               Order from local vendors and track in real-time.
             </p>
-          </Link>
+          </a>
 
-          <Link
+          <a
             href="/driver"
             className="group flex flex-col gap-4 rounded-lg border border-neutral-200 bg-transparent p-6 text-left transition-colors hover:bg-neutral-100 dark:border-neutral-800 dark:hover:bg-neutral-900"
             aria-label="Navigate to the driver portal"
@@ -47,7 +46,7 @@ export default function Home() {
             <p className="text-neutral-600 dark:text-neutral-400">
               Join the decentralized network and fulfill local orders.
             </p>
-          </Link>
+          </a>
         </div>
       </main>
     </div>

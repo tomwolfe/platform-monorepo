@@ -34,6 +34,11 @@ export function DataTablesClient({
   updateWaitlistStatus,
   deleteReservation,
 }: DataTablesClientProps) {
+  // Format dates using a fixed format to avoid hydration mismatch
+  const formatDate = (date: Date | string) => {
+    return new Date(date).toISOString().replace('T', ' ').slice(0, 19);
+  };
+
   return (
     <>
       <section className="mt-8 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -55,7 +60,7 @@ export function DataTablesClient({
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{w.guestName}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{w.partySize}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(w.createdAt!).toLocaleString()}
+                    {formatDate(w.createdAt!)}
                   </td>
                   <td className={`px-6 py-4 whitespace-nowrap text-sm font-semibold capitalize ${
                     w.status === 'notified' ? 'text-blue-600' : 'text-orange-600'
@@ -111,7 +116,7 @@ export function DataTablesClient({
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{res.guestName}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{res.partySize}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(res.startTime).toLocaleString()}
+                    {formatDate(res.startTime)}
                   </td>
                   <td className={`px-6 py-4 whitespace-nowrap text-sm font-semibold capitalize ${
                     res.status === 'confirmed' ? 'text-green-600' : 'text-red-600'

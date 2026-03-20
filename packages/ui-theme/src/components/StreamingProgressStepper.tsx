@@ -128,12 +128,6 @@ const StepItem: React.FC<StepItemProps> = React.memo(({
   isActive,
   showTraceId,
 }) => {
-  const [mounted, setMounted] = useState(false);
-
-  React.useEffect(() => {
-    setMounted(true);
-  }, []);
-
   const statusColors: Record<StepStatus, string> = {
     completed: "border-green-500 bg-green-50",
     in_progress: "border-blue-500 bg-blue-50",
@@ -181,7 +175,7 @@ const StepItem: React.FC<StepItemProps> = React.memo(({
           </p>
         )}
         <p className="text-xs text-gray-400 mt-1">
-          {mounted ? new Date(step.timestamp).toLocaleTimeString() : step.timestamp.slice(11, 19)}
+          {new Date(step.timestamp).toLocaleTimeString()}
         </p>
       </div>
     </div>
@@ -262,12 +256,6 @@ export const StreamingProgressStepper: React.FC<ProgressStepperProps> = ({
   onComplete,
   onError,
 }) => {
-  const [mounted, setMounted] = useState(false);
-
-  React.useEffect(() => {
-    setMounted(true);
-  }, []);
-
   // Use Optimistic UI for instant feedback (React 19)
   const [optimisticSteps, setOptimisticSteps] = useOptimistic(
     initialSteps.map((step, index) => ({
@@ -300,7 +288,7 @@ export const StreamingProgressStepper: React.FC<ProgressStepperProps> = ({
             status: update.status || "pending",
             message: update.message || "",
             // Use stable timestamp for new steps during hydration
-            timestamp: update.timestamp || (mounted ? new Date().toISOString() : "1970-01-01T00:00:00Z"),
+            timestamp: update.timestamp || new Date().toISOString(),
             traceId: update.traceId,
           } as StepState,
         ];

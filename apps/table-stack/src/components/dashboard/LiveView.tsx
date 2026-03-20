@@ -6,14 +6,9 @@ import { Bell, X } from 'lucide-react';
 
 export default function LiveView({ restaurantId }: { restaurantId: string }) {
   const [notification, setNotification] = useState<{ id: string; message: string } | null>(null);
-  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (!restaurantId || !mounted) return;
+    if (!restaurantId) return;
 
     const ably = new Ably.Realtime({ authUrl: '/api/ably/auth' });
     const channel = ably.channels.get(`merchant:${restaurantId}`);
@@ -40,9 +35,9 @@ export default function LiveView({ restaurantId }: { restaurantId: string }) {
       }
       ably.close();
     };
-  }, [restaurantId, mounted]);
+  }, [restaurantId]);
 
-  if (!mounted || !notification) return null;
+  if (!notification) return null;
 
   return (
     <div className="fixed bottom-4 right-4 z-[100]">

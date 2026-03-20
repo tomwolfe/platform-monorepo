@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Bell, UserCheck, Trash2 } from 'lucide-react';
 
 interface WaitlistItem {
@@ -34,12 +34,6 @@ export function DataTablesClient({
   updateWaitlistStatus,
   deleteReservation,
 }: DataTablesClientProps) {
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
   return (
     <>
       <section className="mt-8 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -61,7 +55,7 @@ export function DataTablesClient({
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{w.guestName}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{w.partySize}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {mounted ? new Date(w.createdAt!).toLocaleTimeString() : w.createdAt!.slice(11, 19)}
+                    {new Date(w.createdAt!).toLocaleString()}
                   </td>
                   <td className={`px-6 py-4 whitespace-nowrap text-sm font-semibold capitalize ${
                     w.status === 'notified' ? 'text-blue-600' : 'text-orange-600'
@@ -117,7 +111,7 @@ export function DataTablesClient({
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{res.guestName}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{res.partySize}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {mounted ? new Date(res.startTime).toLocaleString() : res.startTime.slice(0, 19).replace('T', ' ')}
+                    {new Date(res.startTime).toLocaleString()}
                   </td>
                   <td className={`px-6 py-4 whitespace-nowrap text-sm font-semibold capitalize ${
                     res.status === 'confirmed' ? 'text-green-600' : 'text-red-600'

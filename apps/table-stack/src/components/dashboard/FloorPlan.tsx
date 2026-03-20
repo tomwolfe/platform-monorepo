@@ -165,19 +165,14 @@ export default function FloorPlan({
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [editingTable, setEditingTable] = useState<RestaurantTable | null>(null);
   const [listMode, setListMode] = useState(false);
-  const [mounted, setMounted] = useState(false);
   const router = useRouter();
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   useEffect(() => {
     setTables(initialTables);
   }, [initialTables]);
 
   useEffect(() => {
-    if (!restaurantId || !mounted) return;
+    if (!restaurantId) return;
 
     const ably = new Ably.Realtime({ authUrl: '/api/ably/auth' });
     const channel = ably.channels.get(`restaurant:${restaurantId}`);
@@ -208,7 +203,7 @@ export default function FloorPlan({
       }
       ably.close();
     };
-  }, [restaurantId, mounted, router]);
+  }, [restaurantId, router]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -247,14 +242,6 @@ export default function FloorPlan({
       );
     }
     setActiveTable(null);
-  }
-
-  if (!mounted) {
-    return (
-      <div className="w-full h-[600px] bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl flex items-center justify-center">
-        <p className="text-gray-400 font-medium">Loading floor plan...</p>
-      </div>
-    );
   }
 
   const handleUpdateDetails = async (e: React.FormEvent) => {

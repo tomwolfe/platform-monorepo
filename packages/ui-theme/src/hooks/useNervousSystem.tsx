@@ -155,6 +155,7 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
     let channel: any = null;
     let ably: any = null;
     let subscription: any = null;
+    let failoverSubscription: any = null;
     let isMounted = true;
 
     const connectToAbly = async () => {
@@ -191,7 +192,8 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
               callback({ token: data.token });
             } catch (err) {
               console.error("[useNervousSystem] Token refresh failed:", err);
-              callback(null);
+              // Don't pass null - just don't call callback with new token
+              // Ably will continue using the existing token
             }
           }
         });
@@ -199,6 +201,23 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
 
         // Subscribe to nervous system updates
         channel = ably.channels.get("nervous-system:updates");
+
+        // Handle connection state changes to catch disconnections
+        const connectionStateListener = (stateChange: any) => {
+          if (!isMounted) return;
+          
+          if (stateChange.current === "closed" || stateChange.current === "failed") {
+            console.warn("[useNervousSystem] Connection closed:", stateChange.reason?.message || "Unknown reason");
+            nervousSystemStore.publishUpdate({
+              isConnected: false,
+              error: stateChange.reason?.message || "Connection lost",
+            });
+          } else if (stateChange.current === "connected") {
+            nervousSystemStore.publishUpdate({ isConnected: true, error: null });
+          }
+        };
+        
+        ably.connection.on(connectionStateListener);
 
         subscription = await channel.subscribe(
           "ExecutionStepUpdate",
@@ -235,7 +254,7 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
         );
 
         // Also listen for failover suggestions
-        const failoverSubscription = await channel.subscribe(
+        failoverSubscription = await channel.subscribe(
           "FailoverSuggestion",
           (message: any) => {
             if (!isMounted) return;
@@ -283,6 +302,16 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
 
     return () => {
       isMounted = false;
+      
+      // Clean up subscriptions first
+      if (failoverSubscription && channel) {
+        try {
+          channel.unsubscribe(failoverSubscription);
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+      
       if (subscription && channel) {
         try {
           channel.unsubscribe(subscription);
@@ -290,6 +319,18 @@ export function useNervousSystem(options: UseNervousSystemOptions = {}): Nervous
           // Ignore cleanup errors
         }
       }
+      
+      // Close Ably connection properly
+      if (ably) {
+        try {
+          ably.close();
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+      
+      // Clear global reference
+      globalAblyInstance = null;
     };
   }, [autoSubscribe]);
 

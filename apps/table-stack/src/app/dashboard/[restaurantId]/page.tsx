@@ -202,7 +202,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
                 <tr key={w.id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{w.guestName}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{w.partySize}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(w.createdAt!).toLocaleTimeString()}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500" suppressHydrationWarning>{new Date(w.createdAt!).toLocaleTimeString()}</td>
                   <td className={`px-6 py-4 whitespace-nowrap text-sm font-semibold capitalize ${
                     w.status === 'notified' ? 'text-blue-600' : 'text-orange-600'
                   }`}>
@@ -258,7 +258,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
                 <tr key={res.id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{res.guestName}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{res.partySize}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(res.startTime).toLocaleString()}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500" suppressHydrationWarning>{new Date(res.startTime).toLocaleString()}</td>
                   <td className={`px-6 py-4 whitespace-nowrap text-sm font-semibold capitalize ${
                     res.status === 'confirmed' ? 'text-green-600' : 'text-red-600'
                   }`}>

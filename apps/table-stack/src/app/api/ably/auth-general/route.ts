@@ -34,33 +34,23 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    if (!userId) {
-      return NextResponse.json(
-        { error: "Unauthorized - please log in" },
-        { status: 401 }
-      );
+    const clientId = userId || `anonymous-${Math.random().toString(36).substring(2, 9)}`;
+
+    const apiKey = process.env.ABLY_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json({ error: "ABLY_API_KEY is not configured" }, { status: 500 });
     }
 
-    // 3. Generate Ably signed token with restricted permissions
-    const ably = new Ably.Rest({
-      key: process.env.ABLY_API_KEY,
-    });
+    const ably = new Ably.Rest({ key: apiKey });
 
-    // Request a signed token (not just a token request)
-    // The client will use this signed token directly
-    const tokenDetails = await ably.auth.requestToken({
-      clientId: userId,
+    const tokenRequestData = await ably.auth.createTokenRequest({
+      clientId,
       capability: {
         "nervous-system:updates": ["subscribe"],
       },
     });
 
-    // 4. Return signed token for client to use
-    return NextResponse.json({
-      token: tokenDetails.token,
-      clientId: userId,
-      email: userEmail,
-    });
+    return NextResponse.json(tokenRequestData);
   } catch (error) {
     console.error("Ably auth error:", error);
     return NextResponse.json(

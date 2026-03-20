@@ -45,7 +45,7 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({ logs }) => {
                   )}
                 </div>
                 <div className="text-right flex flex-col items-end gap-1">
-                  <span className="text-xs text-slate-500 block">{new Date(log.timestamp).toLocaleString()}</span>
+                  <span className="text-xs text-slate-500 block" suppressHydrationWarning>{new Date(log.timestamp).toLocaleString()}</span>
                   <div className="flex gap-2 items-center">
                     {log.efficiency_flag === "LOW" && (
                       <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-red-500 text-white animate-pulse">
@@ -119,7 +119,7 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({ logs }) => {
                                 {step.tool_name.replace(/_/g, ' ')}
                                 {step.latency && <span className="ml-2 text-[10px] font-normal text-slate-400">({step.latency}ms)</span>}
                               </span>
-                              <span className="text-[10px] text-slate-400">{new Date(step.timestamp).toLocaleTimeString()}</span>
+                              <span className="text-[10px] text-slate-400" suppressHydrationWarning>{new Date(step.timestamp).toLocaleTimeString()}</span>
                             </div>
                             <div className="mt-1 space-y-1">
                               <div className="text-[11px] bg-slate-50 p-1.5 rounded border font-mono overflow-x-auto max-w-full">

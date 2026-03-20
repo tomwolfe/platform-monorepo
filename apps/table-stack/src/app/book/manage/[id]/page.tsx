@@ -51,11 +51,11 @@ export default async function ManageBookingPage(props: { params: Promise<{ id: s
           <div className="space-y-4">
             <div className="flex items-center gap-3 text-gray-700">
               <Calendar className="w-5 h-5 text-blue-600" />
-              <span>{format(new Date(reservation.startTime), "EEEE, MMMM do, yyyy")}</span>
+              <span suppressHydrationWarning>{format(new Date(reservation.startTime), "EEEE, MMMM do, yyyy")}</span>
             </div>
             <div className="flex items-center gap-3 text-gray-700">
               <Clock className="w-5 h-5 text-blue-600" />
-              <span>{format(new Date(reservation.startTime), "h:mm aa")}</span>
+              <span suppressHydrationWarning>{format(new Date(reservation.startTime), "h:mm aa")}</span>
             </div>
             <div className="flex items-center gap-3 text-gray-700">
               <Users className="w-5 h-5 text-blue-600" />

@@ -1,12 +1,28 @@
 /**
- * Web3 Utility Functions for OpenDeliver
+ * Web3 Transaction Verification Utility
  *
- * Helper functions for crypto payment processing and verification
+ * SINGLE SOURCE OF TRUTH for zero-trust verification of on-chain payments.
+ * Consolidates verification logic from apps/open-delivery and apps/table-stack.
+ *
+ * Features:
+ * - Supports both ETH (native) and ERC-20 (USDC, USDT) verification
+ * - For ERC-20: parses Transfer event logs (transaction.value is always 0)
+ * - For ETH: verifies transaction.value and optional order ID in tx data
+ * - Configurable confirmations, RPC URLs, and treasury addresses
+ * - Fail-closed: returns explicit error objects, never throws
  */
 
-import { createPublicClient, http, type Hash, type Address, parseEventLogs, type Log } from "viem";
+import {
+  createPublicClient,
+  http,
+  type Hash,
+  type Address,
+  parseEventLogs,
+  type Log,
+  hexToString,
+} from "viem";
 import { base, polygon, mainnet } from "viem/chains";
-import { ERC20_ABI } from "@repo/shared/utils/erc20-abi";
+import { ERC20_ABI } from "./erc20-abi";
 
 // ============================================================================
 // CONFIGURATION
@@ -18,7 +34,9 @@ const RPC_URLS = {
   ethereum: process.env.ETHEREUM_RPC_URL || "https://eth-mainnet.g.alchemy.com/v2/demo",
 };
 
-const TREASURY_ADDRESS = (process.env.NEXT_PUBLIC_TREASURY_WALLET_ADDRESS || "0x0000000000000000000000000000000000000000") as Address;
+const TREASURY_ADDRESS = (
+  process.env.NEXT_PUBLIC_TREASURY_WALLET_ADDRESS || "0x0000000000000000000000000000000000000000"
+) as Address;
 
 const MIN_CONFIRMATIONS = parseInt(process.env.NEXT_PUBLIC_MIN_CONFIRMATIONS || "3", 10);
 
@@ -40,21 +58,21 @@ export const TOKEN_DECIMALS: Record<string, number> = {
  */
 export function getPublicClient(chainId?: number) {
   const chain = chainId || base.id;
-  
+
   if (chain === polygon.id) {
     return createPublicClient({
       chain: polygon,
       transport: http(RPC_URLS.polygon),
     });
   }
-  
+
   if (chain === mainnet.id) {
     return createPublicClient({
       chain: mainnet,
       transport: http(RPC_URLS.ethereum),
     });
   }
-  
+
   // Default to Base
   return createPublicClient({
     chain: base,
@@ -85,21 +103,43 @@ export interface TransactionVerificationResult {
  *
  * This function performs zero-trust verification:
  * 1. Checks if transaction exists and was successful
- * 2. Verifies the recipient matches treasury address
+ * 2. Verifies the recipient matches treasury/restaurant address
  * 3. Confirms the value matches expected amount
  * 4. Waits for minimum confirmations
  * 5. CRITICAL: Verifies transaction data contains order ID (prevents spoofing)
- * 6. FIX: For ERC-20 tokens (USDC), parses Transfer event logs instead of tx.value
+ * 6. CRITICAL: For ERC-20 tokens (USDC), parses Transfer event logs instead of tx.value
+ *
+ * @param params - Verification parameters
+ * @param params.txHash - Transaction hash to verify
+ * @param params.expectedValue - Expected value in smallest units (Wei for ETH, atomic for USDC)
+ * @param params.expectedRecipient - Expected recipient address (treasury or restaurant)
+ * @param params.chainId - Chain ID (default: Base)
+ * @param params.orderId - Optional order/reservation ID to verify in transaction data
+ * @param params.paymentCurrency - 'ETH' or 'USDC' (affects verification logic)
+ * @param params.walletAddress - Sender's wallet address (for additional verification)
+ * @param params.minConfirmations - Override default minimum confirmations
+ * @returns Verification result with success status and optional receipt
  */
 export async function verifyTransaction(params: {
   txHash: Hash;
   expectedValue: bigint;
   expectedRecipient?: Address;
   chainId?: number;
-  orderId?: string; // Optional: order/reservation ID to verify in transaction data
-  paymentCurrency?: string; // 'ETH' or 'USDC' (affects verification logic)
+  orderId?: string;
+  paymentCurrency?: string;
+  walletAddress?: Address;
+  minConfirmations?: number;
 }): Promise<TransactionVerificationResult> {
-  const { txHash, expectedValue, expectedRecipient, chainId, orderId, paymentCurrency = 'ETH' } = params;
+  const {
+    txHash,
+    expectedValue,
+    expectedRecipient,
+    chainId,
+    orderId,
+    paymentCurrency = "ETH",
+    walletAddress,
+    minConfirmations = MIN_CONFIRMATIONS,
+  } = params;
 
   try {
     const client = getPublicClient(chainId);
@@ -115,7 +155,15 @@ export async function verifyTransaction(params: {
       };
     }
 
-    // Step 3: Verify recipient (if provided)
+    // Step 3: Verify sender matches wallet address (if provided)
+    if (walletAddress && receipt.from.toLowerCase() !== walletAddress.toLowerCase()) {
+      return {
+        success: false,
+        error: `Transaction sender mismatch. Expected: ${walletAddress}, Got: ${receipt.from}`,
+      };
+    }
+
+    // Step 4: Verify recipient (if provided)
     const recipient = expectedRecipient || TREASURY_ADDRESS;
     if (receipt.to && receipt.to.toLowerCase() !== recipient.toLowerCase()) {
       return {
@@ -124,45 +172,42 @@ export async function verifyTransaction(params: {
       };
     }
 
-    // Step 4: Get full transaction to verify value
+    // Step 5: Get full transaction to verify value
     const transaction = await client.getTransaction({ hash: txHash });
 
     // ============================================================================
-    // CRITICAL FIX: Handle ERC-20 (USDC) vs ETH verification differently
+    // CRITICAL: Handle ERC-20 (USDC) vs ETH verification differently
     // ============================================================================
-    
+
     let actualValue: bigint;
-    
-    if (paymentCurrency === 'USDC' || paymentCurrency === 'USDT') {
+
+    if (paymentCurrency === "USDC" || paymentCurrency === "USDT") {
       // For ERC-20 tokens, transaction.value is always 0
       // We need to parse the Transfer event logs to get the actual token amount
-      
+
       try {
         // Parse event logs to find Transfer events
         const transferLogs = parseEventLogs({
           logs: receipt.logs,
           abi: ERC20_ABI,
-          eventName: 'Transfer',
+          eventName: "Transfer",
         });
-        
+
         // Find the Transfer event matching our expected recipient
         const matchingTransfer = transferLogs.find((log: any) => {
           const args = log.args as { from?: Address; to?: Address; value?: bigint };
-          return (
-            args.to?.toLowerCase() === recipient.toLowerCase() &&
-            args.value !== undefined
-          );
+          return args.to?.toLowerCase() === recipient.toLowerCase() && args.value !== undefined;
         });
-        
+
         if (!matchingTransfer) {
           return {
             success: false,
             error: `No Transfer event found for recipient ${recipient}`,
           };
         }
-        
+
         actualValue = (matchingTransfer.args as { value: bigint }).value;
-        
+
         console.log(`[verifyTransaction] ERC-20 Transfer verified:`, {
           from: (matchingTransfer.args as any).from,
           to: (matchingTransfer.args as any).to,
@@ -171,7 +216,7 @@ export async function verifyTransaction(params: {
       } catch (parseError) {
         return {
           success: false,
-          error: `Failed to parse ERC-20 Transfer events: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`,
+          error: `Failed to parse ERC-20 Transfer events: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
         };
       }
     } else {
@@ -179,7 +224,7 @@ export async function verifyTransaction(params: {
       actualValue = transaction.value;
     }
 
-    // Verify the amount matches expected value
+    // Step 6: Verify the amount matches expected value
     if (actualValue !== expectedValue) {
       return {
         success: false,
@@ -187,18 +232,13 @@ export async function verifyTransaction(params: {
       };
     }
 
-    // Step 5: CRITICAL SECURITY FIX - Verify transaction data contains order ID
-    // This prevents attackers from reusing valid txHash for different orders
-    if (orderId) {
-      const { hexToString } = await import("viem");
-      
-      // Extract input data from transaction
+    // Step 7: CRITICAL SECURITY - Verify transaction data contains order ID (for ETH payments)
+    // For USDC transfers, the exact amount + recipient + sender verification is sufficient
+    if (orderId && paymentCurrency !== "USDC" && paymentCurrency !== "USDT") {
       const txInput = transaction.input || "0x";
-      
-      // For native ETH transfers, the order ID should be in the `data` field
-      // Convert hex back to string and check if it contains the order ID
-      try {
-        if (txInput !== "0x" && txInput.length > 2) {
+
+      if (txInput !== "0x" && txInput.length > 2) {
+        try {
           const decodedData = hexToString(txInput);
           if (decodedData !== orderId) {
             return {
@@ -206,23 +246,22 @@ export async function verifyTransaction(params: {
               error: `Transaction data mismatch. Expected order ID: ${orderId}, Got: ${decodedData}`,
             };
           }
+        } catch (decodeError) {
+          // If decoding fails, the data might be for a contract call (USDC transfer)
+          // For USDC transfers, we rely on the exact amount + recipient + sender verification
+          console.warn("Could not decode transaction data, likely USDC contract call");
         }
-      } catch (decodeError) {
-        // If decoding fails, the data might be for a contract call (USDC transfer)
-        // For USDC transfers, we rely on the exact amount + recipient + sender verification
-        // The order ID binding is less critical for USDC as the amount is exact
-        console.warn("Could not decode transaction data, likely USDC contract call");
       }
     }
 
-    // Step 6: Check confirmations
+    // Step 8: Check confirmations
     const currentBlock = await client.getBlockNumber();
     const confirmations = Number(currentBlock - receipt.blockNumber);
 
-    if (confirmations < MIN_CONFIRMATIONS) {
+    if (confirmations < minConfirmations) {
       return {
         success: false,
-        error: `Insufficient confirmations. Required: ${MIN_CONFIRMATIONS}, Current: ${confirmations}`,
+        error: `Insufficient confirmations. Required: ${minConfirmations}, Current: ${confirmations}`,
       };
     }
 
@@ -287,15 +326,15 @@ export function formatCryptoPrice(amount: string | bigint, tokenSymbol: string =
   const { formatUnits } = require("viem");
   const decimals = TOKEN_DECIMALS[tokenSymbol] || 6;
   const formatted = formatUnits(BigInt(amount), decimals);
-  
+
   if (tokenSymbol === "USDC" || tokenSymbol === "USDT") {
     return `$${parseFloat(formatted).toFixed(2)}`;
   }
-  
+
   if (tokenSymbol === "ETH") {
     return `${parseFloat(formatted).toFixed(6)} ETH`;
   }
-  
+
   return `${parseFloat(formatted).toFixed(4)} ${tokenSymbol}`;
 }
 
@@ -331,7 +370,7 @@ export function getPaymentStatusText(status: string): string {
 
 /**
  * Convert USD amount to token amount in smallest units
- * 
+ *
  * @param usdAmount - USD amount (e.g., 10.50)
  * @param tokenPrice - Token price in USD (e.g., 2000 for ETH)
  * @param decimals - Token decimals
@@ -397,7 +436,7 @@ export function createPaymentRequest(params: {
   chainId?: number;
 }): PaymentRequest {
   const { amount, chainId = base.id } = params;
-  
+
   return {
     to: TREASURY_ADDRESS,
     value: amount,

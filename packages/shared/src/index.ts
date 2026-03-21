@@ -101,5 +101,7 @@ export type {
 // Web3 / Crypto Payment Utilities
 // Note: ERC20_ABI is safe for client components
 // Note: crypto-price utilities are server-side only (use direct import)
+// Note: web3-verification is server-side only (use direct import)
 export * from './utils/erc20-abi';
 // export * from './utils/crypto-price'; // Server-side only - import directly
+// export * from './utils/web3-verification'; // Server-side only - import directly

@@ -9,6 +9,7 @@
     "./utils/geo": "./src/utils/geo.ts",
     "./utils/erc20-abi": "./src/utils/erc20-abi.ts",
     "./utils/crypto-price": "./src/utils/crypto-price.ts",
+    "./utils/web3-verification": "./src/utils/web3-verification.ts",
     "./tracing": "./src/tracing.ts",
     "./idempotency": "./src/idempotency.ts",
     "./clients": "./src/clients.ts"

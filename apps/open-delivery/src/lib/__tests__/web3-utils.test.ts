@@ -1,6 +1,6 @@
 /**
  * Web3 Utilities Unit Tests
- * 
+ *
  * Tests for crypto payment helper functions
  */
 
@@ -12,7 +12,7 @@ import {
   usdToCrypto,
   getPaymentStatusText,
   TOKEN_DECIMALS,
-} from "../web3-utils";
+} from "@repo/shared/utils/web3-verification";
 
 // Mock viem
 vi.mock("viem", () => ({

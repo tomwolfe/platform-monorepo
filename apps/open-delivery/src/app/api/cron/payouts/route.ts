@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, orders, orderItems, restaurants, drivers, eq, sql, and } from "@repo/database";
-import { createWalletClient, http, parseAbi, parseUnits, type Address } from 'viem';
+import { createWalletClient, createPublicClient, http, parseAbi, parseUnits, type Address } from 'viem';
 import { base } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 import { ERC20_ABI } from '@repo/shared/utils/erc20-abi';
@@ -72,6 +72,35 @@ export async function GET(req: NextRequest) {
     }
 
     console.log('[Payout Cron] Starting payout processing...');
+
+    // ============================================================================
+    // STATE RECOVERY: Reset orphaned 'processing' payouts back to 'pending'
+    // If cron crashed mid-payout, these would be stuck forever otherwise
+    // ============================================================================
+    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+    
+    const orphanedPayouts = await db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.payoutStatus, 'processing'),
+          sql`${orders.payoutProcessedAt} < ${fifteenMinutesAgo}`
+        )
+      )
+      .limit(50);
+
+    if (orphanedPayouts.length > 0) {
+      console.log(`[Payout Cron] Recovering ${orphanedPayouts.length} orphaned payouts stuck in 'processing'`);
+      
+      for (const order of orphanedPayouts) {
+        await db.update(orders)
+          .set({ payoutStatus: 'pending', payoutProcessedAt: null })
+          .where(eq(orders.id, order.id));
+      }
+      
+      console.log(`[Payout Cron] Successfully recovered ${orphanedPayouts.length} orphaned payouts`);
+    }
 
     // Query all delivered orders with pending payout status
     const deliveredOrders = await db
@@ -228,18 +257,24 @@ export async function GET(req: NextRequest) {
       try {
         // Create wallet client from private key
         const account = privateKeyToAccount(treasuryPrivateKey as `0x${string}`);
-        
+
         const walletClient = createWalletClient({
           account,
           chain: base,
           transport: http(),
         });
-        
+
+        // Create public client for waiting for transaction receipts
+        const publicClient = createPublicClient({
+          chain: base,
+          transport: http(),
+        });
+
         console.log(`[Payout Cron] Executing ${restaurantPayouts.length + driverPayouts.length} payouts from ${account.address}`);
-        
+
         // USDC contract address on Base
         const USDC_CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913') as Address;
-        
+
         // Execute restaurant payouts
         for (const payout of restaurantPayouts) {
           try {
@@ -247,7 +282,7 @@ export async function GET(req: NextRequest) {
             await db.update(orders)
               .set({ payoutStatus: 'processing' })
               .where(eq(orders.id, payout.orderId));
-            
+
             // Execute USDC transfer
             const hash = await walletClient.writeContract({
               address: USDC_CONTRACT_ADDRESS,
@@ -255,18 +290,33 @@ export async function GET(req: NextRequest) {
               functionName: 'transfer',
               args: [payout.address as Address, BigInt(payout.amount)],
             });
-            
-            console.log(`[Payout Cron] Restaurant payout executed: ${payout.orderId} -> ${payout.address} (${payout.amount} ${payout.currency}) tx: ${hash}`);
-            
-            // Mark as completed
-            await db.update(orders)
-              .set({ 
-                payoutStatus: 'completed',
-                payoutProcessedAt: new Date(),
-              })
-              .where(eq(orders.id, payout.orderId));
-            
-            executedCount++;
+
+            console.log(`[Payout Cron] Restaurant payout submitted: ${payout.orderId} -> ${payout.address} (${payout.amount} ${payout.currency}) tx: ${hash}`);
+
+            // CRITICAL FIX: Wait for transaction receipt to confirm on-chain success
+            // A hash only means the tx was submitted, NOT that it succeeded
+            const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+            if (receipt.status === 'success') {
+              console.log(`[Payout Cron] Restaurant payout confirmed on-chain: ${payout.orderId}`);
+              
+              // Only mark as completed if transaction actually succeeded
+              await db.update(orders)
+                .set({
+                  payoutStatus: 'completed',
+                  payoutProcessedAt: new Date(),
+                })
+                .where(eq(orders.id, payout.orderId));
+
+              executedCount++;
+            } else {
+              console.error(`[Payout Cron] Restaurant payout reverted on-chain: ${payout.orderId}`);
+              
+              // Mark as failed if transaction reverted
+              await db.update(orders)
+                .set({ payoutStatus: 'failed' })
+                .where(eq(orders.id, payout.orderId));
+            }
           } catch (error) {
             console.error(`[Payout Cron] Failed to execute restaurant payout ${payout.orderId}:`, error);
             // Mark as failed
@@ -275,7 +325,7 @@ export async function GET(req: NextRequest) {
               .where(eq(orders.id, payout.orderId));
           }
         }
-        
+
         // Execute driver payouts
         for (const payout of driverPayouts) {
           try {
@@ -283,7 +333,7 @@ export async function GET(req: NextRequest) {
             await db.update(orders)
               .set({ payoutStatus: 'processing' })
               .where(eq(orders.id, payout.orderId));
-            
+
             // Execute USDC transfer
             const hash = await walletClient.writeContract({
               address: USDC_CONTRACT_ADDRESS,
@@ -291,18 +341,32 @@ export async function GET(req: NextRequest) {
               functionName: 'transfer',
               args: [payout.address as Address, BigInt(payout.amount)],
             });
-            
-            console.log(`[Payout Cron] Driver payout executed: ${payout.orderId} -> ${payout.address} (${payout.amount} ${payout.currency}) tx: ${hash}`);
-            
-            // Mark as completed
-            await db.update(orders)
-              .set({ 
-                payoutStatus: 'completed',
-                payoutProcessedAt: new Date(),
-              })
-              .where(eq(orders.id, payout.orderId));
-            
-            executedCount++;
+
+            console.log(`[Payout Cron] Driver payout submitted: ${payout.orderId} -> ${payout.address} (${payout.amount} ${payout.currency}) tx: ${hash}`);
+
+            // CRITICAL FIX: Wait for transaction receipt to confirm on-chain success
+            const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+            if (receipt.status === 'success') {
+              console.log(`[Payout Cron] Driver payout confirmed on-chain: ${payout.orderId}`);
+              
+              // Only mark as completed if transaction actually succeeded
+              await db.update(orders)
+                .set({
+                  payoutStatus: 'completed',
+                  payoutProcessedAt: new Date(),
+                })
+                .where(eq(orders.id, payout.orderId));
+
+              executedCount++;
+            } else {
+              console.error(`[Payout Cron] Driver payout reverted on-chain: ${payout.orderId}`);
+              
+              // Mark as failed if transaction reverted
+              await db.update(orders)
+                .set({ payoutStatus: 'failed' })
+                .where(eq(orders.id, payout.orderId));
+            }
           } catch (error) {
             console.error(`[Payout Cron] Failed to execute driver payout ${payout.orderId}:`, error);
             // Mark as failed

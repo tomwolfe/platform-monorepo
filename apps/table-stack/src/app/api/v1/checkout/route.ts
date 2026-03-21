@@ -4,7 +4,7 @@ import { db, restaurantReservations, eq, restaurants } from "@repo/database";
 import { NotifyService } from '@/lib/notifications';
 import { createPublicClient, http, parseUnits } from 'viem';
 import { base } from 'viem/chains';
-import { isValidTxHash } from '@/lib/web3-utils';
+import { isValidTxHash } from '@repo/shared/utils/web3-verification';
 import { getCryptoPrices } from '@repo/shared/utils/crypto-price';
 
 export const runtime = 'edge';
@@ -101,8 +101,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Zero-Trust On-Chain Verification using shared utility
-    const { verifyTransaction } = await import('@/lib/web3-utils');
-    
+    const { verifyTransaction } = await import('@repo/shared/utils/web3-verification');
+
     const verificationResult = await verifyTransaction({
       txHash: txHash as `0x${string}`,
       expectedValue,

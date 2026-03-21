@@ -49,19 +49,17 @@ export function CryptoCheckout({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
 
-  // Fetch ETH price dynamically on mount
+  // Fetch ETH price dynamically on mount from server-side oracle
   useEffect(() => {
     async function fetchEthPrice() {
       try {
-        const response = await fetch(
-          "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
-        );
+        const response = await fetch("/api/prices");
         const data = await response.json();
-        if (data.ethereum?.usd) {
-          setEthPrice(data.ethereum.usd);
+        if (data.ETH) {
+          setEthPrice(data.ETH);
         }
       } catch (error) {
-        console.warn("Failed to fetch ETH price, using fallback");
+        console.warn("Failed to fetch ETH price from oracle", error);
       }
     }
     fetchEthPrice();

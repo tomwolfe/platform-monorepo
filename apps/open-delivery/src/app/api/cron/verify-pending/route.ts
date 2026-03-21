@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, orders, restaurants, eq, and, sql } from "@repo/database";
 import { RealtimeService } from "@repo/shared";
-import { verifyTransaction } from '@/lib/web3-utils';
+import { verifyTransaction } from '@repo/shared/utils/web3-verification';
 import { type Address } from 'viem';
 
 /**

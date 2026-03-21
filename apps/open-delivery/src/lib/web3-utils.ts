@@ -1,11 +1,12 @@
 /**
  * Web3 Utility Functions for OpenDeliver
- * 
+ *
  * Helper functions for crypto payment processing and verification
  */
 
-import { createPublicClient, http, type Hash, type Address } from "viem";
+import { createPublicClient, http, type Hash, type Address, parseEventLogs, type Log } from "viem";
 import { base, polygon, mainnet } from "viem/chains";
+import { ERC20_ABI } from "@repo/shared/utils/erc20-abi";
 
 // ============================================================================
 // CONFIGURATION
@@ -88,6 +89,7 @@ export interface TransactionVerificationResult {
  * 3. Confirms the value matches expected amount
  * 4. Waits for minimum confirmations
  * 5. CRITICAL: Verifies transaction data contains order ID (prevents spoofing)
+ * 6. FIX: For ERC-20 tokens (USDC), parses Transfer event logs instead of tx.value
  */
 export async function verifyTransaction(params: {
   txHash: Hash;
@@ -95,8 +97,9 @@ export async function verifyTransaction(params: {
   expectedRecipient?: Address;
   chainId?: number;
   orderId?: string; // Optional: order/reservation ID to verify in transaction data
+  paymentCurrency?: string; // 'ETH' or 'USDC' (affects verification logic)
 }): Promise<TransactionVerificationResult> {
-  const { txHash, expectedValue, expectedRecipient, chainId, orderId } = params;
+  const { txHash, expectedValue, expectedRecipient, chainId, orderId, paymentCurrency = 'ETH' } = params;
 
   try {
     const client = getPublicClient(chainId);
@@ -121,13 +124,66 @@ export async function verifyTransaction(params: {
       };
     }
 
-    // Step 4: Get full transaction to verify value (receipt doesn't have value property)
+    // Step 4: Get full transaction to verify value
     const transaction = await client.getTransaction({ hash: txHash });
 
-    if (transaction.value !== expectedValue) {
+    // ============================================================================
+    // CRITICAL FIX: Handle ERC-20 (USDC) vs ETH verification differently
+    // ============================================================================
+    
+    let actualValue: bigint;
+    
+    if (paymentCurrency === 'USDC' || paymentCurrency === 'USDT') {
+      // For ERC-20 tokens, transaction.value is always 0
+      // We need to parse the Transfer event logs to get the actual token amount
+      
+      try {
+        // Parse event logs to find Transfer events
+        const transferLogs = parseEventLogs({
+          logs: receipt.logs,
+          abi: ERC20_ABI,
+          eventName: 'Transfer',
+        });
+        
+        // Find the Transfer event matching our expected recipient
+        const matchingTransfer = transferLogs.find((log: any) => {
+          const args = log.args as { from?: Address; to?: Address; value?: bigint };
+          return (
+            args.to?.toLowerCase() === recipient.toLowerCase() &&
+            args.value !== undefined
+          );
+        });
+        
+        if (!matchingTransfer) {
+          return {
+            success: false,
+            error: `No Transfer event found for recipient ${recipient}`,
+          };
+        }
+        
+        actualValue = (matchingTransfer.args as { value: bigint }).value;
+        
+        console.log(`[verifyTransaction] ERC-20 Transfer verified:`, {
+          from: (matchingTransfer.args as any).from,
+          to: (matchingTransfer.args as any).to,
+          value: actualValue.toString(),
+        });
+      } catch (parseError) {
+        return {
+          success: false,
+          error: `Failed to parse ERC-20 Transfer events: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`,
+        };
+      }
+    } else {
+      // For native ETH, use transaction.value directly
+      actualValue = transaction.value;
+    }
+
+    // Verify the amount matches expected value
+    if (actualValue !== expectedValue) {
       return {
         success: false,
-        error: `Transaction value mismatch. Expected: ${expectedValue}, Got: ${transaction.value}`,
+        error: `Transaction value mismatch. Expected: ${expectedValue}, Got: ${actualValue}`,
       };
     }
 
@@ -178,7 +234,7 @@ export async function verifyTransaction(params: {
         confirmations,
         from: receipt.from,
         to: receipt.to,
-        value: transaction.value,
+        value: actualValue,
       },
     };
   } catch (error) {

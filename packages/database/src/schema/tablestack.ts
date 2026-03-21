@@ -286,6 +286,9 @@ export const orders = pgTable('orders', {
   deliveredAt: timestamp('delivered_at'),
   cancelledAt: timestamp('cancelled_at'),
   cancellationReason: text('cancellation_reason'),
+  // Payout tracking (to prevent double-spending)
+  payoutStatus: text('payout_status').default('pending'), // pending, processing, completed, failed
+  payoutProcessedAt: timestamp('payout_processed_at'),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => {
@@ -295,6 +298,7 @@ export const orders = pgTable('orders', {
     storeIdIdx: index('orders_store_id_idx').on(table.storeId),
     statusIdx: index('orders_status_idx').on(table.status),
     paymentTxHashIdx: uniqueIndex('orders_payment_tx_hash_idx').on(table.paymentTxHash),
+    payoutStatusIdx: index('orders_payout_status_idx').on(table.payoutStatus),
   };
 });
 

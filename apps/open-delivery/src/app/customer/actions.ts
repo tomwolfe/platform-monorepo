@@ -5,8 +5,9 @@ import { currentUser } from "@clerk/nextjs/server";
 import { RealtimeService } from "@repo/shared";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
-import { createPublicClient, http, type Hash, type Address } from "viem";
+import { createPublicClient, http, type Hash, type Address, parseUnits, formatUnits } from "viem";
 import { base } from "viem/chains";
+import { getCryptoPrices } from "@repo/shared/utils/crypto-price";
 
 export interface Vendor {
   id: string;
@@ -171,30 +172,41 @@ export async function placeRealOrder(
   }
 
   const orderId = randomUUID();
-  
+
   // Convert fiat amounts to crypto smallest units (Wei for ETH, atomic for USDC)
-  // Default to USDC with 6 decimals if no currency specified
+  // Fetch live ETH price from oracle for accurate conversion
   const paymentCurrency = paymentParams?.paymentCurrency || "USDC";
-  const decimals = paymentCurrency === "ETH" ? 18 : 6;
-  
-  // Calculate totals in fiat first
   const subtotalFiat = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const tipFiat = Math.max(0, tipAmount);
   const totalFiat = subtotalFiat + tipFiat;
-  
-  // Convert to crypto smallest units (simplified - in production, use oracle price)
-  // For now, we assume 1 USD = 1 USDC (6 decimals) or use ETH price oracle
-  const subtotalCrypto = paymentCurrency === "USDC" 
-    ? (subtotalFiat * 1000000).toString() // USDC: 6 decimals
-    : "0"; // ETH would require price oracle
-  
-  const tipCrypto = paymentCurrency === "USDC"
-    ? (tipFiat * 1000000).toString()
-    : "0";
-  
-  const totalCrypto = paymentCurrency === "USDC"
-    ? (totalFiat * 1000000).toString()
-    : "0";
+
+  let subtotalCrypto: string;
+  let tipCrypto: string;
+  let totalCrypto: string;
+
+  if (paymentCurrency === "ETH") {
+    // Fetch live ETH price from CoinGecko (cached in Redis)
+    const { ETH: ethPriceUsd } = await getCryptoPrices();
+    
+    if (ethPriceUsd <= 0) {
+      throw new Error("Failed to fetch ETH price from oracle");
+    }
+
+    // Convert USD to ETH: ETH amount = USD / price
+    const subtotalEth = subtotalFiat / ethPriceUsd;
+    const tipEth = tipFiat / ethPriceUsd;
+    const totalEth = totalFiat / ethPriceUsd;
+
+    // Convert to Wei (18 decimals)
+    subtotalCrypto = parseUnits(subtotalEth.toFixed(18), 18).toString();
+    tipCrypto = parseUnits(tipEth.toFixed(18), 18).toString();
+    totalCrypto = parseUnits(totalEth.toFixed(18), 18).toString();
+  } else {
+    // USDC: 6 decimals, assume 1 USD = 1 USDC
+    subtotalCrypto = parseUnits(subtotalFiat.toFixed(6), 6).toString();
+    tipCrypto = parseUnits(tipFiat.toFixed(6), 6).toString();
+    totalCrypto = parseUnits(totalFiat.toFixed(6), 6).toString();
+  }
 
   // ============================================================================
   // ZERO-TRUST: Verify on-chain transaction BEFORE inserting order
@@ -218,6 +230,7 @@ export async function placeRealOrder(
       walletAddress: paymentParams.walletAddress as Address,
       chainId: paymentParams.chainId,
       expectedRecipient: paymentParams.restaurantWalletAddress as Address | undefined,
+      paymentCurrency,
     });
     
     if (!verificationResult.success) {
@@ -266,7 +279,7 @@ export async function placeRealOrder(
         id: orderId,
         userId: userRecord?.id,
         storeId: vendorId as any,
-        status: "pending",
+        status: "pending_verification", // Intermediate state: payment verified, awaiting driver dispatch
         subtotal: subtotalCrypto as CryptoAmount,
         tip: tipCrypto as CryptoAmount,
         total: totalCrypto as CryptoAmount,
@@ -342,6 +355,7 @@ async function verifyOnChainTransaction(params: {
   walletAddress: Address;
   chainId?: number;
   expectedRecipient?: Address; // Optional: verify recipient (for direct-to-restaurant payments)
+  paymentCurrency?: string; // 'ETH' or 'USDC' (affects verification logic)
 }): Promise<{
   success: boolean;
   error?: string;
@@ -354,20 +368,20 @@ async function verifyOnChainTransaction(params: {
     value: bigint;
   };
 }> {
-  const { txHash, expectedValue, walletAddress, chainId, expectedRecipient } = params;
+  const { txHash, expectedValue, walletAddress, chainId, expectedRecipient, paymentCurrency = 'ETH' } = params;
   
   try {
     // Get RPC URL from environment or use default
     const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
-    
+
     const client = createPublicClient({
       transport: http(rpcUrl),
       chain: base,
     });
-    
+
     // Step 1: Get transaction receipt
     const receipt = await client.getTransactionReceipt({ hash: txHash });
-    
+
     // Step 2: Check transaction status
     if (receipt.status !== "success") {
       return {
@@ -375,7 +389,7 @@ async function verifyOnChainTransaction(params: {
         error: `Transaction failed with status: ${receipt.status}`,
       };
     }
-    
+
     // Step 3: Verify sender matches wallet address
     if (receipt.from.toLowerCase() !== walletAddress.toLowerCase()) {
       return {
@@ -383,15 +397,72 @@ async function verifyOnChainTransaction(params: {
         error: `Transaction sender mismatch. Expected: ${walletAddress}, Got: ${receipt.from}`,
       };
     }
-    
+
     // Step 4: Get full transaction to verify value
     const transaction = await client.getTransaction({ hash: txHash });
+
+    // ============================================================================
+    // CRITICAL FIX: Handle ERC-20 (USDC) vs ETH verification differently
+    // ============================================================================
     
+    let actualValue: bigint;
+    
+    if (paymentCurrency === 'USDC' || paymentCurrency === 'USDT') {
+      // For ERC-20 tokens, transaction.value is always 0
+      // We need to parse the Transfer event logs to get the actual token amount
+      const { parseEventLogs } = await import("viem");
+      const { ERC20_ABI } = await import("@repo/shared/utils/erc20-abi");
+      
+      try {
+        // Parse event logs to find Transfer events
+        const transferLogs = parseEventLogs({
+          logs: receipt.logs,
+          abi: ERC20_ABI,
+          eventName: 'Transfer',
+        });
+        
+        // Find the Transfer event matching our expected recipient
+        const treasuryAddress = (process.env.NEXT_PUBLIC_TREASURY_WALLET_ADDRESS || "").toLowerCase() as Address;
+        const expectedTo = expectedRecipient ? expectedRecipient.toLowerCase() : treasuryAddress;
+        
+        const matchingTransfer = transferLogs.find((log: any) => {
+          const args = log.args as { from?: Address; to?: Address; value?: bigint };
+          return (
+            args.to?.toLowerCase() === expectedTo &&
+            args.value !== undefined
+          );
+        });
+        
+        if (!matchingTransfer) {
+          return {
+            success: false,
+            error: `No Transfer event found for recipient ${expectedTo || 'treasury'}`,
+          };
+        }
+        
+        actualValue = (matchingTransfer.args as { value: bigint }).value;
+        
+        console.log(`[verifyOnChainTransaction] ERC-20 Transfer verified:`, {
+          from: (matchingTransfer.args as any).from,
+          to: (matchingTransfer.args as any).to,
+          value: actualValue.toString(),
+        });
+      } catch (parseError) {
+        return {
+          success: false,
+          error: `Failed to parse ERC-20 Transfer events: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`,
+        };
+      }
+    } else {
+      // For native ETH, use transaction.value directly
+      actualValue = transaction.value;
+    }
+
     // Verify transaction value matches expected amount
-    if (transaction.value !== expectedValue) {
+    if (actualValue !== expectedValue) {
       return {
         success: false,
-        error: `Transaction value mismatch. Expected: ${expectedValue}, Got: ${transaction.value}`,
+        error: `Transaction value mismatch. Expected: ${expectedValue}, Got: ${actualValue}`,
       };
     }
     
@@ -426,7 +497,7 @@ async function verifyOnChainTransaction(params: {
         confirmations,
         from: receipt.from,
         to: transaction.to,
-        value: transaction.value,
+        value: actualValue,
       },
     };
   } catch (error) {

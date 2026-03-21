@@ -1,20 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, orders, orderItems, restaurants, drivers, eq, sql, and } from "@repo/database";
+import { createWalletClient, http, parseAbi, parseUnits, type Address } from 'viem';
+import { base } from 'viem/chains';
+import { privateKeyToAccount } from 'viem/accounts';
+import { ERC20_ABI } from '@repo/shared/utils/erc20-abi';
 
 /**
  * Payout Ledger Cron Endpoint
  *
  * SECURE PAYOUT DISTRIBUTION FOR OPEN-DELIVERY
- * 
+ *
  * Problem Solved:
  * - Previously, tips were sent directly to restaurant wallets (tip theft)
  * - Now all payments go to treasury, and this cron generates payout instructions
- * 
+ *
  * What it does:
  * 1. Queries all delivered orders with pending payout status
  * 2. Calculates split: restaurant (subtotal), driver (tip + base pay), platform (fee)
- * 3. Generates structured JSON payload for batch payment execution
- * 4. Marks orders as "processing" to prevent duplicate payouts
+ * 3. EXECUTES batch payment execution via treasury wallet
+ * 4. Marks orders as "completed" to prevent duplicate payouts
  *
  * Security:
  * - Requires CRON_SECRET header for authentication
@@ -34,7 +38,8 @@ import { db, orders, orderItems, restaurants, drivers, eq, sql, and } from "@rep
  *     drivers: [{ address: string, amount: string, orderId: string }],
  *     platform: { totalFees: string }
  *   },
- *   processedCount: number
+ *   processedCount: number,
+ *   executedCount: number
  * }
  */
 
@@ -69,8 +74,6 @@ export async function GET(req: NextRequest) {
     console.log('[Payout Cron] Starting payout processing...');
 
     // Query all delivered orders with pending payout status
-    // We track payout status via a combination of deliveredAt and a custom field
-    // Since the schema doesn't have payout_status, we'll use deliveredAt + paymentTxHash
     const deliveredOrders = await db
       .select({
         id: orders.id,
@@ -83,6 +86,7 @@ export async function GET(req: NextRequest) {
         storeId: orders.storeId,
         driverId: orders.driverId,
         deliveredAt: orders.deliveredAt,
+        payoutStatus: orders.payoutStatus,
         restaurant: {
           id: restaurants.id,
           name: restaurants.name,
@@ -101,9 +105,7 @@ export async function GET(req: NextRequest) {
       .where(
         and(
           eq(orders.status, 'delivered'),
-          // Only process orders that have been delivered
-          // and have a payment transaction hash
-          // In production, add a dedicated payout_status column
+          eq(orders.payoutStatus, 'pending'), // Only process pending payouts
         )
       )
       .limit(100); // Process up to 100 orders per run
@@ -214,14 +216,114 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // In production, you would:
-    // 1. Update orders to mark them as "payout_processing"
-    // 2. Store the payout ledger in a dedicated table
-    // 3. Trigger batch payment execution via Safe (Gnosis) multisig or automated script
+    // ============================================================================
+    // EXECUTE PAYOUTS
+    // Actually send the crypto payments to restaurants and drivers
+    // ============================================================================
+    
+    let executedCount = 0;
+    const treasuryPrivateKey = process.env.TREASURY_PRIVATE_KEY;
+    
+    if (treasuryPrivateKey && restaurantPayouts.length + driverPayouts.length > 0) {
+      try {
+        // Create wallet client from private key
+        const account = privateKeyToAccount(treasuryPrivateKey as `0x${string}`);
+        
+        const walletClient = createWalletClient({
+          account,
+          chain: base,
+          transport: http(),
+        });
+        
+        console.log(`[Payout Cron] Executing ${restaurantPayouts.length + driverPayouts.length} payouts from ${account.address}`);
+        
+        // USDC contract address on Base
+        const USDC_CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913') as Address;
+        
+        // Execute restaurant payouts
+        for (const payout of restaurantPayouts) {
+          try {
+            // Mark as processing first (idempotency)
+            await db.update(orders)
+              .set({ payoutStatus: 'processing' })
+              .where(eq(orders.id, payout.orderId));
+            
+            // Execute USDC transfer
+            const hash = await walletClient.writeContract({
+              address: USDC_CONTRACT_ADDRESS,
+              abi: ERC20_ABI,
+              functionName: 'transfer',
+              args: [payout.address as Address, BigInt(payout.amount)],
+            });
+            
+            console.log(`[Payout Cron] Restaurant payout executed: ${payout.orderId} -> ${payout.address} (${payout.amount} ${payout.currency}) tx: ${hash}`);
+            
+            // Mark as completed
+            await db.update(orders)
+              .set({ 
+                payoutStatus: 'completed',
+                payoutProcessedAt: new Date(),
+              })
+              .where(eq(orders.id, payout.orderId));
+            
+            executedCount++;
+          } catch (error) {
+            console.error(`[Payout Cron] Failed to execute restaurant payout ${payout.orderId}:`, error);
+            // Mark as failed
+            await db.update(orders)
+              .set({ payoutStatus: 'failed' })
+              .where(eq(orders.id, payout.orderId));
+          }
+        }
+        
+        // Execute driver payouts
+        for (const payout of driverPayouts) {
+          try {
+            // Mark as processing first (idempotency)
+            await db.update(orders)
+              .set({ payoutStatus: 'processing' })
+              .where(eq(orders.id, payout.orderId));
+            
+            // Execute USDC transfer
+            const hash = await walletClient.writeContract({
+              address: USDC_CONTRACT_ADDRESS,
+              abi: ERC20_ABI,
+              functionName: 'transfer',
+              args: [payout.address as Address, BigInt(payout.amount)],
+            });
+            
+            console.log(`[Payout Cron] Driver payout executed: ${payout.orderId} -> ${payout.address} (${payout.amount} ${payout.currency}) tx: ${hash}`);
+            
+            // Mark as completed
+            await db.update(orders)
+              .set({ 
+                payoutStatus: 'completed',
+                payoutProcessedAt: new Date(),
+              })
+              .where(eq(orders.id, payout.orderId));
+            
+            executedCount++;
+          } catch (error) {
+            console.error(`[Payout Cron] Failed to execute driver payout ${payout.orderId}:`, error);
+            // Mark as failed
+            await db.update(orders)
+              .set({ payoutStatus: 'failed' })
+              .where(eq(orders.id, payout.orderId));
+          }
+        }
+        
+        console.log(`[Payout Cron] Successfully executed ${executedCount} payouts`);
+      } catch (error) {
+        console.error('[Payout Cron] Critical error during payout execution:', error);
+      }
+    } else if (!treasuryPrivateKey) {
+      console.warn('[Payout Cron] TREASURY_PRIVATE_KEY not set - payouts calculated but NOT executed');
+      console.warn('[Payout Cron] Set TREASURY_PRIVATE_KEY in environment to enable automatic payouts');
+    }
 
     const result = {
       success: true,
-      message: `Processed ${restaurantPayouts.length + driverPayouts.length} payouts`,
+      message: `Processed ${restaurantPayouts.length + driverPayouts.length} payouts, executed ${executedCount}`,
       payouts: {
         restaurants: restaurantPayouts,
         drivers: driverPayouts,
@@ -231,6 +333,7 @@ export async function GET(req: NextRequest) {
         },
       },
       processedCount: restaurantPayouts.length + driverPayouts.length,
+      executedCount,
       timestamp: new Date().toISOString(),
       // Metadata for batch payment execution
       batchMetadata: {

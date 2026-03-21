@@ -12,12 +12,18 @@ export async function createReservation(data: {
   partySize: number;
   startTime: string;
   endTime: string;
+  depositAmount?: number;
+  paymentTxHash?: string;
 }) {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  
+
   if (!uuidRegex.test(data.restaurantId) || !uuidRegex.test(data.tableId)) {
     throw new Error("Invalid restaurant or table ID");
   }
+
+  // If deposit is required, mark as pending until payment is verified
+  const requiresDeposit = data.depositAmount && data.depositAmount > 0;
+  const isVerified = !requiresDeposit || !!data.paymentTxHash;
 
   const [reservation] = await db.insert(restaurantReservations).values({
     restaurantId: data.restaurantId,
@@ -28,7 +34,9 @@ export async function createReservation(data: {
     startTime: new Date(data.startTime),
     endTime: new Date(data.endTime),
     status: 'confirmed',
-    isVerified: true, // Auto-verify for this demo
+    isVerified: isVerified,
+    depositAmount: data.depositAmount || 0,
+    paymentTxHash: data.paymentTxHash,
   }).returning();
 
   const restaurant = await db.query.restaurants.findFirst({

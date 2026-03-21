@@ -97,6 +97,44 @@ export async function getMenu(restaurantId: string): Promise<MenuItem[]> {
 }
 
 /**
+ * Get Restaurant Wallet Address
+ *
+ * Fetches the crypto wallet address for a restaurant to enable direct payments.
+ */
+export async function getRestaurantWallet(restaurantId: string): Promise<{
+  success: boolean;
+  walletAddress?: string | null;
+  error?: string;
+}> {
+  try {
+    const restaurant = await db.query.restaurants.findFirst({
+      where: eq(restaurants.id, restaurantId),
+      columns: {
+        walletAddress: true,
+      },
+    });
+
+    if (!restaurant) {
+      return {
+        success: false,
+        error: "Restaurant not found",
+      };
+    }
+
+    return {
+      success: true,
+      walletAddress: restaurant.walletAddress,
+    };
+  } catch (error) {
+    console.error("Failed to fetch restaurant wallet:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to fetch wallet",
+    };
+  }
+}
+
+/**
  * Place a real order with crypto payment verification
  * 
  * ZERO-TRUST ARCHITECTURE:
@@ -115,6 +153,7 @@ export async function placeRealOrder(
     walletAddress: string; // User's wallet address
     paymentCurrency?: string; // Token symbol (USDC, ETH, etc.)
     chainId?: number; // Blockchain chain ID (default: Base)
+    restaurantWalletAddress?: string; // Direct payment to restaurant wallet
   }
 ) {
   const user = await currentUser();
@@ -178,6 +217,7 @@ export async function placeRealOrder(
       expectedValue: BigInt(totalCrypto),
       walletAddress: paymentParams.walletAddress as Address,
       chainId: paymentParams.chainId,
+      expectedRecipient: paymentParams.restaurantWalletAddress as Address | undefined,
     });
     
     if (!verificationResult.success) {
@@ -301,6 +341,7 @@ async function verifyOnChainTransaction(params: {
   expectedValue: bigint;
   walletAddress: Address;
   chainId?: number;
+  expectedRecipient?: Address; // Optional: verify recipient (for direct-to-restaurant payments)
 }): Promise<{
   success: boolean;
   error?: string;
@@ -313,7 +354,7 @@ async function verifyOnChainTransaction(params: {
     value: bigint;
   };
 }> {
-  const { txHash, expectedValue, walletAddress, chainId } = params;
+  const { txHash, expectedValue, walletAddress, chainId, expectedRecipient } = params;
   
   try {
     // Get RPC URL from environment or use default
@@ -366,12 +407,14 @@ async function verifyOnChainTransaction(params: {
       };
     }
     
-    // Step 6: Verify recipient is treasury address
+    // Step 6: Verify recipient (support direct-to-restaurant or treasury)
     const treasuryAddress = (process.env.NEXT_PUBLIC_TREASURY_WALLET_ADDRESS || "").toLowerCase() as Address;
-    if (treasuryAddress && transaction.to && transaction.to.toLowerCase() !== treasuryAddress) {
+    const expectedTo = expectedRecipient ? expectedRecipient.toLowerCase() : treasuryAddress;
+    
+    if (expectedTo && transaction.to && transaction.to.toLowerCase() !== expectedTo) {
       return {
         success: false,
-        error: `Transaction recipient mismatch. Expected treasury: ${treasuryAddress}, Got: ${transaction.to}`,
+        error: `Transaction recipient mismatch. Expected: ${expectedTo || 'treasury'}, Got: ${transaction.to}`,
       };
     }
     

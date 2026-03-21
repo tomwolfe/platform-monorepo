@@ -4,65 +4,54 @@ import { useState, useEffect } from "react";
 import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useBalance } from "wagmi";
 import { parseUnits, type Address } from "viem";
 import { base } from "viem/chains";
-import { Loader2, CheckCircle, AlertCircle, ArrowRight, Coins, Shield, Wallet } from "lucide-react";
+import { Loader2, CheckCircle, AlertCircle, ArrowRight, Coins, Shield, DollarSign } from "lucide-react";
 import { useWeb3 } from "./Web3Provider";
 
-interface CartItem {
-  id: string;
-  name: string;
-  price: number;
-  quantity: number;
-}
-
 interface CryptoCheckoutProps {
-  cart: CartItem[];
-  tip: number;
-  deliveryAddress: string;
-  selectedVendor: { id: string; name: string } | null;
-  restaurantWalletAddress?: string | null; // Optional: direct payment to restaurant
-  onCheckoutComplete: (result: { orderId: string; txHash?: string }) => void;
+  reservationId: string;
+  depositAmount: number; // in USD
+  restaurantWalletAddress: string;
+  guestName: string;
+  onCheckoutComplete: (result: { success: boolean; txHash?: string }) => void;
   onError: (error: string) => void;
   onCancel: () => void;
 }
 
 /**
- * CryptoCheckout Component
- * 
- * Web3-native checkout flow:
- * 1. Display order summary with crypto amounts
- * 2. Send transaction to treasury wallet
+ * CryptoCheckout Component for Restaurant Reservations
+ *
+ * Web3-native checkout flow for reservation deposits:
+ * 1. Display deposit amount in USD and crypto
+ * 2. Send transaction directly to restaurant wallet
  * 3. Wait for confirmation
- * 4. Call backend to place order with txHash
+ * 4. Call backend to verify and confirm reservation
  */
 export function CryptoCheckout({
-  cart,
-  tip,
-  deliveryAddress,
-  selectedVendor,
+  reservationId,
+  depositAmount,
   restaurantWalletAddress,
+  guestName,
   onCheckoutComplete,
   onError,
   onCancel,
 }: CryptoCheckoutProps) {
   const { address, chain } = useAccount();
-  const { treasuryAddress, defaultChainId } = useWeb3();
+  const { defaultChainId } = useWeb3();
   const { data: balance } = useBalance({
     address,
     chainId: chain?.id || defaultChainId,
   });
 
-  // Calculate totals
-  const subtotalFiat = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const totalFiat = subtotalFiat + tip;
-
-  // Convert to USDC (6 decimals) - assuming 1 USDC = 1 USD
-  const totalUSDC = (totalFiat * 1_000_000).toString();
-  const subtotalUSDC = (subtotalFiat * 1_000_000).toString();
-  const tipUSDC = (tip * 1_000_000).toString();
+  // Convert USD to ETH (assuming 1 ETH = ~$2500 for display, actual rate from oracle)
+  // In production, use a price oracle or API
+  const ethPriceUsd = 2500; // Placeholder
+  const depositEth = depositAmount / ethPriceUsd;
+  const depositWei = parseUnits(depositEth.toFixed(18), 18);
 
   // Transaction state
   const [step, setStep] = useState<"review" | "sending" | "confirming" | "completed" | "error">("review");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isVerifying, setIsVerifying] = useState(false);
 
   // Send transaction hook
   const {
@@ -79,48 +68,61 @@ export function CryptoCheckout({
     error: receiptError,
   } = useWaitForTransactionReceipt({
     hash,
-    confirmations: 3, // Wait for 3 confirmations on Base
+    confirmations: 1, // 1 confirmation for reservations
     timeout: 120000, // 2 minute timeout
   });
 
   // Handle send transaction
   useEffect(() => {
-    if (step === "sending" && address) {
+    if (step === "sending" && address && restaurantWalletAddress) {
       try {
-        // Use restaurant wallet if available, otherwise fallback to treasury
-        const recipient = restaurantWalletAddress || treasuryAddress;
-        
-        if (!recipient) {
-          throw new Error("No payment recipient configured");
-        }
-
-        // For USDC transfers, we need to use contract interaction
-        // For simplicity, we're using native ETH transfer here
-        // In production, you'd use: writeContract({ abi: ERC20_ABI, functionName: 'transfer', args: [recipient, amount] })
-
         sendTransaction({
-          to: recipient as Address,
-          value: parseUnits(totalFiat.toFixed(6), 18), // Convert to Wei (18 decimals for ETH)
+          to: restaurantWalletAddress as Address,
+          value: depositWei,
           chainId: defaultChainId,
         });
       } catch (err) {
-        setErrorMessage(err instanceof Error ? err.message : "Failed to send transaction");
+        const errorMsg = err instanceof Error ? err.message : "Failed to send transaction";
+        setErrorMessage(errorMsg);
         setStep("error");
       }
     }
-  }, [step, address, restaurantWalletAddress, treasuryAddress, totalFiat, sendTransaction, defaultChainId]);
+  }, [step, address, restaurantWalletAddress, depositWei, sendTransaction, defaultChainId]);
 
-  // Handle confirmation
+  // Handle confirmation and backend verification
   useEffect(() => {
     if (isConfirmed && receipt) {
-      setStep("completed");
-      // Notify parent component with txHash
-      onCheckoutComplete({
-        orderId: receipt.transactionHash,
-        txHash: receipt.transactionHash,
-      });
+      setStep("confirming");
+      setIsVerifying(true);
+
+      // Call backend to verify transaction
+      fetch("/api/v1/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          txHash: receipt.transactionHash,
+          reservationId,
+          expectedAmount: depositWei.toString(),
+        }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          setIsVerifying(false);
+          if (data.success) {
+            setStep("completed");
+            onCheckoutComplete({ success: true, txHash: receipt.transactionHash });
+          } else {
+            setErrorMessage(data.message || "Verification failed");
+            setStep("error");
+          }
+        })
+        .catch((err) => {
+          setIsVerifying(false);
+          setErrorMessage(err.message || "Network error");
+          setStep("error");
+        });
     }
-  }, [isConfirmed, receipt, onCheckoutComplete]);
+  }, [isConfirmed, receipt, reservationId, depositWei, onCheckoutComplete]);
 
   // Handle errors
   useEffect(() => {
@@ -136,13 +138,8 @@ export function CryptoCheckout({
   const hasSufficientBalance = balance && (() => {
     const { formatUnits } = require("viem");
     const balanceEth = parseFloat(formatUnits(balance.value, balance.decimals));
-    return balanceEth >= totalFiat;
+    return balanceEth >= depositEth;
   })();
-
-  // Format crypto amount for display
-  const formatCrypto = (amount: number, decimals: number = 18) => {
-    return (amount / Math.pow(10, decimals)).toFixed(6);
-  };
 
   const handlePay = () => {
     if (!hasSufficientBalance) {
@@ -160,7 +157,7 @@ export function CryptoCheckout({
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-bold text-white flex items-center gap-2">
             <Coins className="h-5 w-5" />
-            Crypto Payment
+            Reservation Deposit
           </h3>
           {step === "completed" && (
             <span className="flex items-center gap-1 text-xs bg-white/20 px-2 py-1 rounded-full text-white">
@@ -172,29 +169,24 @@ export function CryptoCheckout({
 
       {/* Content */}
       <div className="p-6 space-y-4">
-        {/* Order Summary */}
+        {/* Guest Info */}
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+          <p className="text-sm font-semibold text-gray-900">Reservation for</p>
+          <p className="text-lg font-bold text-blue-900">{guestName}</p>
+        </div>
+
+        {/* Deposit Summary */}
         <div className="bg-gray-50 rounded-xl p-4 space-y-2">
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-500">Subtotal</span>
+          <div className="flex justify-between items-center">
+            <span className="text-gray-500">Deposit Amount</span>
             <div className="text-right">
-              <p className="font-medium">${subtotalFiat.toFixed(2)}</p>
-              <p className="text-xs text-gray-400">{subtotalUSDC} USDC</p>
+              <p className="text-xl font-black text-blue-600">${depositAmount.toFixed(2)}</p>
+              <p className="text-xs text-gray-400">≈ {depositEth.toFixed(6)} ETH</p>
             </div>
           </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-500">Driver Tip</span>
-            <div className="text-right">
-              <p className="font-medium text-emerald-600">${tip.toFixed(2)}</p>
-              <p className="text-xs text-gray-400">{tipUSDC} USDC</p>
-            </div>
-          </div>
-          <div className="border-t pt-2 flex justify-between items-center">
-            <span className="font-bold text-gray-900">Total</span>
-            <div className="text-right">
-              <p className="text-xl font-black text-blue-600">${totalFiat.toFixed(2)}</p>
-              <p className="text-xs text-gray-400">≈ {totalUSDC} USDC</p>
-            </div>
-          </div>
+          <p className="text-xs text-gray-500 pt-2">
+            This deposit is sent directly to the restaurant's wallet and will be deducted from your final bill.
+          </p>
         </div>
 
         {/* Payment Method Info */}
@@ -204,32 +196,11 @@ export function CryptoCheckout({
             <div className="flex-1">
               <p className="text-sm font-semibold text-gray-900">Secure On-Chain Payment</p>
               <p className="text-xs text-gray-600 mt-1">
-                {restaurantWalletAddress ? (
-                  <>
-                    Your payment is sent <strong>directly to {selectedVendor?.name}</strong>'s wallet. 
-                    The driver tip will be distributed separately from the treasury.
-                  </>
-                ) : (
-                  <>
-                    Your payment is verified on the blockchain. Funds are transferred to our treasury wallet and your order is confirmed automatically.
-                  </>
-                )}
+                Your payment is verified on the blockchain. Funds are transferred directly to the restaurant's wallet.
               </p>
             </div>
           </div>
         </div>
-
-        {/* Restaurant Wallet Indicator */}
-        {restaurantWalletAddress && (
-          <div className="bg-green-50 border border-green-200 rounded-xl p-3">
-            <div className="flex items-center gap-2 text-green-800">
-              <Wallet className="h-4 w-4" />
-              <span className="text-xs font-medium">
-                Paying directly to restaurant wallet: {restaurantWalletAddress.slice(0, 6)}...{restaurantWalletAddress.slice(-4)}
-              </span>
-            </div>
-          </div>
-        )}
 
         {/* Balance Check */}
         {balance && (
@@ -266,15 +237,23 @@ export function CryptoCheckout({
 
         {/* Action Buttons */}
         {step === "review" && (
-          <button
-            onClick={handlePay}
-            disabled={!hasSufficientBalance || !address}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3.5 rounded-lg font-bold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
-          >
-            <Coins className="h-5 w-5" />
-            Pay with Crypto
-            <ArrowRight className="h-5 w-5" />
-          </button>
+          <>
+            <button
+              onClick={handlePay}
+              disabled={!hasSufficientBalance || !address}
+              className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3.5 rounded-lg font-bold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
+            >
+              <DollarSign className="h-5 w-5" />
+              Pay Deposit
+              <ArrowRight className="h-5 w-5" />
+            </button>
+            <button
+              onClick={onCancel}
+              className="w-full text-gray-500 text-sm py-2 hover:text-gray-700 transition-colors"
+            >
+              Cancel
+            </button>
+          </>
         )}
 
         {step === "sending" && (
@@ -293,7 +272,7 @@ export function CryptoCheckout({
             className="w-full bg-blue-50 text-blue-700 py-3.5 rounded-lg font-bold flex items-center justify-center gap-2 border border-blue-200"
           >
             <Loader2 className="animate-spin h-5 w-5" />
-            Waiting for Confirmation...
+            {isVerifying ? "Verifying on Blockchain..." : "Waiting for Confirmation..."}
           </button>
         )}
 
@@ -303,19 +282,9 @@ export function CryptoCheckout({
             className="w-full bg-green-50 text-green-700 py-3.5 rounded-lg font-bold flex items-center justify-center gap-2 border border-green-200"
           >
             <CheckCircle className="h-5 w-5" />
-            Payment Confirmed!
+            Reservation Confirmed!
           </button>
         )}
-
-        {/* Cancel Button */}
-        {step === "review" || step === "error" ? (
-          <button
-            onClick={onCancel}
-            className="w-full text-gray-500 text-sm py-2 hover:text-gray-700 transition-colors"
-          >
-            Continue Shopping
-          </button>
-        ) : null}
       </div>
     </div>
   );

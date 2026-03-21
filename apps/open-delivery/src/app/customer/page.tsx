@@ -15,7 +15,7 @@ import {
   DollarSign,
   Wallet,
 } from "lucide-react";
-import { getRealVendors, placeRealOrder, getMenu, Vendor, MenuItem } from "./actions";
+import { getRealVendors, placeRealOrder, getMenu, Vendor, MenuItem, getRestaurantWallet } from "./actions";
 import { useUser } from "@clerk/nextjs";
 import { reverseGeocode } from "@repo/shared/utils/geo";
 import { ConnectWallet } from "@/components/ConnectWallet";
@@ -59,9 +59,10 @@ export default function CustomerDashboard() {
   const [cityLabel, setCityLabel] = useState("Detecting location...");
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [tip, setTip] = useState(5.0); // Default $5 tip
-  
+
   // Web3 checkout state
   const [showCryptoCheckout, setShowCryptoCheckout] = useState(false);
+  const [restaurantWalletAddress, setRestaurantWalletAddress] = useState<string | null>(null);
 
   useEffect(() => {
     if ("geolocation" in navigator) {
@@ -181,12 +182,19 @@ export default function CustomerDashboard() {
       setSelectedVendor(vendor);
       setIsLoadingMenu(true);
       setError(null);
+      setRestaurantWalletAddress(null); // Reset wallet address
 
       try {
         const items = await getMenu(vendor.id);
         setMenuItems(items);
         setCart([]);
         setShowMenuModal(true);
+        
+        // Fetch restaurant wallet address for direct payment
+        const walletResult = await getRestaurantWallet(vendor.id);
+        if (walletResult.success && walletResult.walletAddress) {
+          setRestaurantWalletAddress(walletResult.walletAddress);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load menu");
       } finally {
@@ -243,15 +251,16 @@ export default function CustomerDashboard() {
       
       // Place order with Web3 payment params
       const placeOrderResult = await placeRealOrder(
-        selectedVendor.id, 
-        orderItems, 
-        deliveryAddress || undefined, 
+        selectedVendor.id,
+        orderItems,
+        deliveryAddress || undefined,
         tip,
         {
           txHash: result.txHash || "",
           walletAddress: "", // Will be populated by the component
           paymentCurrency: "USDC",
           chainId: 8453, // Base mainnet
+          restaurantWalletAddress: restaurantWalletAddress || undefined,
         }
       );
 
@@ -671,6 +680,7 @@ export default function CustomerDashboard() {
                         tip={tip}
                         deliveryAddress={deliveryAddress}
                         selectedVendor={selectedVendor}
+                        restaurantWalletAddress={restaurantWalletAddress}
                         onCheckoutComplete={handleCryptoCheckoutComplete}
                         onError={(err) => {
                           setError(err);

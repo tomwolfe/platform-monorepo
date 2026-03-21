@@ -1,56 +1,157 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from "@repo/database";
-import { restaurantReservations } from "@repo/database";
-import { eq } from '@repo/database';
+import { db, restaurantReservations, eq, restaurants } from "@repo/database";
 import { NotifyService } from '@/lib/notifications';
+import { createPublicClient, http } from 'viem';
+import { base } from 'viem/chains';
+import { isValidTxHash } from '@/lib/web3-utils';
 
 export const runtime = 'edge';
 
+/**
+ * Crypto Payment Verification Endpoint
+ *
+ * Verifies on-chain transactions for restaurant reservation deposits.
+ * Replaces the Stripe webhook with zero-trust blockchain verification.
+ *
+ * Expected payload:
+ * {
+ *   txHash: string;       // On-chain transaction hash
+ *   reservationId: string; // Reservation ID from table-stack
+ *   expectedAmount?: bigint; // Optional: expected payment amount in Wei
+ * }
+ */
 export async function POST(req: NextRequest) {
-  // Stripe Webhook handling placeholder
   try {
-    const body = await req.json();
-    
-    // In a real app, you would verify the Stripe signature here
-    // const sig = req.headers.get('stripe-signature');
-    // const event = stripe.webhooks.constructEvent(body, sig, endpointSecret);
+    const { txHash, reservationId, expectedAmount } = await req.json();
 
-    const event = body; // Assume body is the event for now
+    if (!txHash || !reservationId) {
+      return NextResponse.json(
+        { message: 'Missing txHash or reservationId' },
+        { status: 400 }
+      );
+    }
 
-    if (event.type === 'payment_intent.succeeded') {
-      const paymentIntent = event.data.object;
-      const reservationId = paymentIntent.metadata.reservationId;
+    // Validate transaction hash format
+    if (!isValidTxHash(txHash)) {
+      return NextResponse.json(
+        { message: 'Invalid transaction hash format' },
+        { status: 400 }
+      );
+    }
 
-      if (reservationId) {
-        const reservation = await db.query.restaurantReservations.findFirst({
-          where: eq(restaurantReservations.id, reservationId),
-          with: {
-            restaurant: true,
+    // Fetch reservation with restaurant details
+    const reservation = await db.query.restaurantReservations.findFirst({
+      where: eq(restaurantReservations.id, reservationId),
+      with: {
+        restaurant: true,
+      },
+    });
+
+    if (!reservation) {
+      return NextResponse.json(
+        { message: 'Reservation not found' },
+        { status: 404 }
+      );
+    }
+
+    // Already verified?
+    if (reservation.isVerified) {
+      return NextResponse.json(
+        { message: 'Reservation already verified', success: true },
+        { status: 200 }
+      );
+    }
+
+    // Zero-Trust On-Chain Verification
+    const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
+    const client = createPublicClient({ transport: http(rpcUrl), chain: base });
+
+    // Get transaction receipt
+    const receipt = await client.getTransactionReceipt({ hash: txHash as `0x${string}` });
+
+    if (receipt.status !== 'success') {
+      return NextResponse.json(
+        { message: 'Transaction pending or reverted on-chain' },
+        { status: 400 }
+      );
+    }
+
+    // Verify recipient matches restaurant wallet (if wallet is set)
+    if (reservation.restaurant.walletAddress) {
+      if (
+        receipt.to?.toLowerCase() !==
+        reservation.restaurant.walletAddress.toLowerCase()
+      ) {
+        return NextResponse.json(
+          {
+            message: 'Payment recipient mismatch. Expected restaurant wallet.',
+            expected: reservation.restaurant.walletAddress,
+            received: receipt.to,
           },
-        });
-
-        if (reservation) {
-          await db.update(restaurantReservations)
-            .set({ isVerified: true, status: 'confirmed' })
-            .where(eq(restaurantReservations.id, reservationId));
-          
-          if (reservation.restaurant && reservation.restaurant.ownerEmail) {
-            await NotifyService.notifyOwner(reservation.restaurant.ownerEmail, {
-              guestName: reservation.guestName,
-              partySize: reservation.partySize,
-              startTime: reservation.startTime,
-            });
-          }
-          
-          console.log(`Reservation ${reservationId} verified via payment.`);
-        }
+          { status: 400 }
+        );
       }
     }
 
-    return NextResponse.json({ received: true });
+    // Verify amount if provided
+    if (expectedAmount) {
+      const tx = await client.getTransaction({ hash: txHash as `0x${string}` });
+      if (tx.value !== BigInt(expectedAmount)) {
+        return NextResponse.json(
+          {
+            message: 'Payment amount mismatch',
+            expected: expectedAmount.toString(),
+            received: tx.value.toString(),
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Check confirmations (wait for at least 1 confirmation for reservations)
+    const currentBlock = await client.getBlockNumber();
+    const confirmations = Number(currentBlock - receipt.blockNumber);
+    if (confirmations < 1) {
+      return NextResponse.json(
+        { message: 'Waiting for more confirmations', confirmations },
+        { status: 400 }
+      );
+    }
+
+    // Mark reservation as verified
+    await db.update(restaurantReservations)
+      .set({
+        isVerified: true,
+        status: 'confirmed',
+        paymentTxHash: txHash,
+      })
+      .where(eq(restaurantReservations.id, reservationId));
+
+    // Notify restaurant owner
+    if (reservation.restaurant?.ownerEmail) {
+      await NotifyService.notifyOwner(reservation.restaurant.ownerEmail, {
+        guestName: reservation.guestName,
+        partySize: reservation.partySize,
+        startTime: reservation.startTime,
+      });
+    }
+
+    console.log(
+      `[CryptoCheckout] Reservation ${reservationId} verified with tx ${txHash}`
+    );
+
+    return NextResponse.json({
+      success: true,
+      message: 'Crypto payment verified successfully',
+      txHash,
+      confirmations,
+    });
   } catch (error) {
-    console.error('Checkout Webhook Error:', error);
-    return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
+    console.error('Crypto Verification Error:', error);
+    return NextResponse.json(
+      { message: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }

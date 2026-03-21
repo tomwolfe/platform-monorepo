@@ -425,15 +425,73 @@ export async function regenerateApiKey(restaurantId: string) {
 export async function createStripeConnectAccount(restaurantId: string) {
   await verifyOwnership(restaurantId);
 
+  // Deprecated: Stripe is being replaced with crypto payments
   // Mock Stripe Connect onboarding
-  const mockStripeAccountId = `acct_${Math.random().toString(36).substring(2, 12)}`;
+  // const mockStripeAccountId = `acct_${Math.random().toString(36).substring(2, 12)}`;
 
-  await db.update(restaurants)
-    .set({ stripeAccountId: mockStripeAccountId })
-    .where(eq(restaurants.id, restaurantId));
+  // throw new Error('Stripe is deprecated. Please use crypto wallet payments instead.');
+  throw new Error('Stripe is deprecated. Please link a crypto wallet instead.');
+}
 
-  revalidatePath(`/dashboard/${restaurantId}`);
-  return { stripeAccountId: mockStripeAccountId };
+/**
+ * Link Restaurant Wallet Server Action
+ *
+ * Allows a restaurant owner to link their crypto wallet for receiving payments.
+ * Stores the EIP-55 formatted wallet address in the database.
+ */
+export async function linkRestaurantWallet(
+  restaurantId: string,
+  walletAddress: string
+): Promise<{ success: boolean; error?: string }> {
+  await verifyOwnership(restaurantId);
+
+  // Validate wallet address format (basic EIP-55 check)
+  if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
+    return { success: false, error: 'Invalid wallet address format. Must be a valid Ethereum address (0x...)' };
+  }
+
+  try {
+    await db.update(restaurants)
+      .set({
+        walletAddress,
+      })
+      .where(eq(restaurants.id, restaurantId));
+
+    revalidatePath(`/dashboard/${restaurantId}`);
+    return { success: true };
+  } catch (error) {
+    console.error('[LinkRestaurantWallet] Error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to link wallet',
+    };
+  }
+}
+
+/**
+ * Get Restaurant Wallet Server Action
+ *
+ * Returns the linked wallet address for the restaurant.
+ */
+export async function getRestaurantWallet(
+  restaurantId: string
+): Promise<{ success: boolean; walletAddress?: string | null; error?: string }> {
+  try {
+    const restaurant = await db.query.restaurants.findFirst({
+      where: eq(restaurants.id, restaurantId),
+      columns: {
+        walletAddress: true,
+      },
+    });
+
+    return { success: true, walletAddress: restaurant?.walletAddress };
+  } catch (error) {
+    console.error('[GetRestaurantWallet] Error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to get wallet',
+    };
+  }
 }
 
 // Menu Management Actions

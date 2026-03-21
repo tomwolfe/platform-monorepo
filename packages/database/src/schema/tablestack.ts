@@ -43,7 +43,8 @@ export const restaurants = pgTable('restaurants', {
   closingTime: text('closing_time').default('22:00'),
   daysOpen: text('days_open').default('monday,tuesday,wednesday,thursday,friday,saturday,sunday'),
   defaultDurationMinutes: integer('default_duration_minutes').default(90),
-  stripeAccountId: text('stripe_account_id'),
+  // Deprecated: stripeAccountId: text('stripe_account_id'),
+  walletAddress: text('wallet_address'), // Crypto wallet for receiving payments
   isShadow: boolean('is_shadow').default(false),
   isClaimed: boolean('is_claimed').default(false),
   claimToken: uuid('claim_token').defaultRandom(),
@@ -82,7 +83,8 @@ export const restaurantReservations = pgTable('restaurant_reservations', {
   isVerified: boolean('is_verified').default(false),
   verificationToken: uuid('verification_token').defaultRandom(),
   depositAmount: integer('deposit_amount').default(0),
-  stripePaymentIntentId: text('stripe_payment_intent_id'),
+  // Deprecated: stripePaymentIntentId: text('stripe_payment_intent_id'),
+  paymentTxHash: text('payment_tx_hash').unique(), // On-chain transaction hash for crypto payment
   combinedTableIds: jsonb('combined_table_ids').$type<string[]>(),
   metadata: jsonb('metadata'),
   createdAt: timestamp('created_at').defaultNow(),

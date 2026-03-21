@@ -3,9 +3,9 @@ import { notFound, redirect } from 'next/navigation';
 import { currentUser } from '@clerk/nextjs/server';
 import FloorPlan from '@/components/dashboard/FloorPlan';
 import LiveView from '@/components/dashboard/LiveView';
-import { updateTablePositions, updateTableStatus, updateRestaurantSettings, addTable, deleteTable, updateTableDetails, deleteReservation, updateWaitlistStatus, regenerateApiKey, createStripeConnectAccount } from './actions';
+import { updateTablePositions, updateTableStatus, updateRestaurantSettings, addTable, deleteTable, updateTableDetails, deleteReservation, updateWaitlistStatus, regenerateApiKey, linkRestaurantWallet } from './actions';
 import { IconAfterMount } from '@/components/ui/IconWrapper';
-import { Trash2, Bell, UserCheck, CreditCard, Store, Utensils } from 'lucide-react';
+import { Trash2, Bell, UserCheck, Wallet, Store, Utensils } from 'lucide-react';
 import { UserMenu } from '@/components/nav/UserMenu';
 import Link from 'next/link';
 import { DataTablesClient } from './DataTablesClient';
@@ -204,33 +204,48 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
           <p className="text-sm text-amber-700">Manage your menu items and pricing</p>
         </Link>
 
-        <div className="bg-purple-50 p-6 rounded-xl border border-purple-100 md:col-span-1 flex justify-between items-center">
-          <div>
+        <div className="bg-purple-50 p-6 rounded-xl border border-purple-100 md:col-span-1 flex flex-col justify-between">
+          <div className="mb-4">
             <h3 className="text-purple-900 font-semibold mb-2 flex items-center">
               <IconAfterMount>
-                <CreditCard className="w-4 h-4 mr-2" />
+                <Wallet className="w-4 h-4 mr-2" />
               </IconAfterMount>
-              Payouts & Deposits
+              Crypto Payouts & Deposits
             </h3>
-            {restaurant.stripeAccountId ? (
+            {restaurant.walletAddress ? (
               <div className="flex items-center text-purple-700">
                 <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-                <span className="text-sm font-medium">Stripe Connected ({restaurant.stripeAccountId})</span>
+                <span className="text-sm font-medium break-all">
+                  Wallet: {restaurant.walletAddress.slice(0, 6)}...{restaurant.walletAddress.slice(-4)}
+                </span>
               </div>
             ) : (
-              <p className="text-sm text-purple-600">Connect your Stripe account to start accepting deposits.</p>
+              <p className="text-sm text-purple-600">Connect your Web3 wallet to receive OpenDeliver payouts and reservation deposits in USDC.</p>
             )}
           </div>
-          {!restaurant.stripeAccountId && (
-            <form action={async () => {
+          
+          {!restaurant.walletAddress && (
+            <form action={async (formData) => {
               'use server';
-              await createStripeConnectAccount(restaurantInternalId);
-            }}>
+              const address = formData.get('walletAddress') as string;
+              const result = await linkRestaurantWallet(restaurantInternalId, address);
+              if (!result.success) {
+                alert(result.error || 'Failed to link wallet');
+              }
+            }} className="flex gap-2">
+              <input 
+                type="text" 
+                name="walletAddress" 
+                placeholder="0x..." 
+                required 
+                pattern="^0x[a-fA-F0-9]{40}$"
+                className="flex-1 px-3 py-2 text-sm border border-purple-200 rounded-lg outline-none focus:ring-2 focus:ring-purple-500"
+              />
               <button
                 type="submit"
                 className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors"
               >
-                Connect Stripe
+                Link
               </button>
             </form>
           )}

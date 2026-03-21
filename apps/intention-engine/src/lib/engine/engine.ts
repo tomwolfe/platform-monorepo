@@ -6,7 +6,7 @@ import {
 } from "./types";
 import { IPersistenceProvider } from "../../infrastructure/PersistenceProvider";
 import { ObservationProvider } from "../../infrastructure/ObservationProvider";
-import { ToolExecutor } from "./saga-orchestrator";
+import { WorkflowToolExecutor as ToolExecutor } from "./workflow-machine"; // Use workflow-machine directly
 
 export interface EngineOptions {
   persistence: IPersistenceProvider;

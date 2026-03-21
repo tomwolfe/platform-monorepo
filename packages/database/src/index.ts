@@ -22,6 +22,7 @@ export {
   orders,
   orderItems,
   outbox,
+  processed_crypto_transactions,
   // Enums
   waitlistStatusEnum,
   userRoleEnum,

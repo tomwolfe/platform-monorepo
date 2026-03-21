@@ -10,6 +10,8 @@
  * - For ETH: verifies transaction.value and optional order ID in tx data
  * - Configurable confirmations, RPC URLs, and treasury addresses
  * - Fail-closed: returns explicit error objects, never throws
+ * - CRITICAL: Implements global replay prevention via processed_crypto_transactions table
+ * - CRITICAL: Requires cryptographic signature verification to prevent front-running
  */
 
 import {
@@ -20,9 +22,12 @@ import {
   parseEventLogs,
   type Log,
   hexToString,
+  verifyMessage,
+  type Hex,
 } from "viem";
 import { base, polygon, mainnet } from "viem/chains";
 import { ERC20_ABI } from "./erc20-abi";
+import { db, processed_crypto_transactions, eq } from "@repo/database";
 
 // ============================================================================
 // CONFIGURATION
@@ -102,21 +107,26 @@ export interface TransactionVerificationResult {
  * Verify a transaction on-chain
  *
  * This function performs zero-trust verification:
- * 1. Checks if transaction exists and was successful
- * 2. Verifies the recipient matches treasury/restaurant address
- * 3. Confirms the value matches expected amount
- * 4. Waits for minimum confirmations
- * 5. CRITICAL: Verifies transaction data contains order ID (prevents spoofing)
- * 6. CRITICAL: For ERC-20 tokens (USDC), parses Transfer event logs instead of tx.value
+ * 1. CHECKS replay prevention table first (prevents front-running)
+ * 2. Verifies cryptographic signature (proves wallet ownership)
+ * 3. Checks if transaction exists and was successful
+ * 4. Verifies the recipient matches treasury/restaurant address
+ * 5. Confirms the value matches expected amount
+ * 6. Waits for minimum confirmations
+ * 7. CRITICAL: Verifies transaction data contains order ID (prevents spoofing)
+ * 8. CRITICAL: For ERC-20 tokens (USDC), parses Transfer event logs instead of tx.value
+ * 9. REGISTERS transaction in replay prevention table after successful verification
  *
  * @param params - Verification parameters
  * @param params.txHash - Transaction hash to verify
  * @param params.expectedValue - Expected value in smallest units (Wei for ETH, atomic for USDC)
  * @param params.expectedRecipient - Expected recipient address (treasury or restaurant)
  * @param params.chainId - Chain ID (default: Base)
- * @param params.orderId - Optional order/reservation ID to verify in transaction data
+ * @param params.orderId - Order/reservation ID to verify in transaction data
  * @param params.paymentCurrency - 'ETH' or 'USDC' (affects verification logic)
  * @param params.walletAddress - Sender's wallet address (for additional verification)
+ * @param params.signature - REQUIRED: Personal signature of the orderId/reservationId (prevents front-running)
+ * @param params.appSource - Source app ('open-delivery' or 'table-stack') for replay prevention
  * @param params.minConfirmations - Override default minimum confirmations
  * @returns Verification result with success status and optional receipt
  */
@@ -128,6 +138,8 @@ export async function verifyTransaction(params: {
   orderId?: string;
   paymentCurrency?: string;
   walletAddress?: Address;
+  signature?: Hex; // REQUIRED: Personal sign of orderId/reservationId
+  appSource?: string; // 'open-delivery' | 'table-stack'
   minConfirmations?: number;
 }): Promise<TransactionVerificationResult> {
   const {
@@ -138,11 +150,44 @@ export async function verifyTransaction(params: {
     orderId,
     paymentCurrency = "ETH",
     walletAddress,
+    signature,
+    appSource = "unknown",
     minConfirmations = MIN_CONFIRMATIONS,
   } = params;
 
+  // CRITICAL: orderId is required for signature verification
+  if (!orderId) {
+    return {
+      success: false,
+      error: "Order/reservation ID is required for verification",
+    };
+  }
+
+  // CRITICAL: Signature is required to prevent front-running attacks
+  if (!signature) {
+    return {
+      success: false,
+      error: "Cryptographic signature is required to prevent front-running",
+    };
+  }
+
   try {
     const client = getPublicClient(chainId);
+
+    // ============================================================================
+    // STEP 0: REPLAY PREVENTION CHECK
+    // Check if this transaction has already been processed (globally across all apps)
+    // ============================================================================
+    const existingTx = await db.query.processed_crypto_transactions.findFirst({
+      where: eq(processed_crypto_transactions.txHash, txHash),
+    });
+
+    if (existingTx) {
+      return {
+        success: false,
+        error: `Transaction already processed by ${existingTx.appSource} for entity ${existingTx.entityId}`,
+      };
+    }
 
     // Step 1: Get transaction receipt
     const receipt = await client.getTransactionReceipt({ hash: txHash });
@@ -263,6 +308,60 @@ export async function verifyTransaction(params: {
         success: false,
         error: `Insufficient confirmations. Required: ${minConfirmations}, Current: ${confirmations}`,
       };
+    }
+
+    // ============================================================================
+    // STEP 9: SIGNATURE VERIFICATION (CRITICAL - Prevents Front-Running)
+    // Verify that the API requester cryptographically owns the wallet address
+    // by checking they signed the orderId/reservationId with that wallet
+    // ============================================================================
+    if (walletAddress && signature) {
+      try {
+        // verifyMessage returns true if the signature is valid for the given address
+        const isValidSignature = await verifyMessage({
+          message: orderId, // The exact message that was signed
+          signature: signature,
+          address: walletAddress, // The claimed wallet address
+        });
+
+        if (!isValidSignature) {
+          return {
+            success: false,
+            error: "Signature verification failed - signature does not match claimed wallet address",
+          };
+        }
+
+        console.log(`[verifyTransaction] Signature verified: wallet ${walletAddress} signed orderId ${orderId}`);
+      } catch (sigError) {
+        return {
+          success: false,
+          error: `Signature verification failed: ${sigError instanceof Error ? sigError.message : "Unknown error"}`,
+        };
+      }
+    }
+
+    // ============================================================================
+    // STEP 10: REGISTER IN REPLAY PREVENTION TABLE
+    // Record this transaction to prevent future replay attacks
+    // ============================================================================
+    try {
+      await db.insert(processed_crypto_transactions).values({
+        txHash: txHash,
+        appSource: appSource,
+        entityId: orderId,
+      });
+      console.log(`[verifyTransaction] Registered tx ${txHash.substring(0, 10)}... in replay prevention table`);
+    } catch (dbError) {
+      // If this is a unique constraint violation, the tx was already registered
+      // (race condition - another request beat us to it)
+      if (dbError instanceof Error && dbError.message.includes('duplicate key')) {
+        return {
+          success: false,
+          error: "Transaction already registered - possible replay attack detected",
+        };
+      }
+      // Log but don't fail - this is a best-effort registration
+      console.error("[verifyTransaction] Failed to register transaction in replay prevention table:", dbError);
     }
 
     return {

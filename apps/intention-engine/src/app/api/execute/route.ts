@@ -19,8 +19,12 @@ import { generatePlan, PlannerResult } from "@/lib/engine/planner";
 import { generateText } from "@/lib/engine/llm";
 import {
   ExecutionResult,
-  ToolExecutor,
-} from "@/lib/engine/saga-orchestrator";
+} from "@/lib/engine/saga-orchestrator"; // Still using ExecutionResult interface from saga (compatibility)
+import {
+  WorkflowToolExecutor as ToolExecutor,
+  executeWorkflow,
+  WorkflowMachine,
+} from "@/lib/engine/workflow-machine"; // Use WorkflowMachine directly
 import {
   createInitialState,
   transitionState,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useBalance, useWriteContract, useReadContract } from "wagmi";
+import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useBalance, useWriteContract, useReadContract, useSignMessage } from "wagmi";
 import { parseUnits, stringToHex, type Address, formatUnits } from "viem";
 import { base } from "viem/chains";
 import { Loader2, CheckCircle, AlertCircle, ArrowRight, Coins, Shield, Wallet } from "lucide-react";
@@ -21,7 +21,7 @@ interface CryptoCheckoutProps {
   deliveryAddress: string;
   selectedVendor: { id: string; name: string } | null;
   restaurantWalletAddress?: string | null; // Deprecated: all payments go to treasury for proper tip routing
-  onCheckoutComplete: (result: { orderId: string; txHash?: string }) => void;
+  onCheckoutComplete: (result: { orderId: string; txHash?: string; signature?: `0x${string}` }) => void;
   onError: (error: string) => void;
   onCancel: () => void;
   orderId?: string; // Order ID to bind to transaction (prevents spoofing)
@@ -49,7 +49,10 @@ export function CryptoCheckout({
 }: CryptoCheckoutProps) {
   const { address, chain } = useAccount();
   const { treasuryAddress, defaultChainId, usdcContractAddress } = useWeb3();
-  
+
+  // CRITICAL: Signature hook for front-running prevention
+  const { signMessage, data: signature, error: signatureError, isPending: isSigning } = useSignMessage();
+
   // Get ETH balance
   const { data: balance } = useBalance({
     address,
@@ -65,8 +68,8 @@ export function CryptoCheckout({
   const subtotalUSDC = parseUnits(subtotalFiat.toFixed(6), 6);
   const tipUSDC = parseUnits(tip.toFixed(6), 6);
 
-  // Transaction state
-  const [step, setStep] = useState<"review" | "sending" | "confirming" | "completed" | "error">("review");
+  // Transaction state - added "signing" step for signature before transaction
+  const [step, setStep] = useState<"review" | "signing" | "sending" | "confirming" | "completed" | "error">("review");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [paymentCurrency, setPaymentCurrency] = useState<"USDC" | "ETH">("USDC");
   const [ethPrice, setEthPrice] = useState<number>(2500); // Fallback, will fetch dynamically
@@ -188,13 +191,14 @@ export function CryptoCheckout({
   useEffect(() => {
     if (isConfirmed && receipt) {
       setStep("completed");
-      // Notify parent component with txHash
+      // Notify parent component with txHash and signature for backend verification
       onCheckoutComplete({
         orderId: receipt.transactionHash,
         txHash: receipt.transactionHash,
+        signature: signature, // CRITICAL: Pass signature for backend verification
       });
     }
-  }, [isConfirmed, receipt, onCheckoutComplete]);
+  }, [isConfirmed, receipt, onCheckoutComplete, signature]);
 
   // Handle errors - include contract errors for USDC
   useEffect(() => {
@@ -209,7 +213,7 @@ export function CryptoCheckout({
   // Check if user has sufficient balance based on selected currency
   const hasSufficientBalance = (() => {
     if (!balance) return false;
-    
+
     if (paymentCurrency === "USDC") {
       if (!usdcBalance) return false;
       return usdcBalance >= totalUSDC;
@@ -219,14 +223,41 @@ export function CryptoCheckout({
     }
   })();
 
+  // CRITICAL: Handle signature and transaction flow
   const handlePay = () => {
     if (!hasSufficientBalance) {
       setErrorMessage(`Insufficient ${paymentCurrency} balance for this transaction`);
       setStep("error");
       return;
     }
-    setStep("sending");
+    if (!orderId) {
+      setErrorMessage("Order ID is missing - cannot proceed with payment");
+      setStep("error");
+      return;
+    }
+    // First step: Request signature of the orderId (proves wallet ownership)
+    setStep("signing");
+    signMessage({ 
+      message: `OpenDelivery Order: ${orderId}`,
+    });
   };
+
+  // CRITICAL: After signature is obtained, proceed to send transaction
+  useEffect(() => {
+    if (signature && step === "signing") {
+      // Signature obtained, now send the transaction
+      setStep("sending");
+    }
+  }, [signature, step]);
+
+  // Handle signature errors
+  useEffect(() => {
+    if (signatureError) {
+      setErrorMessage(`Signature rejected: ${signatureError.message}`);
+      setStep("error");
+      onError("User rejected signature request");
+    }
+  }, [signatureError, onError]);
 
   return (
     <div className="bg-white rounded-2xl border-2 border-blue-100 overflow-hidden">
@@ -384,6 +415,16 @@ export function CryptoCheckout({
           </button>
         )}
 
+        {step === "signing" && (
+          <button
+            disabled
+            className="w-full bg-purple-50 text-purple-700 py-3.5 rounded-lg font-bold flex items-center justify-center gap-2 border border-purple-200"
+          >
+            <Loader2 className="animate-spin h-5 w-5" />
+            {isSigning ? "Signing..." : "Please sign in your wallet"}
+          </button>
+        )}
+
         {step === "sending" && (
           <button
             disabled
@@ -415,7 +456,7 @@ export function CryptoCheckout({
         )}
 
         {/* Cancel Button */}
-        {step === "review" || step === "error" ? (
+        {step === "review" || step === "error" || step === "signing" ? (
           <button
             onClick={onCancel}
             className="w-full text-gray-500 text-sm py-2 hover:text-gray-700 transition-colors"

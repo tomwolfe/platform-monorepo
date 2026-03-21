@@ -179,35 +179,47 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const [newReservation] = await db.insert(restaurantReservations).values({
-      restaurantId: targetRestaurantId,
-      tableId: assignedTableId || null,
-      combinedTableIds: combinedTableIds || null,
-      guestName,
-      guestEmail,
-      partySize,
-      startTime: start,
-      endTime: end,
-      isVerified: isShadow ? true : false,
-      metadata: metadata || null,
-    }).returning();
+    // ============================================================================
+    // ATOMIC TRANSACTION: Wrap reservation + guest profile in single transaction
+    // This ensures data consistency - if either operation fails, both roll back
+    // ============================================================================
+    const result = await db.transaction(async (tx: any) => {
+      // Insert reservation
+      const [newReservation] = await tx.insert(restaurantReservations).values({
+        restaurantId: targetRestaurantId,
+        tableId: assignedTableId || null,
+        combinedTableIds: combinedTableIds || null,
+        guestName,
+        guestEmail,
+        partySize,
+        startTime: start,
+        endTime: end,
+        isVerified: isShadow ? true : false,
+        metadata: metadata || null,
+      }).returning();
 
-    // Upsert Guest Profile
-    const [profile] = await db.insert(guestProfiles).values({
-      restaurantId: targetRestaurantId,
-      email: guestEmail,
-      name: guestName,
-      visitCount: 1,
-    }).onConflictDoUpdate({
-      target: [guestProfiles.restaurantId, guestProfiles.email],
-      set: {
-        name: guestName, // Update name if it changed
-        visitCount: sql.raw(`${guestProfiles.visitCount} + 1`),
-        updatedAt: new Date(),
-      }
-    }).returning();
+      // Upsert Guest Profile (within same transaction)
+      const [profile] = await tx.insert(guestProfiles).values({
+        restaurantId: targetRestaurantId,
+        email: guestEmail,
+        name: guestName,
+        visitCount: 1,
+      }).onConflictDoUpdate({
+        target: [guestProfiles.restaurantId, guestProfiles.email],
+        set: {
+          name: guestName, // Update name if it changed
+          visitCount: sql.raw(`${guestProfiles.visitCount} + 1`),
+          updatedAt: new Date(),
+        }
+      }).returning();
+
+      return { newReservation, profile };
+    });
+
+    const { newReservation, profile } = result;
 
     // High-Value Guest Hook: Trigger logistics if guest is frequent
+    // Note: This is outside the transaction since it's a side effect (publishing to Redis)
     if ((profile.visitCount ?? 0) >= 5) {
       const { RealtimeService } = await import('@repo/shared');
       const mcpProtocol = await import('@repo/mcp-protocol');

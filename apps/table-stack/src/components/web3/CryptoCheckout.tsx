@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useBalance, useWriteContract, useReadContract } from "wagmi";
+import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useBalance, useWriteContract, useReadContract, useSignMessage } from "wagmi";
 import { parseUnits, stringToHex, type Address, formatUnits } from "viem";
 import { base } from "viem/chains";
 import { Loader2, CheckCircle, AlertCircle, ArrowRight, Coins, Shield, DollarSign } from "lucide-react";
@@ -13,7 +13,7 @@ interface CryptoCheckoutProps {
   depositAmount: number; // in USD
   restaurantWalletAddress: string;
   guestName: string;
-  onCheckoutComplete: (result: { success: boolean; txHash?: string }) => void;
+  onCheckoutComplete: (result: { success: boolean; txHash?: string; signature?: `0x${string}` }) => void;
   onError: (error: string) => void;
   onCancel: () => void;
 }
@@ -37,6 +37,10 @@ export function CryptoCheckout({
 }: CryptoCheckoutProps) {
   const { address, chain } = useAccount();
   const { defaultChainId, usdcContractAddress } = useWeb3();
+  
+  // CRITICAL: Signature hook for front-running prevention
+  const { signMessage, data: signature, error: signatureError, isPending: isSigning } = useSignMessage();
+  
   const { data: balance } = useBalance({
     address,
     chainId: chain?.id || defaultChainId,
@@ -45,7 +49,7 @@ export function CryptoCheckout({
   // State for payment currency and dynamic pricing
   const [paymentCurrency, setPaymentCurrency] = useState<"USDC" | "ETH">("USDC");
   const [ethPrice, setEthPrice] = useState<number>(2500); // Fallback
-  const [step, setStep] = useState<"review" | "sending" | "confirming" | "completed" | "error">("review");
+  const [step, setStep] = useState<"review" | "signing" | "sending" | "confirming" | "completed" | "error">("review");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
 
@@ -164,7 +168,7 @@ export function CryptoCheckout({
       // Calculate expected amount based on currency
       const expectedAmount = paymentCurrency === "USDC" ? depositUSDC.toString() : depositWei.toString();
 
-      // Call backend to verify transaction
+      // Call backend to verify transaction - include signature for verification
       fetch("/api/v1/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -173,6 +177,7 @@ export function CryptoCheckout({
           reservationId,
           expectedAmount,
           paymentCurrency,
+          signature: signature, // CRITICAL: Pass signature for backend verification
         }),
       })
         .then((res) => res.json())
@@ -180,7 +185,7 @@ export function CryptoCheckout({
           setIsVerifying(false);
           if (data.success) {
             setStep("completed");
-            onCheckoutComplete({ success: true, txHash: receipt.transactionHash });
+            onCheckoutComplete({ success: true, txHash: receipt.transactionHash, signature });
           } else {
             setErrorMessage(data.message || "Verification failed");
             setStep("error");
@@ -192,7 +197,7 @@ export function CryptoCheckout({
           setStep("error");
         });
     }
-  }, [isConfirmed, receipt, reservationId, depositWei, depositUSDC, paymentCurrency, onCheckoutComplete]);
+  }, [isConfirmed, receipt, reservationId, depositWei, depositUSDC, paymentCurrency, onCheckoutComplete, signature]);
 
   // Handle errors - include contract errors for USDC
   useEffect(() => {
@@ -217,14 +222,36 @@ export function CryptoCheckout({
     }
   })();
 
+  // CRITICAL: Handle signature and transaction flow
   const handlePay = () => {
     if (!hasSufficientBalance) {
       setErrorMessage(`Insufficient ${paymentCurrency} balance for this transaction`);
       setStep("error");
       return;
     }
-    setStep("sending");
+    // First step: Request signature of the reservationId (proves wallet ownership)
+    setStep("signing");
+    signMessage({ 
+      message: `TableStack Reservation: ${reservationId}`,
+    });
   };
+
+  // CRITICAL: After signature is obtained, proceed to send transaction
+  useEffect(() => {
+    if (signature && step === "signing") {
+      // Signature obtained, now send the transaction
+      setStep("sending");
+    }
+  }, [signature, step]);
+
+  // Handle signature errors
+  useEffect(() => {
+    if (signatureError) {
+      setErrorMessage(`Signature rejected: ${signatureError.message}`);
+      setStep("error");
+      onError("User rejected signature request");
+    }
+  }, [signatureError, onError]);
 
   return (
     <div className="bg-white rounded-2xl border-2 border-blue-100 overflow-hidden">
@@ -365,6 +392,24 @@ export function CryptoCheckout({
               <DollarSign className="h-5 w-5" />
               Pay Deposit with {paymentCurrency}
               <ArrowRight className="h-5 w-5" />
+            </button>
+            <button
+              onClick={onCancel}
+              className="w-full text-gray-500 text-sm py-2 hover:text-gray-700 transition-colors"
+            >
+              Cancel
+            </button>
+          </>
+        )}
+
+        {step === "signing" && (
+          <>
+            <button
+              disabled
+              className="w-full bg-purple-50 text-purple-700 py-3.5 rounded-lg font-bold flex items-center justify-center gap-2 border border-purple-200"
+            >
+              <Loader2 className="animate-spin h-5 w-5" />
+              {isSigning ? "Signing..." : "Please sign in your wallet"}
             </button>
             <button
               onClick={onCancel}

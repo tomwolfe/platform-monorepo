@@ -242,6 +242,42 @@ export const outbox = pgTable('outbox', {
   };
 });
 
+// ============================================================================
+// GLOBAL CRYPTO TRANSACTION REPLAY PREVENTION
+// Prevents front-running and replay attacks across all apps
+// ============================================================================
+
+/**
+ * processed_crypto_transactions - Global registry of verified crypto payments
+ * 
+ * SECURITY PURPOSE:
+ * - Prevents replay attacks where attackers reuse txHash from public blockchain
+ * - Prevents cross-app replay (e.g., using OpenDelivery payment for TableStack reservation)
+ * - Enforces global uniqueness of transaction hashes across the entire system
+ * 
+ * Usage:
+ * 1. Before accepting a payment, check if txHash already exists in this table
+ * 2. After successful verification, insert the txHash with app_source
+ * 3. All payment verification flows MUST check this table first
+ */
+export const processed_crypto_transactions = pgTable('processed_crypto_transactions', {
+  // Transaction hash as primary key (enforces global uniqueness)
+  txHash: text('tx_hash').primaryKey().notNull(),
+  // Source app that processed this transaction ('open-delivery', 'table-stack', etc.)
+  appSource: text('app_source').notNull(),
+  // Associated entity ID (orderId, reservationId, etc.) for audit trail
+  entityId: text('entity_id').notNull(),
+  // When this transaction was processed
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => {
+  return {
+    // Index for efficient lookup by entity
+    entityIdIdx: index('processed_tx_entity_id_idx').on(table.entityId),
+    // Index for efficient lookup by app source
+    appSourceIdx: index('processed_tx_app_source_idx').on(table.appSource),
+  };
+});
+
 // OpenDeliver: Drivers table for delivery network
 export const drivers = pgTable('drivers', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -289,6 +325,7 @@ export const orders = pgTable('orders', {
   // Payout tracking (to prevent double-spending)
   payoutStatus: text('payout_status').default('pending'), // pending, processing, completed, failed
   payoutProcessedAt: timestamp('payout_processed_at'),
+  payoutTxHash: text('payout_tx_hash'), // On-chain transaction hash for payout (async verification)
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => {
@@ -299,6 +336,7 @@ export const orders = pgTable('orders', {
     statusIdx: index('orders_status_idx').on(table.status),
     paymentTxHashIdx: uniqueIndex('orders_payment_tx_hash_idx').on(table.paymentTxHash),
     payoutStatusIdx: index('orders_payout_status_idx').on(table.payoutStatus),
+    payoutTxHashIdx: index('orders_payout_tx_hash_idx').on(table.payoutTxHash),
   };
 });
 

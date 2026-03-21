@@ -4,6 +4,45 @@ import { createWalletClient, createPublicClient, http, parseAbi, parseUnits, typ
 import { base } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 import { ERC20_ABI } from '@repo/shared/utils/erc20-abi';
+import { createHash } from 'crypto';
+
+/**
+ * Timing-safe secret comparison to prevent timing attacks
+ * Uses crypto.timingSafeEqual with proper padding to avoid length leakage
+ */
+function timingSafeCompare(a: string, b: string): boolean {
+  // Create fixed-length hashes to compare (prevents length-based timing attacks)
+  const hashA = createHash('sha256').update(a).digest();
+  const hashB = createHash('sha256').update(b).digest();
+  
+  try {
+    return createHash('sha256').update(a).digest().length === createHash('sha256').update(b).digest().length &&
+      require('crypto').timingSafeEqual(hashA, hashB);
+  } catch {
+    return false;
+  }
+}
+
+// Alternative simpler approach using Node.js 20+ timingSafeEqual with strings
+function isTimingSafeEqual(provided: string, expected: string): boolean {
+  const { timingSafeEqual } = require('crypto');
+  const providedBuffer = Buffer.from(provided, 'utf8');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  
+  // Pad to same length to avoid timingSafeEqual errors
+  const maxLength = Math.max(providedBuffer.length, expectedBuffer.length);
+  const paddedProvided = Buffer.alloc(maxLength);
+  const paddedExpected = Buffer.alloc(maxLength);
+  
+  providedBuffer.copy(paddedProvided);
+  expectedBuffer.copy(paddedExpected);
+  
+  try {
+    return timingSafeEqual(paddedProvided, paddedExpected);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Payout Ledger Cron Endpoint
@@ -18,7 +57,8 @@ import { ERC20_ABI } from '@repo/shared/utils/erc20-abi';
  * 1. Queries all delivered orders with pending payout status
  * 2. Calculates split: restaurant (subtotal), driver (tip + base pay), platform (fee)
  * 3. EXECUTES batch payment execution via treasury wallet
- * 4. Marks orders as "completed" to prevent duplicate payouts
+ * 4. Saves payout tx hash for async verification (Vercel 10s timeout pattern)
+ * 5. Marks orders as "processing" - verify-payouts cron confirms completion
  *
  * Security:
  * - Requires CRON_SECRET header for authentication
@@ -63,7 +103,9 @@ export async function GET(req: NextRequest) {
     }
 
     const providedSecret = authHeader.substring(7); // Remove 'Bearer ' prefix
-    if (!CRON_SECRET || providedSecret !== CRON_SECRET) {
+    
+    // TIMING-SAFE COMPARISON: Prevents timing attacks on secret validation
+    if (!CRON_SECRET || !isTimingSafeEqual(providedSecret, CRON_SECRET)) {
       console.warn('[Payout Cron] Invalid cron secret provided');
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -293,30 +335,15 @@ export async function GET(req: NextRequest) {
 
             console.log(`[Payout Cron] Restaurant payout submitted: ${payout.orderId} -> ${payout.address} (${payout.amount} ${payout.currency}) tx: ${hash}`);
 
-            // CRITICAL FIX: Wait for transaction receipt to confirm on-chain success
-            // A hash only means the tx was submitted, NOT that it succeeded
-            const receipt = await publicClient.waitForTransactionReceipt({ hash });
+            // CRITICAL FIX: Do NOT wait for transaction receipt (Vercel 10s timeout)
+            // Instead, save the tx hash and let verify-payouts cron confirm asynchronously
+            await db.update(orders)
+              .set({
+                payoutTxHash: hash,
+              })
+              .where(eq(orders.id, payout.orderId));
 
-            if (receipt.status === 'success') {
-              console.log(`[Payout Cron] Restaurant payout confirmed on-chain: ${payout.orderId}`);
-              
-              // Only mark as completed if transaction actually succeeded
-              await db.update(orders)
-                .set({
-                  payoutStatus: 'completed',
-                  payoutProcessedAt: new Date(),
-                })
-                .where(eq(orders.id, payout.orderId));
-
-              executedCount++;
-            } else {
-              console.error(`[Payout Cron] Restaurant payout reverted on-chain: ${payout.orderId}`);
-              
-              // Mark as failed if transaction reverted
-              await db.update(orders)
-                .set({ payoutStatus: 'failed' })
-                .where(eq(orders.id, payout.orderId));
-            }
+            executedCount++;
           } catch (error) {
             console.error(`[Payout Cron] Failed to execute restaurant payout ${payout.orderId}:`, error);
             // Mark as failed
@@ -344,29 +371,15 @@ export async function GET(req: NextRequest) {
 
             console.log(`[Payout Cron] Driver payout submitted: ${payout.orderId} -> ${payout.address} (${payout.amount} ${payout.currency}) tx: ${hash}`);
 
-            // CRITICAL FIX: Wait for transaction receipt to confirm on-chain success
-            const receipt = await publicClient.waitForTransactionReceipt({ hash });
+            // CRITICAL FIX: Do NOT wait for transaction receipt (Vercel 10s timeout)
+            // Instead, save the tx hash and let verify-payouts cron confirm asynchronously
+            await db.update(orders)
+              .set({
+                payoutTxHash: hash,
+              })
+              .where(eq(orders.id, payout.orderId));
 
-            if (receipt.status === 'success') {
-              console.log(`[Payout Cron] Driver payout confirmed on-chain: ${payout.orderId}`);
-              
-              // Only mark as completed if transaction actually succeeded
-              await db.update(orders)
-                .set({
-                  payoutStatus: 'completed',
-                  payoutProcessedAt: new Date(),
-                })
-                .where(eq(orders.id, payout.orderId));
-
-              executedCount++;
-            } else {
-              console.error(`[Payout Cron] Driver payout reverted on-chain: ${payout.orderId}`);
-              
-              // Mark as failed if transaction reverted
-              await db.update(orders)
-                .set({ payoutStatus: 'failed' })
-                .where(eq(orders.id, payout.orderId));
-            }
+            executedCount++;
           } catch (error) {
             console.error(`[Payout Cron] Failed to execute driver payout ${payout.orderId}:`, error);
             // Mark as failed

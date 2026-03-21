@@ -92,8 +92,14 @@ export type {
 
 // Consumer-driven contract testing for tools
 export * from './services/contract-testing';
-export type { 
-  ToolExecutionTrace, 
-  ToolContract, 
+export type {
+  ToolExecutionTrace,
+  ToolContract,
   ContractTestResult,
 } from './services/contract-testing';
+
+// Web3 / Crypto Payment Utilities
+// Note: ERC20_ABI is safe for client components
+// Note: crypto-price utilities are server-side only (use direct import)
+export * from './utils/erc20-abi';
+// export * from './utils/crypto-price'; // Server-side only - import directly

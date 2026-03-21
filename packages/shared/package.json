@@ -7,6 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./utils/geo": "./src/utils/geo.ts",
+    "./utils/erc20-abi": "./src/utils/erc20-abi.ts",
+    "./utils/crypto-price": "./src/utils/crypto-price.ts",
     "./tracing": "./src/tracing.ts",
     "./idempotency": "./src/idempotency.ts",
     "./clients": "./src/clients.ts"

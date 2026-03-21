@@ -13,6 +13,7 @@ import { createStorage, fallback } from "wagmi";
 // ============================================================================
 
 const TREASURY_ADDRESS = process.env.NEXT_PUBLIC_TREASURY_WALLET_ADDRESS || "0x0000000000000000000000000000000000000000";
+const USDC_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS;
 
 // Supported chains for delivery payments
 const chains = [base, polygon, mainnet] as const;
@@ -86,6 +87,7 @@ function getQueryClient() {
 
 interface Web3ContextType {
   treasuryAddress: string;
+  usdcContractAddress?: string | null;
   defaultChainId: number;
   supportedChainIds: number[];
 }
@@ -115,6 +117,7 @@ export function Web3Provider({ children }: Web3ProviderProps) {
 
   const web3ContextValue: Web3ContextType = {
     treasuryAddress,
+    usdcContractAddress: USDC_CONTRACT_ADDRESS,
     defaultChainId: defaultChain.id,
     supportedChainIds: chains.map((c) => c.id),
   };

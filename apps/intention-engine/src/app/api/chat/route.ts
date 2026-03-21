@@ -1087,9 +1087,10 @@ export async function POST(req: Request) {
     return result.toUIMessageStreamResponse({
       originalMessages: messages,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("Error in chat route:", error);
-    return new Response(JSON.stringify({ error: error.message }), { 
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return new Response(JSON.stringify({ error: errorMessage }), {
       status: 500,
       headers: { "Content-Type": "application/json" }
     });

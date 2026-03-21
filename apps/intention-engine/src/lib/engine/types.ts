@@ -653,3 +653,27 @@ export function transitionState(
     updated_at: new Date().toISOString(),
   };
 }
+
+// ============================================================================
+// EXECUTION RESULT
+// Result of executing a plan/workflow
+// ============================================================================
+
+/**
+ * Execution Result interface
+ * Returns the outcome of executing a plan with saga compensation support
+ */
+export interface ExecutionResult {
+  state: ExecutionState;
+  success: boolean;
+  completed_steps: number;
+  failed_steps: number;
+  total_steps: number;
+  execution_time_ms: number;
+  summary?: string;
+  error?: {
+    code: string;
+    message: string;
+    step_id?: string;
+  };
+}

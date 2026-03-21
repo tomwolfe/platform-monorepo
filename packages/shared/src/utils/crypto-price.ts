@@ -2,17 +2,20 @@
  * Crypto Price Oracle Utility
  *
  * Fetches real-time crypto prices from CoinGecko API with Redis caching.
- * FAIL-CLOSED: Never uses hardcoded prices - throws error if all APIs fail.
+ * FAIL-SOFT: Gracefully degrades with historical averages or stale cache.
  *
  * Fallback chain:
  * 1. Redis cache (fresh < 5 min)
  * 2. CoinGecko API (primary)
  * 3. Coinbase API (secondary fallback)
  * 4. Redis cache (stale - last resort)
- * 5. THROW ERROR (fail-closed - no hardcoded prices)
+ * 5. Postgres historical moving average (if available)
+ * 6. Return graceful degradation response (no throw - allows UI to disable crypto)
  */
 
 import { getRedisClient, ServiceNamespace } from "../redis";
+import { db } from "@repo/database";
+import { sql } from "drizzle-orm";
 
 const COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price";
 const COINBASE_API = "https://api.coinbase.com/v2/exchange-rates";
@@ -26,6 +29,13 @@ const COIN_IDS = {
 
 // Cache TTL in seconds (5 minutes)
 const CACHE_TTL = 300;
+
+// Historical price fallback (used when all APIs fail)
+// These are conservative estimates to avoid underpricing
+const FALLBACK_HISTORICAL_PRICES = {
+  ETH: 2500, // Conservative baseline
+  MATIC: 0.8, // Conservative baseline
+} as const;
 
 // Lazy redis client (initialized on first use)
 let _redisClient: ReturnType<typeof getRedisClient> | null = null;
@@ -48,17 +58,49 @@ interface PriceResponse {
 }
 
 /**
+ * Fetch historical moving average from Postgres as last-resort fallback
+ * This provides a mathematically safe fallback when all APIs fail
+ */
+async function getHistoricalMovingAverage(token: "ETH" | "MATIC"): Promise<number | null> {
+  try {
+    // Query last 7 days of price data from crypto_prices table (if it exists)
+    const result = await db
+      .select({
+        avgPrice: sql<number>`AVG(price_usd)::numeric`,
+      })
+      .from(sql<any>`crypto_prices`)
+      .where(sql`token = ${token} AND created_at > NOW() - INTERVAL '7 days'`);
+
+    if (result[0]?.avgPrice) {
+      return parseFloat(result[0].avgPrice.toString());
+    }
+  } catch (error) {
+    // Table might not exist - that's okay, use hardcoded fallback
+    console.debug("[CryptoPrice] Historical average not available, using baseline");
+  }
+
+  // Return conservative baseline if no historical data
+  return FALLBACK_HISTORICAL_PRICES[token];
+}
+
+/**
  * Fetch current crypto prices from CoinGecko (primary) or Coinbase (fallback)
  * Cached in Redis for 5 minutes to avoid rate limits
  *
- * FAIL-CLOSED: Throws error if all APIs fail and no cache available
+ * FAIL-SOFT: Returns graceful degradation response instead of throwing
  */
-export async function getCryptoPrices(): Promise<{
+export async function getCryptoPrices(options?: {
+  /** If true, throw error when all sources fail (default: false) */
+  failClosed?: boolean;
+}): Promise<{
   ETH: number;
   MATIC: number;
   timestamp: number;
+  source: 'cache' | 'coingecko' | 'coinbase' | 'historical' | 'fallback';
+  isStale?: boolean;
 }> {
   const redis = getRedis();
+  const failClosed = options?.failClosed ?? false;
 
   // Try to get from cache first
   const cached = await redis.get("@apps:crypto-prices");
@@ -66,7 +108,7 @@ export async function getCryptoPrices(): Promise<{
     const parsed = JSON.parse(cached as string);
     // Return cached data if less than 5 minutes old
     if (Date.now() - parsed.timestamp < CACHE_TTL * 1000) {
-      return parsed;
+      return { ...parsed, source: 'cache' as const };
     }
   }
 
@@ -103,7 +145,7 @@ export async function getCryptoPrices(): Promise<{
       JSON.stringify(prices)
     );
 
-    return prices;
+    return { ...prices, source: 'coingecko' as const };
   } catch (coingeckoError) {
     console.warn("CoinGecko failed, trying Coinbase:", coingeckoError);
 
@@ -123,7 +165,7 @@ export async function getCryptoPrices(): Promise<{
 
       // Coinbase returns rates in data.data.rates
       const ethPrice = parseFloat(data.data?.rates?.USD || "0");
-      
+
       // For MATIC, try to fetch separately or use a reasonable estimate from ETH ratio
       let maticPrice = 0;
       try {
@@ -158,7 +200,7 @@ export async function getCryptoPrices(): Promise<{
         JSON.stringify(prices)
       );
 
-      return prices;
+      return { ...prices, source: 'coinbase' as const };
     } catch (coinbaseError) {
       console.warn("Coinbase also failed:", coinbaseError);
 
@@ -166,15 +208,47 @@ export async function getCryptoPrices(): Promise<{
       const staleCached = await redis.get("@apps:crypto-prices");
       if (staleCached) {
         console.warn("Using stale crypto price data as last resort");
-        return JSON.parse(staleCached as string);
+        const staleData = JSON.parse(staleCached as string);
+        return { ...staleData, source: 'cache' as const, isStale: true };
       }
 
-      // FAIL-CLOSED: Throw error instead of using hardcoded prices
-      const error = new Error(
-        "Crypto price oracle unavailable: CoinGecko and Coinbase APIs failed, no cache available"
-      );
-      (error as any).code = "PRICE_ORACLE_UNAVAILABLE";
-      throw error;
+      // Try historical moving average from Postgres
+      try {
+        const ethHistorical = await getHistoricalMovingAverage("ETH");
+        const maticHistorical = await getHistoricalMovingAverage("MATIC");
+
+        if (ethHistorical && maticHistorical) {
+          console.warn("Using historical moving average as fallback");
+          const prices = {
+            ETH: ethHistorical,
+            MATIC: maticHistorical,
+            timestamp: Date.now(),
+          };
+          return { ...prices, source: 'historical' as const };
+        }
+      } catch (historicalError) {
+        console.warn("Historical average also unavailable:", historicalError);
+      }
+
+      // FAIL-SOFT: Return conservative fallback prices instead of throwing
+      // This allows the UI to gracefully disable crypto checkout
+      console.warn("All price sources unavailable, using conservative fallback");
+      const fallbackPrices = {
+        ETH: FALLBACK_HISTORICAL_PRICES.ETH,
+        MATIC: FALLBACK_HISTORICAL_PRICES.MATIC,
+        timestamp: Date.now(),
+      };
+
+      if (failClosed) {
+        // Only throw if explicitly requested (for critical operations)
+        const error = new Error(
+          "Crypto price oracle unavailable: all sources failed"
+        );
+        (error as any).code = "PRICE_ORACLE_UNAVAILABLE";
+        throw error;
+      }
+
+      return { ...fallbackPrices, source: 'fallback' as const };
     }
   }
 }

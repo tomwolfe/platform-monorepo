@@ -60,8 +60,9 @@ export async function GET(req: NextRequest) {
       average_intent_to_outcome_latency: latencyCount > 0 ? totalLatency / latencyCount : 0,
       total_logs: logs.length
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("Analytics aggregation failed:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }

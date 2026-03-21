@@ -1,5 +1,4 @@
 /**
- * @ts-nocheck
  * Speculative Execution Engine - "Fast Path" Optimization
  *
  * Problem: Cold Start Accumulation - In a 10-step plan, even with adaptive batching,
@@ -26,10 +25,10 @@
  * @package apps/intention-engine
  */
 
-import { Intent, IntentType, PlanStep } from "./types";
+import { IntentType } from "./types";
 import { redis } from "../redis-client";
 import { RealtimeService } from "@repo/shared";
-import { db, schema } from "@repo/database";
+import { db } from "@repo/database";
 import { eq, and, gte, lte, sql } from "drizzle-orm";
 import {
   restaurants,
@@ -528,7 +527,7 @@ export class SpeculativeExecutor {
           lastInteractionContext: users.lastInteractionContext,
         })
         .from(users)
-        .where(eq(users.clerkId as any, userId as any))
+        .where(eq(users.clerkId, userId))
         .limit(1);
 
       if (!user) {
@@ -606,6 +605,11 @@ export class SpeculativeExecutor {
         const todayEnd = new Date(now);
         todayEnd.setHours(23, 59, 59, 999);
 
+        // Skip if restaurant has no ID (shouldn't happen but type safety)
+        if (!restaurant.id) {
+          return null;
+        }
+
         const existingReservations = await db
           .select({
             tableId: restaurantReservations.tableId,
@@ -616,7 +620,7 @@ export class SpeculativeExecutor {
           .from(restaurantReservations)
           .where(
             and(
-              eq(restaurantReservations.restaurantId, restaurant.id!),
+              eq(restaurantReservations.restaurantId, restaurant.id),
               gte(restaurantReservations.startTime, now),
               lte(restaurantReservations.startTime, todayEnd)
             )
@@ -633,7 +637,7 @@ export class SpeculativeExecutor {
             status: restaurantTables.status,
           })
           .from(restaurantTables)
-          .where(eq(restaurantTables.restaurantId, restaurant.id!))
+          .where(eq(restaurantTables.restaurantId, restaurant.id))
           .limit(20);
 
         return {
@@ -650,7 +654,7 @@ export class SpeculativeExecutor {
 
       const availability = await Promise.allSettled(availabilityPromises);
       const results = availability
-        .filter((r): r is PromiseFulfilledResult<unknown> => r.status === 'fulfilled')
+        .filter((r): r is PromiseFulfilledResult<unknown> => r.status === 'fulfilled' && r.value !== null)
         .map((r) => r.value);
 
       return { location, availability: results, found: true };
@@ -682,7 +686,7 @@ export class SpeculativeExecutor {
         )
         .limit(1);
 
-      if (!restaurant) {
+      if (!restaurant || !restaurant.id) {
         return { restaurantRef, state: null, found: false };
       }
 
@@ -699,7 +703,7 @@ export class SpeculativeExecutor {
           isActive: restaurantTables.isActive,
         })
         .from(restaurantTables)
-        .where(eq(restaurantTables.restaurantId, restaurant.id!))
+        .where(eq(restaurantTables.restaurantId, restaurant.id))
         .limit(20);
 
       // Get today's reservations
@@ -721,7 +725,7 @@ export class SpeculativeExecutor {
         .from(restaurantReservations)
         .where(
           and(
-            eq(restaurantReservations.restaurantId, restaurant.id!),
+            eq(restaurantReservations.restaurantId, restaurant.id),
             gte(restaurantReservations.startTime, todayStart),
             lte(restaurantReservations.startTime, todayEnd)
           )

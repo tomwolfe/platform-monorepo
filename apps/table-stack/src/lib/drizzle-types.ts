@@ -1,16 +1,17 @@
 /**
  * Drizzle type compatibility helpers
+ *
+ * @deprecated This workaround is no longer needed. Use drizzle-orm's native type inference.
  * 
- * Workaround for drizzle-orm type incompatibility between versions
- * See: https://github.com/drizzle-team/drizzle-orm/issues/2666
+ * All queries should use proper schema inference from @repo/database.
+ * Example:
+ * ```typescript
+ * import { db, schema } from '@repo/database';
+ * 
+ * // Proper type inference
+ * const users = await db.select().from(schema.users);
+ * ```
  */
 
-import type { Column, SQLWrapper } from 'drizzle-orm';
-
-/**
- * Type assertion helper for drizzle-orm column compatibility
- * Use this when passing columns to eq(), and(), and other drizzle functions
- */
-export function asColumn<T extends Column<any, any, any> | SQLWrapper>(col: T): any {
-  return col;
-}
+// NOTE: The asColumn workaround has been removed as it's no longer needed
+// with proper drizzle-orm version alignment across the monorepo.

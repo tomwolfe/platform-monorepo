@@ -76,20 +76,22 @@ export async function POST(req: NextRequest) {
             historyCount: history.length
           }
         });
-      } catch (error: any) {
+      } catch (error) {
         span.end();
         console.error("[Intent Engine] Inference Error:", error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
 
         // RESILIENCE FIX: Return 503 instead of 500 for dependency failures
         // to satisfy chaos test requirements for graceful degradation.
-        return NextResponse.json({ 
+        return NextResponse.json({
           success: false,
-          error: "Service Temporarily Unavailable", 
-          details: error.message,
-        }, { status: 503 }); 
+          error: "Service Temporarily Unavailable",
+          details: errorMessage,
+        }, { status: 503 });
       }
     }, { 'x-trace-id': req.headers.get('x-trace-id') || undefined });
-  } catch (error: any) {
-    return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: "Invalid JSON in request body", details: errorMessage }, { status: 400 });
   }
 }

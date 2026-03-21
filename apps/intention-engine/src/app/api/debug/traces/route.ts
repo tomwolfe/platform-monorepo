@@ -62,17 +62,18 @@ export async function GET(request: NextRequest) {
     // In a production implementation, you would query from a database
     // For now, this is a placeholder that returns an empty list
     // The actual implementation would depend on your storage backend
-    
+
     return NextResponse.json({
       traces,
       total: traces.length,
       hasMore: false,
       query: params,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("[DebugTraces] Error:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Failed to fetch traces", message: error.message },
+      { error: "Failed to fetch traces", message: errorMessage },
       { status: 500 }
     );
   }
@@ -80,7 +81,7 @@ export async function GET(request: NextRequest) {
 
 /**
  * POST /api/debug/traces
- * 
+ *
  * Store a new execution trace (for testing/debugging purposes)
  */
 export async function POST(request: NextRequest) {
@@ -97,17 +98,18 @@ export async function POST(request: NextRequest) {
 
     // In production, you would validate the trace schema here
     // For now, we trust the input (this is a debug endpoint)
-    
+
     console.log("[DebugTraces] Received trace:", trace.execution_id || trace.trace_id);
-    
+
     return NextResponse.json({
       success: true,
       message: "Trace received (storage implementation pending)",
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("[DebugTraces] Error:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Failed to store trace", message: error.message },
+      { error: "Failed to store trace", message: errorMessage },
       { status: 500 }
     );
   }

@@ -179,18 +179,19 @@ export async function POST(req: NextRequest) {
       } else {
         response.error = result.error;
       }
-      
+
       return NextResponse.json(response, { status: 200 });
     });
-    
-  } catch (error: any) {
+
+  } catch (error) {
     console.error("[MeshResume] Error resuming execution:", error);
-    
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
     return NextResponse.json(
       {
         error: "Failed to resume execution",
-        message: error.message,
-        stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
+        message: errorMessage,
+        stack: process.env.NODE_ENV === "development" ? (error as Error).stack : undefined,
       },
       { status: 500 }
     );
@@ -249,10 +250,11 @@ async function buildToolExecutor(traceId?: string): Promise<DurableToolExecutor>
           error: `Local tool execution not supported in mesh resume: ${toolName}`,
           latency_ms: Date.now() - startTime,
         };
-      } catch (error: any) {
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         return {
           success: false,
-          error: error.message,
+          error: errorMessage,
           latency_ms: Date.now() - startTime,
         };
       }

@@ -13,13 +13,11 @@ import {
   Intent,
   Plan,
   ExecutionTrace,
+  ExecutionResult,
 } from "@/lib/engine/types";
 import { parseIntent, ParseResult, validateIntentConfidence } from "@/lib/engine/intent";
 import { generatePlan, PlannerResult } from "@/lib/engine/planner";
 import { generateText } from "@/lib/engine/llm";
-import {
-  ExecutionResult,
-} from "@/lib/engine/saga-orchestrator"; // Still using ExecutionResult interface from saga (compatibility)
 import {
   WorkflowToolExecutor as ToolExecutor,
   executeWorkflow,

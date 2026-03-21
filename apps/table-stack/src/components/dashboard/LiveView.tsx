@@ -31,10 +31,13 @@ export default function LiveView({ restaurantId }: { restaurantId: string }) {
     return () => {
       try {
         channel.unsubscribe('delivery_dispatched', deliveryListener);
+        // Prevent race conditions by checking connection state before closing
+        if (ably.connection.state !== 'closed' && ably.connection.state !== 'closing') {
+          ably.close();
+        }
       } catch {
         // Ignore cleanup errors
       }
-      ably.close();
     };
   }, [restaurantId]);
 

@@ -213,7 +213,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ message: "Event ignored" });
-  } catch (error: any) {
+  } catch (error) {
     console.error("[IntentionEngine Webhook] Error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }

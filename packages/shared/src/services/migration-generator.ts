@@ -470,15 +470,41 @@ ${proposal.deprecatedFields?.map(field => `  // Note: Field ${field} was already
     if (field.required && field.defaultValue !== undefined) {
       statement = `  await db.execute(sql\`ALTER TABLE ${tableName} ADD COLUMN ${field.name} ${postgresType} DEFAULT ${this.sqlLiteral(field.defaultValue)}\`)`;
     } else if (field.required) {
-      // For required fields without default, add with NULL first, then update, then set NOT NULL
+      // For required fields without default, add with NULL first, then update with safe fallback, then set NOT NULL
+      const safeDefault = this.getSafeDefaultForType(field.type);
       return `  // Add column as nullable first
   await db.execute(sql\`ALTER TABLE ${tableName} ADD COLUMN ${field.name} ${postgresType}\`);
-  // TODO: Set default values for existing rows
-  // await db.execute(sql\`UPDATE ${tableName} SET ${field.name} = ? WHERE ${field.name} IS NULL\`);
+  // Set safe default values for existing rows based on field type
+  await db.execute(sql\`UPDATE ${tableName} SET ${field.name} = ${safeDefault} WHERE ${field.name} IS NULL\`);
+  // Now set the column to NOT NULL
   await db.execute(sql\`ALTER TABLE ${tableName} ALTER COLUMN ${field.name} SET NOT NULL\`);`;
     }
 
     return statement;
+  }
+
+  /**
+   * Get safe default value for a field type when no explicit default is provided
+   * This is used for backfilling existing rows when adding a required column
+   */
+  private getSafeDefaultForType(
+    fieldType: "string" | "number" | "boolean" | "object" | "array" | "datetime"
+  ): string {
+    switch (fieldType) {
+      case "string":
+        return "''"; // Empty string
+      case "number":
+        return "0"; // Zero
+      case "boolean":
+        return "false"; // False
+      case "datetime":
+        return "NOW()"; // Current timestamp
+      case "object":
+      case "array":
+        return "'{}'::jsonb"; // Empty JSONB object
+      default:
+        return "NULL"; // Fallback (shouldn't happen)
+    }
   }
 
   /**

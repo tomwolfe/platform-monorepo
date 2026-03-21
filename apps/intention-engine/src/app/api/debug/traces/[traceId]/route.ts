@@ -49,10 +49,11 @@ export async function GET(
     }
 
     return NextResponse.json(enrichedTrace);
-  } catch (error: any) {
+  } catch (error) {
     console.error("[DebugTraceById] Error:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Failed to fetch trace", message: error.message },
+      { error: "Failed to fetch trace", message: errorMessage },
       { status: 500 }
     );
   }

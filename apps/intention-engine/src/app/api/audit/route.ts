@@ -5,11 +5,12 @@ export const runtime = "edge";
 
 export async function GET(req: NextRequest) {
   const userIp = req.headers.get("x-forwarded-for") || "anonymous";
-  
+
   try {
     const logs = await getUserAuditLogs(userIp, 10);
     return NextResponse.json({ logs });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }

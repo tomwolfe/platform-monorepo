@@ -42,13 +42,14 @@ export async function POST(req: NextRequest) {
       },
     }, { status: 404 });
 
-  } catch (error: any) {
+  } catch (error) {
     console.error('MCP Error:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json({
       jsonrpc: '2.0',
       error: {
         code: -32603,
-        message: error.message || 'Internal error',
+        message: errorMessage || 'Internal error',
       },
     }, { status: 500 });
   }

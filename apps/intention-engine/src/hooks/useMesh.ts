@@ -52,7 +52,10 @@ export function useMesh(onEvent: (name: string, data: any) => void) {
           channel.unsubscribe((channel as any)._listener);
         }
         if (ably) {
-          ably.close();
+          // Prevent race conditions by checking connection state before closing
+          if (ably.connection.state !== 'closed' && ably.connection.state !== 'closing') {
+            ably.close();
+          }
         }
       } catch (err) {
         // Ignore cleanup errors - connection may already be closed

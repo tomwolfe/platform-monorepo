@@ -3,9 +3,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Ably from 'ably';
 import useSWR from 'swr';
-import { Truck, MapPin, DollarSign, Star, Bell, Navigation, Package } from 'lucide-react';
-import { acceptDelivery } from './actions';
+import { Truck, MapPin, DollarSign, Star, Bell, Navigation, Package, Wallet } from 'lucide-react';
+import { acceptDelivery, linkDriverWallet, getDriverWallet } from './actions';
 import Link from 'next/link';
+import { ConnectWallet } from "@/components/ConnectWallet";
+import { useAccount } from "wagmi";
 
 interface OrderIntent {
   id?: string; // For API compatibility
@@ -27,6 +29,7 @@ interface DriverProfile {
   id: string;
   fullName: string;
   email: string;
+  walletAddress?: string | null;
   trustScore: number;
   isActive: boolean;
 }
@@ -80,6 +83,9 @@ export default function DriverDashboard() {
   const [ablyError, setAblyError] = useState<string | null>(null);
   const [driverProfile, setDriverProfile] = useState<DriverProfile | null>(null);
   const [profileChecked, setProfileChecked] = useState(false);
+  const [walletSynced, setWalletSynced] = useState(false);
+
+  const { address, isConnected } = useAccount();
 
   // Check driver profile on mount
   useEffect(() => {
@@ -90,6 +96,29 @@ export default function DriverDashboard() {
       setProfileChecked(true);
     });
   }, []);
+
+  // Auto-sync connected wallet to driver profile
+  useEffect(() => {
+    if (!isConnected || !address || !driverProfile || walletSynced) return;
+
+    // Check if wallet is already linked and matches
+    if (driverProfile.walletAddress === address) {
+      setWalletSynced(true);
+      return;
+    }
+
+    // Auto-link the connected wallet
+    linkDriverWallet(address).then((res) => {
+      if (res.success) {
+        console.log("Payout wallet linked:", address);
+        setWalletSynced(true);
+        // Update local profile state
+        setDriverProfile((prev) => prev ? { ...prev, walletAddress: address } : null);
+      } else {
+        console.warn("Failed to link wallet:", res.error);
+      }
+    });
+  }, [isConnected, address, driverProfile, walletSynced]);
 
   // SWR for driver stats
   const { data: stats, error: statsError, isLoading: statsLoading } = useSWR<DriverStats>(
@@ -281,11 +310,19 @@ export default function DriverDashboard() {
           <Truck className="text-emerald-400" size={32} />
           <div>
             <h1 className="text-2xl font-bold">Driver Core</h1>
-            <p className="text-slate-400 text-xs uppercase tracking-widest">OpenDeliver Network</p>
+            <p className="text-slate-400 text-xs uppercase tracking-widest">
+              Payouts: {driverProfile?.walletAddress ? (
+                <span className="text-emerald-400">Linked</span>
+              ) : isConnected ? (
+                <span className="text-amber-400">Connecting...</span>
+              ) : (
+                <span className="text-slate-500">Not Configured</span>
+              )}
+            </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4">
           {driverProfile && (
             <div className="text-right hidden md:block">
               <div className="flex items-center gap-1 justify-end text-emerald-400">
@@ -295,6 +332,8 @@ export default function DriverDashboard() {
               <p className="text-slate-500 text-xs">Trust Score</p>
             </div>
           )}
+          
+          <ConnectWallet />
 
           <button
             onClick={handleGoOnline}

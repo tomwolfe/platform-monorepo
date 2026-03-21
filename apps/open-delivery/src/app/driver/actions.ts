@@ -113,13 +113,13 @@ export async function acceptDelivery(orderId: string): Promise<AcceptDeliveryRes
 
 /**
  * Reject Delivery Server Action
- * 
+ *
  * Allows a driver to reject an order (optional feature).
  */
 export async function rejectDelivery(orderId: string, reason?: string): Promise<AcceptDeliveryResult> {
   try {
     const user = await currentUser();
-    
+
     if (!user) {
       return { success: false, error: "Unauthorized" };
     }
@@ -128,15 +128,99 @@ export async function rejectDelivery(orderId: string, reason?: string): Promise<
     console.log(`[RejectDelivery] Driver ${user.id} rejected order ${orderId}${reason ? `: ${reason}` : ''}`);
 
     // Could add rejection tracking here (e.g., track rejection rate)
-    
+
     revalidatePath('/driver');
-    
+
     return { success: true };
   } catch (error) {
     console.error("[RejectDelivery] Error:", error);
-    return { 
-      success: false, 
-      error: error instanceof Error ? error.message : "Failed to reject order" 
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to reject order"
+    };
+  }
+}
+
+/**
+ * Link Wallet Server Action
+ *
+ * Allows a driver to link their crypto wallet for payouts.
+ * Stores the EIP-55 formatted wallet address in the database.
+ */
+export async function linkDriverWallet(walletAddress: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const user = await currentUser();
+
+    if (!user) {
+      return { success: false, error: "Unauthorized - please log in" };
+    }
+
+    // Validate wallet address format (basic EIP-55 check)
+    if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
+      return { success: false, error: "Invalid wallet address format" };
+    }
+
+    // Atomic update to link the EIP-55 address to the driver profile
+    const updateResult = await db.execute(
+      sql`
+        UPDATE drivers
+        SET
+          wallet_address = ${walletAddress},
+          updated_at = NOW()
+        WHERE
+          clerk_id = ${user.id}
+        RETURNING *
+      `
+    );
+
+    if (updateResult.rows.length === 0) {
+      return {
+        success: false,
+        error: "No driver profile found. Please register as a driver first."
+      };
+    }
+
+    revalidatePath('/driver');
+
+    return { success: true };
+  } catch (error) {
+    console.error("[LinkDriverWallet] Error:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to link wallet"
+    };
+  }
+}
+
+/**
+ * Get Driver Wallet Server Action
+ *
+ * Returns the linked wallet address for the current driver.
+ */
+export async function getDriverWallet(): Promise<{ success: boolean; walletAddress?: string | null; error?: string }> {
+  try {
+    const user = await currentUser();
+
+    if (!user) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    const result = await db.execute(
+      sql`SELECT wallet_address FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`
+    );
+
+    const driver = result.rows[0] as any | undefined;
+
+    if (!driver) {
+      return { success: false, error: "No driver profile found" };
+    }
+
+    return { success: true, walletAddress: driver.wallet_address };
+  } catch (error) {
+    console.error("[GetDriverWallet] Error:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to get wallet"
     };
   }
 }

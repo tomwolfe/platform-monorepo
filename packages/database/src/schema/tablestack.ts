@@ -246,10 +246,12 @@ export const drivers = pgTable('drivers', {
   clerkId: text('clerk_id').unique(), // Link to Clerk authentication
   fullName: text('full_name').notNull(),
   email: text('email').unique().notNull(),
+  walletAddress: text('wallet_address'), // Crypto wallet for payouts
   trustScore: integer('trust_score').default(80),
   isActive: boolean('is_active').default(true),
   createdAt: timestamp('created_at').defaultNow(),
   lastOnline: timestamp('last_online'),
+  updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => {
   return {
     clerkIdIdx: uniqueIndex('drivers_clerk_id_idx').on(table.clerkId),

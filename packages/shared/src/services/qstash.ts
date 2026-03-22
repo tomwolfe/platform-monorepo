@@ -410,6 +410,7 @@ export class QStashService {
 
   /**
    * Fallback for generic publish when QStash is not configured
+   * Uses Next.js after() to ensure execution continues after response
    */
   private static async fallbackPublish(options: {
     url: string;
@@ -417,6 +418,32 @@ export class QStashService {
     headers?: Record<string, string>;
   }): Promise<void> {
     try {
+      // Use dynamic import to avoid breaking non-Next.js environments
+      const { after } = await import('next/server');
+      
+      after(() => 
+        fetch(options.url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...options.headers,
+          },
+          body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body),
+        }).then(response => {
+          if (!response.ok) {
+            console.error(
+              `[FallbackPublish] Failed to call URL: ${response.status} ${response.statusText}`
+            );
+          } else {
+            console.log(`[FallbackPublish] URL called successfully`);
+          }
+        }).catch(error => {
+          console.error(`[FallbackPublish] Error calling URL:`, error);
+        })
+      );
+    } catch (error) {
+      // Fallback to setTimeout if after() is not available (non-Next.js environment)
+      console.warn("[FallbackPublish] after() not available, using setTimeout (dev only)");
       setTimeout(async () => {
         try {
           const response = await fetch(options.url, {
@@ -439,20 +466,60 @@ export class QStashService {
           console.error(`[FallbackPublish] Error calling URL:`, error);
         }
       }, 200);
-    } catch (error) {
-      console.error("[FallbackPublish] Failed to schedule fetch:", error);
     }
   }
 
   /**
    * Fallback to direct fetch when QStash is not configured
    * Maintains backward compatibility for local development
+   * Uses Next.js after() to ensure execution continues after response
    */
   private static async fallbackFetch(options: QStashTriggerOptions): Promise<void> {
-    try {
-      const url = `${this.baseUrl}/api/engine/execute-step`;
+    const url = `${this.baseUrl}/api/engine/execute-step`;
 
-      // Use setTimeout for non-blocking fire-and-forget
+    try {
+      // Use dynamic import to avoid breaking non-Next.js environments
+      const { after } = await import('next/server');
+      
+      after(() => {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+
+        if (options.internalKey) {
+          headers["x-internal-system-key"] = options.internalKey;
+        }
+
+        // Propagate trace context even in fallback mode
+        if (options.traceId) {
+          headers["x-trace-id"] = options.traceId;
+        }
+        if (options.correlationId) {
+          headers["x-correlation-id"] = options.correlationId;
+        }
+
+        return fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            executionId: options.executionId,
+            startStepIndex: options.stepIndex,
+          }),
+        }).then(response => {
+          if (!response.ok) {
+            console.error(
+              `[FallbackFetch] Failed to trigger next step: ${response.status} ${response.statusText}`
+            );
+          } else {
+            console.log(`[FallbackFetch] Next step triggered successfully${options.traceId ? ` [trace: ${options.traceId}]` : ''}`);
+          }
+        }).catch(error => {
+          console.error(`[FallbackFetch] Error triggering next step:`, error);
+        });
+      });
+    } catch (error) {
+      // Fallback to setTimeout if after() is not available (non-Next.js environment)
+      console.warn("[FallbackFetch] after() not available, using setTimeout (dev only)");
       setTimeout(async () => {
         try {
           const headers: Record<string, string> = {
@@ -491,8 +558,6 @@ export class QStashService {
           console.error(`[FallbackFetch] Error triggering next step:`, error);
         }
       }, 200); // 200ms delay to allow response to complete
-    } catch (error) {
-      console.error("[FallbackFetch] Failed to schedule fetch:", error);
     }
   }
 

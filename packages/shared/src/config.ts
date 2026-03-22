@@ -281,10 +281,24 @@ export class AppConfig {
 
   /**
    * Get internal system key for service-to-service authentication
+   * 
+   * SECURITY: In production, this throws a fatal error if the key is missing.
+   * This prevents the system from running with insecure defaults.
    */
   static getInternalSystemKey(): string {
     const config = this.init();
-    return config.INTERNAL_SYSTEM_KEY || "internal-system-key-change-in-production";
+    const key = config.INTERNAL_SYSTEM_KEY;
+    
+    // In production, fail fast if key is missing
+    if (!key && process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'CRITICAL: INTERNAL_SYSTEM_KEY is not configured. ' +
+        'This is a required security credential for service-to-service authentication. ' +
+        'Set a strong, random value in your production environment variables.'
+      );
+    }
+    
+    return key || "internal-system-key-change-in-production";
   }
 
   /**

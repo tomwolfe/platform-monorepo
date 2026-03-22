@@ -1,7 +1,13 @@
 import { useEffect, useRef } from 'react';
 import * as Ably from 'ably';
 
-export function useMesh(onEvent: (name: string, data: any) => void) {
+// Type-safe event handler for Nervous System updates
+interface NervousSystemEvent {
+  name: string;
+  data: Record<string, unknown>;
+}
+
+export function useMesh(onEvent: (name: string, data: Record<string, unknown>) => void) {
   // Store the latest callback in a ref to avoid reconnecting Ably when the callback changes
   const savedOnEvent = useRef(onEvent);
 
@@ -30,7 +36,7 @@ export function useMesh(onEvent: (name: string, data: any) => void) {
         }
       });
 
-      const listener = (message: any) => {
+      const listener = (message: NervousSystemEvent) => {
         if (!isMounted) return;
         console.log('[Mesh] Received real-time event:', message.name, message.data);
         savedOnEvent.current(message.name!, message.data);

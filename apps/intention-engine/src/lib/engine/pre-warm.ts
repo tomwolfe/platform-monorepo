@@ -195,45 +195,43 @@ export class PreWarmService {
 
   /**
    * Send pre-warm request to lambda endpoint
-   * Fire-and-forget - does not wait for response
+   * Fire-and-forget - uses Next.js after() to ensure execution continues after response
    */
   private async sendPreWarmRequest(): Promise<void> {
     const warmUrl = `${PRE_WARM_CONFIG.baseUrl}/api/engine/pre-warm`;
-    
-    try {
-      // Create abort controller for timeout
-      const abortController = new AbortController();
-      const timeoutId = setTimeout(
-        () => abortController.abort(),
-        PRE_WARM_CONFIG.preWarmRequestTimeout
-      );
 
-      // Fire-and-forget request
-      // We intentionally don't await or check response
-      fetch(warmUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          executionId: this.executionId,
-          nextStepIndex: this.state.nextStepIndex,
-          triggeredAt: this.state.preWarmTriggeredAt,
-        }),
-        signal: abortController.signal,
-      }).catch(error => {
-        // Silently ignore errors - pre-warm is best-effort
-        if (PRE_WARM_CONFIG.debug) {
-          console.warn("[PreWarm] Request error (ignored):", error);
-        }
-      }).finally(() => {
-        clearTimeout(timeoutId);
-      });
+    try {
+      // Use Next.js after() to ensure the request completes even after response
+      const { after } = await import('next/server');
+      
+      after(() => 
+        fetch(warmUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            executionId: this.executionId,
+            nextStepIndex: this.state.nextStepIndex,
+            triggeredAt: this.state.preWarmTriggeredAt,
+          }),
+        }).then(response => {
+          // Silently ignore response - pre-warm is best-effort
+          if (PRE_WARM_CONFIG.debug && !response.ok) {
+            console.warn("[PreWarm] Pre-warm request failed:", response.status);
+          }
+        }).catch(error => {
+          // Silently ignore errors - pre-warm is best-effort
+          if (PRE_WARM_CONFIG.debug) {
+            console.warn("[PreWarm] Request error (ignored):", error);
+          }
+        })
+      );
 
       // Mark lambda as warmed (optimistic)
       this.state.lambdaWarmed = true;
       this.state.lambdaWarmedAt = new Date().toISOString();
-      
+
       // Update Redis
       await this.storePreWarmState();
     } catch (error) {

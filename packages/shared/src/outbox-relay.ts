@@ -179,7 +179,7 @@ export class OutboxRelayService {
 
   /**
    * Fallback to direct fetch when QStash is not configured
-   * Fire-and-forget using setTimeout to not block response
+   * Fire-and-forget using Next.js after() to ensure execution continues after response
    */
   private static async fallbackFetch(
     executionId: string,
@@ -187,9 +187,11 @@ export class OutboxRelayService {
   ): Promise<void> {
     const url = `${config.baseUrl || 'http://localhost:3000'}/api/engine/outbox-relay`;
 
-    // Use setTimeout for non-blocking fire-and-forget
-    setTimeout(async () => {
-      try {
+    try {
+      // Use dynamic import to avoid breaking non-Next.js environments
+      const { after } = await import('next/server');
+      
+      after(() => {
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
         };
@@ -205,26 +207,66 @@ export class OutboxRelayService {
           headers['x-correlation-id'] = config.correlationId;
         }
 
-        const response = await fetch(url, {
+        return fetch(url, {
           method: 'POST',
           headers,
           body: JSON.stringify({
             executionId,
             timestamp: new Date().toISOString(),
           }),
+        }).then(response => {
+          if (!response.ok) {
+            console.error(
+              `[OutboxRelay:Fallback] Failed to trigger relay: ${response.status} ${response.statusText}`
+            );
+          } else {
+            console.log(`[OutboxRelay:Fallback] Relay triggered successfully`);
+          }
+        }).catch(error => {
+          console.error(`[OutboxRelay:Fallback] Error triggering relay:`, error);
         });
+      });
+    } catch (error) {
+      // Fallback to setTimeout if after() is not available (non-Next.js environment)
+      console.warn("[OutboxRelay:Fallback] after() not available, using setTimeout (dev only)");
+      setTimeout(async () => {
+        try {
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+          };
 
-        if (!response.ok) {
-          console.error(
-            `[OutboxRelay:Fallback] Failed to trigger relay: ${response.status} ${response.statusText}`
-          );
-        } else {
-          console.log(`[OutboxRelay:Fallback] Relay triggered successfully`);
+          if (config.internalKey) {
+            headers['x-internal-system-key'] = config.internalKey;
+          }
+
+          if (config.traceId) {
+            headers['x-trace-id'] = config.traceId;
+          }
+          if (config.correlationId) {
+            headers['x-correlation-id'] = config.correlationId;
+          }
+
+          const response = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              executionId,
+              timestamp: new Date().toISOString(),
+            }),
+          });
+
+          if (!response.ok) {
+            console.error(
+              `[OutboxRelay:Fallback] Failed to trigger relay: ${response.status} ${response.statusText}`
+            );
+          } else {
+            console.log(`[OutboxRelay:Fallback] Relay triggered successfully`);
+          }
+        } catch (error) {
+          console.error(`[OutboxRelay:Fallback] Error triggering relay:`, error);
         }
-      } catch (error) {
-        console.error(`[OutboxRelay:Fallback] Error triggering relay:`, error);
-      }
-    }, 100); // 100ms delay to allow response to complete
+      }, 100); // 100ms delay to allow response to complete
+    }
   }
 
   /**

@@ -1,7 +1,5 @@
 import { SignJWT, jwtVerify, CompactSign, compactVerify } from 'jose';
 
-const INTERNAL_SYSTEM_KEY = process.env.INTERNAL_SYSTEM_KEY;
-
 // Export asymmetric JWT functions for Zero-Trust authentication
 export {
   generateServiceKeyPair,
@@ -20,14 +18,28 @@ export {
   type AsymmetricJWTOptions,
 } from './asymmetric-jwt';
 
-function getSecret() {
-  if (!INTERNAL_SYSTEM_KEY) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('INTERNAL_SYSTEM_KEY is not defined');
-    }
-    return new TextEncoder().encode(process.env.INTERNAL_SYSTEM_KEY || 'development_secret_at_least_32_chars_long');
+/**
+ * Get internal system key with production safety check
+ * This is a local implementation to avoid circular dependency with @repo/shared
+ */
+function getInternalSystemKey(): string {
+  const key = process.env.INTERNAL_SYSTEM_KEY;
+  
+  // In production, fail fast if key is missing
+  if (!key && process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'CRITICAL: INTERNAL_SYSTEM_KEY is not configured. ' +
+      'This is a required security credential for service-to-service authentication. ' +
+      'Set a strong, random value in your production environment variables.'
+    );
   }
-  return new TextEncoder().encode(INTERNAL_SYSTEM_KEY);
+  
+  return key || 'internal-system-key-change-in-production';
+}
+
+function getSecret() {
+  const key = getInternalSystemKey();
+  return new TextEncoder().encode(key);
 }
 
 // ============================================================================
@@ -574,11 +586,17 @@ export interface Intent {
   parameters?: Record<string, unknown>;
   rawText: string;
 }
+
 export class SecurityProvider {
   static validateInternalKey(key: string | null): boolean {
-    const validKey = process.env.INTERNAL_SYSTEM_KEY;
-    if (!validKey) return false;
-    return key === validKey;
+    try {
+      const validKey = getInternalSystemKey();
+      if (!validKey) return false;
+      return key === validKey;
+    } catch {
+      // Key not configured in production - fail validation
+      return false;
+    }
   }
 
   static validateHeaders(headers: Headers): boolean {

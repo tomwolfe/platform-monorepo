@@ -38,13 +38,6 @@ const BINANCE_SYMBOLS = {
 // Cache TTL in seconds (5 minutes)
 const CACHE_TTL = 300;
 
-// Historical price fallback (used when all APIs fail)
-// These are conservative estimates to avoid underpricing
-const FALLBACK_HISTORICAL_PRICES = {
-  ETH: 2500, // Conservative baseline
-  MATIC: 0.8, // Conservative baseline
-} as const;
-
 // Lazy redis client (initialized on first use)
 let _redisClient: ReturnType<typeof getRedisClient> | null = null;
 
@@ -68,6 +61,7 @@ interface PriceResponse {
 /**
  * Fetch historical moving average from Postgres as last-resort fallback
  * This provides a mathematically safe fallback when all APIs fail
+ * Returns null if historical data is not available - NO hardcoded fallbacks
  */
 async function getHistoricalMovingAverage(token: "ETH" | "MATIC"): Promise<number | null> {
   try {
@@ -83,32 +77,33 @@ async function getHistoricalMovingAverage(token: "ETH" | "MATIC"): Promise<numbe
       return parseFloat(result[0].avgPrice.toString());
     }
   } catch (error) {
-    // Table might not exist - that's okay, use hardcoded fallback
-    console.debug("[CryptoPrice] Historical average not available, using baseline");
+    // Table might not exist - that's okay, return null
+    console.debug("[CryptoPrice] Historical average not available");
   }
 
-  // Return conservative baseline if no historical data
-  return FALLBACK_HISTORICAL_PRICES[token];
+  // Return null if no historical data - DO NOT use hardcoded fallbacks
+  return null;
 }
 
 /**
  * Fetch current crypto prices from CoinGecko (primary) or Coinbase (fallback)
  * Cached in Redis for 5 minutes to avoid rate limits
  *
- * FAIL-SOFT: Returns graceful degradation response instead of throwing
+ * FINANCIAL SAFETY: Defaults to failClosed=true to prevent dangerous hardcoded fallbacks
  */
 export async function getCryptoPrices(options?: {
-  /** If true, throw error when all sources fail (default: false) */
+  /** If true, throw error when all sources fail (default: true for financial safety) */
   failClosed?: boolean;
 }): Promise<{
   ETH: number;
   MATIC: number;
   timestamp: number;
-  source: 'cache' | 'coingecko' | 'coinbase' | 'binance' | 'historical' | 'fallback';
+  source: 'cache' | 'coingecko' | 'coinbase' | 'binance' | 'historical';
   isStale?: boolean;
 }> {
   const redis = getRedis();
-  const failClosed = options?.failClosed ?? false;
+  // CRITICAL: Default to failClosed=true to prevent financial risk from hardcoded prices
+  const failClosed = options?.failClosed ?? true;
 
   // Try to get from cache first
   const cached = await redis.get("@apps:crypto-prices");
@@ -285,25 +280,15 @@ export async function getCryptoPrices(options?: {
           console.warn("Historical average also unavailable:", historicalError);
         }
 
-        // FAIL-SOFT: Return conservative fallback prices instead of throwing
-        // This allows the UI to gracefully disable crypto checkout
-        console.warn("All price sources unavailable, using conservative fallback");
-        const fallbackPrices = {
-          ETH: FALLBACK_HISTORICAL_PRICES.ETH,
-          MATIC: FALLBACK_HISTORICAL_PRICES.MATIC,
-          timestamp: Date.now(),
-        };
-
-        if (failClosed) {
-          // Only throw if explicitly requested (for critical operations)
-          const error = new Error(
-            "Crypto price oracle unavailable: all sources failed"
-          );
-          (error as any).code = "PRICE_ORACLE_UNAVAILABLE";
-          throw error;
-        }
-
-        return { ...fallbackPrices, source: 'fallback' as const };
+        // CRITICAL: All price sources unavailable - THROW ERROR for financial safety
+        // DO NOT use hardcoded fallbacks for real crypto transactions
+        const error = new Error(
+          "Crypto price oracle unavailable: all external sources (CoinGecko, Coinbase, Binance) and historical data failed. " +
+          "Cannot process crypto transactions without reliable price data. " +
+          "This is a safety measure to prevent underpricing/overpricing due to stale data."
+        );
+        (error as any).code = "PRICE_ORACLE_UNAVAILABLE";
+        throw error;
       }
     }
   }

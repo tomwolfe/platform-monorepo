@@ -5,6 +5,7 @@ import { withNervousSystemTracing } from "@repo/shared/tracing";
 import { startTrace } from "@/lib/observability";
 import { saveUserInteractionContext } from "@/lib/context-persistence";
 import { QStashService } from "@repo/shared";
+import { AppConfig } from "@repo/shared";
 
 // Engine imports
 import {
@@ -39,8 +40,8 @@ import {
 import { getRegistryManager } from "@/lib/engine/registry";
 import { verifyPlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/verifier";
 
-// Internal system key for QStash-triggered requests
-const INTERNAL_SYSTEM_KEY = process.env.INTERNAL_SYSTEM_KEY || "internal-system-key-change-in-production";
+// Internal system key for QStash-triggered requests - uses strict getter
+const INTERNAL_SYSTEM_KEY = AppConfig.getInternalSystemKey();
 
 export const runtime = "nodejs";
 

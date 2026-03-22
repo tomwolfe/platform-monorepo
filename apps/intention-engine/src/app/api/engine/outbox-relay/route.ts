@@ -20,16 +20,15 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getOutboxService } from '@repo/shared';
-import { QStashService, verifyQStashWebhook } from '@repo/shared';
+import { getOutboxService, QStashService, verifyQStashWebhook, AppConfig } from '@repo/shared';
 import { redis } from '@/lib/redis-client';
 
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
 
-const INTERNAL_SYSTEM_KEY =
-  process.env.INTERNAL_SYSTEM_KEY || 'internal-system-key-change-in-production';
+// Internal system key - uses strict getter that throws in production if missing
+const INTERNAL_SYSTEM_KEY = AppConfig.getInternalSystemKey();
 
 export const runtime = 'nodejs';
 export const maxDuration = 10; // Vercel Hobby limit

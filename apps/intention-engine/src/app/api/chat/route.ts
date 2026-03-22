@@ -41,9 +41,10 @@ import { getRegistryManager } from "@/lib/engine/registry";
 import { verifyPlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/verifier";
 import { promptInjectionMiddleware } from "@/lib/middleware/prompt-injection";
 import { rateLimitMiddleware, createRateLimitMiddleware } from "@/lib/middleware/rate-limiter";
+import { AppConfig } from "@repo/shared";
 
-// Internal system key for QStash-triggered requests
-const INTERNAL_SYSTEM_KEY = process.env.INTERNAL_SYSTEM_KEY || "internal-system-key-change-in-production";
+// Internal system key for QStash-triggered requests - uses strict getter
+const INTERNAL_SYSTEM_KEY = AppConfig.getInternalSystemKey();
 
 export const runtime = "nodejs";
 export const maxDuration = 30;

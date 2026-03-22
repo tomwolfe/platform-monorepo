@@ -9,6 +9,27 @@ import Link from 'next/link';
 import { ConnectWallet } from "@/components/ConnectWallet";
 import { useAccount } from "wagmi";
 
+// Type-safe event payloads
+interface DeliveryIntentPayload {
+  orderId: string;
+  fulfillmentId?: string;
+  pickupAddress: string;
+  deliveryAddress: string;
+  price?: number;
+  priority?: string;
+  items?: Array<{ name: string; quantity: number; price: number }>;
+  timestamp: string;
+  traceId?: string;
+  [key: string]: unknown;
+}
+
+interface OrderMatchedPayload {
+  orderId: string;
+  driverId?: string;
+  timestamp?: string;
+  [key: string]: unknown;
+}
+
 interface OrderIntent {
   id?: string; // For API compatibility
   orderId: string;
@@ -186,21 +207,22 @@ export default function DriverDashboard() {
         channel = ably.channels.get('nervous-system:updates');
 
         // Listen for new delivery intents
-        const deliveryIntentListener = (msg: any) => {
-          console.log('[Ably] New intent created:', msg.data);
+        const deliveryIntentListener = (msg: Ably.InboundMessage) => {
+          const data = msg.data as DeliveryIntentPayload;
+          console.log('[Ably] New intent created:', data);
 
           // Optimistic update: prepend new order to list
           mutate((current) => {
             const newOrder: OrderIntent = {
-              orderId: msg.data.orderId,
-              fulfillmentId: msg.data.fulfillmentId,
-              pickupAddress: msg.data.pickupAddress,
-              deliveryAddress: msg.data.deliveryAddress,
-              price: msg.data.price,
-              priority: msg.data.priority,
-              items: msg.data.items,
-              timestamp: msg.data.timestamp,
-              traceId: msg.data.traceId,
+              orderId: data.orderId,
+              fulfillmentId: data.fulfillmentId,
+              pickupAddress: data.pickupAddress,
+              deliveryAddress: data.deliveryAddress,
+              price: data.price,
+              priority: data.priority,
+              items: data.items,
+              timestamp: data.timestamp,
+              traceId: data.traceId,
             };
 
             // Avoid duplicates
@@ -214,12 +236,13 @@ export default function DriverDashboard() {
         (channel as any)._deliveryIntentListener = deliveryIntentListener;
 
         // Listen for orders matched (taken by self or others)
-        const orderMatchedListener = (msg: any) => {
-          console.log('[Ably] Order matched:', msg.data);
+        const orderMatchedListener = (msg: Ably.InboundMessage) => {
+          const data = msg.data as OrderMatchedPayload;
+          console.log('[Ably] Order matched:', data);
 
           // Remove matched order from available list
           mutate((current) =>
-            (current || []).filter(o => o.orderId !== msg.data.orderId)
+            (current || []).filter(o => o.orderId !== data.orderId)
           , false);
         };
         channel.subscribe('order.matched', orderMatchedListener);

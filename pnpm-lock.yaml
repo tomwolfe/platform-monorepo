@@ -410,6 +410,9 @@ importers:
 
   packages/auth:
     dependencies:
+      '@repo/shared':
+        specifier: workspace:*
+        version: link:../shared
       jose:
         specifier: ^5.9.6
         version: 5.10.0

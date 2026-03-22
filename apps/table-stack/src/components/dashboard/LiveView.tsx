@@ -5,6 +5,12 @@ import Ably from 'ably';
 import { IconAfterMount } from '@/components/ui/IconWrapper';
 import { Bell, X } from 'lucide-react';
 
+// Type-safe event payload for delivery dispatched events
+interface DeliveryDispatchedPayload {
+  order_id: string;
+  [key: string]: unknown;
+}
+
 export default function LiveView({ restaurantId }: { restaurantId: string }) {
   const [notification, setNotification] = useState<{ id: string; message: string } | null>(null);
 
@@ -14,10 +20,11 @@ export default function LiveView({ restaurantId }: { restaurantId: string }) {
     const ably = new Ably.Realtime({ authUrl: '/api/ably/auth' });
     const channel = ably.channels.get(`merchant:${restaurantId}`);
 
-    const deliveryListener = (message: any) => {
+    const deliveryListener = (message: Ably.InboundMessage) => {
+      const data = message.data as DeliveryDispatchedPayload;
       setNotification({
-        id: message.data.order_id,
-        message: `Delivery Out: Order ${message.data.order_id} has been dispatched!`,
+        id: data.order_id,
+        message: `Delivery Out: Order ${data.order_id} has been dispatched!`,
       });
 
       // Auto-hide after 5 seconds

@@ -35,7 +35,7 @@ import { z } from "zod";
 import { redis } from "@/lib/redis-client";
 import { getToolRegistry } from "@/lib/engine/tools/registry";
 import { loadExecutionState, saveExecutionState } from "@/lib/engine/memory";
-import { RealtimeService } from "@repo/shared";
+import { RealtimeService, AppConfig } from "@repo/shared";
 import {
   ExecutionState,
 } from "@/lib/engine/types";
@@ -128,7 +128,8 @@ function mapFailureReason(errorMessage?: string): PolicyEvaluationContext["failu
 // CONFIGURATION
 // ============================================================================
 
-const INTERNAL_SYSTEM_KEY = process.env.INTERNAL_SYSTEM_KEY || "internal-system-key-change-in-production";
+// Internal system key - uses strict getter that throws in production if missing
+const INTERNAL_SYSTEM_KEY = AppConfig.getInternalSystemKey();
 const RECURSIVE_DELAY_MS = 200;
 const STEP_TIMEOUT_MS = 8500; // Abort individual steps at 8.5s
 

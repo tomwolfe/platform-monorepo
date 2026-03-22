@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ToolDefinitionMetadata, ToolParameter } from "./types";
 import { CommunicationSchema } from "@repo/mcp-protocol";
+import { getResendClient } from "@repo/shared";
 
 export type CommunicationParams = z.infer<typeof CommunicationSchema>;
 
@@ -16,24 +17,52 @@ export async function send_comm(params: CommunicationParams): Promise<{ success:
   if (!validated.success) {
     return { success: false, error: "Invalid parameters: " + validated.error.message };
   }
-  
+
   const { recipient, channel, message, subject } = validated.data;
   console.log(`Sending ${channel} to ${recipient}...`);
-  
+
   try {
-    // Placeholder for actual communication API integration
-    // In production, this would integrate with SendGrid, Twilio, etc.
-    // const apiKey = process.env.COMMUNICATION_API_KEY; // Placeholder for API key
-    
-    return {
-      success: true,
-      result: {
-        status: "sent",
-        channel: channel,
-        recipient: recipient,
-        timestamp: new Date().toISOString()
-      }
-    };
+    if (channel === "email") {
+      // Use Resend for actual email delivery
+      const resend = getResendClient();
+      const from = process.env.EMAIL_FROM || "onboarding@resend.dev";
+      
+      const result = await resend.emails.send({
+        from,
+        to: recipient,
+        subject: subject || "Message",
+        text: message,
+      });
+
+      return {
+        success: true,
+        result: {
+          status: "sent",
+          channel: "email",
+          recipient: recipient,
+          timestamp: new Date().toISOString(),
+          messageId: result.id,
+        },
+      };
+    } else if (channel === "sms") {
+      // SMS not yet implemented - log for now
+      console.log(`[SMS] Would send to ${recipient}: ${message}`);
+      return {
+        success: true,
+        result: {
+          status: "mock_sent",
+          channel: "sms",
+          recipient: recipient,
+          timestamp: new Date().toISOString(),
+          note: "SMS integration not yet configured",
+        },
+      };
+    } else {
+      return {
+        success: false,
+        error: `Unsupported channel: ${channel}`,
+      };
+    }
   } catch (error: any) {
     return { success: false, error: error.message };
   }

@@ -36,11 +36,11 @@ export async function GET(request: NextRequest) {
     }
 
     // 2. Look up driver profile with proper typing
-    const driverResult = await db.execute<DriverStats>(
+    const driverResult = await db.execute(
       sql`SELECT id, trust_score FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`
     );
 
-    const driver = driverResult.rows[0];
+    const driver = driverResult.rows[0] as DriverStats | undefined;
 
     if (!driver) {
       return NextResponse.json(
@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
     const today = new Date().toISOString().split("T")[0];
 
     // 3. Fetch today's completed deliveries and earnings with proper typing
-    const statsResult = await db.execute<StatsRow>(
+    const statsResult = await db.execute(
       sql`
         SELECT
           COUNT(*) FILTER (WHERE status = 'delivered') as deliveries_count,
@@ -70,7 +70,14 @@ export async function GET(request: NextRequest) {
       `
     );
 
-    const stats = statsResult.rows[0];
+    const stats = statsResult.rows[0] as StatsRow | undefined;
+
+    if (!stats) {
+      return NextResponse.json(
+        { error: "Failed to fetch statistics" },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
       todayEarnings: parseFloat(stats.total_earnings) || 0,

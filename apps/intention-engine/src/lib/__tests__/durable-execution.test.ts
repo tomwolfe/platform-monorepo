@@ -1,6 +1,6 @@
 /**
  * Durable Execution & Saga Compensation Tests
- * 
+ *
  * Tests for:
  * 1. Segmented execution with checkpointing
  * 2. Saga compensation on failure
@@ -10,12 +10,11 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
-  executeSegment,
+  executeWorkflow,
   resumeFromCheckpoint,
-  CheckpointManager,
   type ToolExecutor,
-  type DurableExecutionResult,
-} from "@/lib/engine/durable-execution";
+  type WorkflowResult as DurableExecutionResult,
+} from "@/lib/engine/workflow-machine";
 import {
   StepTransactionManager,
   executeSaga,

@@ -189,7 +189,7 @@ export function createTraceHeaders(
 // WRAPPED TOOL EXECUTOR WITH TRACE PROPAGATION
 // ============================================================================
 
-import { ToolExecutor } from "./durable-execution";
+import { ToolExecutor } from "./workflow-machine";
 
 export interface TracedToolExecutor {
   execute(

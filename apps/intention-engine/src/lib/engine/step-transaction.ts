@@ -24,7 +24,7 @@ import {
 } from "./state-machine";
 import { saveExecutionState } from "./memory";
 import { RealtimeService } from "@repo/shared";
-import { ToolExecutor } from "./durable-execution";
+import { ToolExecutor } from "./workflow-machine";
 import { COMPENSATIONS, needsCompensation, getCompensation, mapCompensationParameters } from "@repo/mcp-protocol";
 
 // ============================================================================

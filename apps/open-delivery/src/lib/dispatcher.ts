@@ -130,20 +130,7 @@ export async function findAvailableDrivers(
   const requiredVehicle = getRequiredVehicleType(orderIntent.items);
 
   // Query active drivers from Postgres
-  const driversResult = await db.execute<{
-    id: string;
-    clerk_id: string;
-    full_name: string;
-    email: string;
-    phone: string | null;
-    trust_score: number;
-    is_active: boolean;
-    vehicle_type: "bike" | "car" | "van" | "truck" | null;
-    current_lat: number | null;
-    current_lng: number | null;
-    accepted_orders: number | null;
-    completed_orders: number | null;
-  }>(
+  const driversResult = await db.execute(
     sql`
       SELECT
         id,
@@ -166,7 +153,22 @@ export async function findAvailableDrivers(
     `
   );
 
-  const drivers: Driver[] = driversResult.rows.map((row) => ({
+  interface DriverRow {
+    id: string;
+    clerk_id: string;
+    full_name: string;
+    email: string;
+    phone: string | null;
+    trust_score: number;
+    is_active: boolean;
+    vehicle_type: "bike" | "car" | "van" | "truck" | null;
+    current_lat: number | null;
+    current_lng: number | null;
+    accepted_orders: number | null;
+    completed_orders: number | null;
+  }
+
+  const drivers: Driver[] = driversResult.rows.map((row: DriverRow) => ({
     id: row.id,
     clerk_id: row.clerk_id,
     full_name: row.full_name,

@@ -235,6 +235,16 @@ export interface ToolExecutor {
 }
 
 // ============================================================================
+// BACKWARD COMPATIBILITY ALIASES
+// For migrating code from durable-execution.ts
+// ============================================================================
+
+/**
+ * @deprecated Use WorkflowResult instead
+ */
+export type DurableExecutionResult = WorkflowResult;
+
+// ============================================================================
 // STEP EXECUTION CONTEXT
 // ============================================================================
 
@@ -2847,5 +2857,59 @@ export async function executeWorkflow(
   });
 
   machine.setPlan(plan);
+  return await machine.execute();
+}
+
+/**
+ * Resume workflow from checkpoint
+ * 
+ * @param executionId - The execution ID to resume
+ * @param toolExecutor - Tool executor for executing steps
+ * @param options - Optional tracing and idempotency configuration
+ * @returns Workflow result with completion status
+ */
+export async function resumeFromCheckpoint(
+  executionId: string,
+  toolExecutor: ToolExecutor,
+  options: {
+    traceCallback?: (entry: TraceEntry) => void;
+    idempotencyService?: IdempotencyService;
+    traceId?: string;
+  } = {}
+): Promise<WorkflowResult> {
+  const memory = getSharedMemoryClient()!;
+  
+  // Load task state to get checkpoint info
+  const taskState = await memory.getTaskState(executionId);
+  
+  if (!taskState) {
+    throw new Error(`No task state found for execution ${executionId}`);
+  }
+  
+  // Load execution state from Redis
+  const executionState = await loadExecutionState(executionId);
+  
+  if (!executionState) {
+    throw new Error(`No execution state found for execution ${executionId}`);
+  }
+  
+  if (!executionState.plan) {
+    throw new Error(`No plan found in execution state for ${executionId}`);
+  }
+  
+  console.log(
+    `[WorkflowMachine] Resuming ${executionId} from checkpoint ` +
+    `[segment ${taskState.segment_number || 1}, step ${taskState.current_step_index || 0}]`
+  );
+  
+  // Create machine with loaded state
+  const machine = new WorkflowMachine(executionId, toolExecutor, {
+    initialState: executionState,
+    intentId: executionState.intent?.id,
+    traceId: options.traceId,
+    idempotencyService: options.idempotencyService,
+  });
+  
+  machine.setPlan(executionState.plan);
   return await machine.execute();
 }

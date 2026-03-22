@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { verifyServiceToken } from "@repo/auth";
-import { executeSegment, resumeFromCheckpoint, ToolExecutor as DurableToolExecutor } from "@/lib/engine/durable-execution";
+import { resumeFromCheckpoint, ToolExecutor, WorkflowResult } from "@/lib/engine/workflow-machine";
 import { loadExecutionState } from "@/lib/engine/memory";
 import { getMcpClients, ToolCallResult } from "@/lib/mcp-client";
 import { RealtimeService } from "@repo/shared";
@@ -138,37 +138,37 @@ export async function POST(req: NextRequest) {
       // ========================================================================
       // PUBLISH COMPLETION EVENT
       // ========================================================================
-      
+
       await RealtimeService.publishStreamingStatusUpdate({
         executionId,
-        stepIndex: result.completed_steps,
-        totalSteps: result.total_steps,
+        stepIndex: result.completedSteps,
+        totalSteps: result.totalSteps,
         stepName: "execution_segment",
-        status: result.success ? "completed" : result.failed_steps > 0 ? "failed" : "in_progress",
-        message: result.isPartial 
-          ? `Segment completed, ${result.completed_steps}/${result.total_steps} steps done`
-          : result.success 
+        status: result.success ? "completed" : result.failedSteps > 0 ? "failed" : "in_progress",
+        message: result.isPartial
+          ? `Segment completed, ${result.completedSteps}/${result.totalSteps} steps done`
+          : result.success
             ? "All steps completed successfully"
             : `Execution failed: ${result.error?.message}`,
         timestamp: new Date().toISOString(),
         traceId,
       });
-      
+
       // ========================================================================
       // RESPONSE
       // ========================================================================
-      
+
       const response: any = {
         executionId,
         success: result.success,
-        completed_steps: result.completed_steps,
-        failed_steps: result.failed_steps,
-        total_steps: result.total_steps,
-        execution_time_ms: result.execution_time_ms,
+        completed_steps: result.completedSteps,
+        failed_steps: result.failedSteps,
+        total_steps: result.totalSteps,
+        execution_time_ms: result.executionTimeMs,
         isPartial: result.isPartial || false,
         status: result.state.status,
       };
-      
+
       if (result.isPartial) {
         response.message = "Execution segmented - continuation event published";
         response.nextStepIndex = result.nextStepIndex;
@@ -203,7 +203,7 @@ export async function POST(req: NextRequest) {
 // Creates a tool executor that uses MCP clients and local tools
 // ============================================================================
 
-async function buildToolExecutor(traceId?: string): Promise<DurableToolExecutor> {
+async function buildToolExecutor(traceId?: string): Promise<ToolExecutor> {
   const { manager } = await getMcpClients();
   const toolRegistry = getToolRegistry();
 

@@ -4,13 +4,14 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { 
-  GET_LOCAL_VENDORS_TOOL, 
-  QUOTE_DELIVERY_TOOL, 
+import {
+  GET_LOCAL_VENDORS_TOOL,
+  QUOTE_DELIVERY_TOOL,
   CHECK_KITCHEN_LOAD_TOOL,
   DISPATCH_INTENT_TOOL,
-  TOOL_METADATA
+  TOOL_METADATA,
 } from "@repo/mcp-protocol";
+import { z } from "zod";
 import { redis } from "./lib/redis-client.js";
 import { Pool } from '@neondatabase/serverless';
 import { signServiceToken, signPayload } from "@repo/auth";
@@ -68,12 +69,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case "check_kitchen_load": {
-        const { restaurant_id } = args as any;
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        
-        if (!restaurant_id || !uuidRegex.test(restaurant_id)) {
-           return { content: [{ type: "text", text: "Invalid restaurant_id (UUID expected)" }], isError: true };
+        // Validate arguments using Zod schema
+        const parseResult = z.object({ restaurant_id: z.string().uuid() }).safeParse(args);
+        if (!parseResult.success) {
+          return {
+            content: [{ type: "text", text: `Invalid arguments: ${parseResult.error.message}` }],
+            isError: true,
+          };
         }
+        const { restaurant_id } = parseResult.data;
         
         try {
           const baseUrl = process.env.TABLESTACK_API_URL || "https://table-stack.vercel.app/api/v1";
@@ -141,7 +145,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "get_local_vendors": {
-        const { latitude, longitude, radius_km = 5 } = args as any;
+        // Validate arguments using Zod schema
+        const parseResult = z.object({
+          latitude: z.number(),
+          longitude: z.number(),
+          radius_km: z.number().optional().default(5),
+        }).safeParse(args);
+
+        if (!parseResult.success) {
+          return {
+            content: [{ type: "text", text: `Invalid arguments: ${parseResult.error.message}` }],
+            isError: true,
+          };
+        }
+
+        const { latitude, longitude, radius_km = 5 } = parseResult.data;
         
         try {
           const baseUrl = process.env.TABLESTACK_API_URL || "https://table-stack.vercel.app/api/v1";
@@ -199,7 +217,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "quote_delivery": {
-        const { pickup_address, delivery_address, restaurant_id, system_key } = args as any;
+        // Validate arguments using Zod schema
+        const parseResult = z.object({
+          pickup_address: z.string(),
+          delivery_address: z.string(),
+          restaurant_id: z.string().uuid().optional(),
+          system_key: z.string().optional(),
+        }).safeParse(args);
+
+        if (!parseResult.success) {
+          return {
+            content: [{ type: "text", text: `Invalid arguments: ${parseResult.error.message}` }],
+            isError: true,
+          };
+        }
+
+        const { pickup_address, delivery_address, restaurant_id, system_key } = parseResult.data;
         let estimated_time_mins = 25;
         let special_offer_id = undefined;
 
@@ -246,7 +279,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "dispatch_intent": {
-        const { order_id, pickup_address, delivery_address, customer_id, max_price, restaurant_id, priority } = args as any;
+        // Validate arguments using Zod schema
+        const parseResult = z.object({
+          order_id: z.string(),
+          pickup_address: z.string(),
+          delivery_address: z.string(),
+          customer_id: z.string(),
+          max_price: z.number().optional(),
+          restaurant_id: z.string().uuid().optional(),
+          priority: z.boolean().optional(),
+        }).safeParse(args);
+
+        if (!parseResult.success) {
+          return {
+            content: [{ type: "text", text: `Invalid arguments: ${parseResult.error.message}` }],
+            isError: true,
+          };
+        }
+
+        const { order_id, pickup_address, delivery_address, customer_id, max_price, restaurant_id, priority } = parseResult.data;
         
         // Query Postgres for high trust drivers
         let lowCapacityWarning = "";

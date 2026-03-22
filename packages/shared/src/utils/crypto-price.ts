@@ -1,16 +1,17 @@
 /**
  * Crypto Price Oracle Utility
  *
- * Fetches real-time crypto prices from CoinGecko API with Redis caching.
+ * Fetches real-time crypto prices from multiple sources with Redis caching.
  * FAIL-SOFT: Gracefully degrades with historical averages or stale cache.
  *
  * Fallback chain:
  * 1. Redis cache (fresh < 5 min)
  * 2. CoinGecko API (primary)
  * 3. Coinbase API (secondary fallback)
- * 4. Redis cache (stale - last resort)
- * 5. Postgres historical moving average (if available)
- * 6. Return graceful degradation response (no throw - allows UI to disable crypto)
+ * 4. Binance Public API (tertiary fallback - no auth required)
+ * 5. Redis cache (stale - last resort)
+ * 6. Postgres historical moving average (if available)
+ * 7. Return graceful degradation response (no throw - allows UI to disable crypto)
  */
 
 import { getRedisClient, ServiceNamespace } from "../redis";
@@ -19,12 +20,19 @@ import { sql } from "drizzle-orm";
 
 const COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price";
 const COINBASE_API = "https://api.coinbase.com/v2/exchange-rates";
+const BINANCE_API = "https://api.binance.com/api/v3/ticker/24hr";
 
 // CoinGecko API IDs for supported tokens
 const COIN_IDS = {
   ETH: "ethereum",
   MATIC: "matic-network",
   BASE: "ethereum", // BASE uses ETH as gas token
+} as const;
+
+// Binance API symbols for supported tokens
+const BINANCE_SYMBOLS = {
+  ETH: "ETHUSDT",
+  MATIC: "MATICUSDT",
 } as const;
 
 // Cache TTL in seconds (5 minutes)
@@ -96,7 +104,7 @@ export async function getCryptoPrices(options?: {
   ETH: number;
   MATIC: number;
   timestamp: number;
-  source: 'cache' | 'coingecko' | 'coinbase' | 'historical' | 'fallback';
+  source: 'cache' | 'coingecko' | 'coinbase' | 'binance' | 'historical' | 'fallback';
   isStale?: boolean;
 }> {
   const redis = getRedis();
@@ -204,51 +212,99 @@ export async function getCryptoPrices(options?: {
     } catch (coinbaseError) {
       console.warn("Coinbase also failed:", coinbaseError);
 
-      // Last resort: try stale cache
-      const staleCached = await redis.get("@apps:crypto-prices");
-      if (staleCached) {
-        console.warn("Using stale crypto price data as last resort");
-        const staleData = JSON.parse(staleCached as string);
-        return { ...staleData, source: 'cache' as const, isStale: true };
-      }
-
-      // Try historical moving average from Postgres
+      // Try Binance Public API (tertiary fallback - no auth required)
       try {
-        const ethHistorical = await getHistoricalMovingAverage("ETH");
-        const maticHistorical = await getHistoricalMovingAverage("MATIC");
-
-        if (ethHistorical && maticHistorical) {
-          console.warn("Using historical moving average as fallback");
-          const prices = {
-            ETH: ethHistorical,
-            MATIC: maticHistorical,
-            timestamp: Date.now(),
-          };
-          return { ...prices, source: 'historical' as const };
+        const response = await fetch(`${BINANCE_API}?symbol=${BINANCE_SYMBOLS.ETH}`);
+        
+        if (!response.ok) {
+          throw new Error(`Binance API error: ${response.status}`);
         }
-      } catch (historicalError) {
-        console.warn("Historical average also unavailable:", historicalError);
-      }
 
-      // FAIL-SOFT: Return conservative fallback prices instead of throwing
-      // This allows the UI to gracefully disable crypto checkout
-      console.warn("All price sources unavailable, using conservative fallback");
-      const fallbackPrices = {
-        ETH: FALLBACK_HISTORICAL_PRICES.ETH,
-        MATIC: FALLBACK_HISTORICAL_PRICES.MATIC,
-        timestamp: Date.now(),
-      };
+        const data: any = await response.json();
+        
+        // Binance returns: { symbol: "ETHUSDT", lastPrice: "1234.56", ... }
+        const ethPrice = parseFloat(data.lastPrice || "0");
+        
+        // Fetch MATIC separately
+        let maticPrice = 0;
+        try {
+          const maticResponse = await fetch(`${BINANCE_API}?symbol=${BINANCE_SYMBOLS.MATIC}`);
+          if (maticResponse.ok) {
+            const maticData: any = await maticResponse.json();
+            maticPrice = parseFloat(maticData.lastPrice || "0");
+          }
+        } catch (e) {
+          console.warn("Failed to fetch MATIC price from Binance");
+        }
 
-      if (failClosed) {
-        // Only throw if explicitly requested (for critical operations)
-        const error = new Error(
-          "Crypto price oracle unavailable: all sources failed"
+        const prices = {
+          ETH: ethPrice,
+          MATIC: maticPrice,
+          timestamp: Date.now(),
+        };
+
+        // Validate ETH price is non-zero
+        if (prices.ETH === 0) {
+          throw new Error("Invalid ETH price from Binance");
+        }
+
+        // Cache the result
+        await redis.setex(
+          "@apps:crypto-prices",
+          CACHE_TTL,
+          JSON.stringify(prices)
         );
-        (error as any).code = "PRICE_ORACLE_UNAVAILABLE";
-        throw error;
-      }
 
-      return { ...fallbackPrices, source: 'fallback' as const };
+        return { ...prices, source: 'binance' as const };
+      } catch (binanceError) {
+        console.warn("Binance also failed:", binanceError);
+
+        // Last resort: try stale cache
+        const staleCached = await redis.get("@apps:crypto-prices");
+        if (staleCached) {
+          console.warn("Using stale crypto price data as last resort");
+          const staleData = JSON.parse(staleCached as string);
+          return { ...staleData, source: 'cache' as const, isStale: true };
+        }
+
+        // Try historical moving average from Postgres
+        try {
+          const ethHistorical = await getHistoricalMovingAverage("ETH");
+          const maticHistorical = await getHistoricalMovingAverage("MATIC");
+
+          if (ethHistorical && maticHistorical) {
+            console.warn("Using historical moving average as fallback");
+            const prices = {
+              ETH: ethHistorical,
+              MATIC: maticHistorical,
+              timestamp: Date.now(),
+            };
+            return { ...prices, source: 'historical' as const };
+          }
+        } catch (historicalError) {
+          console.warn("Historical average also unavailable:", historicalError);
+        }
+
+        // FAIL-SOFT: Return conservative fallback prices instead of throwing
+        // This allows the UI to gracefully disable crypto checkout
+        console.warn("All price sources unavailable, using conservative fallback");
+        const fallbackPrices = {
+          ETH: FALLBACK_HISTORICAL_PRICES.ETH,
+          MATIC: FALLBACK_HISTORICAL_PRICES.MATIC,
+          timestamp: Date.now(),
+        };
+
+        if (failClosed) {
+          // Only throw if explicitly requested (for critical operations)
+          const error = new Error(
+            "Crypto price oracle unavailable: all sources failed"
+          );
+          (error as any).code = "PRICE_ORACLE_UNAVAILABLE";
+          throw error;
+        }
+
+        return { ...fallbackPrices, source: 'fallback' as const };
+      }
     }
   }
 }

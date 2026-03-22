@@ -422,22 +422,13 @@ export async function regenerateApiKey(restaurantId: string) {
   return { apiKey: newKey };
 }
 
-export async function createStripeConnectAccount(restaurantId: string) {
-  await verifyOwnership(restaurantId);
-
-  // Deprecated: Stripe is being replaced with crypto payments
-  // Mock Stripe Connect onboarding
-  // const mockStripeAccountId = `acct_${Math.random().toString(36).substring(2, 12)}`;
-
-  // throw new Error('Stripe is deprecated. Please use crypto wallet payments instead.');
-  throw new Error('Stripe is deprecated. Please link a crypto wallet instead.');
-}
-
 /**
  * Link Restaurant Wallet Server Action
  *
  * Allows a restaurant owner to link their crypto wallet for receiving payments.
  * Stores the EIP-55 formatted wallet address in the database.
+ *
+ * Note: Stripe payments are deprecated - use crypto wallet payments instead.
  */
 export async function linkRestaurantWallet(
   restaurantId: string,

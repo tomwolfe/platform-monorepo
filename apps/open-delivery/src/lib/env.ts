@@ -1,6 +1,23 @@
-export const getTableStackApiUrl = () => {
-  const isDev = process.env.NODE_ENV === 'development';
-  return process.env.TABLESTACK_API_URL || (isDev ? 'http://localhost:3005/api/v1' : 'https://table-stack.vercel.app/api/v1');
-};
+/**
+ * Open Delivery Environment Configuration
+ *
+ * Re-exports from @repo/shared for backward compatibility.
+ * New code should use AppConfig directly from @repo/shared.
+ */
 
-export const getInternalSystemKey = () => process.env.INTERNAL_SYSTEM_KEY || 'vi3tnam';
+import { AppConfig } from "@repo/shared";
+
+/**
+ * @deprecated Use AppConfig.getTableStackApiUrl() instead
+ */
+export const getTableStackApiUrl = () => AppConfig.getTableStackApiUrl();
+
+/**
+ * @deprecated Use AppConfig.getInternalSystemKey() instead
+ */
+export const getInternalSystemKey = () => AppConfig.getInternalSystemKey();
+
+/**
+ * Re-export AppConfig for direct usage
+ */
+export { AppConfig };

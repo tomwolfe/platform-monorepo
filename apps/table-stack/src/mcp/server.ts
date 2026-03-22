@@ -8,12 +8,13 @@ import {
   CHECK_AVAILABILITY_TOOL,
   BOOK_RESERVATION_TOOL,
   DISCOVER_RESTAURANT_TOOL,
-  TOOL_METADATA
+  TOOL_METADATA,
 } from "@repo/mcp-protocol";
-import { db, restaurants, restaurantTables, restaurantReservations, eq, gte, or, and } from "@repo/database";
+import { db, restaurants, restaurantTables, restaurantReservations, restaurantWaitlist, eq, gte, or, and } from "@repo/database";
 import { sql } from 'drizzle-orm';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
+import { z } from "zod";
 
 const server = new Server(
   {
@@ -145,7 +146,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case "check_availability": {
-        const { restaurantId, date, partySize } = args as any;
+        // Validate arguments using Zod schema
+        const parseResult = z.object({
+          restaurantId: z.string().uuid(),
+          date: z.string().datetime(),
+          partySize: z.number().int().positive(),
+        }).safeParse(args);
+
+        if (!parseResult.success) {
+          return {
+            content: [{ type: "text", text: `Invalid arguments: ${parseResult.error.message}` }],
+            isError: true,
+          };
+        }
+
+        const { restaurantId, date, partySize } = parseResult.data;
         
         const restaurant = await db.query.restaurants.findFirst({
           where: eq(restaurants.id, restaurantId),
@@ -211,7 +226,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "book_tablestack_reservation": {
-        const { restaurantId, tableId, guestName, guestEmail, partySize, startTime, is_confirmed } = args as any;
+        // Validate arguments using Zod schema
+        const parseResult = z.object({
+          restaurantId: z.string().uuid(),
+          tableId: z.string().uuid(),
+          guestName: z.string().min(1).max(100),
+          guestEmail: z.string().email(),
+          partySize: z.number().int().positive().max(100),
+          startTime: z.string().datetime(),
+          is_confirmed: z.boolean().optional(),
+        }).safeParse(args);
+
+        if (!parseResult.success) {
+          return {
+            content: [{ type: "text", text: `Invalid arguments: ${parseResult.error.message}` }],
+            isError: true,
+          };
+        }
+
+        const { restaurantId, tableId, guestName, guestEmail, partySize, startTime, is_confirmed } = parseResult.data;
 
         if (!is_confirmed) {
           return {
@@ -261,7 +294,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "discover_restaurant": {
-        const { restaurant_slug } = args as any;
+        // Validate arguments using Zod schema
+        const parseResult = z.object({
+          restaurant_slug: z.string(),
+        }).safeParse(args);
+
+        if (!parseResult.success) {
+          return {
+            content: [{ type: "text", text: `Invalid arguments: ${parseResult.error.message}` }],
+            isError: true,
+          };
+        }
+
+        const { restaurant_slug } = parseResult.data;
         
         const restaurant = await db.query.restaurants.findFirst({
           where: eq(restaurants.slug, restaurant_slug),

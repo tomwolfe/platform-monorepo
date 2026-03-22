@@ -7,6 +7,8 @@ export * from './idempotency';
 export * from './outbox';
 export * from './services';
 export * from './realtime';
+export * from './realtime/ably-auth';
+export * from './config';
 export * from './state-machine';
 export * from './policies/failover-policy';
 export * from './services/semantic-memory';
@@ -71,21 +73,21 @@ export * from './services/semantic-versioning';
 
 // Automated repair agent for self-healing DLQ
 export * from './services/repair-agent';
-export type { 
-  ZombieSaga, 
-  RepairAnalysis, 
-  FailureType, 
-  SuggestedFix, 
+export type {
+  ZombieSaga,
+  RepairAnalysis,
+  FailureType,
+  SuggestedFix,
   RepairResult,
 } from './services/repair-agent';
 
 // Redlock algorithm for distributed locking
 export * from './services/redlock';
-export type { 
-  RedlockResource, 
-  RedlockConfig, 
-  RedlockLock, 
-  ReleaseResult, 
+export type {
+  RedlockResource,
+  RedlockConfig,
+  RedlockLock,
+  ReleaseResult,
   ExtendResult,
   AcquireResult,
 } from './services/redlock';
@@ -103,5 +105,6 @@ export type {
 // Note: crypto-price utilities are server-side only (use direct import)
 // Note: web3-verification is server-side only (use direct import)
 export * from './utils/erc20-abi';
+export * from './utils/api-error';
 // export * from './utils/crypto-price'; // Server-side only - import directly
 // export * from './utils/web3-verification'; // Server-side only - import directly

@@ -3,6 +3,17 @@ import { db } from "@repo/database";
 import { sql } from "drizzle-orm";
 import { currentUser } from "@clerk/nextjs/server";
 
+interface DriverStats {
+  id: string;
+  trust_score: number;
+}
+
+interface StatsRow {
+  deliveries_count: string;
+  total_earnings: string;
+  avg_minutes_per_delivery: string;
+}
+
 /**
  * Driver Statistics API Route
  *
@@ -24,12 +35,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 2. Look up driver profile
-    const driverResult = await db.execute(
+    // 2. Look up driver profile with proper typing
+    const driverResult = await db.execute<DriverStats>(
       sql`SELECT id, trust_score FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`
     );
 
-    const driver = driverResult.rows[0] as any | undefined;
+    const driver = driverResult.rows[0];
 
     if (!driver) {
       return NextResponse.json(
@@ -41,8 +52,8 @@ export async function GET(request: NextRequest) {
     const driverId = driver.id;
     const today = new Date().toISOString().split("T")[0];
 
-    // 3. Fetch today's completed deliveries and earnings
-    const statsResult = await db.execute(
+    // 3. Fetch today's completed deliveries and earnings with proper typing
+    const statsResult = await db.execute<StatsRow>(
       sql`
         SELECT
           COUNT(*) FILTER (WHERE status = 'delivered') as deliveries_count,
@@ -59,7 +70,7 @@ export async function GET(request: NextRequest) {
       `
     );
 
-    const stats = statsResult.rows[0] as any;
+    const stats = statsResult.rows[0];
 
     return NextResponse.json({
       todayEarnings: parseFloat(stats.total_earnings) || 0,

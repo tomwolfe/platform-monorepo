@@ -3,29 +3,7 @@ import { db, orders, restaurants, eq, and, sql } from "@repo/database";
 import { RealtimeService } from "@repo/shared";
 import { verifyTransaction } from '@repo/shared/utils/web3-verification';
 import { type Address } from 'viem';
-import { timingSafeEqual } from 'crypto';
-
-/**
- * Timing-safe secret comparison to prevent timing attacks
- */
-function isTimingSafeEqual(provided: string, expected: string): boolean {
-  const providedBuffer = Buffer.from(provided, 'utf8');
-  const expectedBuffer = Buffer.from(expected, 'utf8');
-  
-  // Pad to same length to avoid timingSafeEqual errors
-  const maxLength = Math.max(providedBuffer.length, expectedBuffer.length);
-  const paddedProvided = Buffer.alloc(maxLength);
-  const paddedExpected = Buffer.alloc(maxLength);
-  
-  providedBuffer.copy(paddedProvided);
-  expectedBuffer.copy(paddedExpected);
-  
-  try {
-    return timingSafeEqual(paddedProvided, paddedExpected);
-  } catch {
-    return false;
-  }
-}
+import { isTimingSafeEqual } from '@repo/shared/utils/crypto';
 
 /**
  * Background Verification Sweeper Endpoint

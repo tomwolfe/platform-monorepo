@@ -5,6 +5,7 @@ import { env } from "../config";
 import { signServiceToken } from "@repo/auth";
 import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared/tracing";
 import { TableReservationSchema } from "@repo/mcp-protocol";
+import { AppConfig } from "@repo/shared";
 
 export type TableReservationParams = z.infer<typeof TableReservationSchema>;
 

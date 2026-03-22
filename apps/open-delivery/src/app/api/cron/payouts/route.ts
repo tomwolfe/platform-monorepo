@@ -4,45 +4,7 @@ import { createWalletClient, createPublicClient, http, parseAbi, parseUnits, typ
 import { base } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 import { ERC20_ABI } from '@repo/shared/utils/erc20-abi';
-import { createHash } from 'crypto';
-
-/**
- * Timing-safe secret comparison to prevent timing attacks
- * Uses crypto.timingSafeEqual with proper padding to avoid length leakage
- */
-function timingSafeCompare(a: string, b: string): boolean {
-  // Create fixed-length hashes to compare (prevents length-based timing attacks)
-  const hashA = createHash('sha256').update(a).digest();
-  const hashB = createHash('sha256').update(b).digest();
-  
-  try {
-    return createHash('sha256').update(a).digest().length === createHash('sha256').update(b).digest().length &&
-      require('crypto').timingSafeEqual(hashA, hashB);
-  } catch {
-    return false;
-  }
-}
-
-// Alternative simpler approach using Node.js 20+ timingSafeEqual with strings
-function isTimingSafeEqual(provided: string, expected: string): boolean {
-  const { timingSafeEqual } = require('crypto');
-  const providedBuffer = Buffer.from(provided, 'utf8');
-  const expectedBuffer = Buffer.from(expected, 'utf8');
-  
-  // Pad to same length to avoid timingSafeEqual errors
-  const maxLength = Math.max(providedBuffer.length, expectedBuffer.length);
-  const paddedProvided = Buffer.alloc(maxLength);
-  const paddedExpected = Buffer.alloc(maxLength);
-  
-  providedBuffer.copy(paddedProvided);
-  expectedBuffer.copy(paddedExpected);
-  
-  try {
-    return timingSafeEqual(paddedProvided, paddedExpected);
-  } catch {
-    return false;
-  }
-}
+import { isTimingSafeEqual } from '@repo/shared/utils/crypto';
 
 /**
  * Payout Ledger Cron Endpoint

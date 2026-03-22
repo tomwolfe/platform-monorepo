@@ -162,7 +162,7 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
   }
 
   let { origin, destination, travel_mode } = validated.data;
-  
+
   const resolveCoords = async (loc: UnifiedLocation) => {
     // Handle case where loc is a JSON string (e.g., from AI SDK serialization)
     if (typeof loc === "string") {
@@ -184,7 +184,7 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
   try {
     const originCoords = await resolveCoords(origin);
     const destCoords = await resolveCoords(destination);
-    
+
     const normalizedOrigin = normalizeLocation(origin);
     const normalizedDestination = normalizeLocation(destination);
 
@@ -198,12 +198,78 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
     // We'll use 'driving' as base and adjust for other modes if car is the only available profile.
     const url = `https://router.project-osrm.org/route/v1/driving/${originCoords.lon},${originCoords.lat};${destCoords.lon},${destCoords.lat}?overview=false`;
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
     return await withNervousSystemTracing(async ({ correlationId }) => {
-      const response = await fetch(url, {
-        headers: injectTracingHeaders({}, correlationId),
-      });
+      let response: Response;
       
-      if (!response.ok) throw new Error("Routing API error");
+      try {
+        response = await fetch(url, {
+          headers: injectTracingHeaders({}, correlationId),
+          signal: controller.signal
+        });
+      } catch (fetchError: any) {
+        clearTimeout(timeoutId);
+        
+        // Handle AbortError (timeout) or network errors
+        if (fetchError.name === 'AbortError') {
+          console.warn('[get_route_estimate] OSRM API timeout, returning graceful fallback');
+          return {
+            success: true,
+            result: {
+              origin: normalizedOrigin,
+              destination: normalizedDestination,
+              distance_km: 0,
+              duration_minutes: 0,
+              traffic_status: "unavailable",
+              warning: 'Route estimation temporarily unavailable. Please try again later.'
+            }
+          };
+        }
+        
+        throw fetchError;
+      }
+
+      clearTimeout(timeoutId);
+
+      // Handle HTTP error status codes
+      if (!response.ok) {
+        const statusCode = response.status;
+        
+        // Handle rate limiting (429) or service unavailable (503)
+        if (statusCode === 429) {
+          console.warn('[get_route_estimate] OSRM API rate limited (429), returning graceful fallback');
+          return {
+            success: true,
+            result: {
+              origin: normalizedOrigin,
+              destination: normalizedDestination,
+              distance_km: 0,
+              duration_minutes: 0,
+              traffic_status: "unavailable",
+              warning: 'Route estimation is currently rate-limited. Please try again in a moment.'
+            }
+          };
+        }
+        
+        if (statusCode === 503 || statusCode >= 500) {
+          console.warn('[get_route_estimate] OSRM API unavailable, returning graceful fallback');
+          return {
+            success: true,
+            result: {
+              origin: normalizedOrigin,
+              destination: normalizedDestination,
+              distance_km: 0,
+              duration_minutes: 0,
+              traffic_status: "unavailable",
+              warning: 'Route estimation is temporarily unavailable. Please try again later.'
+            }
+          };
+        }
+        
+        throw new Error("Routing API error");
+      }
 
       const data = await response.json();
       if (!data.routes || data.routes.length === 0) throw new Error("No route found");

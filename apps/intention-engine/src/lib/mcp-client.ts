@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { env } from "./config";
 import { SecurityProvider } from "@repo/auth";
-import { SERVICES } from "@repo/shared";
+import { SERVICES, AppConfig } from "@repo/shared";
 import {
   TOOLS,
   PARAMETER_ALIASES,
@@ -11,6 +11,7 @@ import {
   McpToolRegistry,
 } from "@repo/mcp-protocol";
 import { createSchemaEvolutionService } from "@repo/shared";
+import * as zod from "zod";
 
 /**
  * MCP Client - Enhanced with Dynamic Tool Discovery and Schema Evolution
@@ -65,7 +66,7 @@ export interface ToolCallResult {
 
 export class ParameterAliaser {
   private aliases: Record<string, string>;
-  private schemaEvolutionService: any | null = null;
+  private schemaEvolutionService: Awaited<ReturnType<typeof createSchemaEvolutionService>> | null = null;
   private aliasUsageCounter: Map<string, number> = new Map();
 
   constructor(aliases: Record<string, string> = PARAMETER_ALIASES) {
@@ -112,7 +113,7 @@ export class ParameterAliaser {
    * Apply parameter aliases to tool input
    * If LLM provides `venueId` but tool expects `restaurant_id`, fix it
    */
-  applyAliases(parameters: Record<string, unknown>, targetSchema?: any): Record<string, unknown> {
+  applyAliases(parameters: Record<string, unknown>, targetSchema?: zod.ZodType): Record<string, unknown> {
     const resolved: Record<string, unknown> = { ...parameters };
     let aliasApplied = false;
 
@@ -133,21 +134,22 @@ export class ParameterAliaser {
     }
 
     // Tool-specific aliases (from tool definition)
-    if (targetSchema?.parameter_aliases) {
-      for (const [alias, primary] of Object.entries(
-        targetSchema.parameter_aliases
-      )) {
-        if (
-          resolved[alias] !== undefined &&
-          resolved[primary as string] === undefined
-        ) {
-          resolved[primary as string] = resolved[alias];
-          delete resolved[alias];
-          console.log(
-            `[ParameterAliaser] Applied tool-specific alias: ${alias} -> ${primary}`
-          );
-          this.trackAliasUsage(alias, primary as string);
-          aliasApplied = true;
+    if (targetSchema && 'parameter_aliases' in targetSchema._def) {
+      const schemaDef = targetSchema._def as { parameter_aliases?: Record<string, string> };
+      if (schemaDef.parameter_aliases) {
+        for (const [alias, primary] of Object.entries(schemaDef.parameter_aliases)) {
+          if (
+            resolved[alias] !== undefined &&
+            resolved[primary as string] === undefined
+          ) {
+            resolved[primary as string] = resolved[alias];
+            delete resolved[alias];
+            console.log(
+              `[ParameterAliaser] Applied tool-specific alias: ${alias} -> ${primary}`
+            );
+            this.trackAliasUsage(alias, primary as string);
+            aliasApplied = true;
+          }
         }
       }
     }
@@ -287,7 +289,7 @@ export class DynamicMcpClientManager {
           inputSchema: tool.inputSchema,
           requires_confirmation: false, // Will be determined from metadata
           origin: service.mcpUrl,
-        } as any);
+        });
       }
     } catch (error) {
       console.warn(
@@ -318,7 +320,7 @@ export class DynamicMcpClientManager {
   /**
    * Get discovered tool registry
    */
-  getToolRegistry(): Map<string, any> {
+  getToolRegistry(): Map<string, { name: string; description: string; inputSchema?: Record<string, unknown>; requires_confirmation?: boolean; origin?: string }> {
     return this.toolRegistry;
   }
 
@@ -368,7 +370,7 @@ export class DynamicMcpClientManager {
       // Apply parameter aliasing
       const resolvedParams = this.parameterAliaser.applyAliases(
         parameters,
-        (toolDef as any).inputSchema
+        toolDef.inputSchema as unknown as zod.ZodType | undefined
       );
 
       console.log(
@@ -401,8 +403,8 @@ export class DynamicMcpClientManager {
   private findToolServer(toolName: string): string | null {
     // Check static TOOLS registry first
     for (const [serverName, tools] of Object.entries(TOOLS)) {
-      for (const [toolKey, toolDef] of Object.entries(tools as any)) {
-        if ((toolDef as any).name === toolName || toolKey === toolName) {
+      for (const [toolKey, toolDef] of Object.entries(tools as Record<string, { name?: string }>)) {
+        if ((toolDef as { name?: string }).name === toolName || toolKey === toolName) {
           return serverName;
         }
       }
@@ -434,7 +436,7 @@ export class DynamicMcpClientManager {
             description: tool.description || "",
             inputSchema: tool.inputSchema,
             origin: name,
-          } as any);
+          });
         }
       } catch (error) {
         console.error(
@@ -463,7 +465,7 @@ export async function createMcpClient(url: string) {
   // Also add internal key for fallback
   urlWithAuth.searchParams.set(
     "internal_key",
-    process.env.INTERNAL_SYSTEM_KEY || ""
+    AppConfig.getInternalSystemKey() || ""
   );
 
   const transport = new SSEClientTransport(urlWithAuth);

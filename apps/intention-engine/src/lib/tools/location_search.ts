@@ -180,12 +180,11 @@ export async function search_restaurant(params: z.infer<typeof SearchRestaurantS
   const validated = SearchRestaurantSchema.safeParse(params);
   if (!validated.success) return { success: false, error: "Invalid parameters" };
   let { cuisine, lat, lon, location, userLocation } = validated.data;
-  
+
   if ((lat === undefined || lon === undefined) && (location || userLocation)) {
-    // If we have a location string, or just userLocation and no lat/lon
-    const geo = await geocode_location({ 
-      location: location || "nearby", 
-      userLocation 
+    const geo = await geocode_location({
+      location: location || "nearby",
+      userLocation
     });
     if (geo.success && geo.result) {
       lat = geo.result.lat;
@@ -224,7 +223,7 @@ export async function search_restaurant(params: z.infer<typeof SearchRestaurantS
 
   try {
     // 2. Overpass Query - STRICT cuisine filtering if provided
-    const query = cuisine 
+    const query = cuisine
       ? `
         [out:json][timeout:10];
         nwr["amenity"="restaurant"]["cuisine"~"${cuisine}",i](around:10000,${lat},${lon});
@@ -242,14 +241,54 @@ export async function search_restaurant(params: z.infer<typeof SearchRestaurantS
     const timeoutId = setTimeout(() => controller.abort(), 5000);
 
     return await withNervousSystemTracing(async ({ correlationId }) => {
-      const overpassRes = await fetch(overpassUrl, {
-        headers: injectTracingHeaders({}, correlationId),
-        signal: controller.signal
-      });
+      let overpassRes: Response;
       
+      try {
+        overpassRes = await fetch(overpassUrl, {
+          headers: injectTracingHeaders({}, correlationId),
+          signal: controller.signal
+        });
+      } catch (fetchError: any) {
+        clearTimeout(timeoutId);
+        
+        // Handle AbortError (timeout) or network errors
+        if (fetchError.name === 'AbortError' || fetchError.message?.includes('fetch')) {
+          console.warn('[search_restaurant] Overpass API timeout or network error, returning graceful fallback');
+          return {
+            success: true,
+            result: [],
+            warning: 'Restaurant search temporarily unavailable. Please try again later.'
+          };
+        }
+        
+        throw fetchError;
+      }
+
       clearTimeout(timeoutId);
 
+      // Handle HTTP error status codes
       if (!overpassRes.ok) {
+        const statusCode = overpassRes.status;
+        
+        // Handle rate limiting (429) or service unavailable (503)
+        if (statusCode === 429) {
+          console.warn('[search_restaurant] Overpass API rate limited (429), returning graceful fallback');
+          return {
+            success: true,
+            result: [],
+            warning: 'Restaurant search is currently rate-limited. Please try again in a moment.'
+          };
+        }
+        
+        if (statusCode === 503 || statusCode >= 500) {
+          console.warn('[search_restaurant] Overpass API unavailable, returning graceful fallback');
+          return {
+            success: true,
+            result: [],
+            warning: 'Restaurant search is temporarily unavailable. Please try again later.'
+          };
+        }
+        
         throw new Error(`Overpass API error: ${overpassRes.statusText}`);
       }
 
@@ -307,7 +346,12 @@ export async function search_restaurant(params: z.infer<typeof SearchRestaurantS
     });
   } catch (error: any) {
     console.error("Error in search_restaurant:", error);
-    return { success: false, error: error.message };
+    // Graceful fallback for any unhandled errors
+    return { 
+      success: true, 
+      result: [],
+      warning: 'Restaurant search encountered an error. Please try again later.'
+    };
   }
 }
 

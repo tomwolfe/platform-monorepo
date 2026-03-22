@@ -1,16 +1,17 @@
-import { 
-  ToolDefinition as EngineToolDefinition, 
-  ToolParameter 
+import {
+  ToolDefinition as EngineToolDefinition,
+  ToolParameter
 } from "../lib/engine/types";
 import { ToolDefinition as RegistryToolDefinition } from "../lib/tools/types";
-import { 
-  CallToolRequestSchema, 
+import {
+  CallToolRequestSchema,
   ListToolsRequestSchema,
   CallToolResult
 } from "@modelcontextprotocol/sdk/types.js";
+import * as zod from "zod";
 
 /**
- * McpAdapter provides bi-directional compatibility between 
+ * McpAdapter provides bi-directional compatibility between
  * IntentionEngine tools and Model Context Protocol (MCP) tools.
  */
 export class McpAdapter {
@@ -18,8 +19,8 @@ export class McpAdapter {
    * Converts a legacy ToolParameter array to an MCP-compliant JSON Schema inputSchema.
    * Supports nested objects and recursion for complex schemas.
    */
-  static parametersToInputSchema(parameters: ToolParameter[]): any {
-    const properties: Record<string, any> = {};
+  static parametersToInputSchema(parameters: ToolParameter[]): Record<string, unknown> {
+    const properties: Record<string, unknown> = {};
     const required: string[] = [];
 
     const mapType = (type: string) => {
@@ -33,22 +34,22 @@ export class McpAdapter {
       }
     };
 
-    const processParam = (param: any): any => {
-      const schema: any = {
+    const processParam = (param: ToolParameter): Record<string, unknown> => {
+      const schema: Record<string, unknown> = {
         type: mapType(param.type),
         description: param.description,
       };
 
       if (param.type === "object" && param.properties) {
-        schema.properties = {};
-        schema.required = [];
+        schema.properties = {} as Record<string, unknown>;
+        schema.required = [] as string[];
         for (const [propName, propValue] of Object.entries(param.properties)) {
-          schema.properties[propName] = processParam(propValue);
-          if ((propValue as any).required) {
-            schema.required.push(propName);
+          (schema.properties as Record<string, unknown>)[propName] = processParam(propValue as ToolParameter);
+          if ((propValue as ToolParameter).required) {
+            (schema.required as string[]).push(propName);
           }
         }
-        if (schema.required.length === 0) delete schema.required;
+        if ((schema.required as string[]).length === 0) delete schema.required;
       }
 
       if (param.type === "array" && param.items) {
@@ -87,7 +88,7 @@ export class McpAdapter {
     return {
       name: tool.name,
       description: tool.description,
-      inputSchema: tool.inputSchema || this.parametersToInputSchema((tool as any).parameters || []),
+      inputSchema: tool.inputSchema || this.parametersToInputSchema(tool.parameters || []),
     };
   }
 }
@@ -116,7 +117,7 @@ export class McpManager {
   /**
    * Handles an MCP CallTool request.
    */
-  async callTool(name: string, args: any): Promise<CallToolResult> {
+  async callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
     const tool = this.tools.get(name);
     if (!tool) {
       throw new Error(`Tool not found: ${name}`);
@@ -133,12 +134,13 @@ export class McpManager {
         ],
         isError: !result.success,
       };
-    } catch (error: any) {
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error during tool execution";
       return {
         content: [
           {
             type: "text",
-            text: error.message || "Unknown error during tool execution",
+            text: errorMessage,
           },
         ],
         isError: true,

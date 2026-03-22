@@ -44,7 +44,10 @@
     "test:performance": "k6 run k6/scripts/performance-budgets.js",
     "test:performance:load": "k6 run k6/scripts/load-test.js",
     "test:performance:stress": "k6 run k6/scripts/stress-test.js",
-    "test:performance:all": "k6 run k6/scripts/performance-budgets.js"
+    "test:performance:all": "k6 run k6/scripts/performance-budgets.js",
+    "test:golden-path": "tsx scripts/test-golden-path.ts",
+    "dev:minimal": "pnpm container:up && ENABLE_AUTONOMOUS_FEATURES=false turbo dev --filter=@repo/intention-engine --filter=@repo/table-stack --filter=@repo/open-delivery",
+    "setup": "pnpm setup:local && pnpm container:up"
   },
   "engines": {
     "node": "24.x"

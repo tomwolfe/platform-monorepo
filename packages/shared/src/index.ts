@@ -1,3 +1,46 @@
+// ============================================================================
+// SHARED PACKAGE EXPORTS
+// Phase 1-5 Roadmap Implementation
+// ============================================================================
+
+// Phase 1: Golden Path (System Spine)
+export * from './golden-path';
+// Note: tracing exports ExecutionTraceEntry (type), ExecutionTraceEntrySchema (schema)
+export {
+  CORRELATION_ID_HEADER,
+  TRACE_ID_HEADER,
+  IDEMPOTENCY_KEY_HEADER,
+  EXECUTION_ID_HEADER,
+  ExecutionTraceEntrySchema,
+  type ExecutionTraceEntry,
+  type ExecutionTraceEntry as TraceEntry,
+  InMemoryTraceEmitter,
+  RedisTraceEmitter,
+  type TraceEmitter,
+  withNervousSystemTracing,
+  getCorrelationId,
+  getTraceId,
+  injectTracingHeaders,
+  createTraceEntry,
+  createStepCompletedEntry,
+  createStepFailedEntry,
+  createErrorEntry,
+  emitTrace,
+  getGlobalTraceEmitter,
+  setGlobalTraceEmitter,
+} from './tracing';
+
+// Phase 2: Architecture Simplification
+export * from './runtime-registry'; // Unified registry (tools, MCP, services)
+export * from './infrastructure/cache'; // Standardized Redis cache layer
+
+// Tool types
+export * from './types/tool';
+
+// Phase 5: Feature Flags (Gate autonomous features)
+export * from './feature-flags';
+
+// Legacy exports (below) - existing functionality
 export * from './redis';
 export * from './redis/memory';
 export * from './types/execution';
@@ -28,8 +71,6 @@ export * from './services/outbox-listener';
 export * from './services/state-diff-viewer';
 export * from './services/serverless-pubsub-bridge';
 export * from './outbox-relay';
-// Export tracing constants (not the AsyncLocalStorage functions)
-export { IDEMPOTENCY_KEY_HEADER } from './tracing';
 
 // Phase 2: Security & Hardening
 // Note: tool-sandbox is Node.js only, import directly from './services/sandbox/tool-sandbox'

@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, orders, orderItems, restaurants, drivers, eq, sql, and } from "@repo/database";
-import { createWalletClient, createPublicClient, http, parseAbi, parseUnits, type Address } from 'viem';
+import { createWalletClient, createPublicClient, http, fallback, parseAbi, parseUnits, type Address } from 'viem';
 import { base } from 'viem/chains';
-import { privateKeyToAccount } from 'viem/accounts';
 import { ERC20_ABI } from '@repo/shared/utils/erc20-abi';
 import { isTimingSafeEqual } from '@repo/shared/utils/crypto';
+import { getCachedTreasuryAccount } from '@repo/shared/utils/treasury';
 
 /**
  * Payout Ledger Cron Endpoint
@@ -255,26 +255,32 @@ export async function GET(req: NextRequest) {
     // ============================================================================
     
     let executedCount = 0;
-    const treasuryPrivateKey = process.env.TREASURY_PRIVATE_KEY;
-    
-    if (treasuryPrivateKey && restaurantPayouts.length + driverPayouts.length > 0) {
+
+    if (restaurantPayouts.length + driverPayouts.length > 0) {
       try {
-        // Create wallet client from private key
-        const account = privateKeyToAccount(treasuryPrivateKey as `0x${string}`);
+        // RPC URLs with fallbacks for resilience
+        const BASE_RPC_URLS = [
+          process.env.BASE_RPC_URL || "https://mainnet.base.org",
+          "https://base.llamarpc.com",
+          "https://base.publicnode.com",
+        ];
+
+        // Get treasury account (abstracted key management)
+        const treasuryAccount = getCachedTreasuryAccount();
 
         const walletClient = createWalletClient({
-          account,
+          account: treasuryAccount.account,
           chain: base,
-          transport: http(),
+          transport: fallback(BASE_RPC_URLS.map((url) => http(url))),
         });
 
         // Create public client for waiting for transaction receipts
         const publicClient = createPublicClient({
           chain: base,
-          transport: http(),
+          transport: fallback(BASE_RPC_URLS.map((url) => http(url))),
         });
 
-        console.log(`[Payout Cron] Executing ${restaurantPayouts.length + driverPayouts.length} payouts from ${account.address}`);
+        console.log(`[Payout Cron] Executing ${restaurantPayouts.length + driverPayouts.length} payouts from ${treasuryAccount.address}`);
 
         // USDC contract address on Base
         const USDC_CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913') as Address;
@@ -355,7 +361,7 @@ export async function GET(req: NextRequest) {
       } catch (error) {
         console.error('[Payout Cron] Critical error during payout execution:', error);
       }
-    } else if (!treasuryPrivateKey) {
+    } else if (!process.env.TREASURY_PRIVATE_KEY) {
       console.warn('[Payout Cron] TREASURY_PRIVATE_KEY not set - payouts calculated but NOT executed');
       console.warn('[Payout Cron] Set TREASURY_PRIVATE_KEY in environment to enable automatic payouts');
     }

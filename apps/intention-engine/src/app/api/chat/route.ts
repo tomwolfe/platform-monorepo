@@ -3,11 +3,7 @@ import { streamText, tool, stepCountIs, convertToModelMessages, generateObject }
 import { z } from "zod";
 import { randomUUID } from "crypto";
 import {
-  search_restaurant,
-  add_calendar_event,
-  geocode_location,
   getToolCapabilitiesPrompt,
-  listTools
 } from "@/lib/tools";
 import { env } from "@/lib/config";
 import { inferIntent } from "@/lib/intent";
@@ -19,17 +15,6 @@ import { QStashService } from "@repo/shared";
 import {
   TOOLS,
   McpToolRegistry,
-  GeocodeSchema,
-  AddCalendarEventSchema,
-  SearchRestaurantSchema,
-  WeatherDataSchema,
-  RouteEstimateSchema,
-  MobilityRequestSchema,
-  TableReservationSchema,
-  CommunicationSchema,
-  GetLiveOperationalStateSchema,
-  DB_REFLECTED_SCHEMAS,
-  UnifiedLocationSchema
 } from "@repo/mcp-protocol";
 import { NormalizationService, FailoverPolicyEngine, type PolicyEvaluationContext } from "@repo/shared";
 import { getNervousSystemObserver } from "@/lib/listeners/nervous-system-observer";
@@ -548,6 +533,8 @@ async function fetchLiveOperationalState(
 /**
  * Dynamically fetches tools from all registered MCP servers.
  * Uses centralized McpToolRegistry schemas for validation.
+ * All tool execution is routed through DynamicMcpClientManager.executeTool()
+ * for consistent parameter aliasing and server routing.
  */
 async function getTools(auditLogId: string, userLocation?: { lat: number, lng: number }) {
   const { manager } = await getMcpClients();
@@ -563,7 +550,7 @@ async function getTools(auditLogId: string, userLocation?: { lat: number, lng: n
 
   // Get discovered tools from the dynamic manager
   const toolRegistry = manager.getToolRegistry();
-  
+
   for (const [toolName, toolDef] of toolRegistry.entries()) {
     try {
       // Use schema from registry if available, fallback to generic
@@ -576,6 +563,7 @@ async function getTools(auditLogId: string, userLocation?: { lat: number, lng: n
           console.log(`Executing MCP tool ${toolName}`, params);
 
           // Use the manager's executeTool method with parameter aliasing
+          // This handles routing between remote MCP tools and local tool executions
           const result = await manager.executeTool(toolName, params);
 
           if (result.success) {
@@ -912,117 +900,8 @@ export async function POST(req: Request) {
       : `\n### LIVE STATE: ${liveOperationalState.rawText || "No live state available"}\n`;
 
     // Fetch dynamic tools from MCP servers
-    const mcpTools = await getTools(auditLog.id, userLocation || undefined);
-    
-    // Build the complete toolset combining MCP and Local tools
-    const localTools = listTools();
-    const allTools: Record<string, any> = { ...mcpTools };
-
-    const schemaMap: Record<string, z.ZodType<any>> = {
-      geocode_location: GeocodeSchema,
-      add_calendar_event: AddCalendarEventSchema,
-      search_restaurant: SearchRestaurantSchema,
-      get_weather_data: WeatherDataSchema,
-      get_route_estimate: RouteEstimateSchema,
-      request_ride: MobilityRequestSchema,
-      book_restaurant_table: DB_REFLECTED_SCHEMAS.createReservation,
-      reserve_restaurant: DB_REFLECTED_SCHEMAS.createReservation,
-      send_comm: CommunicationSchema,
-      get_live_operational_state: GetLiveOperationalStateSchema,
-    };
-
-    for (const localTool of localTools) {
-      // Don't override MCP tools with local ones if they already exist
-      if (!allTools[localTool.name]) {
-        allTools[localTool.name] = tool({
-          description: localTool.description,
-          inputSchema: schemaMap[localTool.name] || z.record(z.any()),
-          execute: async (params) => {
-            // Context Injection: Provide user location if schema expects it
-            const enrichedParams = { ...params };
-            const needsLocation = ["geocode_location", "search_restaurant"].includes(localTool.name);
-
-            if (needsLocation && userLocation && !enrichedParams.userLocation) {
-              enrichedParams.userLocation = userLocation;
-            }
-
-            // SAGA DETECTION - Check if this tool requires async execution
-            // STRICT SAGA ENFORCEMENT: All state-modifying tools MUST use async execution
-            // to avoid Vercel 10s timeout and ensure proper compensation handling
-            const stateModifyingTools = [
-              "book_restaurant_table",
-              "reserve_restaurant",
-              "create_reservation",
-              "create_order",
-              "place_order",
-              "checkout",
-              "purchase",
-              "dispatch_driver",
-              "create_delivery",
-              "send_comm",
-              "send_email",
-              "send_sms",
-              "add_calendar_event",
-              "create_event",
-              "process_payment",
-              "refund_payment",
-              "request_ride",
-              "update_order_status",
-              "update_reservation_status",
-              "cancel_reservation",
-              "cancel_order",
-            ];
-
-            const isStateModifying = stateModifyingTools.some(tool => localTool.name.includes(tool));
-            const isSagaIntent = requiresSagaExecution(intent.type);
-
-            if (isStateModifying || isSagaIntent) {
-              try {
-                console.log(`[Chat] Detected saga operation (${localTool.name}), triggering async execution`);
-
-                // Create a synthetic intent for this specific tool execution
-                const sagaIntent = {
-                  id: crypto.randomUUID(),
-                  type: localTool.name.toUpperCase(),
-                  confidence: 0.9,
-                  parameters: enrichedParams,
-                  rawText: userText,
-                  metadata: { version: "1.0.0", timestamp: new Date().toISOString(), source: "chat_saga" }
-                };
-
-                // Trigger async execution via QStash
-                const executionId = await triggerAsyncExecution(sagaIntent, {
-                  userId: userId as string | undefined,
-                  clerkId: clerkId || undefined,
-                  userEmail: undefined,
-                }, auditLog.id);
-
-                // Return immediately with execution ID for tracking
-                return {
-                  success: true,
-                  executionId,
-                  message: `Started ${localTool.name} execution. Track progress via execution ID: ${executionId}`,
-                  status: "STARTED",
-                };
-              } catch (error) {
-                console.error(`[Chat] Failed to trigger async execution for ${localTool.name}:`, error);
-                return {
-                  success: false,
-                  error: error instanceof Error ? error.message : String(error),
-                };
-              }
-            }
-
-            // Read-only operations execute inline (search, geocode, get_weather, etc.)
-            const result = await executeToolWithContext(localTool.name, enrichedParams, {
-              audit_log_id: auditLog.id,
-              step_index: auditLog.steps.length
-            });
-            return result;
-          },
-        });
-      }
-    }
+    // All tool execution is routed through DynamicMcpClientManager.executeTool()
+    const allTools = await getTools(auditLog.id, userLocation || undefined);
 
     const locationContext = userLocation
       ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}.`

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, orders, eq, and, isNotNull, inArray } from "@repo/database";
-import { createPublicClient, http, type Address } from 'viem';
+import { createPublicClient, http, fallback, type Address } from 'viem';
 import { base } from 'viem/chains';
 import { timingSafeEqual } from 'crypto';
 
@@ -110,10 +110,17 @@ export async function GET(req: NextRequest) {
 
     console.log(`[Verify Payouts Cron] Found ${processingPayouts.length} payouts to verify`);
 
+    // RPC URLs with fallbacks for resilience
+    const BASE_RPC_URLS = [
+      process.env.BASE_RPC_URL || "https://mainnet.base.org",
+      "https://base.llamarpc.com",
+      "https://base.publicnode.com",
+    ];
+
     // Create public client for checking receipts
     const publicClient = createPublicClient({
       chain: base,
-      transport: http(),
+      transport: fallback(BASE_RPC_URLS.map((url) => http(url))),
     });
 
     // CRITICAL: Use Promise.all for parallel verification (not sequential)

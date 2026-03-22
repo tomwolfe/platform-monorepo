@@ -77,8 +77,9 @@
  * @since 1.0.0
  */
 
-import { db, outbox } from '@repo/database';
+import type { Database, OutboxTable } from '../types/database';
 import { sql, eq } from 'drizzle-orm';
+import { outbox } from '@repo/database';
 import { QStashService } from './qstash';
 
 // ============================================================================
@@ -113,8 +114,10 @@ const DEFAULT_CONFIG: Required<ServerlessBridgeConfig> = {
 
 export class ServerlessPubSubBridge {
   private config: Required<ServerlessBridgeConfig>;
+  private db: Database;
 
-  constructor(config: ServerlessBridgeConfig = {}) {
+  constructor(db: Database, config: ServerlessBridgeConfig = {}) {
+    this.db = db;
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
@@ -251,13 +254,13 @@ export class ServerlessPubSubBridge {
 
     try {
       // Set the qstash_token setting for use in PL/pgSQL
-      await db.execute(sql`
+      await this.db.execute(sql`
         SELECT set_config('app.qstash_token', ${qstashToken}, FALSE)
       `);
 
       // Create the function and trigger
       // Note: In production, this should be in a migration file
-      await db.execute(sql`
+      await this.db.execute(sql`
         -- Create function to send HTTP request via http extension
         CREATE OR REPLACE FUNCTION notify_outbox_via_http()
         RETURNS trigger AS $$
@@ -298,7 +301,7 @@ export class ServerlessPubSubBridge {
       `);
 
       // Create trigger
-      await db.execute(sql`
+      await this.db.execute(sql`
         DROP TRIGGER IF EXISTS outbox_http_notify ON outbox;
         CREATE TRIGGER outbox_http_notify
           AFTER INSERT ON outbox
@@ -326,7 +329,7 @@ export class ServerlessPubSubBridge {
    */
   async removeTrigger(): Promise<void> {
     try {
-      await db.execute(sql`
+      await this.db.execute(sql`
         DROP TRIGGER IF EXISTS outbox_http_notify ON outbox;
         DROP FUNCTION IF EXISTS notify_outbox_via_http();
       `);
@@ -346,7 +349,7 @@ export class ServerlessPubSubBridge {
    */
   async isHttpExtensionAvailable(): Promise<boolean> {
     try {
-      const result = await db.execute(sql`
+      const result = await this.db.execute(sql`
         SELECT EXISTS (
           SELECT 1 FROM pg_extension WHERE extname = 'http'
         ) as available
@@ -369,7 +372,7 @@ export class ServerlessPubSubBridge {
     const httpAvailable = await this.isHttpExtensionAvailable();
 
     // Check if trigger exists
-    const triggerResult = await db.execute(sql`
+    const triggerResult = await this.db.execute(sql`
       SELECT EXISTS (
         SELECT 1 FROM pg_trigger
         WHERE tgname = 'outbox_http_notify'
@@ -378,7 +381,7 @@ export class ServerlessPubSubBridge {
     const triggerExists = (triggerResult.rows[0] as any)?.exists === true;
 
     // Count pending events
-    const pendingResult = await db.execute(sql`
+    const pendingResult = await this.db.execute(sql`
       SELECT COUNT(*) as count
       FROM outbox
       WHERE status = 'pending'
@@ -400,16 +403,18 @@ export class ServerlessPubSubBridge {
 let defaultBridge: ServerlessPubSubBridge | null = null;
 
 export function getServerlessPubSubBridge(
+  db: Database,
   config?: ServerlessBridgeConfig
 ): ServerlessPubSubBridge {
   if (!defaultBridge) {
-    defaultBridge = new ServerlessPubSubBridge(config);
+    defaultBridge = new ServerlessPubSubBridge(db, config);
   }
   return defaultBridge;
 }
 
 export function createServerlessPubSubBridge(
+  db: Database,
   config?: ServerlessBridgeConfig
 ): ServerlessPubSubBridge {
-  return new ServerlessPubSubBridge(config);
+  return new ServerlessPubSubBridge(db, config);
 }

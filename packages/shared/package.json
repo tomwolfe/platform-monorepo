@@ -14,7 +14,8 @@
     "./tracing": "./src/tracing.ts",
     "./idempotency": "./src/idempotency.ts",
     "./clients": "./src/clients.ts",
-    "./redis/memory": "./src/redis/memory.ts"
+    "./redis/memory": "./src/redis/memory.ts",
+    "./types/database": "./src/types/database.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
@@ -23,8 +24,6 @@
     "@ai-sdk/openai": "^3.0.25",
     "@octokit/rest": "^21.0.0",
     "@repo/auth": "workspace:*",
-    "@repo/database": "workspace:*",
-    "@repo/mcp-protocol": "workspace:*",
     "@upstash/qstash": "^2.1.0",
     "@upstash/redis": "^1.36.2",
     "ably": "^2.17.1",
@@ -33,17 +32,20 @@
     "resend": "^4.1.1",
     "uuid": "^11.0.0",
     "viem": "^2.47.5",
-    "zod": "^3.24.1"
+    "zod": "^3.24.1",
+    "drizzle-orm": "^0.38.3"
   },
   "devDependencies": {
     "@clerk/nextjs": "^6.10.6",
+    "@repo/database": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/node": "^20.17.16",
     "@types/uuid": "^10.0.0",
     "typescript": "^5.0.0"
   },
   "peerDependencies": {
-    "@clerk/nextjs": "^6.10.6"
+    "@clerk/nextjs": "^6.10.6",
+    "@repo/database": "workspace:*"
   },
   "peerDependenciesMeta": {
     "@clerk/nextjs": {

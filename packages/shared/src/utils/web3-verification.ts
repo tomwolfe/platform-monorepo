@@ -17,6 +17,7 @@
 import {
   createPublicClient,
   http,
+  fallback,
   type Hash,
   type Address,
   parseEventLogs,
@@ -34,9 +35,21 @@ import { db, processed_crypto_transactions, eq } from "@repo/database";
 // ============================================================================
 
 const RPC_URLS = {
-  base: process.env.BASE_RPC_URL || "https://mainnet.base.org",
-  polygon: process.env.POLYGON_RPC_URL || "https://polygon-rpc.com",
-  ethereum: process.env.ETHEREUM_RPC_URL || "https://eth-mainnet.g.alchemy.com/v2/demo",
+  base: [
+    process.env.BASE_RPC_URL || "https://mainnet.base.org",
+    "https://base.llamarpc.com",
+    "https://base.publicnode.com",
+  ],
+  polygon: [
+    process.env.POLYGON_RPC_URL || "https://polygon-rpc.com",
+    "https://polygon.llamarpc.com",
+    "https://polygon.publicnode.com",
+  ],
+  ethereum: [
+    process.env.ETHEREUM_RPC_URL || "https://eth-mainnet.g.alchemy.com/v2/demo",
+    "https://eth.llamarpc.com",
+    "https://ethereum.publicnode.com",
+  ],
 };
 
 const TREASURY_ADDRESS = (
@@ -59,7 +72,8 @@ export const TOKEN_DECIMALS: Record<string, number> = {
 // ============================================================================
 
 /**
- * Get public client for a specific chain
+ * Get public client for a specific chain with fallback RPC URLs
+ * Uses viem's fallback transport for automatic failover between RPC providers
  */
 export function getPublicClient(chainId?: number) {
   const chain = chainId || base.id;
@@ -67,21 +81,27 @@ export function getPublicClient(chainId?: number) {
   if (chain === polygon.id) {
     return createPublicClient({
       chain: polygon,
-      transport: http(RPC_URLS.polygon),
+      transport: fallback(
+        RPC_URLS.polygon.map((url) => http(url))
+      ),
     });
   }
 
   if (chain === mainnet.id) {
     return createPublicClient({
       chain: mainnet,
-      transport: http(RPC_URLS.ethereum),
+      transport: fallback(
+        RPC_URLS.ethereum.map((url) => http(url))
+      ),
     });
   }
 
   // Default to Base
   return createPublicClient({
     chain: base,
-    transport: http(RPC_URLS.base),
+    transport: fallback(
+      RPC_URLS.base.map((url) => http(url))
+    ),
   });
 }
 

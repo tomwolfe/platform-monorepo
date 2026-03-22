@@ -12,7 +12,8 @@
  *
  * Usage:
  * ```ts
- * const vectorStore = createPGVectorStore();
+ * // In app initialization - pass db instance
+ * const vectorStore = createPGVectorStore(db);
  *
  * // Add vector
  * await vectorStore.addVector({
@@ -37,9 +38,12 @@
  * @since 1.0.0
  */
 
-import { db, semanticMemories, cosineSimilarity, type SemanticMemory } from '@repo/database';
-import { eq, and, gte, lte, sql, desc } from 'drizzle-orm';
+import type { Database } from '../types/database';
+import { eq, and, gte, lte, sql, desc, cosineSimilarity, type SQL } from 'drizzle-orm';
 import type { VectorStore, VectorEntry, VectorSearchQuery, VectorSearchResult } from './vector-store';
+
+// Import table reference - type only, actual table passed via db
+import { semanticMemories } from '@repo/database';
 
 // ============================================================================
 // PGVECTOR STORE IMPLEMENTATION
@@ -56,8 +60,10 @@ export interface PGVectorStoreConfig {
 
 export class PGVectorStore implements VectorStore {
   private config: Required<PGVectorStoreConfig>;
+  private db: Database;
 
-  constructor(config: PGVectorStoreConfig = {}) {
+  constructor(db: Database, config: PGVectorStoreConfig = {}) {
+    this.db = db;
     this.config = {
       dimensions: config.dimensions || 384,
       defaultMinSimilarity: config.defaultMinSimilarity || 0.5,
@@ -388,9 +394,9 @@ export class PGVectorStore implements VectorStore {
 
 // ============================================================================
 // FACTORY
-// Create PGVector store instance
+// Create PGVector store instance - requires db instance
 // ============================================================================
 
-export function createPGVectorStore(config?: PGVectorStoreConfig): PGVectorStore {
-  return new PGVectorStore(config);
+export function createPGVectorStore(db: Database, config?: PGVectorStoreConfig): PGVectorStore {
+  return new PGVectorStore(db, config);
 }

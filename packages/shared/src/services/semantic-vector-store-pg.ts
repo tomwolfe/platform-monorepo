@@ -13,7 +13,7 @@
  *
  * Usage:
  * ```typescript
- * const store = createHybridSemanticStore();
+ * const store = createHybridSemanticStore(db);
  *
  * // Hybrid search: Vector + relational filters
  * const results = await store.search({
@@ -37,7 +37,8 @@
  * @since 1.0.0
  */
 
-import { db, semanticMemories, cosineSimilarity, type SemanticMemorySearchQuery, type SemanticMemorySearchResult } from '@repo/database';
+import type { Database } from '../types/database';
+import { semanticMemories, type SemanticMemorySearchQuery, type SemanticMemorySearchResult } from '@repo/database';
 import { sql, eq, and, gte, lte, isNull, or, desc, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -120,7 +121,12 @@ export interface BusinessDataJoinConfig {
 // ============================================================================
 
 export class HybridSemanticStore {
+  private db: Database;
   private initialized = false;
+
+  constructor(db: Database) {
+    this.db = db;
+  }
 
   /**
    * Initialize pgvector (ensure extension is enabled)
@@ -131,7 +137,7 @@ export class HybridSemanticStore {
 
     try {
       // Verify pgvector extension is available
-      await db.execute(sql`SELECT 1 FROM pg_extension WHERE extname = 'vector' LIMIT 1`);
+      await this.db.execute(sql`SELECT 1 FROM pg_extension WHERE extname = 'vector' LIMIT 1`);
       this.initialized = true;
       console.log('[PGVectorStore] pgvector extension verified');
     } catch (error) {
@@ -156,7 +162,7 @@ export class HybridSemanticStore {
   ): Promise<{ id: string }> {
     await this.initialize();
 
-    const result = await db.insert(semanticMemories).values({
+    const result = await this.db.insert(semanticMemories).values({
       id: entry.id,
       userId: entry.userId,
       intentType: entry.intentType,
@@ -499,7 +505,7 @@ export class HybridSemanticStore {
    */
   async analyze(): Promise<void> {
     await this.initialize();
-    await db.execute(sql`ANALYZE semantic_memories`);
+    await this.db.execute(sql`ANALYZE semantic_memories`);
     console.log('[PGVectorStore] Statistics updated for query planner');
   }
 }
@@ -510,13 +516,13 @@ export class HybridSemanticStore {
 
 let defaultHybridSemanticStore: HybridSemanticStore | null = null;
 
-export function createHybridSemanticStore(): HybridSemanticStore {
+export function createHybridSemanticStore(db: Database): HybridSemanticStore {
   if (!defaultHybridSemanticStore) {
-    defaultHybridSemanticStore = new HybridSemanticStore();
+    defaultHybridSemanticStore = new HybridSemanticStore(db);
   }
   return defaultHybridSemanticStore;
 }
 
-export function getHybridSemanticStore(): HybridSemanticStore {
-  return createHybridSemanticStore();
+export function getHybridSemanticStore(db: Database): HybridSemanticStore {
+  return createHybridSemanticStore(db);
 }

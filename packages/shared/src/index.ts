@@ -150,6 +150,8 @@ export type {
 export * from './utils/erc20-abi';
 export * from './utils/crypto'; // NEW: Timing-safe comparison and secure random generation
 export * from './utils/api-error';
+// Middleware exports (server-side only)
+export * from './middleware/web3-replay-guard';
 // export * from './utils/treasury'; // Treasury account management - import directly
 // export * from './utils/crypto-price'; // Server-side only - import directly
 // export * from './utils/web3-verification'; // Server-side only - import directly

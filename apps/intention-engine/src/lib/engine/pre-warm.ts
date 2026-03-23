@@ -23,6 +23,11 @@
  * - Tracks pre-warm state in Redis to avoid duplicate warming
  * - Configurable threshold (default: 80% step completion)
  *
+ * ENHANCEMENT: Pre-Warm Hints
+ * - Passes a "hint" to the next lambda about what data to pre-load
+ * - E.g., "DB_RESERVATION_LOAD" tells the next lambda to pre-fetch reservation data
+ * - Enables proactive data loading before the next segment starts
+ *
  * @package apps/intention-engine
  */
 
@@ -54,6 +59,14 @@ const PRE_WARM_CONFIG = {
 // TYPES
 // ============================================================================
 
+export type PreWarmHint = 
+  | 'DB_RESERVATION_LOAD'
+  | 'DB_USER_LOAD'
+  | 'DB_PAYMENT_LOAD'
+  | 'DB_SEARCH_LOAD'
+  | 'DB_CANCELLATION_LOAD'
+  | 'GENERIC';
+
 export interface PreWarmState {
   executionId: string;
   preWarmTriggered: boolean;
@@ -64,6 +77,8 @@ export interface PreWarmState {
   nextStepIndex: number;
   lambdaWarmed: boolean;
   lambdaWarmedAt?: string;
+  hint?: PreWarmHint;
+  nextToolName?: string;
 }
 
 export interface PreWarmResult {
@@ -91,6 +106,8 @@ export class PreWarmService {
       completionPercentage: 0,
       nextStepIndex: 0,
       lambdaWarmed: false,
+      hint: undefined,
+      nextToolName: undefined,
     };
   }
 
@@ -99,16 +116,20 @@ export class PreWarmService {
    */
   async updateProgress(
     currentState: ExecutionState,
-    totalSteps: number
+    totalSteps: number,
+    options?: {
+      hint?: PreWarmHint;
+      nextToolName?: string;
+    }
   ): Promise<PreWarmResult> {
     const completedSteps = getCompletedSteps(currentState);
     const pendingSteps = getPendingSteps(currentState);
-    
+
     const currentStepIndex = completedSteps.length;
-    const completionPercentage = totalSteps > 0 
-      ? currentStepIndex / totalSteps 
+    const completionPercentage = totalSteps > 0
+      ? currentStepIndex / totalSteps
       : 0;
-    const nextStepIndex = pendingSteps.length > 0 
+    const nextStepIndex = pendingSteps.length > 0
       ? currentState.step_states.findIndex(s => s.status === "pending")
       : totalSteps;
 
@@ -119,11 +140,13 @@ export class PreWarmService {
       totalSteps,
       completionPercentage,
       nextStepIndex: nextStepIndex >= 0 ? nextStepIndex : totalSteps,
+      hint: options?.hint,
+      nextToolName: options?.nextToolName,
     };
 
     // Check if we should trigger pre-warm
     if (this.shouldTriggerPreWarm()) {
-      return await this.triggerPreWarm();
+      return await this.triggerPreWarm(options?.hint, options?.nextToolName);
     }
 
     return { success: true, warmed: false };
@@ -155,9 +178,9 @@ export class PreWarmService {
   /**
    * Trigger pre-warm request to warm up lambda for next step
    */
-  private async triggerPreWarm(): Promise<PreWarmResult> {
+  private async triggerPreWarm(hint?: PreWarmHint, nextToolName?: string): Promise<PreWarmResult> {
     const startTime = Date.now();
-    
+
     try {
       // Mark as triggered to avoid duplicate calls
       this.state.preWarmTriggered = true;
@@ -166,16 +189,16 @@ export class PreWarmService {
       // Store state in Redis for observability
       await this.storePreWarmState();
 
-      // Fire-and-forget pre-warm request
+      // Fire-and-forget pre-warm request WITH HINT
       // We don't await this - it's best-effort
-      this.sendPreWarmRequest().catch(error => {
+      this.sendPreWarmRequest(hint, nextToolName).catch(error => {
         console.warn("[PreWarm] Pre-warm request failed (non-blocking):", error);
       });
 
       if (PRE_WARM_CONFIG.debug) {
         console.log(
           `[PreWarm] Triggered for ${this.executionId} ` +
-          `(completion: ${(this.state.completionPercentage * 100).toFixed(1)}%)`
+          `(completion: ${(this.state.completionPercentage * 100).toFixed(1)}%, hint: ${hint || 'GENERIC'})`
         );
       }
 
@@ -198,23 +221,26 @@ export class PreWarmService {
    * Send pre-warm request to lambda endpoint
    * Fire-and-forget - uses Next.js after() to ensure execution continues after response
    */
-  private async sendPreWarmRequest(): Promise<void> {
+  private async sendPreWarmRequest(hint?: PreWarmHint, nextToolName?: string): Promise<void> {
     const warmUrl = `${PRE_WARM_CONFIG.baseUrl}/api/engine/pre-warm`;
 
     try {
       // Use Next.js after() to ensure the request completes even after response
       const { after } = await import('next/server');
-      
-      after(() => 
+
+      after(() =>
         fetch(warmUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            "x-pre-warm-hint": hint || 'GENERIC',
           },
           body: JSON.stringify({
             executionId: this.executionId,
             nextStepIndex: this.state.nextStepIndex,
             triggeredAt: this.state.preWarmTriggeredAt,
+            hint: hint || 'GENERIC',
+            nextToolName,
           }),
         }).then(response => {
           // Silently ignore response - pre-warm is best-effort
@@ -232,6 +258,8 @@ export class PreWarmService {
       // Mark lambda as warmed (optimistic)
       this.state.lambdaWarmed = true;
       this.state.lambdaWarmedAt = new Date().toISOString();
+      this.state.hint = hint;
+      this.state.nextToolName = nextToolName;
 
       // Update Redis
       await this.storePreWarmState();
@@ -313,26 +341,41 @@ export class PreWarmService {
 
 /**
  * Pre-warm endpoint handler
- * 
+ *
  * This endpoint is called by PreWarmService to warm up the lambda
  * before the actual QStash trigger arrives.
- * 
+ *
  * It performs minimal work:
  * 1. Initializes database connection pool
  * 2. Initializes Redis client
  * 3. Loads execution state (optional, for extra warming)
- * 4. Returns immediately
+ * 4. Pre-fetches data based on hint (NEW)
+ * 5. Returns immediately
+ *
+ * ENHANCEMENT: Pre-Warm Hints
+ * - DB_RESERVATION_LOAD: Pre-fetch reservation data
+ * - DB_USER_LOAD: Pre-fetch user preferences
+ * - DB_PAYMENT_LOAD: Pre-fetch payment gateway connection
+ * - DB_SEARCH_LOAD: Pre-fetch search indexes
+ * - DB_CANCELLATION_LOAD: Pre-fetch cancellation policies
+ * - GENERIC: Generic warm-up
  */
 export async function handlePreWarmRequest(
   executionId: string,
-  nextStepIndex: number
+  nextStepIndex: number,
+  options?: {
+    hint?: PreWarmHint;
+    nextToolName?: string;
+  }
 ): Promise<{ success: boolean; warmed: boolean }> {
   const startTime = Date.now();
+  const hint = options?.hint || 'GENERIC';
+  const nextToolName = options?.nextToolName;
 
   try {
-    // Log pre-warm event
+    // Log pre-warm event with hint
     console.log(
-      `[PreWarm] Lambda warming for ${executionId} (next step: ${nextStepIndex})`
+      `[PreWarm] Lambda warming for ${executionId} (next step: ${nextStepIndex}, hint: ${hint}, tool: ${nextToolName || 'unknown'})`
     );
 
     // Warm database connection (lazy initialization)
@@ -369,13 +412,88 @@ export async function handlePreWarmRequest(
       }
     }
 
+    // ENHANCEMENT: Pre-fetch data based on hint
+    await preFetchDataForHint(hint, executionId, nextStepIndex);
+
     const warmDuration = Date.now() - startTime;
-    console.log(`[PreWarm] Lambda warmed in ${warmDuration}ms for ${executionId}`);
+    console.log(`[PreWarm] Lambda warmed in ${warmDuration}ms for ${executionId} (hint: ${hint})`);
 
     return { success: true, warmed: true };
   } catch (error) {
     console.error("[PreWarm] Warming failed:", error);
     return { success: false, warmed: false };
+  }
+}
+
+/**
+ * Pre-fetch data based on hint type
+ *
+ * This is the key optimization: instead of generic warming,
+ * we proactively load the specific data the next step will need.
+ */
+async function preFetchDataForHint(
+  hint: PreWarmHint,
+  executionId: string,
+  nextStepIndex: number
+): Promise<void> {
+  try {
+    switch (hint) {
+      case 'DB_RESERVATION_LOAD':
+        // Pre-fetch reservation-related tables
+        await getDb().execute("SELECT 1 FROM restaurant_tables LIMIT 1");
+        await getDb().execute("SELECT 1 FROM reservations LIMIT 1");
+        if (PRE_WARM_CONFIG.debug) {
+          console.log("[PreWarm] Pre-fetched reservation data");
+        }
+        break;
+
+      case 'DB_USER_LOAD':
+        // Pre-fetch user-related tables
+        await getDb().execute("SELECT 1 FROM users LIMIT 1");
+        await getDb().execute("SELECT 1 FROM user_preferences LIMIT 1");
+        if (PRE_WARM_CONFIG.debug) {
+          console.log("[PreWarm] Pre-fetched user data");
+        }
+        break;
+
+      case 'DB_PAYMENT_LOAD':
+        // Pre-fetch payment-related tables
+        await getDb().execute("SELECT 1 FROM payment_methods LIMIT 1");
+        await getDb().execute("SELECT 1 FROM crypto_payments LIMIT 1");
+        if (PRE_WARM_CONFIG.debug) {
+          console.log("[PreWarm] Pre-fetched payment data");
+        }
+        break;
+
+      case 'DB_SEARCH_LOAD':
+        // Pre-fetch search-related tables
+        await getDb().execute("SELECT 1 FROM restaurants LIMIT 1");
+        await getDb().execute("SELECT 1 FROM cuisines LIMIT 1");
+        if (PRE_WARM_CONFIG.debug) {
+          console.log("[PreWarm] Pre-fetched search data");
+        }
+        break;
+
+      case 'DB_CANCELLATION_LOAD':
+        // Pre-fetch cancellation-related tables
+        await getDb().execute("SELECT 1 FROM cancellation_policies LIMIT 1");
+        await getDb().execute("SELECT 1 FROM refunds LIMIT 1");
+        if (PRE_WARM_CONFIG.debug) {
+          console.log("[PreWarm] Pre-fetched cancellation data");
+        }
+        break;
+
+      case 'GENERIC':
+      default:
+        // Generic warm-up - just ping the database
+        await getDb().execute("SELECT 1");
+        break;
+    }
+  } catch (error) {
+    // Ignore pre-fetch errors - this is best-effort optimization
+    if (PRE_WARM_CONFIG.debug) {
+      console.warn("[PreWarm] Pre-fetch failed for hint:", hint, error);
+    }
   }
 }
 

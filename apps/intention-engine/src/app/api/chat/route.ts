@@ -1,32 +1,16 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import { streamText, tool, stepCountIs, convertToModelMessages, generateObject } from "ai";
+import { streamText, tool, stepCountIs, convertToModelMessages } from "ai";
 import { z } from "zod";
-import { randomUUID } from "crypto";
-import {
-  getToolCapabilitiesPrompt,
-} from "@/lib/tools";
+import { getToolCapabilitiesPrompt } from "@/lib/tools";
 import { env } from "@/lib/config";
-import { inferIntent } from "@/lib/intent";
-import { Redis } from "@upstash/redis";
-import { getUserPreferences, updateUserPreferences } from "@/lib/preferences";
+import { getUserPreferences } from "@/lib/preferences";
 import { redis } from "@/lib/redis-client";
 import { getMcpClients } from "@/lib/mcp-client";
-import { QStashService } from "@repo/shared";
-import {
-  TOOLS,
-  McpToolRegistry,
-} from "@repo/mcp-protocol";
-import { getNervousSystemObserver } from "@/lib/listeners/nervous-system-observer";
-import { saveExecutionState, loadExecutionState } from "@/lib/engine/memory";
-import { createInitialState, setIntent, setPlan } from "@/lib/engine/state-machine";
-import { parseIntent as engineParseIntent } from "@/lib/engine/intent";
-import { generatePlan as engineGeneratePlan } from "@/lib/engine/planner";
-import { getRegistryManager } from "@/lib/engine/registry";
-import { verifyPlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/verifier";
-import { promptInjectionMiddleware } from "@/lib/middleware/prompt-injection";
-import { rateLimitMiddleware, createRateLimitMiddleware } from "@/lib/middleware/rate-limiter";
+import { TOOLS } from "@repo/mcp-protocol";
+import { rateLimitMiddleware } from "@/lib/middleware/rate-limiter";
 import { AppConfig } from "@repo/shared";
 import { fetchLiveOperationalState } from "@/lib/engine/live-state";
+import { createChatOrchestrator, type ChatOrchestrationResult } from "@/lib/engine/chat-orchestrator";
 
 // Internal system key for QStash-triggered requests - uses strict getter
 const INTERNAL_SYSTEM_KEY = AppConfig.getInternalSystemKey();
@@ -46,107 +30,6 @@ const ChatRequestSchema = z.object({
     lng: z.number().min(-180).max(180),
   }).nullable().optional(),
 });
-
-/**
- * Trigger async execution for saga-type operations
- *
- * This function creates an execution state and triggers QStash to run the plan
- * asynchronously using the recursive self-trigger pattern.
- *
- * @param intent - The parsed intent
- * @param userContext - User context (userId, clerkId, etc.)
- * @param auditLogId - Audit log ID for tracing
- * @returns Execution ID for tracking
- */
-async function triggerAsyncExecution(
-  intent: any,
-  userContext: { userId?: string; clerkId?: string; userEmail?: string },
-  auditLogId: string
-): Promise<string> {
-  const executionId = randomUUID();
-
-  try {
-    // Create initial state
-    let state = createInitialState(executionId);
-    state = setIntent(state, intent);
-
-    // Generate plan
-    const registryManager = getRegistryManager();
-    const planResult = await engineGeneratePlan(intent, {
-      execution_id: executionId,
-      available_tools: registryManager.listAllTools(),
-    });
-
-    // Verify plan
-    const verification = verifyPlan(planResult.plan, DEFAULT_SAFETY_POLICY);
-    if (!verification.valid) {
-      throw new Error(verification.reason || "Plan verification failed");
-    }
-
-    state = setPlan(state, planResult.plan);
-    await saveExecutionState(state);
-
-    // Trigger first step via QStash
-    // CRITICAL: Pass trace context for distributed tracing
-    await QStashService.triggerNextStep({
-      executionId,
-      stepIndex: 0,
-      internalKey: INTERNAL_SYSTEM_KEY,
-      traceId: executionId, // Use executionId as initial traceId
-      correlationId: executionId,
-    });
-
-    console.log(`[Chat] Triggered async execution ${executionId} for intent ${intent.type} [trace: ${executionId}]`);
-
-    return executionId;
-  } catch (error) {
-    console.error("[Chat] Failed to trigger async execution:", error);
-    throw error;
-  }
-}
-
-/**
- * Check if an intent requires saga-style async execution
- *
- * Saga operations are multi-step, state-modifying operations that benefit from
- * the recursive self-trigger pattern (e.g., booking, reservation, complex workflows)
- *
- * STRICT SAGA ENFORCEMENT: All state-modifying operations MUST use async execution
- * to avoid Vercel 10s timeout and ensure proper compensation handling.
- */
-function requiresSagaExecution(intentType: string): boolean {
-  const sagaIntentTypes = [
-    "BOOKING",
-    "RESERVATION",
-    "CREATE_RESERVATION",
-    "BOOK_RESTAURANT",
-    "RESERVE_RESTAURANT",
-    "CREATE_ORDER",
-    "PLACE_ORDER",
-    "CHECKOUT",
-    "PURCHASE",
-    // Delivery and logistics
-    "DISPATCH",
-    "DELIVERY",
-    "CREATE_DELIVERY",
-    // Communication (state-modifying)
-    "SEND_COMM",
-    "SEND_EMAIL",
-    "SEND_SMS",
-    // Calendar (state-modifying)
-    "ADD_CALENDAR_EVENT",
-    "CREATE_EVENT",
-    // Payment (state-modifying)
-    "PAYMENT",
-    "PROCESS_PAYMENT",
-    "REFUND",
-    // Ride/mobility
-    "REQUEST_RIDE",
-    "MOBILITY",
-  ];
-
-  return sagaIntentTypes.some(type => intentType.includes(type) || intentType === type);
-}
 
 /**
  * Dynamically fetches tools from all registered MCP servers.
@@ -199,6 +82,100 @@ async function getTools(auditLogId: string, userLocation?: { lat: number, lng: n
   return tools;
 }
 
+/**
+ * Build live state context string from operational state result
+ */
+function buildLiveStateContext(liveOperationalState: ReturnType<typeof fetchLiveOperationalState> extends Promise<infer T> ? T : never): string {
+  const liveStateContextParts: string[] = [];
+
+  if (liveOperationalState.restaurantStates) {
+    liveStateContextParts.push(
+      `\n### LIVE RESTAURANT STATE (Real-time from Redis/DB):\n${liveOperationalState.restaurantStates
+        .map(r => `- ${r.name}: ${r.tableAvailability.toUpperCase()}${r.waitlistCount ? ` (${r.waitlistCount} on waitlist)` : ""}${r.nextAvailableSlot ? ` - Next: ${r.nextAvailableSlot}` : ""}${r.hasRecentFailures ? " ⚠️ RECENT FAILURES" : ""}`)
+        .join("\n")}\n\n**IMPORTANT**: Use this live state to avoid suggesting restaurants that are full. If a restaurant shows "full", suggest alternatives or recommend joining the waitlist.`
+    );
+  }
+
+  if (liveOperationalState.failedBookings && liveOperationalState.failedBookings.length > 0) {
+    liveStateContextParts.push(
+      `\n### ⚠️ RECENT BOOKING FAILURES (Avoid These):\n${liveOperationalState.failedBookings
+        .map(f => `- ${f.restaurantName || f.restaurantId}: ${f.failureReason} (at ${new Date(f.failedAt).toLocaleTimeString()})`)
+        .join("\n")}\n\n**CRITICAL**: These restaurants have recent booking failures. DO NOT attempt to book these unless the user explicitly insists. Instead, suggest alternative restaurants or explain the issue to the user.`
+    );
+  }
+
+  // HARD CONSTRAINTS - Block invalid plans before generation
+  if (liveOperationalState.hardConstraints && liveOperationalState.hardConstraints.length > 0) {
+    liveStateContextParts.push(
+      `\n### 🚫 HARD CONSTRAINTS (MUST FOLLOW):\n${liveOperationalState.hardConstraints
+        .map(c => `- ${c}`)
+        .join("\n")}\n\n**WARNING**: Violating these constraints will result in immediate plan rejection.`
+    );
+  }
+
+  // FAILOVER SUGGESTIONS - Pre-computed alternatives
+  if (liveOperationalState.failoverSuggestions && liveOperationalState.failoverSuggestions.length > 0) {
+    liveStateContextParts.push(
+      `\n### 💡 RECOMMENDED ALTERNATIVES (Pre-computed):\n${liveOperationalState.failoverSuggestions
+        .map(s => `- [${s.type.toUpperCase()}] ${s.message || JSON.stringify(s.value)} (Confidence: ${(s.confidence * 100).toFixed(0)}%)`)
+        .join("\n")}\n\n**TIP**: These alternatives have been pre-validated and are ready to offer.`
+    );
+  }
+
+  // DELIVERY LOAD STATE - Real-time demand/supply for tip recommendations
+  if (liveOperationalState.deliveryLoadState) {
+    const { isHighLoad, avgWaitTimeMinutes, activeDrivers, pendingOrders, recommendedTipBoost } = liveOperationalState.deliveryLoadState;
+    liveStateContextParts.push(
+      `\n### 🚗 DELIVERY LOAD STATE (Real-time):\n- Active Drivers: ${activeDrivers}\n- Pending Orders: ${pendingOrders}\n- Load Status: ${isHighLoad ? "HIGH DEMAND" : "Normal"}\n- Avg Wait Time: ${avgWaitTimeMinutes} minutes\n\n**TIP BOOST RECOMMENDATION**: ${isHighLoad ? `Suggest increasing tip by $${recommendedTipBoost} to prioritize this order. Higher tips attract drivers faster during high demand.` : "Current tip levels are adequate for normal demand."}`
+    );
+  }
+
+  return liveStateContextParts.length > 0
+    ? liveStateContextParts.join("\n\n")
+    : `\n### LIVE STATE: ${liveOperationalState.rawText || "No live state available"}\n`;
+}
+
+/**
+ * Extract user text from core messages
+ */
+function extractUserText(coreMessages: any[]): string {
+  const lastUserMessage = [...coreMessages].reverse().find(m => m.role === "user");
+  let userText = "";
+  if (typeof lastUserMessage?.content === "string") {
+    userText = lastUserMessage.content;
+  } else if (Array.isArray(lastUserMessage?.content)) {
+    userText = lastUserMessage.content
+      .filter(part => part.type === "text")
+      .map(part => (part as any).text)
+      .join("\n");
+  }
+  return userText;
+}
+
+/**
+ * Get relevant failure warnings from recent audit logs
+ */
+function getRelevantFailures(text: string, logs: any[]): string[] {
+  const keywords = text.toLowerCase().split(/\W+/).filter(w => w.length > 3);
+  const failures: string[] = [];
+  for (const log of logs) {
+    if (log.steps) {
+      for (const step of log.steps) {
+        if (step.status === "failed") {
+          const inputStr = JSON.stringify(step.input).toLowerCase();
+          const hasOverlap = keywords.some(k => inputStr.includes(k));
+
+          if (hasOverlap) {
+            const specificWarning = `Previous attempt at ${step.tool_name} with parameters ${JSON.stringify(step.input)} failed with error: "${step.error}".`;
+            failures.push(specificWarning);
+          }
+        }
+      }
+    }
+  }
+  return Array.from(new Set(failures)).slice(0, 3);
+}
+
 export async function POST(req: Request) {
   try {
     const rawBody = await req.json();
@@ -223,13 +200,13 @@ export async function POST(req: Request) {
     const userIp = req.headers.get("x-forwarded-for") || "anonymous";
     const clerkId = req.headers.get("x-clerk-id") || undefined;
     const userId = clerkId || userIp; // Prefer clerkId, fallback to IP for anonymous
-    
+
     // RATE LIMITING: User-level rate limiting to prevent quota drain
     const rateLimitResult = await rateLimitMiddleware(userId, "chat");
-    
+
     if (!rateLimitResult.allowed) {
       console.warn(`[RateLimiter] Rate limit exceeded for user ${userId}`);
-      
+
       return new Response(
         JSON.stringify({
           error: "Rate limit exceeded",
@@ -248,16 +225,13 @@ export async function POST(req: Request) {
       );
     }
 
-    const userPrefsKey = `prefs:${userId}`;
-    let userPreferences = null;
     let recentLogs: any[] = [];
-
     const { createAuditLog, updateAuditLog, getUserAuditLogs } = await import("@/lib/audit");
     const { getPlanWithAvoidance, getProvider } = await import("@/app/actions");
 
     if (redis) {
       try {
-        [userPreferences, recentLogs] = await Promise.all([
+        [, recentLogs] = await Promise.all([
           getUserPreferences(userId),
           getUserAuditLogs(userId, 10)
         ]);
@@ -267,259 +241,114 @@ export async function POST(req: Request) {
     }
 
     const coreMessages = await convertToModelMessages(messages);
+    const userText = extractUserText(coreMessages);
 
-    // Phase 4: Consume structured intent to drive logic
-    const lastUserMessage = [...coreMessages].reverse().find(m => m.role === "user");
-    let userText = "";
-    if (typeof lastUserMessage?.content === "string") {
-      userText = lastUserMessage.content;
-    } else if (Array.isArray(lastUserMessage?.content)) {
-      userText = lastUserMessage.content
-        .filter(part => part.type === "text")
-        .map(part => (part as any).text)
-        .join("\n");
-    }
-
-    // Step 2: Semantic Memory & Proactive Retrieval
-    
-    // SECURITY: Prompt Injection Detection
-    // Scan user input for prompt injection attacks before processing
-    const securityCheck = await promptInjectionMiddleware(userText, userId, {
-      enableHeuristics: true,
-      enableSemanticAnalysis: true,
-      enableEncodingDetection: true,
-      enableAuditLog: true,
+    // Initialize Chat Orchestrator Service
+    const orchestrator = createChatOrchestrator(INTERNAL_SYSTEM_KEY, {
+      userId,
+      clerkId,
+      userIp,
     });
 
-    if (!securityCheck.allowed) {
-      console.warn(`[Security] Prompt injection detected for user ${userId}:`, securityCheck.detectionResult);
-
-      // Return appropriate error based on risk level
-      const statusCode = securityCheck.detectionResult.riskLevel === "critical" ? 403 : 400;
-      return new Response(
-        JSON.stringify({
-          error: "Input blocked for security reasons",
-          message: securityCheck.detectionResult.recommendedAction === "block"
-            ? "Your input contains patterns that may attempt to manipulate the AI system. Please rephrase your request."
-            : "Your input requires review. Please rephrase or contact support if this persists.",
-          riskLevel: securityCheck.detectionResult.riskLevel,
-          ...(process.env.NODE_ENV === "development" && {
-            debug: {
-              attackTypes: securityCheck.detectionResult.attackTypes,
-              explanation: securityCheck.detectionResult.explanation,
-            },
-          }),
-        }),
-        {
-          status: statusCode,
-          headers: { "Content-Type": "application/json" },
+    // Get contextual memory for intent inference
+    const lastInteractionContext = await (async () => {
+      if (clerkId) {
+        try {
+          const { getLastInteractionContextByClerkId } = await import("@/lib/intent");
+          return await getLastInteractionContextByClerkId(clerkId);
+        } catch (err) {
+          console.warn("Failed to retrieve last interaction context by clerkId:", err);
         }
-      );
-    }
-
-    const getRelevantFailures = function(text: string, logs: any[]) {
-      const keywords = text.toLowerCase().split(/\W+/).filter(w => w.length > 3);
-      const failures: string[] = [];
-      for (const log of logs) {
-        if (log.steps) {
-          for (const step of log.steps) {
-            if (step.status === "failed") {
-              const inputStr = JSON.stringify(step.input).toLowerCase();
-              const hasOverlap = keywords.some(k => inputStr.includes(k));
-
-              if (hasOverlap) {
-                let specificWarning = `Previous attempt at ${step.tool_name} with parameters ${JSON.stringify(step.input)} failed with error: "${step.error}".`;
-                failures.push(specificWarning);
-              }
-            }
-          }
+      } else if (userIp !== "anonymous") {
+        try {
+          const { getLastInteractionContext } = await import("@/lib/intent");
+          return await getLastInteractionContext(userIp);
+        } catch (err) {
+          console.warn("Failed to retrieve last interaction context:", err);
         }
       }
-      return Array.from(new Set(failures)).slice(0, 3);
+      return null;
+    })();
+
+    // Orchestrate the chat request (security, intent inference, live state, async execution)
+    const { avoidTools } = await getPlanWithAvoidance(userText, userIp);
+    const history = recentLogs
+      .filter(log => log.final_outcome && !log.steps?.some(s => s.status === "failed"))
+      .map(log => ({
+        intentType: log.intent.type,
+        rawText: log.intent.rawText,
+        parameters: log.intent.parameters || {},
+        timestamp: log.timestamp,
+      }));
+
+    let orchestrationResult: ChatOrchestrationResult;
+
+    try {
+      orchestrationResult = await orchestrator.orchestrate(
+        {
+          messages,
+          userLocation: userLocation || undefined,
+          userContext: { userId, clerkId, userIp, userEmail: undefined },
+        },
+        userText,
+        coreMessages,
+        avoidTools,
+        history,
+        lastInteractionContext
+      );
+    } catch (securityError: any) {
+      // Handle security check failures (prompt injection)
+      if (securityError.message.includes("Input blocked for security reasons")) {
+        const detectionResult = securityError.message.split(": ")[1] || "Security check failed";
+        return new Response(
+          JSON.stringify({
+            error: "Input blocked for security reasons",
+            message: "Your input contains patterns that may attempt to manipulate the AI system. Please rephrase your request.",
+            riskLevel: "high",
+            ...(process.env.NODE_ENV === "development" && {
+              debug: {
+                attackTypes: ["PROMPT_INJECTION"],
+                explanation: detectionResult,
+              },
+            }),
+          }),
+          {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+      throw securityError;
     }
 
+    const { intent, auditLogId, executionId, requiresAsyncExecution, liveOperationalState } = orchestrationResult;
+
+    // Handle saga-style async execution
+    if (requiresAsyncExecution && executionId) {
+      return new Response(JSON.stringify({
+        success: true,
+        executionId,
+        message: "I've started working on that. Track progress in real-time.",
+        status: "STARTED",
+        intentType: intent.type,
+      }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Build failure warnings from recent logs
     const relevantFailures = getRelevantFailures(userText, recentLogs);
     const failureWarnings = relevantFailures.length > 0
       ? `\n### DO NOT REPEAT THESE MISTAKES:\n${relevantFailures.map(f => `- ${f}`).join('\n')}`
       : "";
 
-    let intent;
-    let intentInferenceLatency = 0;
-    let rawModelResponse = "";
-    try {
-      const intentStart = Date.now();
-      const { avoidTools } = await getPlanWithAvoidance(userText, userIp);
-
-      // Contextual Memory: Retrieve last interaction context from Postgres
-      // This enables pronoun resolution ("it", "there", "that restaurant")
-      const lastInteractionContext = await (async () => {
-        if (clerkId) {
-          try {
-            const { getLastInteractionContextByClerkId } = await import("@/lib/intent");
-            return await getLastInteractionContextByClerkId(clerkId);
-          } catch (err) {
-            console.warn("Failed to retrieve last interaction context by clerkId:", err);
-          }
-        } else if (userIp !== "anonymous") {
-          // Fallback to email-based lookup for anonymous users (legacy)
-          try {
-            const { getLastInteractionContext } = await import("@/lib/intent");
-            return await getLastInteractionContext(userIp);
-          } catch (err) {
-            console.warn("Failed to retrieve last interaction context:", err);
-          }
-        }
-        return null;
-      })();
-
-      const inferenceResult = await inferIntent(
-        userText,
-        avoidTools,
-        [],
-        lastInteractionContext || undefined,
-        clerkId || undefined // Pass clerkId for retrieving last 3 successful intents from audit logs
-      );
-      intentInferenceLatency = Date.now() - intentStart;
-      intent = inferenceResult.hypotheses.primary;
-      rawModelResponse = inferenceResult.rawResponse;
-
-      // Phase 3: Deterministic Intelligence Guardrails
-      // Validate intent parameters against McpToolRegistry schemas
-      // This overrides LLM "Confidence Inflation" with deterministic Zod failures
-      const normalizationResult = NormalizationService.normalizeIntentParameters(
-        intent.type,
-        intent.parameters || {}
-      );
-
-      if (!normalizationResult.success) {
-        console.warn("[NormalizationService] Intent parameter validation failed:", {
-          intentType: intent.type,
-          errors: normalizationResult.errors
-        });
-        // Reduce confidence if parameters fail validation
-        intent.confidence = Math.min(intent.confidence * 0.5, 0.3);
-      } else if (normalizationResult.data) {
-        // Replace parameters with normalized/validated version
-        intent.parameters = normalizationResult.data as Record<string, unknown>;
-      }
-    } catch (e) {
-      console.error("Intent inference failed, falling back to UNKNOWN", e);
-      intent = {
-        id: crypto.randomUUID(),
-        type: "UNKNOWN",
-        confidence: 0,
-        parameters: {},
-        rawText: userText,
-        metadata: { version: "1.0.0", timestamp: new Date().toISOString(), source: "error_fallback" }
-      } as any;
-    }
-
-    // Initialize Audit Log
-    const auditLog = await createAuditLog(intent, undefined, userLocation || undefined, userIp);
-
-    // ========================================================================
-    // SAGA PATTERN: Immediate Handoff for Multi-Step Operations
-    // ========================================================================
-    // If this is a complex multi-step operation, trigger async execution
-    // and return immediately to avoid Vercel 10s timeout
-    if (requiresSagaExecution(intent.type)) {
-      try {
-        // Trigger async execution via QStash
-        const executionId = await triggerAsyncExecution(
-          intent,
-          {
-            userId: userId as string | undefined,
-            clerkId: clerkId || undefined,
-            userEmail: undefined,
-          },
-          auditLog.id
-        );
-
-        // Return immediately to client (<500ms response time)
-        return new Response(JSON.stringify({
-          success: true,
-          executionId,
-          message: "I've started working on that. Track progress in real-time.",
-          status: "STARTED",
-          intentType: intent.type,
-        }), {
-          headers: { "Content-Type": "application/json" },
-        });
-      } catch (error) {
-        console.error("[Chat] Failed to trigger async execution:", error);
-        // Fallback: If QStash fails in prod, error out - do NOT fallback to sync
-        return new Response(
-          JSON.stringify({
-            error: "System busy, please try again",
-            code: "SAGA_TRIGGER_FAILED",
-          }),
-          { status: 503, headers: { "Content-Type": "application/json" } }
-        );
-      }
-    }
-
-    // Zero-Latency Context: Fetch live operational state BEFORE calling LLM
-    // This allows the LLM to "see" table availability without explicit tool calls
-    // Pre-Flight State Injection with Hard Constraints and Failover Policy
-    const liveOperationalState = await fetchLiveOperationalState(coreMessages, userLocation || undefined, {
-      intentType: intent.type,
-      partySize: intent.parameters?.partySize as number | undefined,
-      requestedTime: intent.parameters?.time as string | undefined,
-      restaurantId: intent.parameters?.restaurantId as string | undefined,
-    });
-
-    // Build live state context with failed bookings awareness
-    const liveStateContextParts: string[] = [];
-
-    if (liveOperationalState.restaurantStates) {
-      liveStateContextParts.push(
-        `\n### LIVE RESTAURANT STATE (Real-time from Redis/DB):\n${liveOperationalState.restaurantStates
-          .map(r => `- ${r.name}: ${r.tableAvailability.toUpperCase()}${r.waitlistCount ? ` (${r.waitlistCount} on waitlist)` : ""}${r.nextAvailableSlot ? ` - Next: ${r.nextAvailableSlot}` : ""}${r.hasRecentFailures ? " ⚠️ RECENT FAILURES" : ""}`)
-          .join("\n")}\n\n**IMPORTANT**: Use this live state to avoid suggesting restaurants that are full. If a restaurant shows "full", suggest alternatives or recommend joining the waitlist.`
-      );
-    }
-
-    if (liveOperationalState.failedBookings && liveOperationalState.failedBookings.length > 0) {
-      liveStateContextParts.push(
-        `\n### ⚠️ RECENT BOOKING FAILURES (Avoid These):\n${liveOperationalState.failedBookings
-          .map(f => `- ${f.restaurantName || f.restaurantId}: ${f.failureReason} (at ${new Date(f.failedAt).toLocaleTimeString()})`)
-          .join("\n")}\n\n**CRITICAL**: These restaurants have recent booking failures. DO NOT attempt to book these unless the user explicitly insists. Instead, suggest alternative restaurants or explain the issue to the user.`
-      );
-    }
-
-    // HARD CONSTRAINTS - Block invalid plans before generation
-    if (liveOperationalState.hardConstraints && liveOperationalState.hardConstraints.length > 0) {
-      liveStateContextParts.push(
-        `\n### 🚫 HARD CONSTRAINTS (MUST FOLLOW):\n${liveOperationalState.hardConstraints
-          .map(c => `- ${c}`)
-          .join("\n")}\n\n**WARNING**: Violating these constraints will result in immediate plan rejection.`
-      );
-    }
-
-    // FAILOVER SUGGESTIONS - Pre-computed alternatives
-    if (liveOperationalState.failoverSuggestions && liveOperationalState.failoverSuggestions.length > 0) {
-      liveStateContextParts.push(
-        `\n### 💡 RECOMMENDED ALTERNATIVES (Pre-computed):\n${liveOperationalState.failoverSuggestions
-          .map(s => `- [${s.type.toUpperCase()}] ${s.message || JSON.stringify(s.value)} (Confidence: ${(s.confidence * 100).toFixed(0)}%)`)
-          .join("\n")}\n\n**TIP**: These alternatives have been pre-validated and are ready to offer.`
-      );
-    }
-
-    // DELIVERY LOAD STATE - Real-time demand/supply for tip recommendations
-    if (liveOperationalState.deliveryLoadState) {
-      const { isHighLoad, avgWaitTimeMinutes, activeDrivers, pendingOrders, recommendedTipBoost } = liveOperationalState.deliveryLoadState;
-      liveStateContextParts.push(
-        `\n### 🚗 DELIVERY LOAD STATE (Real-time):\n- Active Drivers: ${activeDrivers}\n- Pending Orders: ${pendingOrders}\n- Load Status: ${isHighLoad ? "HIGH DEMAND" : "Normal"}\n- Avg Wait Time: ${avgWaitTimeMinutes} minutes\n\n**TIP BOOST RECOMMENDATION**: ${isHighLoad ? `Suggest increasing tip by $${recommendedTipBoost} to prioritize this order. Higher tips attract drivers faster during high demand.` : "Current tip levels are adequate for normal demand."}`
-      );
-    }
-
-    const liveStateContext = liveStateContextParts.length > 0
-      ? liveStateContextParts.join("\n\n")
-      : `\n### LIVE STATE: ${liveOperationalState.rawText || "No live state available"}\n`;
+    // Build live state context (for non-saga requests)
+    const liveStateContext = liveOperationalState
+      ? buildLiveStateContext(liveOperationalState)
+      : "\n### LIVE STATE: No live state available\n";
 
     // Fetch dynamic tools from MCP servers
-    // All tool execution is routed through DynamicMcpClientManager.executeTool()
-    const allTools = await getTools(auditLog.id, userLocation || undefined);
+    const allTools = await getTools(auditLogId, userLocation || undefined);
 
     const locationContext = userLocation
       ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}.`
@@ -531,7 +360,7 @@ export async function POST(req: Request) {
 
     const toolCapabilitiesPrompt = getToolCapabilitiesPrompt();
 
-    let systemPrompt = `You are an Intention Engine.
+    const systemPrompt = `You are an Intention Engine.
     Today's date is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.
     The user's inferred intent is: ${intent.type} (Confidence: ${intent.confidence})
 
@@ -560,7 +389,7 @@ export async function POST(req: Request) {
       onFinish: async (event) => {
         const totalLatency = Date.now() - startTime;
         try {
-          await (await import("@/lib/audit")).updateAuditLog(auditLog.id, {
+          await updateAuditLog(auditLogId, {
             final_outcome: event.text,
             inferenceLatencies: {
               total: totalLatency,
@@ -571,9 +400,9 @@ export async function POST(req: Request) {
           if (userId) {
             const { saveInteractionContextByClerkId, saveInteractionContext } = await import("@/lib/intent");
             if (clerkId) {
-              await saveInteractionContextByClerkId(clerkId, intent, auditLog.id);
+              await saveInteractionContextByClerkId(clerkId, intent, auditLogId);
             } else if (userIp !== "anonymous") {
-              await saveInteractionContext(userIp, intent, auditLog.id);
+              await saveInteractionContext(userIp, intent, auditLogId);
             }
           }
         } catch (err) {

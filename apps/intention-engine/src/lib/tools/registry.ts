@@ -10,40 +10,101 @@ import {
   routeEstimateReturnSchema,
   cancelRideReturnSchema
 } from "./mobility";
-import { 
-  reserve_table, 
+import {
+  reserve_table,
   reserve_restaurant,
   tableReservationReturnSchema,
   reserveRestaurantToolDefinition
 } from "./booking";
-import { 
-  send_comm, 
+import {
+  send_comm,
   communicationReturnSchema
 } from "./communication";
 import {
   get_weather_data,
   weatherReturnSchema
 } from "./weather";
-import { 
+import {
   get_live_operational_state,
   getLiveOperationalStateToolDefinition
 } from "./operational_state";
 import { RestaurantResultSchema } from "../schema";
-import { 
-  GEOCODE_LOCATION_TOOL, 
-  SEARCH_RESTAURANT_TOOL, 
-  ADD_CALENDAR_EVENT_TOOL,
-  GET_WEATHER_DATA_TOOL,
-  AppCapabilitiesSchema
-} from "@repo/mcp-protocol";
+import { AppCapabilitiesSchema } from "@repo/mcp-protocol";
 import { SERVICES } from "@repo/shared";
+
+// ============================================================================
+// LOCAL TOOL SCHEMAS - Eliminate dependency on legacy exports
+// These schemas are now defined locally for better type safety and maintainability
+// ============================================================================
+
+const GEOCODE_LOCATION_TOOL = {
+  name: "geocode_location",
+  description: "Converts city names, addresses, or place names to precise lat/lon coordinates.",
+  inputSchema: {
+    type: "object" as const,
+    properties: {
+      location: { type: "string" as const }
+    },
+    required: ["location"]
+  }
+} as const;
+
+const SEARCH_RESTAURANT_TOOL = {
+  name: "search_restaurant",
+  description: "Search for restaurants based on cuisine and location.",
+  inputSchema: {
+    type: "object" as const,
+    properties: {
+      cuisine: { type: "string" as const },
+      lat: { type: "number" as const },
+      lon: { type: "number" as const },
+      location: { type: "string" as const }
+    }
+  }
+} as const;
+
+const ADD_CALENDAR_EVENT_TOOL = {
+  name: "add_calendar_event",
+  description: "Add one or more events to the calendar.",
+  inputSchema: {
+    type: "object" as const,
+    properties: {
+      events: {
+        type: "array" as const,
+        items: {
+          type: "object" as const,
+          properties: {
+            title: { type: "string" as const },
+            start_time: { type: "string" as const },
+            end_time: { type: "string" as const }
+          },
+          required: ["title", "start_time", "end_time"]
+        }
+      }
+    },
+    required: ["events"]
+  }
+} as const;
+
+const GET_WEATHER_DATA_TOOL = {
+  name: "get_weather_data",
+  description: "Authorized to access real-time weather data. Provides live forecasts and current conditions with full meteorological authority.",
+  inputSchema: {
+    type: "object" as const,
+    properties: {
+      lat: { type: "number" as const, description: "Latitude of the location." },
+      lon: { type: "number" as const, description: "Longitude of the location." }
+    },
+    required: ["lat", "lon"]
+  }
+} as const;
 
 /**
  * Tool registry with complete ToolDefinition metadata for all tools.
  */
 export const TOOLS: Map<string, ToolDefinition> = new Map([
   ["geocode_location", {
-    ...(GEOCODE_LOCATION_TOOL as any),
+    ...GEOCODE_LOCATION_TOOL,
     version: "1.0.0",
     return_schema: {
       lat: "number",
@@ -59,7 +120,7 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     execute: geocode_location
   }],
   ["search_restaurant", {
-    ...(SEARCH_RESTAURANT_TOOL as any),
+    ...SEARCH_RESTAURANT_TOOL,
     version: "1.0.0",
     return_schema: {
       results: "array"
@@ -71,7 +132,7 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     execute: search_restaurant
   }],
   ["add_calendar_event", {
-    ...(ADD_CALENDAR_EVENT_TOOL as any),
+    ...ADD_CALENDAR_EVENT_TOOL,
     version: "1.0.0",
     return_schema: {
       status: "string",
@@ -86,7 +147,7 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
       status: z.string(),
       count: z.number(),
       download_url: z.string(),
-      events: z.array(z.any())
+      events: z.array(z.unknown())
     }),
     execute: add_calendar_event
   }],
@@ -263,7 +324,7 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
     execute: send_comm
   }],
   ["get_weather_data", {
-    ...(GET_WEATHER_DATA_TOOL as any),
+    ...GET_WEATHER_DATA_TOOL,
     version: "1.0.0",
     return_schema: weatherReturnSchema,
     timeout_ms: 15000,
@@ -295,13 +356,13 @@ export async function discoverDynamicTools() {
       if (!res.ok) continue;
       const data = await res.json();
       const capabilities = AppCapabilitiesSchema.parse(data);
-      
+
       for (const tool of capabilities.tools) {
         if (!TOOLS.has(tool.name)) {
            console.log(`[MCP Discovery] Discovered new tool: ${tool.name} from ${capabilities.app_name}`);
            TOOLS.set(tool.name, {
              ...tool,
-             execute: async (params: any) => {
+             execute: async (params: unknown) => {
                // This is a placeholder for remote execution if called directly from TOOLS
                console.warn(`Tool ${tool.name} is a discovered remote tool and should be executed via the Engine's MCP client.`);
                return { success: false, error: "Remote tool execution not implemented in TOOLS registry" };

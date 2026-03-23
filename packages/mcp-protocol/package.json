@@ -13,8 +13,7 @@
     "@repo/database": "workspace:*",
     "@repo/auth": "workspace:*",
     "drizzle-orm": "^0.38.4",
-    "drizzle-zod": "^0.5.1",
-    "next": "15.2.9"
+    "drizzle-zod": "^0.5.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",

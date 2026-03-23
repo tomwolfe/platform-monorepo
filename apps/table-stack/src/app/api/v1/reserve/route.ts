@@ -9,19 +9,20 @@ import { validateRequest } from '@/lib/auth';
 import { IdempotencyService, IDEMPOTENCY_KEY_HEADER } from '@repo/shared';
 import { withNervousSystemTracing, injectTracingHeaders } from '@repo/shared/tracing';
 import { redis } from '@/lib/redis';
+import { formatApiError, formatApiSuccess, type EngineErrorCode } from '@repo/shared';
 
 export const runtime = 'edge';
 
 export async function POST(req: NextRequest) {
   const { error, status, context } = await validateRequest(req);
-  if (error) return NextResponse.json({ message: error }, { status });
+  if (error) return NextResponse.json(formatApiError(new Error(error), 'UNAUTHORIZED'), { status });
 
   const idempotencyKey = req.headers.get(IDEMPOTENCY_KEY_HEADER);
   if (idempotencyKey) {
     const idempotencyService = new IdempotencyService(redis);
     const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey, 'reserve_api');
     if (isDuplicate) {
-      return NextResponse.json({ message: 'Reservation already processed' }, { status: 200, headers: { 'x-idempotency-duplicate': 'true' } });
+      return NextResponse.json(formatApiSuccess({ message: 'Reservation already processed' }, { traceId: req.headers.get('x-trace-id') || undefined }), { status: 200, headers: { 'x-idempotency-duplicate': 'true' } });
     }
   }
 
@@ -69,15 +70,15 @@ export async function POST(req: NextRequest) {
     }
 
     if (!targetRestaurantId) {
-      return NextResponse.json({ message: 'Restaurant identifier missing' }, { status: 400 });
+      return NextResponse.json(formatApiError(new Error('Restaurant identifier missing'), 'VALIDATION_ERROR'), { status: 400 });
     }
 
     if (restaurantId && restaurantId !== targetRestaurantId) {
-      return NextResponse.json({ message: 'Unauthorized access to this restaurant' }, { status: 403 });
+      return NextResponse.json(formatApiError(new Error('Unauthorized access to this restaurant'), 'FORBIDDEN'), { status: 403 });
     }
 
     if (!guestName || !guestEmail || !partySize || !startTime) {
-      return NextResponse.json({ message: 'Missing required guest or time fields' }, { status: 400 });
+      return NextResponse.json(formatApiError(new Error('Missing required guest or time fields'), 'VALIDATION_ERROR'), { status: 400 });
     }
 
     // Verify Restaurant exists
@@ -86,7 +87,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!restaurant) {
-      return NextResponse.json({ message: 'Restaurant not found' }, { status: 404 });
+      return NextResponse.json(formatApiError(new Error('Restaurant not found'), 'NOT_FOUND'), { status: 404 });
     }
 
     // Fetch guest profile for metadata propagation
@@ -131,7 +132,7 @@ export async function POST(req: NextRequest) {
           visitCount: existingProfile?.visitCount || 0,
           preferences: existingProfile?.preferences || {}
         });
-        return NextResponse.json({ message: 'No suitable tables available for this time and party size' }, { status: 409 });
+        return NextResponse.json(formatApiError(new Error('No suitable tables available for this time and party size'), 'CONFLICT'), { status: 409 });
       }
       assignedTableId = availableTable.id;
     }
@@ -175,7 +176,7 @@ export async function POST(req: NextRequest) {
           visitCount: existingProfile?.visitCount || 0,
           preferences: existingProfile?.preferences || {}
         });
-        return NextResponse.json({ message: 'One or more tables are no longer available' }, { status: 409 });
+        return NextResponse.json(formatApiError(new Error('One or more tables are no longer available'), 'CONFLICT'), { status: 409 });
       }
     }
 
@@ -260,7 +261,7 @@ export async function POST(req: NextRequest) {
     if (isShadow) {
       // Send Claim Invitation to Owner
       await NotifyService.sendClaimInvitation(restaurant.ownerEmail, restaurant.name, restaurant.claimToken!);
-      
+
       // Notify owner of the "Passive Booking"
       await NotifyService.notifyOwner(restaurant.ownerEmail, {
         guestName,
@@ -268,10 +269,10 @@ export async function POST(req: NextRequest) {
         startTime: start,
       }, true);
 
-      return NextResponse.json({
+      return NextResponse.json(formatApiSuccess({
         message: 'Shadow reservation created. Restaurant has been notified.',
         bookingId: newReservation.id,
-      });
+      }));
     }
 
     // Send Verification Notification
@@ -288,12 +289,13 @@ export async function POST(req: NextRequest) {
       `,
     });
 
-    return NextResponse.json({
+    return NextResponse.json(formatApiSuccess({
       message: 'Reservation created. Please check your email to verify.',
       bookingId: newReservation.id,
-    });
+    }));
   } catch (error) {
     console.error('Reservation Error:', error);
-    return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
+    const errorCode: EngineErrorCode = 'DATABASE_ERROR';
+    return NextResponse.json(formatApiError(error, errorCode), { status: 500 });
   }
 }

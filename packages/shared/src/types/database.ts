@@ -1,31 +1,34 @@
 /**
  * Database Interfaces for Dependency Injection
- * 
+ *
  * Purpose: Decouple @repo/shared from direct @repo/database imports
  * This allows @repo/shared to be used without creating circular dependencies
- * 
+ *
  * Usage:
  * ```typescript
  * // In @repo/shared - accept interface via constructor
  * export class PGVectorStore {
  *   constructor(private db: Database) {}
  * }
- * 
+ *
  * // In app - pass the actual db instance
  * const vectorStore = new PGVectorStore(db);
  * ```
  */
 
+import type { NeonHttpDatabase } from 'drizzle-orm/neon-http';
+import type * as schema from '@repo/database';
+
 // ============================================================================
 // CORE DATABASE TYPE
-// Use any to avoid circular dependency - actual type is DrizzleDatabase
+// Properly typed Drizzle database instance without circular dependency
 // ============================================================================
 
 /**
- * Database instance type - matches @repo/database export
- * Using any to avoid circular dependency during build
+ * Database instance type - Drizzle database with the full schema
+ * This is the type returned by getDb() from @repo/database
  */
-export type Database = any;
+export type Database = NeonHttpDatabase<typeof schema>;
 
 // ============================================================================
 // TABLE SCHEMAS (Type-only exports for type safety)

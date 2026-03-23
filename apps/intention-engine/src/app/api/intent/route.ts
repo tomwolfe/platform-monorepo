@@ -7,6 +7,7 @@ import { getMemoryClient } from "@/lib/engine/memory";
 import { z } from "zod";
 import { withNervousSystemTracing } from "@repo/shared/tracing";
 import { startTrace } from "@/lib/observability";
+import { withApiErrorHandler, formatApiError, formatApiSuccess, type EngineErrorCode } from "@repo/shared";
 
 export const runtime = "nodejs"; // AsyncLocalStorage needs nodejs runtime
 
@@ -14,16 +15,15 @@ const IntentRequestSchema = z.object({
   text: z.string().min(1),
 });
 
-export async function POST(req: NextRequest) {
-  try {
+export const POST = withApiErrorHandler(
+  async (req: NextRequest) => {
     const rawBody = await req.json();
     const validatedBody = IntentRequestSchema.safeParse(rawBody);
 
     if (!validatedBody.success) {
-      return NextResponse.json({ 
-        error: "Invalid request parameters", 
-        details: validatedBody.error.format() 
-      }, { status: 400 });
+      return NextResponse.json(formatApiError(new Error("Invalid request parameters"), "VALIDATION_ERROR", {
+        details: validatedBody.error.format()
+      }), { status: 400 });
     }
 
     const { text } = validatedBody.data;
@@ -31,10 +31,10 @@ export async function POST(req: NextRequest) {
 
     return await withNervousSystemTracing(async ({ correlationId }) => {
       const span = startTrace("intent_inference", correlationId);
-      
+
       try {
         const { avoidTools } = await getPlanWithAvoidance(text, userId);
-        
+
         // Fetch history for contextual resolution
         const memory = getMemoryClient();
         const recentStates = await memory.getRecentSuccessfulIntents(3);
@@ -44,17 +44,17 @@ export async function POST(req: NextRequest) {
 
         const { hypotheses, rawResponse } = await inferIntent(text, avoidTools, history);
         const intent = hypotheses.primary;
-        
+
         let plan = null;
         let auditLogId = null;
 
         if (!hypotheses.isAmbiguous && (intent.type === "PLANNING" || intent.confidence > 0.7)) {
           plan = await generatePlan(text);
         }
-        
+
         const auditLog = await createAuditLog(intent, plan || undefined, undefined, userId);
         auditLogId = auditLog.id;
-        
+
         // Phase 3: Debuggability & Inspection
         console.log("[Intent Engine] Input:", text);
         console.log("[Intent Engine] Inferred Intent:", JSON.stringify(intent, null, 2));
@@ -64,8 +64,7 @@ export async function POST(req: NextRequest) {
 
         span.end();
 
-        return NextResponse.json({
-          success: true,
+        return NextResponse.json(formatApiSuccess({
           intent,
           plan,
           audit_log_id: auditLogId,
@@ -75,23 +74,17 @@ export async function POST(req: NextRequest) {
             rawResponse,
             historyCount: history.length
           }
-        });
+        }));
       } catch (error) {
         span.end();
         console.error("[Intent Engine] Inference Error:", error);
-        const errorMessage = error instanceof Error ? error.message : String(error);
 
         // RESILIENCE FIX: Return 503 instead of 500 for dependency failures
         // to satisfy chaos test requirements for graceful degradation.
-        return NextResponse.json({
-          success: false,
-          error: "Service Temporarily Unavailable",
-          details: errorMessage,
-        }, { status: 503 });
+        const errorCode: EngineErrorCode = "SERVICE_UNAVAILABLE";
+        return NextResponse.json(formatApiError(error, errorCode), { status: 503 });
       }
     }, { 'x-trace-id': req.headers.get('x-trace-id') || undefined });
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: "Invalid JSON in request body", details: errorMessage }, { status: 400 });
-  }
-}
+  },
+  "EXECUTION_FAILED"
+);

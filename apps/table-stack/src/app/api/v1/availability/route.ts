@@ -6,6 +6,7 @@ import { and, eq, gte, or, sql } from '@repo/database';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
 import { validateRequest } from '@/lib/auth';
+import { formatApiError, formatApiSuccess, withApiErrorHandler, type EngineErrorCode } from '@repo/shared';
 
 export const runtime = 'edge';
 
@@ -122,7 +123,7 @@ export async function GET(req: NextRequest) {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
   if (!restaurantId || restaurantId === 'undefined' || !uuidRegex.test(restaurantId) || !date || isNaN(partySize)) {
-    return NextResponse.json({ message: 'Missing or invalid parameters' }, { status: 400 });
+    return NextResponse.json(formatApiError(new Error('Missing or invalid parameters'), 'VALIDATION_ERROR'), { status: 400 });
   }
 
   // Determine target restaurant ID
@@ -131,10 +132,10 @@ export async function GET(req: NextRequest) {
   const apiKey = req.headers.get('x-api-key');
   if (apiKey) {
     const { error, status, context } = await validateRequest(req);
-    if (error) return NextResponse.json({ message: error }, { status });
-    
+    if (error) return NextResponse.json(formatApiError(new Error(error), 'UNAUTHORIZED'), { status });
+
     if (restaurantId !== context!.restaurantId) {
-      return NextResponse.json({ message: 'Unauthorized access to this restaurant data' }, { status: 403 });
+      return NextResponse.json(formatApiError(new Error('Unauthorized access to this restaurant data'), 'FORBIDDEN'), { status: 403 });
     }
     targetRestaurantId = context!.restaurantId;
   } else {
@@ -148,7 +149,7 @@ export async function GET(req: NextRequest) {
     });
 
     if (!restaurant) {
-      return NextResponse.json({ message: 'Restaurant not found' }, { status: 404 });
+      return NextResponse.json(formatApiError(new Error('Restaurant not found'), 'NOT_FOUND'), { status: 404 });
     }
 
     const requestedDate = parseISO(date);
@@ -157,14 +158,14 @@ export async function GET(req: NextRequest) {
     
     const dayOfWeek = format(restaurantTime, 'eeee', { timeZone: timezone }).toLowerCase();
     const openDays = restaurant.daysOpen?.split(',').map((d: string) => d.trim().toLowerCase()) || [];
-    
+
     if (!openDays.includes(dayOfWeek)) {
-      return NextResponse.json({ message: 'Restaurant is closed on this day', availableTables: [] });
+      return NextResponse.json(formatApiSuccess({ message: 'Restaurant is closed on this day', availableTables: [] }));
     }
 
     const timeStr = format(restaurantTime, 'HH:mm', { timeZone: timezone });
     if (timeStr < (restaurant.openingTime || '00:00') || timeStr > (restaurant.closingTime || '23:59')) {
-      return NextResponse.json({ message: 'Restaurant is closed at this time', availableTables: [] });
+      return NextResponse.json(formatApiSuccess({ message: 'Restaurant is closed at this time', availableTables: [] }));
     }
 
     const duration = restaurant.defaultDurationMinutes || 90;
@@ -193,15 +194,16 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({
+    return NextResponse.json(formatApiSuccess({
       restaurantId: targetRestaurantId,
       requestedTime: requestedDate.toISOString(),
       partySize,
       availableTables,
       suggestedSlots: suggestedSlots.length > 0 ? suggestedSlots : undefined,
-    });
+    }));
   } catch (error) {
     console.error('Availability Error:', error);
-    return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
+    const errorCode: EngineErrorCode = 'DATABASE_ERROR';
+    return NextResponse.json(formatApiError(error, errorCode), { status: 500 });
   }
 }

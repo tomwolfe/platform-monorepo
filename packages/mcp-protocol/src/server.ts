@@ -26,7 +26,6 @@
  * @package @repo/mcp-protocol
  */
 
-import { NextRequest, NextResponse } from "next/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { SecurityProvider } from "@repo/auth";
@@ -35,7 +34,7 @@ import { randomUUID } from "crypto";
 /**
  * Extract trace ID from request headers or generate new one
  */
-function extractTraceId(request: NextRequest): string {
+function extractTraceId(request: Request): string {
   return (
     request.headers.get("x-trace-id") ||
     request.headers.get("x-request-id") ||
@@ -65,12 +64,12 @@ function createResponse(data: any, traceId: string, isError = false) {
 /**
  * Validate MCP request authentication
  */
-async function validateRequest(request: NextRequest): Promise<boolean> {
+async function validateRequest(request: Request): Promise<boolean> {
   const authHeader = request.headers.get("Authorization");
   const token = authHeader?.startsWith("Bearer ")
     ? authHeader.substring(7)
-    : request.nextUrl.searchParams.get("token");
-  const internalKey = request.nextUrl.searchParams.get("internal_key");
+    : new URL(request.url).searchParams.get("token");
+  const internalKey = new URL(request.url).searchParams.get("internal_key");
 
   if (token) {
     const payload = await SecurityProvider.verifyServiceToken(token);
@@ -88,8 +87,8 @@ async function validateRequest(request: NextRequest): Promise<boolean> {
  * MCP Server Route Configuration
  */
 export interface McpServerRoutes {
-  GET: (request: NextRequest) => Promise<NextResponse>;
-  POST: (request: NextRequest) => Promise<NextResponse>;
+  GET: (request: Request) => Promise<Response>;
+  POST: (request: Request) => Promise<Response>;
 }
 
 /**
@@ -135,11 +134,11 @@ export function createMcpServerRoutes(
     /**
      * GET handler - Establishes SSE connection
      */
-    GET: async (request: NextRequest): Promise<NextResponse> => {
+    GET: async (request: Request): Promise<Response> => {
       const traceId = extractTraceId(request);
 
       if (!(await validateRequest(request))) {
-        return new NextResponse("Unauthorized", { status: 401 });
+        return new Response("Unauthorized", { status: 401 });
       }
 
       if (enableLogging) {
@@ -160,7 +159,7 @@ export function createMcpServerRoutes(
 
       await server.connect(transport);
 
-      return new NextResponse(readable, {
+      return new Response(readable, {
         headers: {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
@@ -173,15 +172,15 @@ export function createMcpServerRoutes(
     /**
      * POST handler - Processes MCP requests
      */
-    POST: async (request: NextRequest): Promise<NextResponse> => {
+    POST: async (request: Request): Promise<Response> => {
       const traceId = extractTraceId(request);
 
       if (!(await validateRequest(request))) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        return Response.json({ error: "Unauthorized" }, { status: 401 });
       }
 
       if (!transport) {
-        return NextResponse.json(
+        return Response.json(
           { error: "No active transport", traceId },
           { status: 400 }
         );
@@ -191,9 +190,9 @@ export function createMcpServerRoutes(
         const body = await request.json();
         // Attach traceId to transport for tool execution context
         (transport as any).traceId = traceId;
-        await (transport as any).handlePostRequest(request, NextResponse as any);
+        await (transport as any).handlePostRequest(request, Response as any);
 
-        return new NextResponse("OK", {
+        return new Response("OK", {
           headers: {
             "X-Trace-Id": traceId,
           },
@@ -202,7 +201,7 @@ export function createMcpServerRoutes(
         const errorMessage =
           error instanceof Error ? error.message : String(error);
 
-        return NextResponse.json(
+        return Response.json(
           {
             error: errorMessage,
             traceId,

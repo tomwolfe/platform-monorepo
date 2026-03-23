@@ -83,28 +83,36 @@ export async function discoverMcpTools(
     }
 
     try {
-      // Convert to ToolDefinition
+      // Convert to ToolDefinition using unknown type with proper type assertion
+      const rawToolDef = toolDef as unknown as {
+        name?: string;
+        description?: string;
+        inputSchema?: Record<string, unknown>;
+        outputSchema?: Record<string, unknown>;
+        origin?: string;
+      };
+
       const newToolDef: ToolDefinition = {
         name: toolName,
         version: "1.0.0",
-        description: (toolDef as any).description || `Remote tool`,
-        inputSchema: (toolDef as any).inputSchema || {},
-        return_schema: (toolDef as any).outputSchema || {},
+        description: rawToolDef.description || `Remote tool`,
+        inputSchema: rawToolDef.inputSchema || {},
+        return_schema: rawToolDef.outputSchema || {},
         parameter_aliases: {},
         timeout_ms: 30000,
         requires_confirmation: toolName.toLowerCase().includes("book") ||
                                toolName.toLowerCase().includes("reserve") ||
                                toolName.toLowerCase().includes("pay"),
         category: "external",
-        origin: (toolDef as any).origin || "mcp",
+        origin: rawToolDef.origin || "mcp",
       };
 
       discoveredTools.push(newToolDef);
       console.log(
         `[MCP Discovery] Discovered ${toolName} from ${newToolDef.origin}`
       );
-    } catch (error: any) {
-      const errorMsg = `Failed to process tool ${toolName}: ${error.message}`;
+    } catch (error: unknown) {
+      const errorMsg = `Failed to process tool ${toolName}: ${error instanceof Error ? error.message : String(error)}`;
       console.error(`[MCP Discovery] ${errorMsg}`);
       errors.push(errorMsg);
     }
@@ -177,19 +185,24 @@ export async function buildSystemPrompt(
   // Build parameter schemas if requested
   const parameterSchemas = includeParameterSchemas
     ? tools.map(tool => {
+        const inputSchema = tool.inputSchema as {
+          properties?: Record<string, { type?: string; description?: string }>;
+          required?: string[];
+        };
+
         const params = Object.entries(
-          (tool.inputSchema as any).properties || {}
+          inputSchema.properties || {}
         )
-          .map(([name, schema]: [string, any]) => {
+          .map(([name, schema]) => {
             const type = schema.type || "any";
-            const required = (tool.inputSchema as any).required?.includes(name)
+            const required = inputSchema.required?.includes(name)
               ? " (required)"
               : "";
             const desc = schema.description ? ` - ${schema.description}` : "";
             return `    - ${name}: ${type}${required}${desc}`;
           })
           .join("\n");
-        
+
         return `${tool.name}:\n${params}`;
       }).join("\n\n")
     : "";

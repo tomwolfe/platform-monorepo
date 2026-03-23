@@ -84,8 +84,10 @@ let _dbInstance: ReturnType<typeof drizzle> | null = null;
 
 /**
  * Get the database instance with lazy initialization.
- * Throws a descriptive error only at runtime when a query is executed
- * without a DATABASE_URL configured.
+ * Throws a descriptive error at runtime if DATABASE_URL is not configured.
+ *
+ * This is the ONLY supported way to access the database. The db proxy export
+ * has been removed to prevent type inference issues and masked connection failures.
  *
  * @example
  * ```typescript
@@ -112,27 +114,6 @@ export function getDb() {
   _dbInstance = drizzle(neonClient, { schema });
   return _dbInstance;
 }
-
-/**
- * Database instance - deprecated, use getDb() instead
- * @deprecated Use getDb() for better error handling
- */
-export const db = new Proxy({} as any, {
-  get(_, prop) {
-    if (prop === 'then') return undefined;
-    if (prop === 'getDb') return getDb;
-    
-    // Delegate to the actual database instance if available
-    try {
-      const dbInstance = getDb();
-      return (dbInstance as any)[prop];
-    } catch (error) {
-      return () => {
-        throw error;
-      };
-    }
-  }
-});
 
 export type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
 

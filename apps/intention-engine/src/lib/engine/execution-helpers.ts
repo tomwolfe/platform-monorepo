@@ -4,7 +4,7 @@
  */
 
 import { PlanStep, StepExecutionState } from "./types";
-import { NormalizationService } from "@repo/shared";
+import { NormalizationService, parseJsonWithFallback } from "@repo/shared";
 import { generateText } from "./llm";
 
 /**
@@ -141,14 +141,14 @@ Respond with ONLY a valid JSON object containing the corrected parameters.`;
         temperature: 0.2,
       });
 
-      const correctedParams = JSON.parse(correctionResponse.content.trim());
-      
+      const correctedParams = parseJsonWithFallback(correctionResponse.content.trim());
+
       // Validate the corrected parameters
       const revalidation = NormalizationService.validateToolParameters(
         step.tool_name,
         correctedParams
       );
-      
+
       if (revalidation.success) {
         console.log(`[Error Recovery] Successfully corrected parameters`);
         return {
@@ -195,8 +195,8 @@ Respond with ONLY a JSON object in this format:
         temperature: 0.1,
       });
 
-      const refinement = JSON.parse(refinementResponse.content.trim());
-      
+      const refinement = parseJsonWithFallback(refinementResponse.content.trim());
+
       if (refinement.action === "retry_modified" && refinement.modifiedParams) {
         return {
           recovered: true,

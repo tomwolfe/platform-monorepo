@@ -1,6 +1,7 @@
 import { Plan, PlanSchema, Intent } from "./schema";
 import { env } from "./config";
 import { getToolDefinitions, discoverDynamicTools } from "./tools";
+import { parseJsonWithFallback } from "@repo/shared";
 
 export async function generatePlan(intent: string | Intent, userLocation?: { lat: number; lng: number } | null): Promise<Plan> {
   // Discover dynamic tools before planning
@@ -277,8 +278,8 @@ export async function generatePlan(intent: string | Intent, userLocation?: { lat
   }
 
   const data = await response.json();
-  const planJson = JSON.parse(data.choices[0].message.content);
-  
+  const planJson = parseJsonWithFallback(data.choices[0].message.content);
+
   // Validate against schema
   return PlanSchema.parse(planJson);
 }
@@ -375,6 +376,6 @@ export async function replan(
   }
 
   const data = await response.json();
-  const planJson = JSON.parse(data.choices[0].message.content);
+  const planJson = parseJsonWithFallback(data.choices[0].message.content);
   return PlanSchema.parse(planJson);
 }

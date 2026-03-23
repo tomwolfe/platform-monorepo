@@ -247,13 +247,17 @@ export class ContractTester {
     const tracePromises = traceIds.map(async (traceId) => {
       const traceKey = this.buildTraceKey(toolName, traceId);
       const data = await this.config.redis.get<any>(traceKey);
-      
+
       if (!data) return null;
-      
+
       try {
         return typeof data === "string" ? JSON.parse(data) : data;
       } catch (error) {
-        console.warn(`[ContractTester] Failed to parse trace ${traceId}:`, error);
+        // CRITICAL: Include toolName and traceId for debugging malformed traces
+        console.warn(
+          `[ContractTester] Failed to parse trace for tool=${toolName}, traceId=${traceId}:`,
+          error instanceof Error ? error.message : String(error)
+        );
         return null;
       }
     });

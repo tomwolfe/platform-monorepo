@@ -1,77 +1,30 @@
 /**
- * Serverless Pub/Sub Bridge - Postgres Trigger to QStash HTTP
+ * Serverless Pub/Sub Bridge - Fallback Polling Implementation
  *
  * Problem Solved: LISTEN/NOTIFY in Serverless Environments
  * - Traditional LISTEN/NOTIFY requires persistent PostgreSQL connections
  * - Vercel serverless functions are short-lived (10s timeout on Hobby tier)
  * - Cannot maintain persistent LISTEN connections
  *
- * Solution: Postgres Trigger + http_request Extension
- * - Uses PostgreSQL trigger to fire HTTP call on INSERT to outbox table
- * - Converts database event directly into QStash execution trigger
- * - No persistent listener or cron-job delay required
+ * Solution: Fallback Polling Mechanism
+ * - Relies purely on notifyPendingEvents() polling mechanism
+ * - No PostgreSQL http_request extension required
+ * - Portable across all Postgres providers (no vendor lock-in)
  *
  * Architecture:
- * 1. Create PostgreSQL function that calls http_request() extension
- * 2. Create trigger on outbox table that fires AFTER INSERT
- * 3. Trigger sends HTTP POST to QStash webhook URL
+ * 1. Outbox events are inserted with 'pending' status
+ * 2. Background polling checks for pending events
+ * 3. Polling triggers QStash delivery via HTTP POST
  * 4. QStash reliably delivers to /api/engine/outbox-relay endpoint
  *
  * Benefits:
- * - Zero-latency notification (fires immediately on commit)
- * - No polling overhead or consistency lag
- * - Reliable delivery via QStash retries
- * - Serverless-native (no persistent workers needed)
+ * - No database extension dependencies
+ * - Fully portable across Postgres providers
+ * - Easier to debug (no PL/pgSQL triggers)
+ * - Configurable polling interval
  *
- * SQL Migration Required:
- * ```sql
- * -- Enable http extension (Neon/Supabase)
- * CREATE EXTENSION IF NOT EXISTS http;
- *
- * -- Create function to send HTTP request
- * CREATE OR REPLACE FUNCTION notify_outbox_via_http()
- * RETURNS trigger AS $$
- * DECLARE
- *   qstash_url TEXT := 'https://qstash.upstash.io/v2/topics/outbox_events';
- *   qstash_token TEXT := current_setting('app.qstash_token', TRUE);
- *   payload_json TEXT;
- *   http_response RECORD;
- * BEGIN
- *   -- Build payload
- *   payload_json := json_build_object(
- *     'outboxId', NEW.id,
- *     'executionId', (NEW.payload->>'executionId'),
- *     'eventType', NEW.eventType,
- *     'timestamp', NOW()
- *   )::text;
- *
- *   -- Send HTTP POST to QStash
- *   SELECT * INTO http_response FROM http_post(
- *     qstash_url,
- *     payload_json,
- *     'application/json',
- *     ARRAY[
- *       http_header('Authorization', 'Bearer ' || qstash_token),
- *       http_header('Content-Type', 'application/json')
- *     ]
- *   );
- *
- *   -- Log result (optional)
- *   IF http_response.status_code != 200 THEN
- *     RAISE WARNING 'QStash notification failed: %', http_response.content;
- *   END IF;
- *
- *   RETURN NEW;
- * END;
- * $$ LANGUAGE plpgsql;
- *
- * -- Create trigger
- * DROP TRIGGER IF EXISTS outbox_http_notify ON outbox;
- * CREATE TRIGGER outbox_http_notify
- *   AFTER INSERT ON outbox
- *   FOR EACH ROW
- *   EXECUTE FUNCTION notify_outbox_via_http();
- * ```
+ * Note: The trigger setup methods are kept for backward compatibility
+ * but are deprecated and not used by default.
  *
  * @package @repo/shared
  * @since 1.0.0
@@ -104,7 +57,7 @@ export interface ServerlessBridgeConfig {
 
 const DEFAULT_CONFIG: Required<ServerlessBridgeConfig> = {
   qstashTopic: 'outbox_events',
-  enableFallbackPolling: true,
+  enableFallbackPolling: true, // CRITICAL: Always use fallback polling (no http extension)
   pollIntervalMs: 5000,
 };
 
@@ -124,8 +77,8 @@ export class ServerlessPubSubBridge {
   /**
    * Trigger QStash delivery for an outbox event
    *
-   * This is called automatically by the PostgreSQL trigger via http_request().
-   * Can also be called manually as a fallback if the trigger fails.
+   * This is the primary method for notifying QStash of pending outbox events.
+   * Uses pure HTTP polling - no database triggers required.
    *
    * @param outboxId - Outbox event ID
    * @param executionId - Execution ID
@@ -236,10 +189,11 @@ export class ServerlessPubSubBridge {
   /**
    * Setup database trigger for automatic notification
    *
-   * This should be called once during database migration/setup.
-   * Creates the PostgreSQL function and trigger for automatic HTTP notification.
+   * @deprecated This method relies on the Postgres http extension which creates vendor lock-in.
+   * The bridge now uses pure fallback polling by default. This method is kept for backward
+   * compatibility only and should not be used in new deployments.
    *
-   * Note: Requires http extension (available in Neon/Supabase)
+   * @deprecated Requires http extension (Neon/Supabase specific) - not portable
    */
   async setupTrigger(): Promise<void> {
     const qstashToken = process.env.QSTASH_TOKEN;
@@ -346,6 +300,7 @@ export class ServerlessPubSubBridge {
 
   /**
    * Check if http extension is available
+   * @deprecated No longer used - bridge uses pure polling by default
    */
   async isHttpExtensionAvailable(): Promise<boolean> {
     try {

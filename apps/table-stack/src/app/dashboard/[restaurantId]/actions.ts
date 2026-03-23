@@ -175,8 +175,17 @@ export const updateTableStatus = withServerActionHandler(
     }
 
     // 2. Delivery Hotspot Hook: Notify OpenDeliver when a table is vacant
-    const openDeliverWebhookUrl = process.env.OPEN_DELIVER_WEBHOOK_URL || 'http://localhost:3001/api/webhooks';
-    const webhookSecret = process.env.INTERNAL_SYSTEM_KEY || 'fallback_secret';
+    const openDeliverWebhookUrl = process.env.OPEN_DELIVER_WEBHOOK_URL;
+    const webhookSecret = process.env.INTERNAL_SYSTEM_KEY;
+
+    // CRITICAL: Fail fast if INTERNAL_SYSTEM_KEY is not configured
+    if (!webhookSecret) {
+      throw new Error(
+        'CRITICAL: INTERNAL_SYSTEM_KEY environment variable is not configured. ' +
+        'Cannot sign webhook payloads without this key. ' +
+        'Please set INTERNAL_SYSTEM_KEY in your environment.'
+      );
+    }
 
     if (status === 'vacant' && openDeliverWebhookUrl) {
       const restaurant = await db.query.restaurants.findFirst({

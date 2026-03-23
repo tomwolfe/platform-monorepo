@@ -121,6 +121,7 @@ export class WasmSandbox extends EventEmitter {
 
   /**
    * Execute code in the QuickJS sandbox
+   * Uses both QuickJS interrupt handler AND Promise.race for strict timeout enforcement
    */
   async execute(code: string, context?: Record<string, unknown>): Promise<WasmExecutionResult> {
     const startTime = Date.now();
@@ -139,11 +140,17 @@ export class WasmSandbox extends EventEmitter {
       };
     }
 
+    // Create abort controller for Promise.race timeout fallback
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => {
+      abortController.abort();
+    }, this.config.timeoutMs);
+
     try {
-      // Set up timeout handling using interrupt handler
+      // Set up timeout handling using interrupt handler (QuickJS native)
       const deadline = Date.now() + this.config.timeoutMs;
       this.context.runtime.setInterruptHandler(() => {
-        return Date.now() > deadline;
+        return Date.now() > deadline || abortController.signal.aborted;
       });
 
       // Inject context variables into the QuickJS environment
@@ -160,21 +167,40 @@ export class WasmSandbox extends EventEmitter {
         }
       }
 
-      // Execute the code safely in QuickJS VM
-      const result = this.context.evalCode(code);
+      // Execute the code safely in QuickJS VM with Promise.race timeout
+      const executionPromise = new Promise<any>((resolve, reject) => {
+        try {
+          const result = this.context!.evalCode(code);
+          
+          if (result.error) {
+            // Handle execution error
+            const errorHandle = result.error;
+            const errorDesc = this.context!.getString(errorHandle);
+            errorHandle.dispose();
+            reject(new Error(errorDesc));
+          } else {
+            resolve(result.value);
+          }
+        } catch (error) {
+          reject(error);
+        }
+      });
 
-      if (result.error) {
-        // Handle execution error
-        const errorHandle = result.error;
-        const errorDesc = this.context.getString(errorHandle);
-        errorHandle.dispose();
-        throw new Error(errorDesc);
-      }
+      // Use Promise.race for strict timeout enforcement
+      const outputHandle = await Promise.race([
+        executionPromise,
+        new Promise<any>((_, reject) => {
+          abortController.signal.addEventListener('abort', () => {
+            reject(new Error(`Execution timed out after ${this.config.timeoutMs}ms`));
+          });
+        })
+      ]);
 
-      // Extract the result
-      const outputHandle = result.value;
+      // Clear timeout since execution completed
+      clearTimeout(timeoutId);
+
       let output: unknown = undefined;
-      
+
       if (outputHandle) {
         const outputType = this.context.typeof(outputHandle);
         if (outputType === 'string') {
@@ -206,12 +232,15 @@ export class WasmSandbox extends EventEmitter {
         executionTimeMs: executionTime,
       };
     } catch (error) {
+      // Clear timeout on error
+      clearTimeout(timeoutId);
+
       const executionTime = Date.now() - startTime;
       this.stats.failedExecutions++;
 
       let errorCode = 'EXECUTION_ERROR';
       if (error instanceof Error) {
-        if (error.message.includes('Interrupt') || error.message.includes('timeout')) {
+        if (error.message.includes('Interrupt') || error.message.includes('timeout') || error.message.includes('Timed out')) {
           errorCode = 'TIMEOUT';
           this.stats.timeoutExecutions++;
         } else if (error.message.includes('memory')) {

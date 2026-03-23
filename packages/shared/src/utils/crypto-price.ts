@@ -98,7 +98,7 @@ export async function getCryptoPrices(options?: {
   ETH: number;
   MATIC: number;
   timestamp: number;
-  source: 'cache' | 'coingecko' | 'coinbase' | 'binance' | 'historical';
+  source: 'cache' | 'coingecko' | 'coinbase' | 'binance' | 'historical' | 'cache-stale';
   isStale?: boolean;
 }> {
   const redis = getRedis();
@@ -210,16 +210,16 @@ export async function getCryptoPrices(options?: {
       // Try Binance Public API (tertiary fallback - no auth required)
       try {
         const response = await fetch(`${BINANCE_API}?symbol=${BINANCE_SYMBOLS.ETH}`);
-        
+
         if (!response.ok) {
           throw new Error(`Binance API error: ${response.status}`);
         }
 
         const data: any = await response.json();
-        
+
         // Binance returns: { symbol: "ETHUSDT", lastPrice: "1234.56", ... }
         const ethPrice = parseFloat(data.lastPrice || "0");
-        
+
         // Fetch MATIC separately
         let maticPrice = 0;
         try {
@@ -254,14 +254,6 @@ export async function getCryptoPrices(options?: {
       } catch (binanceError) {
         console.warn("Binance also failed:", binanceError);
 
-        // Last resort: try stale cache
-        const staleCached = await redis.get("@apps:crypto-prices");
-        if (staleCached) {
-          console.warn("Using stale crypto price data as last resort");
-          const staleData = JSON.parse(staleCached as string);
-          return { ...staleData, source: 'cache' as const, isStale: true };
-        }
-
         // Try historical moving average from Postgres
         try {
           const ethHistorical = await getHistoricalMovingAverage("ETH");
@@ -280,12 +272,26 @@ export async function getCryptoPrices(options?: {
           console.warn("Historical average also unavailable:", historicalError);
         }
 
-        // CRITICAL: All price sources unavailable - THROW ERROR for financial safety
-        // DO NOT use hardcoded fallbacks for real crypto transactions
+        // LAST RESORT: Use stale cache data if available
+        // This is safer than throwing because it allows the UI to gracefully disable crypto
+        // while still providing a reasonable price estimate from the last known good data
+        const staleCached = await redis.get("@apps:crypto-prices");
+        if (staleCached) {
+          console.error(
+            "⚠️ CRITICAL: All crypto price sources (CoinGecko, Coinbase, Binance, historical) failed. " +
+            "Using STALE cached data as last resort. Prices may be significantly outdated. " +
+            "Users should be warned that crypto prices are not current."
+          );
+          const staleData = JSON.parse(staleCached as string);
+          return { ...staleData, source: 'cache-stale' as const, isStale: true };
+        }
+
+        // No stale cache available - throw error for financial safety
         const error = new Error(
-          "Crypto price oracle unavailable: all external sources (CoinGecko, Coinbase, Binance) and historical data failed. " +
-          "Cannot process crypto transactions without reliable price data. " +
-          "This is a safety measure to prevent underpricing/overpricing due to stale data."
+          "Crypto price oracle unavailable: all external sources (CoinGecko, Coinbase, Binance), " +
+          "historical data, and stale cache are unavailable. " +
+          "Cannot process crypto transactions without any price data. " +
+          "This is a safety measure to prevent transactions without price verification."
         );
         (error as any).code = "PRICE_ORACLE_UNAVAILABLE";
         throw error;

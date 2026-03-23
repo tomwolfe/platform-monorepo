@@ -22,7 +22,7 @@
  * - Pushes to Ably channel user:{userId} with personalized message
  */
 
-import { getAblyClient, RealtimeService, MemoryClient, getMemoryClient as getSharedMemoryClient } from "@repo/shared";
+import { getAblyClient, RealtimeService, MemoryClient, getMemoryClient as getSharedMemoryClient, parseJsonWithFallback } from "@repo/shared";
 import { db, eq, users, restaurants, restaurantReservations } from "@repo/database";
 import { createSystemEvent, SystemEvent, createTypedSystemEvent, SystemEventType } from "@repo/mcp-protocol";
 import { signServiceToken } from "@repo/auth";
@@ -592,7 +592,7 @@ Respond with ONLY a JSON object in this format:
           temperature: 0.7,
         });
 
-        const parsed = JSON.parse(response.content.trim());
+        const parsed = parseJsonWithFallback(response.content.trim());
         notificationContent = {
           title: parsed.title || "Second Chance!",
           message: parsed.message || `Good news! A table${capacity} is now available at ${restaurantName}. Your previous booking failed, but now's your chance to try again!`,
@@ -820,8 +820,8 @@ Respond with ONLY a JSON object in this format:
         temperature: 0.7,
       });
 
-      const parsed = JSON.parse(response.content.trim());
-      
+      const parsed = parseJsonWithFallback(response.content.trim());
+
       return {
         title: parsed.title || "Table Available!",
         message: parsed.message || `Good news! A table${capacity} just became available at ${restaurantName}.`,

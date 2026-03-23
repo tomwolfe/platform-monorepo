@@ -9,7 +9,16 @@ export async function POST(req: NextRequest) {
   const bodyText = await req.text();
   const signature = req.headers.get('x-signature');
   const timestamp = Number(req.headers.get('x-timestamp'));
-  const secret = process.env.INTERNAL_SYSTEM_KEY || 'fallback_secret';
+  
+  // CRITICAL: Fail fast if INTERNAL_SYSTEM_KEY is not configured
+  const secret = process.env.INTERNAL_SYSTEM_KEY;
+  if (!secret) {
+    throw new Error(
+      'CRITICAL: INTERNAL_SYSTEM_KEY environment variable is not configured. ' +
+      'Cannot verify webhook signatures without this key. ' +
+      'Please set INTERNAL_SYSTEM_KEY in your environment.'
+    );
+  }
 
   const isValid = await verifySignature(bodyText, signature || '', timestamp, secret);
   if (!isValid) {

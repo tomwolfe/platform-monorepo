@@ -1,0 +1,104 @@
+# Prometheus Configuration for TableStack
+#
+# This configuration file sets up Prometheus scraping for TableStack services.
+# Place this file at: prometheus/prometheus.yml
+#
+# @see Phase 3.1: Monitoring & Alerting
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'tablestack'
+    environment: '${ENVIRONMENT:-production}'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+# Load rules files
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+# Scrape configurations
+scrape_configs:
+  # TableStack API metrics
+  - job_name: 'tablestack-api'
+    static_configs:
+      - targets: ['tablestack-api:3000']
+        labels:
+          service: 'tablestack'
+          component: 'api'
+    metrics_path: '/api/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # TableStack Intention Engine
+  - job_name: 'tablestack-intention-engine'
+    static_configs:
+      - targets: ['intention-engine:3001']
+        labels:
+          service: 'tablestack'
+          component: 'intention-engine'
+    metrics_path: '/api/metrics'
+    scrape_interval: 10s
+
+  # TableStack Open Delivery
+  - job_name: 'tablestack-open-delivery'
+    static_configs:
+      - targets: ['open-delivery:3002']
+        labels:
+          service: 'tablestack'
+          component: 'open-delivery'
+    metrics_path: '/api/metrics'
+    scrape_interval: 10s
+
+  # PostgreSQL Database
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+        labels:
+          service: 'database'
+          component: 'postgres'
+    scrape_interval: 30s
+
+  # Redis Cache
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+        labels:
+          service: 'cache'
+          component: 'redis'
+    scrape_interval: 30s
+
+  # Node Exporter (Host metrics)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          service: 'infrastructure'
+          component: 'node'
+    scrape_interval: 30s
+
+  # Blackbox Exporter (Endpoint probing)
+  - job_name: 'blackbox'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - https://api.tablestack.io/api/health
+          - https://api.tablestack.io/api/ready
+        labels:
+          service: 'tablestack'
+          component: 'healthcheck'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

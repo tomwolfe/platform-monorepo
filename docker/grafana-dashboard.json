@@ -1,0 +1,211 @@
+# Grafana Dashboard Configuration for TableStack
+#
+# Import this dashboard into Grafana for visualization.
+# Access Grafana at: http://localhost:3000 (default credentials: admin/admin)
+#
+# @see Phase 3.1: Monitoring & Alerting
+
+{
+  "dashboard": {
+    "id": null,
+    "uid": "tablestack-main",
+    "title": "TableStack - Main Dashboard",
+    "tags": ["tablestack", "production"],
+    "timezone": "browser",
+    "schemaVersion": 38,
+    "version": 1,
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "service",
+          "type": "query",
+          "datasource": "Prometheus",
+          "query": "label_values(up, service)",
+          "refresh": 1,
+          "current": {
+            "text": "tablestack",
+            "value": "tablestack"
+          }
+        },
+        {
+          "name": "environment",
+          "type": "query",
+          "datasource": "Prometheus",
+          "query": "label_values(up, environment)",
+          "refresh": 1,
+          "current": {
+            "text": "production",
+            "value": "production"
+          }
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+        "type": "stat",
+        "title": "Service Health",
+        "targets": [
+          {
+            "expr": "up{job=\"tablestack-api\"}",
+            "legendFormat": "API Status",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" } } },
+              { "type": "value", "options": { "1": { "text": "UP", "color": "green" } } }
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "red" },
+                { "value": 1, "color": "green" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+        "type": "graph",
+        "title": "HTTP Request Rate",
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total{service=\"$service\"}[5m])) by (method)",
+            "legendFormat": "{{ method }}",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [{ "label": "Requests/sec" }],
+        "xAxis": { "mode": "time" }
+      },
+      {
+        "id": 3,
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+        "type": "graph",
+        "title": "HTTP Response Time (P95, P99)",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+            "legendFormat": "P95",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+            "legendFormat": "P99",
+            "refId": "B"
+          }
+        ],
+        "yAxes": [{ "label": "Seconds", "format": "s" }]
+      },
+      {
+        "id": 4,
+        "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+        "type": "graph",
+        "title": "Error Rate",
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m]))",
+            "legendFormat": "Error Rate",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [{ "label": "Error Rate", "format": "percentunit", "max": 1 }]
+      },
+      {
+        "id": 5,
+        "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
+        "type": "graph",
+        "title": "Database Query Time",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(database_query_duration_seconds_bucket[5m])) by (le))",
+            "legendFormat": "P95 Query Time",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [{ "label": "Seconds", "format": "s" }]
+      },
+      {
+        "id": 6,
+        "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+        "type": "graph",
+        "title": "Cache Hit Rate",
+        "targets": [
+          {
+            "expr": "sum(rate(cache_hits_total[5m])) / (sum(rate(cache_hits_total[5m])) + sum(rate(cache_misses_total[5m])))",
+            "legendFormat": "Hit Rate",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [{ "label": "Hit Rate", "format": "percentunit", "max": 1 }]
+      },
+      {
+        "id": 7,
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+        "type": "graph",
+        "title": "Memory Usage",
+        "targets": [
+          {
+            "expr": "nodejs_memory_usage_bytes{type=\"heap_used\"}",
+            "legendFormat": "Heap Used",
+            "refId": "A"
+          },
+          {
+            "expr": "nodejs_memory_usage_bytes{type=\"heap_total\"}",
+            "legendFormat": "Heap Total",
+            "refId": "B"
+          }
+        ],
+        "yAxes": [{ "label": "Bytes", "format": "bytes" }]
+      },
+      {
+        "id": 8,
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+        "type": "graph",
+        "title": "Active Connections",
+        "targets": [
+          {
+            "expr": "active_connections",
+            "legendFormat": "{{ type }}",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [{ "label": "Connections" }]
+      },
+      {
+        "id": 9,
+        "gridPos": { "h": 4, "w": 24, "x": 0, "y": 28 },
+        "type": "table",
+        "title": "Alert Summary",
+        "targets": [
+          {
+            "expr": "ALERTS{alertstate=\"firing\"}",
+            "format": "table",
+            "instant": true,
+            "refId": "A"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": { "Time": true, "Value": true },
+              "indexByName": {}
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

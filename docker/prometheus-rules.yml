@@ -1,0 +1,278 @@
+# Prometheus Alerting Rules for TableStack
+#
+# Defines alert conditions and notifications.
+# Place this file at: prometheus/rules/alerts.yml
+#
+# @see Phase 3.1: Monitoring & Alerting
+
+groups:
+  # ============================================================================
+  # API ALERTS
+  # ============================================================================
+  - name: api_alerts
+    interval: 30s
+    rules:
+      # High Error Rate
+      - alert: APIHighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) 
+          / sum(rate(http_requests_total[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "High API error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 1%)"
+          runbook_url: "https://runbooks.tablestack.io/api-high-error-rate"
+
+      # High Response Time (P95)
+      - alert: APIHighResponseTime
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, path)
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "High API response time"
+          description: "P95 response time is {{ $value | humanizeDuration }} (threshold: 500ms)"
+          runbook_url: "https://runbooks.tablestack.io/api-high-response-time"
+
+      # High Response Time (P99)
+      - alert: APIHighResponseTimeP99
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, path)
+          ) > 1
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Critical API response time (P99)"
+          description: "P99 response time is {{ $value | humanizeDuration }} (threshold: 1s)"
+          runbook_url: "https://runbooks.tablestack.io/api-high-response-time-p99"
+
+      # High Request Rate
+      - alert: APIHighRequestRate
+        expr: sum(rate(http_requests_total[1m])) > 1000
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "High API request rate"
+          description: "Request rate is {{ $value | humanize }} req/s (threshold: 1000)"
+          runbook_url: "https://runbooks.tablestack.io/api-high-request-rate"
+
+      # API Down
+      - alert: APIDown
+        expr: up{job="tablestack-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "API service is down"
+          description: "TableStack API has been unreachable for more than 1 minute"
+          runbook_url: "https://runbooks.tablestack.io/api-down"
+
+  # ============================================================================
+  # DATABASE ALERTS
+  # ============================================================================
+  - name: database_alerts
+    interval: 30s
+    rules:
+      # Slow Queries
+      - alert: DatabaseSlowQueries
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(database_query_duration_seconds_bucket[5m])) by (le)
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Database queries are slow"
+          description: "P95 query time is {{ $value | humanizeDuration }} (threshold: 100ms)"
+          runbook_url: "https://runbooks.tablestack.io/db-slow-queries"
+
+      # Database Connection Pool Exhausted
+      - alert: DatabaseConnectionPoolExhausted
+        expr: |
+          active_connections{type="database"} / max_connections > 0.9
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Database connection pool nearly exhausted"
+          description: "Connection pool usage is {{ $value | humanizePercentage }}"
+          runbook_url: "https://runbooks.tablestack.io/db-pool-exhausted"
+
+      # Database Down
+      - alert: DatabaseDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Database is down"
+          description: "PostgreSQL database has been unreachable for more than 1 minute"
+          runbook_url: "https://runbooks.tablestack.io/db-down"
+
+  # ============================================================================
+  # CACHE ALERTS
+  # ============================================================================
+  - name: cache_alerts
+    interval: 30s
+    rules:
+      # Low Cache Hit Rate
+      - alert: CacheLowHitRate
+        expr: |
+          sum(rate(cache_hits_total[5m])) 
+          / (sum(rate(cache_hits_total[5m])) + sum(rate(cache_misses_total[5m]))) < 0.8
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Low cache hit rate"
+          description: "Cache hit rate is {{ $value | humanizePercentage }} (threshold: 80%)"
+          runbook_url: "https://runbooks.tablestack.io/cache-low-hit-rate"
+
+      # Cache Memory High
+      - alert: CacheMemoryHigh
+        expr: |
+          nodejs_memory_usage_bytes{type="heap_used"} 
+          / nodejs_memory_usage_bytes{type="heap_total"} > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Cache memory usage is high"
+          description: "Heap usage is {{ $value | humanizePercentage }}"
+          runbook_url: "https://runbooks.tablestack.io/cache-memory-high"
+
+      # Redis Down
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Redis cache is down"
+          description: "Redis has been unreachable for more than 1 minute"
+          runbook_url: "https://runbooks.tablestack.io/redis-down"
+
+  # ============================================================================
+  # INFRASTRUCTURE ALERTS
+  # ============================================================================
+  - name: infrastructure_alerts
+    interval: 30s
+    rules:
+      # High CPU Usage
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 10m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tablestack.io/high-cpu"
+
+      # High Memory Usage
+      - alert: HighMemoryUsage
+        expr: |
+          (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) 
+          / node_memory_MemTotal_bytes > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tablestack.io/high-memory"
+
+      # Disk Space Low
+      - alert: DiskSpaceLow
+        expr: |
+          (node_filesystem_size_bytes - node_filesystem_free_bytes) 
+          / node_filesystem_size_bytes > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: "Disk space is running low"
+          description: "Disk usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+          runbook_url: "https://runbooks.tablestack.io/disk-space-low"
+
+      # Node Down
+      - alert: NodeDown
+        expr: up{job="node"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: infrastructure
+        annotations:
+          summary: "Node is down"
+          description: "Node {{ $labels.instance }} has been unreachable for more than 2 minutes"
+          runbook_url: "https://runbooks.tablestack.io/node-down"
+
+  # ============================================================================
+  # BUSINESS ALERTS
+  # ============================================================================
+  - name: business_alerts
+    interval: 60s
+    rules:
+      # Reservation Failure Rate
+      - alert: HighReservationFailureRate
+        expr: |
+          sum(rate(errors_total{type="reservation"}[5m])) 
+          / sum(rate(http_requests_total{path=~"/api/v1/reserve"}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "High reservation failure rate"
+          description: "Reservation failure rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+          runbook_url: "https://runbooks.tablestack.io/reservation-failures"
+
+      # Payment Failure Rate
+      - alert: HighPaymentFailureRate
+        expr: |
+          sum(rate(errors_total{type="payment"}[5m])) 
+          / sum(rate(http_requests_total{path=~"/api/v1/checkout"}[5m])) > 0.02
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "High payment failure rate"
+          description: "Payment failure rate is {{ $value | humanizePercentage }} (threshold: 2%)"
+          runbook_url: "https://runbooks.tablestack.io/payment-failures"
+
+      # Webhook Delivery Failures
+      - alert: HighWebhookFailureRate
+        expr: |
+          sum(rate(errors_total{type="webhook"}[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "High webhook delivery failure rate"
+          description: "{{ $value }} webhook failures in the last 5 minutes"
+          runbook_url: "https://runbooks.tablestack.io/webhook-failures"

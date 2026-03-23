@@ -174,3 +174,174 @@ export async function getRawBodyForVerification(
 ): Promise<string> {
   return await request.text();
 }
+
+/**
+ * QStash Webhook Handler Wrapper
+ *
+ * Wraps Next.js POST handlers with automatic QStash signature verification.
+ * Handles both production (with signing keys) and development modes.
+ *
+ * Usage:
+ * ```ts
+ * export const POST = withQStashAuth(async (request, body) => {
+ *   // Your handler logic here
+ *   return NextResponse.json({ success: true });
+ * });
+ * ```
+ *
+ * @param handler - Your handler function that receives (request, parsedBody)
+ * @returns Next.js POST handler with built-in verification
+ */
+export function withQStashAuth<T extends Record<string, unknown>>(
+  handler: (
+    request: Request,
+    body: T
+  ) => Promise<Response>
+) {
+  return async (request: Request): Promise<Response> => {
+    const headers = request.headers;
+    const upstashSignature = headers.get("upstash-signature");
+    const upstashKeyId = headers.get("upstash-key-id");
+
+    const isQStashWebhook = upstashSignature !== null;
+    const isProduction = process.env.NODE_ENV === "production";
+    const hasSigningKey = !!process.env.QSTASH_CURRENT_SIGNING_KEY;
+
+    // Handle QStash webhook
+    if (isQStashWebhook) {
+      if (isProduction && hasSigningKey) {
+        const rawBody = await request.text();
+        const isValid = await verifyQStashWebhook(rawBody, upstashSignature, upstashKeyId);
+
+        if (!isValid) {
+          console.warn("[withQStashAuth] QStash webhook signature verification failed");
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: {
+                code: "UNAUTHORIZED",
+                message: "Invalid QStash signature",
+              },
+            }),
+            { status: 401, headers: { "Content-Type": "application/json" } }
+          );
+        }
+
+        console.log("[withQStashAuth] QStash webhook verified");
+        const parsedBody = JSON.parse(rawBody) as T;
+        return await handler(request, parsedBody);
+      }
+
+      // Dev mode or no signing key - skip verification
+      console.warn("[withQStashAuth] QStash webhook verification skipped (dev mode or no key)");
+      const rawBody = await request.text();
+      const parsedBody = JSON.parse(rawBody) as T;
+      return await handler(request, parsedBody);
+    }
+
+    // Direct API call (no webhook signature)
+    if (isProduction && hasSigningKey) {
+      console.warn(
+        "[withQStashAuth] Direct API call received in production with webhook configured. " +
+        "Ensure this is intentional."
+      );
+    }
+
+    const rawBody = await request.text();
+    const parsedBody = JSON.parse(rawBody) as T;
+    return await handler(request, parsedBody);
+  };
+}
+
+/**
+ * QStash Webhook Verification Options
+ */
+export interface QStashVerificationOptions {
+  /** Skip verification in development (default: true) */
+  skipDevVerification?: boolean;
+  /** Require webhook signature (default: false - allows direct API calls) */
+  requireWebhook?: boolean;
+}
+
+/**
+ * Enhanced QStash webhook wrapper with configurable options
+ *
+ * Usage:
+ * ```ts
+ * export const POST = withQStashAuth(async (request, body) => {
+ *   return NextResponse.json({ success: true });
+ * }, { requireWebhook: true });
+ * ```
+ */
+export function withQStashAuthEnhanced<T extends Record<string, unknown>>(
+  handler: (
+    request: Request,
+    body: T
+  ) => Promise<Response>,
+  options: QStashVerificationOptions = {}
+) {
+  const { skipDevVerification = true, requireWebhook = false } = options;
+
+  return async (request: Request): Promise<Response> => {
+    const headers = request.headers;
+    const upstashSignature = headers.get("upstash-signature");
+    const upstashKeyId = headers.get("upstash-key-id");
+
+    const isQStashWebhook = upstashSignature !== null;
+    const isProduction = process.env.NODE_ENV === "production";
+    const hasSigningKey = !!process.env.QSTASH_CURRENT_SIGNING_KEY;
+
+    // Require webhook in production if configured
+    if (requireWebhook && !isQStashWebhook && isProduction && hasSigningKey) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: {
+            code: "WEBHOOK_REQUIRED",
+            message: "QStash webhook signature required",
+          },
+        }),
+        { status: 401, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // Handle QStash webhook
+    if (isQStashWebhook) {
+      if (isProduction && hasSigningKey) {
+        const rawBody = await request.text();
+        const isValid = await verifyQStashWebhook(rawBody, upstashSignature, upstashKeyId);
+
+        if (!isValid) {
+          console.warn("[withQStashAuthEnhanced] QStash webhook signature verification failed");
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: {
+                code: "UNAUTHORIZED",
+                message: "Invalid QStash signature",
+              },
+            }),
+            { status: 401, headers: { "Content-Type": "application/json" } }
+          );
+        }
+
+        console.log("[withQStashAuthEnhanced] QStash webhook verified");
+        const parsedBody = JSON.parse(rawBody) as T;
+        return await handler(request, parsedBody);
+      }
+
+      // Dev mode or no signing key - skip verification
+      if (skipDevVerification) {
+        console.warn("[withQStashAuthEnhanced] QStash webhook verification skipped (dev mode)");
+      }
+      const rawBody = await request.text();
+      const parsedBody = JSON.parse(rawBody) as T;
+      return await handler(request, parsedBody);
+    }
+
+    // Direct API call
+    const rawBody = await request.text();
+    const parsedBody = JSON.parse(rawBody) as T;
+    return await handler(request, parsedBody);
+  };
+}

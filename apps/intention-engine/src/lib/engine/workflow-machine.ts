@@ -65,6 +65,7 @@ import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { captureStateDiffOnSave } from "./state-diff-viewer";
 import { after } from "next/server";
+import { BatchExecutionPlanner } from "./dependency-resolver";
 
 // ============================================================================
 // LLM CIRCUIT BREAKER CONFIGURATION
@@ -285,6 +286,7 @@ export class WorkflowMachine {
     compensationTool: string;
     parameters: Record<string, unknown>;
   }> = [];
+  private batchPlanner: BatchExecutionPlanner | null = null;
 
   constructor(
     executionId: string,
@@ -326,6 +328,8 @@ export class WorkflowMachine {
     this.plan = plan;
     this.state = applyStateUpdate(this.state, { plan });
     this.state = transitionState(this.state, "PLANNED");
+    // Initialize batch execution planner with DAG analysis
+    this.batchPlanner = new BatchExecutionPlanner(plan);
   }
 
   /**
@@ -760,7 +764,7 @@ export class WorkflowMachine {
 
         this.state = transitionState(this.state, "EXECUTING");
 
-        // Main execution loop with ADAPTIVE BATCHING
+        // Main execution loop with DAG-BASED BATCHED EXECUTION
         while (true) {
           const elapsedInSegment = Date.now() - this.segmentStartTime;
 
@@ -780,10 +784,10 @@ export class WorkflowMachine {
             return await this.yieldExecution("TIMEOUT_APPROACHING");
           }
 
-          // Find ready steps
-          const readySteps = this.findReadySteps();
+          // DAG-BASED EXECUTION: Get next batch from dependency resolver
+          const batch = this.batchPlanner?.getNextBatch();
 
-          if (readySteps.length === 0) {
+          if (!batch || batch.stepIds.length === 0) {
             // Check if all steps are complete
             const completedCount = getCompletedSteps(this.state).length;
             const failedCount = getFailedSteps(this.state).length;
@@ -817,16 +821,23 @@ export class WorkflowMachine {
             }
           }
 
-          // ADAPTIVE BATCHING: Limit batch size to avoid timeout
-          const stepsToExecute = readySteps.slice(0, ADAPTIVE_BATCHING_CONFIG.maxBatchSize);
+          // Get step objects for the batch
+          const stepsToExecute = batch.stepIds
+            .map(stepId => this.plan?.steps.find(s => s.id === stepId))
+            .filter((s): s is PlanStep => s !== undefined);
 
-          if (stepsToExecute.length < readySteps.length) {
+          if (stepsToExecute.length === 0) {
+            continue;
+          }
+
+          // Log parallelization info
+          if (batch.stepIds.length > 1) {
             console.log(
-              `[WorkflowMachine] Adaptive batching: limiting batch to ${stepsToExecute.length}/${readySteps.length} steps`
+              `[WorkflowMachine] Executing batch of ${batch.stepIds.length} steps in parallel: ${batch.stepIds.join(", ")}`
             );
           }
 
-          // Execute ready steps in parallel
+          // Execute batch steps in parallel
           const stepIds = stepsToExecute.map(s => s.id);
           const stepResultsSettled = await Promise.allSettled(
             stepsToExecute.map((step) =>
@@ -861,7 +872,7 @@ export class WorkflowMachine {
               }
 
               console.log(
-                `[WorkflowMachine] Step ${stepId} (${readySteps[i].tool_name}) completed: ${stepResult.stepState.status}`
+                `[WorkflowMachine] Step ${stepId} (${stepsToExecute[i].tool_name}) completed: ${stepResult.stepState.status}`
               );
 
               // ENHANCEMENT: Capture state diff after step completion
@@ -893,6 +904,9 @@ export class WorkflowMachine {
               return this.createResult(false, startTime, `Step ${failedStep.id} failed`);
             }
           }
+
+          // DAG-BASED EXECUTION: Advance batch planner after successful batch
+          this.batchPlanner?.advanceBatch();
 
           // ADAPTIVE BATCHING: Check if we need to yield after this batch
           // Use the intelligent shouldYieldExecution method instead of simple threshold

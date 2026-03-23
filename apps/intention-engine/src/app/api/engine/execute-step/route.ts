@@ -4,7 +4,7 @@
  * Delegates all business logic to StepExecutionService.
  * This route handles:
  * - HTTP request/response handling
- * - QStash webhook signature verification
+ * - QStash webhook signature verification (via withQStashAuth wrapper)
  * - Request validation
  * - Delegation to StepExecutionService
  *
@@ -21,8 +21,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { verifyQStashWebhook } from "@repo/shared";
+import { withQStashAuth } from "@repo/shared";
 import { StepExecutionService, createStepExecutionService } from "@/lib/engine/step-execution-service";
+
 // Idempotency: acquireStepIdempotencyLock uses Redis SETNX with nx: true
 // Distributed Tracing: x-trace-id header extracted and propagated
 
@@ -60,85 +61,21 @@ const ExecuteStepResponseSchema = z.object({
 const stepExecutionService = createStepExecutionService();
 
 // ============================================================================
-// API HANDLER
+// API HANDLER (wrapped with QStash auth)
 // ============================================================================
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
+async function executeStepHandler(
+  request: NextRequest,
+  body: z.infer<typeof ExecuteStepRequestSchema>
+): Promise<NextResponse> {
   const startTime = performance.now();
+  const { executionId, startStepIndex } = body;
 
   try {
     // DISTRIBUTED TRACING: Extract trace context from headers
-    // traceId is extracted here and passed to stepExecutionService.execute()
-    // which propagates it to triggerNextStep() for QStash recursive triggering
     const traceId = request.headers.get("x-trace-id");
     const correlationId = request.headers.get("x-correlation-id");
-    
-    // QSTASH WEBHOOK VERIFICATION
-    const headers = request.headers;
-    const upstashSignature = headers.get("upstash-signature");
-    const upstashKeyId = headers.get("upstash-key-id");
-    const isQStashWebhook = upstashSignature !== null;
 
-    const isProduction = process.env.NODE_ENV === "production";
-    const hasSigningKey = !!process.env.QSTASH_CURRENT_SIGNING_KEY;
-
-    // Parse and validate request body
-    const parseBody = async (): Promise<{ executionId: string; startStepIndex: number }> => {
-      const rawBody = await request.json();
-      const validatedBody = ExecuteStepRequestSchema.safeParse(rawBody);
-
-      if (!validatedBody.success) {
-        throw new Error(`Invalid request: ${validatedBody.error.message}`);
-      }
-
-      return {
-        executionId: validatedBody.data.executionId,
-        startStepIndex: validatedBody.data.startStepIndex ?? 0,
-      };
-    };
-
-    // Handle QStash webhook with signature verification
-    if (isQStashWebhook) {
-      if (isProduction && hasSigningKey) {
-        const rawBody = await request.text();
-        const isValid = await verifyQStashWebhook(rawBody, upstashSignature, upstashKeyId);
-
-        if (!isValid) {
-          console.warn("[ExecuteStep] QStash webhook signature verification failed");
-          return NextResponse.json(
-            {
-              success: false,
-              error: {
-                code: "UNAUTHORIZED",
-                message: "Invalid QStash signature",
-              },
-            },
-            { status: 401 }
-          );
-        }
-
-        console.log("[ExecuteStep] QStash webhook verified");
-        const { executionId, startStepIndex } = JSON.parse(rawBody);
-        const result = await stepExecutionService.execute(executionId, startStepIndex, request);
-        return NextResponse.json(ExecuteStepResponseSchema.parse(result));
-      }
-
-      // Dev mode or no signing key - skip verification
-      console.warn("[ExecuteStep] QStash webhook verification skipped (dev mode or no key)");
-      const { executionId, startStepIndex } = await parseBody();
-      const result = await stepExecutionService.execute(executionId, startStepIndex, request);
-      return NextResponse.json(ExecuteStepResponseSchema.parse(result));
-    }
-
-    // Direct API call (no webhook signature)
-    if (isProduction && hasSigningKey) {
-      console.warn(
-        "[ExecuteStep] Direct API call received in production with webhook configured. " +
-        "Ensure this is intentional."
-      );
-    }
-
-    const { executionId, startStepIndex } = await parseBody();
     const result = await stepExecutionService.execute(executionId, startStepIndex, request);
     return NextResponse.json(ExecuteStepResponseSchema.parse(result));
   } catch (error) {
@@ -156,3 +93,5 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 }
+
+export const POST = withQStashAuth(executeStepHandler);

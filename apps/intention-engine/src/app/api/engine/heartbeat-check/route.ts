@@ -14,40 +14,23 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { withQStashAuth } from '@repo/shared';
 import { createHeartbeatService } from '@repo/shared';
-import { verifyQStashWebhook } from '@repo/shared';
 
-export async function POST(request: NextRequest) {
+const HeartbeatRequestSchema = z.object({
+  executionId: z.string().uuid(),
+  expectedStepIndex: z.number().int().nonnegative(),
+});
+
+async function heartbeatCheckHandler(
+  request: NextRequest,
+  body: z.infer<typeof HeartbeatRequestSchema>
+): Promise<NextResponse> {
   const startTime = Date.now();
+  const { executionId, expectedStepIndex } = body;
 
   try {
-    // Get raw body for verification
-    const rawBody = await request.text();
-    const headers = request.headers;
-    const signature = headers.get('upstash-signature');
-
-    // Verify QStash webhook signature in production
-    if (process.env.NODE_ENV === 'production') {
-      const isValid = await verifyQStashWebhook(rawBody, signature);
-      if (!isValid) {
-        return NextResponse.json(
-          { error: 'Unauthorized - invalid signature' },
-          { status: 401 }
-        );
-      }
-    }
-
-    // Parse request body
-    const body = JSON.parse(rawBody);
-    const { executionId, expectedStepIndex } = body;
-
-    if (!executionId || expectedStepIndex === undefined) {
-      return NextResponse.json(
-        { error: 'Missing required fields: executionId, expectedStepIndex' },
-        { status: 400 }
-      );
-    }
-
     console.log(
       `[HeartbeatCheck] Received heartbeat check for ${executionId} (expected step: ${expectedStepIndex})`
     );
@@ -151,6 +134,8 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withQStashAuth(heartbeatCheckHandler);
 
 /**
  * GET endpoint for health check

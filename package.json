@@ -68,5 +68,8 @@
     "turbo": "^2.3.3",
     "vitest": "^4.0.18"
   },
-  "packageManager": "pnpm@8.15.9"
+  "packageManager": "pnpm@8.15.9",
+  "dependencies": {
+    "crypto-browserify": "^3.12.1"
+  }
 }

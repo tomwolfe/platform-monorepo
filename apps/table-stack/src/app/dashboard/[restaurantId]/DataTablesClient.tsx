@@ -56,7 +56,7 @@ export function DataTablesClient({
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {waitlist.map((w: any) => (
+              {waitlist.map((w: WaitlistItem) => (
                 <tr key={w.id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{w.guestName}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{w.partySize}</td>
@@ -116,7 +116,7 @@ export function DataTablesClient({
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {reservations.map((res: any) => (
+              {reservations.map((res: ReservationItem) => (
                 <tr key={res.id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{res.guestName}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{res.partySize}</td>

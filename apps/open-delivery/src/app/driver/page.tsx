@@ -483,8 +483,8 @@ export default function DriverDashboard() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {availableOrders.map((order) => {
-                const orderId = (order as any).id || order.orderId;
+              {availableOrders.map((order: OrderIntent) => {
+                const orderId = order.id || order.orderId;
                 const displayId = orderId?.slice(0, 8).toUpperCase() || 'UNKNOWN';
                 
                 return (

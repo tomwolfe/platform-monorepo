@@ -11,8 +11,7 @@
     "start": "next start",
     "lint": "eslint",
     "db:push": "drizzle-kit push",
-    "db:seed": "tsx seed.ts",
-    "mcp": "tsx src/mcp/server.ts"
+    "db:seed": "tsx seed.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.10.6",
@@ -21,7 +20,6 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@hookform/resolvers": "^3.10.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "@neondatabase/serverless": "^1.0.2",
     "@repo/auth": "workspace:*",
     "@repo/database": "workspace:*",
     "@repo/mcp-protocol": "workspace:*",

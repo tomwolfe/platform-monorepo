@@ -34,7 +34,21 @@
 import { privateKeyToAccount, type Account } from 'viem/accounts';
 import type { Address, Hash } from 'viem';
 import { stringToHex, bytesToHex, hexToBytes } from 'viem';
-import { createCipheriv, createDecipheriv, randomBytes, scrypt } from 'crypto';
+
+// Dynamic import for Node.js crypto (only available in Node.js runtime)
+let cryptoModule: typeof import('crypto') | null = null;
+
+/**
+ * Lazily load Node.js crypto module
+ * Only called in Node.js runtime environments
+ */
+function getCryptoModule(): typeof import('crypto') {
+  if (!cryptoModule) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    cryptoModule = require('crypto');
+  }
+  return cryptoModule;
+}
 
 // ============================================================================
 // TYPES
@@ -142,6 +156,9 @@ interface V3Keystore {
  * @returns Decrypted private key as hex string
  */
 function decryptV3Keystore(keystore: V3Keystore, passphrase: string): `0x${string}` {
+  const crypto = getCryptoModule();
+  const { createDecipheriv } = crypto;
+  
   const { crypto: cryptoData } = keystore;
   const ciphertext = hexToBytes(`0x${cryptoData.ciphertext}`);
   const iv = hexToBytes(`0x${cryptoData.cipherparams.iv}`);
@@ -179,8 +196,8 @@ function decryptV3Keystore(keystore: V3Keystore, passphrase: string): `0x${strin
     derivedKeyBuffer.subarray(16, 32),
     Buffer.from(ciphertext),
   ]);
-  const mac = require('crypto').createHash('keccak256').update(macData).digest('hex');
-  
+  const mac = crypto.createHash('keccak256').update(macData).digest('hex');
+
   if (mac !== cryptoData.mac) {
     throw new Error('Invalid passphrase or corrupted keystore');
   }
@@ -192,7 +209,7 @@ function decryptV3Keystore(keystore: V3Keystore, passphrase: string): `0x${strin
     iv
   );
   decipher.setAutoPadding(false);
-  
+
   const privateKeyBytes = Buffer.concat([
     decipher.update(Buffer.from(ciphertext)),
     decipher.final(),
@@ -210,7 +227,8 @@ function scryptSync(
   keylen: number,
   options: { N: number; r: number; p: number }
 ): Buffer {
-  return require('crypto').scryptSync(password, salt, keylen, options);
+  const crypto = getCryptoModule();
+  return crypto.scryptSync(password, salt, keylen, options);
 }
 
 /**
@@ -223,7 +241,8 @@ function pbkdf2Sync(
   keylen: number,
   digest: string
 ): Buffer {
-  return require('crypto').pbkdf2Sync(password, salt, iterations, keylen, digest);
+  const crypto = getCryptoModule();
+  return crypto.pbkdf2Sync(password, salt, iterations, keylen, digest);
 }
 
 export class EncryptedKeystoreSigner implements ITreasurySigner {

@@ -12,7 +12,7 @@
  *
  * Security:
  * - Zero-Trust: Requires Bearer JWT token for service-to-service auth
- * - QStash webhook verification in production
+ * - QStash webhook verification via withQStashAuth wrapper
  *
  * @package apps/intention-engine
  * @since 1.0.0
@@ -20,7 +20,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getOutboxService, QStashService, verifyQStashWebhook } from '@repo/shared';
+import { withQStashAuth } from '@repo/shared';
+import { getOutboxService } from '@repo/shared';
 import { redis } from '@/lib/redis-client';
 import { verifyServiceToken } from '@repo/auth';
 
@@ -41,14 +42,15 @@ const OutboxRelayRequestSchema = z.object({
 });
 
 // ============================================================================
-// API HANDLER
+// API HANDLER (wrapped with QStash auth)
 // ============================================================================
 
 async function outboxRelayHandler(
   request: NextRequest,
-  executionId: string
+  body: z.infer<typeof OutboxRelayRequestSchema>
 ): Promise<NextResponse> {
   const startTime = performance.now();
+  const { executionId } = body;
 
   try {
     console.log(`[OutboxRelay] Processing outbox for execution ${executionId}`);
@@ -90,161 +92,4 @@ async function outboxRelayHandler(
   }
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
-  try {
-    // QSTASH WEBHOOK VERIFICATION
-    const headers = request.headers;
-    const upstashSignature = headers.get('upstash-signature');
-    const upstashKeyId = headers.get('upstash-key-id');
-
-    const isQStashWebhook = upstashSignature !== null;
-    const isProduction = process.env.NODE_ENV === 'production';
-    const hasSigningKey = !!process.env.QSTASH_CURRENT_SIGNING_KEY;
-
-    if (isQStashWebhook) {
-      // Webhook signature present - verify it
-      if (isProduction && !hasSigningKey) {
-        console.warn(
-          '[OutboxRelay] QStash webhook received but QSTASH_CURRENT_SIGNING_KEY not configured'
-        );
-        return NextResponse.json(
-          {
-            success: false,
-            error: {
-              code: 'WEBHOOK_NOT_CONFIGURED',
-              message: 'Webhook verification not configured. Set QSTASH_CURRENT_SIGNING_KEY.',
-            },
-          },
-          { status: 500 }
-        );
-      }
-
-      // In development without signing keys, skip verification
-      if (!isProduction || !hasSigningKey) {
-        console.warn('[OutboxRelay] QStash webhook verification skipped (dev mode)');
-        const rawBody = await request.json();
-        const validatedBody = OutboxRelayRequestSchema.safeParse(rawBody);
-
-        if (!validatedBody.success) {
-          return NextResponse.json(
-            {
-              success: false,
-              error: {
-                code: 'VALIDATION_ERROR',
-                message: `Invalid request: ${validatedBody.error.message}`,
-              },
-            },
-            { status: 400 }
-          );
-        }
-
-        return await outboxRelayHandler(request, validatedBody.data.executionId);
-      }
-
-      // Production with signing key - verify signature
-      const rawBody = await request.text();
-      const isValid = await verifyQStashWebhook(rawBody, upstashSignature, upstashKeyId);
-
-      if (!isValid) {
-        console.warn('[OutboxRelay] QStash webhook signature verification failed');
-        return NextResponse.json(
-          {
-            success: false,
-            error: {
-              code: 'UNAUTHORIZED',
-              message: 'Invalid QStash signature',
-            },
-          },
-          { status: 401 }
-        );
-      }
-
-      const validatedBody = OutboxRelayRequestSchema.safeParse(JSON.parse(rawBody));
-
-      if (!validatedBody.success) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: {
-              code: 'VALIDATION_ERROR',
-              message: `Invalid request: ${validatedBody.error.message}`,
-            },
-          },
-          { status: 400 }
-        );
-      }
-
-      return await outboxRelayHandler(request, validatedBody.data.executionId);
-    }
-
-    // No webhook signature - direct API call
-    // Zero-Trust: Require JWT for internal service-to-service communication
-    const authHeader = request.headers.get('authorization');
-    const hasAuthToken = authHeader?.startsWith('Bearer ');
-
-    if (!hasAuthToken) {
-      console.warn('[OutboxRelay] Missing Authorization header - JWT required');
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'UNAUTHORIZED',
-            message: 'Missing Authorization header. JWT token required for internal relay.',
-          },
-        },
-        { status: 401 }
-      );
-    }
-
-    const token = authHeader.substring(7);
-    const payload = await verifyServiceToken(token);
-
-    if (!payload) {
-      console.warn('[OutboxRelay] Invalid or expired JWT token');
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'UNAUTHORIZED',
-            message: 'Invalid or expired JWT token',
-          },
-        },
-        { status: 401 }
-      );
-    }
-
-    console.log(`[OutboxRelay] JWT verified for service=${(payload as any).service}`);
-
-    // Parse and validate request
-    const rawBody = await request.json();
-    const validatedBody = OutboxRelayRequestSchema.safeParse(rawBody);
-
-    if (!validatedBody.success) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: `Invalid request: ${validatedBody.error.message}`,
-          },
-        },
-        { status: 400 }
-      );
-    }
-
-    return await outboxRelayHandler(request, validatedBody.data.executionId);
-  } catch (error) {
-    console.error('[OutboxRelay] Unhandled error:', error);
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: error instanceof Error ? error.message : String(error),
-        },
-      },
-      { status: 500 }
-    );
-  }
-}
+export const POST = withQStashAuth(outboxRelayHandler);

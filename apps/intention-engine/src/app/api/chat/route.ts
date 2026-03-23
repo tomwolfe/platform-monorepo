@@ -253,7 +253,7 @@ export async function POST(req: Request) {
     let recentLogs: any[] = [];
 
     const { createAuditLog, updateAuditLog, getUserAuditLogs } = await import("@/lib/audit");
-    const { executeToolWithContext, getPlanWithAvoidance, getProvider } = await import("@/app/actions");
+    const { getPlanWithAvoidance, getProvider } = await import("@/app/actions");
 
     if (redis) {
       try {

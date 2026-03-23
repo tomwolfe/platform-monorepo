@@ -1,17 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@repo/database";
-import { sql } from "drizzle-orm";
+import { db, drivers as driversTable, orders as ordersTable, eq, sql, and, gte, lt } from "@repo/database";
 import { currentUser } from "@clerk/nextjs/server";
 
 interface DriverStats {
   id: string;
-  trust_score: number;
+  trustScore: number;
 }
 
-interface StatsRow {
-  deliveries_count: string;
-  total_earnings: string;
-  avg_minutes_per_delivery: string;
+interface StatsResult {
+  deliveriesCount: number;
+  totalEarnings: number;
+  avgMinutesPerDelivery: number;
 }
 
 /**
@@ -36,11 +35,16 @@ export async function GET(request: NextRequest) {
     }
 
     // 2. Look up driver profile with proper typing
-    const driverResult = await db.execute(
-      sql`SELECT id, trust_score FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`
-    );
+    const driverResult = await db
+      .select({
+        id: driversTable.id,
+        trustScore: driversTable.trustScore,
+      })
+      .from(driversTable)
+      .where(eq(driversTable.clerkId, user.id))
+      .limit(1);
 
-    const driver = driverResult.rows[0] as DriverStats | undefined;
+    const driver = driverResult[0];
 
     if (!driver) {
       return NextResponse.json(
@@ -50,27 +54,33 @@ export async function GET(request: NextRequest) {
     }
 
     const driverId = driver.id;
-    const today = new Date().toISOString().split("T")[0];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
 
     // 3. Fetch today's completed deliveries and earnings with proper typing
-    const statsResult = await db.execute(
-      sql`
-        SELECT
-          COUNT(*) FILTER (WHERE status = 'delivered') as deliveries_count,
-          COALESCE(SUM(total) FILTER (WHERE status = 'delivered'), 0) as total_earnings,
-          COALESCE(
-            AVG(
-              EXTRACT(EPOCH FROM (updated_at - created_at)) / 60
-            ) FILTER (WHERE status = 'delivered'),
-            0
-          ) as avg_minutes_per_delivery
-        FROM orders
-        WHERE driver_id = ${driverId}
-          AND DATE(created_at) = DATE(${today})
-      `
-    );
+    const statsResult = await db
+      .select({
+        deliveriesCount: sql<number>`COUNT(*) FILTER (WHERE ${ordersTable.status} = 'delivered')`,
+        totalEarnings: sql<number>`COALESCE(SUM(${ordersTable.total}) FILTER (WHERE ${ordersTable.status} = 'delivered'), 0)`,
+        avgMinutesPerDelivery: sql<number>`COALESCE(
+          AVG(
+            EXTRACT(EPOCH FROM (${ordersTable.updatedAt} - ${ordersTable.createdAt})) / 60
+          ) FILTER (WHERE ${ordersTable.status} = 'delivered'),
+          0
+        )`,
+      })
+      .from(ordersTable)
+      .where(
+        and(
+          eq(ordersTable.driverId, driverId),
+          gte(ordersTable.createdAt, today),
+          lt(ordersTable.createdAt, tomorrow)
+        )
+      );
 
-    const stats = statsResult.rows[0] as StatsRow | undefined;
+    const stats = statsResult[0];
 
     if (!stats) {
       return NextResponse.json(
@@ -80,10 +90,10 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json({
-      todayEarnings: parseFloat(stats.total_earnings) || 0,
-      deliveriesCount: parseInt(stats.deliveries_count) || 0,
-      avgTimePerDelivery: Math.round(parseFloat(stats.avg_minutes_per_delivery) || 0),
-      trustScore: driver.trust_score || 80,
+      todayEarnings: stats.totalEarnings || 0,
+      deliveriesCount: stats.deliveriesCount || 0,
+      avgTimePerDelivery: Math.round(stats.avgMinutesPerDelivery || 0),
+      trustScore: driver.trustScore || 80,
     });
   } catch (error) {
     console.error("Driver stats error:", error);

@@ -59,6 +59,34 @@ export class MCPClient {
   }
 
   /**
+   * Reconnect to the MCP server (Vercel serverless connection resiliency).
+   * Re-instantiates the transport and re-establishes the SSE connection.
+   * Used when connection drops due to Vercel's aggressive connection culling.
+   */
+  async reconnect(): Promise<void> {
+    console.log(`[MCPClient] Reconnecting to ${this.serverUrl}`);
+
+    try {
+      // Close existing connection
+      await this.disconnect();
+
+      // Re-instantiate transport (SSE connections can't be reused after close)
+      this.transport = new SSEClientTransport(new URL(this.serverUrl));
+
+      // Re-connect client
+      await this.client.connect(this.transport);
+
+      console.log(`[MCPClient] Reconnection to ${this.serverUrl} successful`);
+    } catch (error) {
+      console.error(
+        `[MCPClient] Reconnection failed:`,
+        error instanceof Error ? error.message : String(error)
+      );
+      throw error;
+    }
+  }
+
+  /**
    * Get circuit breaker status for observability
    */
   getCircuitBreakerStatus() {
@@ -84,6 +112,7 @@ export class MCPClient {
    * Calls a tool on the remote MCP server with circuit breaker protection and exponential backoff retry.
    * Phase 4: Circuit breaker fails fast when downstream service degrades.
    * Vercel Hobby Tier: Implements AbortController timeout protection (8s limit).
+   * Phase 5: Enhanced SSE connection drop detection with auto-reconnect.
    * Parameter Mapping: Applies PARAMETER_ALIASES to bridge LLM hallucinations.
    */
   async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolOutput> {
@@ -124,6 +153,53 @@ export class MCPClient {
           return result as ToolOutput;
         } catch (error: any) {
           clearTimeout(timeoutId);
+
+          // Detect SSE connection drop or premature close (Vercel serverless culling)
+          const isConnectionError =
+            error.message.includes('premature close') ||
+            error.message.includes('connection closed') ||
+            error.message.includes('ECONNRESET') ||
+            error.message.includes('ETIMEDOUT') ||
+            error.message.includes('NetworkError') ||
+            error.message.includes('fetch failed') ||
+            error.name === 'TypeError' && error.message.includes('fetch');
+
+          if (isConnectionError) {
+            console.warn(
+              `[MCPClient] SSE connection drop detected for ${name} - Attempting auto-reconnect`
+            );
+
+            // Publish "Service Degraded" event to Ably for observability
+            await RealtimeService.publishNervousSystemEvent('ServiceDegraded', {
+              serviceName: this.circuitBreaker.getServiceName(),
+              toolName: name,
+              reason: 'connection_drop',
+              error: error.message,
+              timestamp: new Date().toISOString(),
+            }).catch(err => console.error('Failed to publish ServiceDegraded event:', err));
+
+            // Auto-reconnect: Re-instantiate transport and reconnect
+            try {
+              await this.reconnect();
+              console.log(`[MCPClient] Reconnection successful, retrying ${name}`);
+            } catch (reconnectError) {
+              console.error(
+                `[MCPClient] Reconnection failed for ${name}:`,
+                reconnectError instanceof Error ? reconnectError.message : String(reconnectError)
+              );
+
+              // Trigger circuit breaker to open if reconnection fails
+              this.circuitBreaker.recordFailure();
+              throw new CircuitBreakerError(
+                `Service Degraded: ${name} connection lost and reconnection failed`,
+                CircuitState.OPEN
+              );
+            }
+
+            // Retry the tool call after successful reconnection
+            // Don't count this as a failure - throw special retry error
+            throw new Error(`RECONNECT_AND_RETRY: ${name}`);
+          }
 
           // Handle timeout/abort as "Service Degraded"
           if (error.message.includes('AbortError') || error.message.includes('cancelled') || this.abortController?.signal.aborted) {
@@ -220,6 +296,7 @@ export class MCPClient {
   /**
    * Exponential backoff with jitter retry strategy.
    * Supports AbortSignal for cancellation propagation.
+   * Special handling for RECONNECT_AND_RETRY errors from connection drops.
    */
   private async withRetry<T>(
     fn: (signal: AbortSignal) => Promise<T>,
@@ -232,9 +309,21 @@ export class MCPClient {
       try {
         return await fn(attemptController.signal);
       } catch (error: any) {
+        // Special handling for reconnection-triggered retry
+        if (error.message?.includes('RECONNECT_AND_RETRY')) {
+          console.log(
+            `[MCPClient] Reconnection triggered, retrying ${error.message.split(':')[1]?.trim() || 'tool call'} (attempt ${attempt + 1}/${maxAttempts})`
+          );
+          lastError = error;
+          // Short delay before retry after reconnection
+          const delay = 500 + Math.random() * 500;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+
         lastError = error;
         if (attempt === maxAttempts) break;
-        
+
         // Don't retry if aborted
         if (error.name === 'AbortError' || attemptController.signal.aborted) {
           throw error;
@@ -253,10 +342,17 @@ export class MCPClient {
    */
   private mapMcpToolToEngineTool(tool: McpTool): ToolDefinition {
     // Attempt to derive return_schema from non-standard MCP metadata if available
-    const return_schema = (tool as any).outputSchema || (tool as any).returnSchema || {};
-    
+    const toolWithMetadata = tool as McpTool & {
+      outputSchema?: Record<string, unknown>;
+      returnSchema?: Record<string, unknown>;
+      requiresConfirmation?: boolean;
+      requires_confirmation?: boolean;
+    };
+
+    const return_schema = toolWithMetadata.outputSchema || toolWithMetadata.returnSchema || {};
+
     const confirmationKeywords = ["book", "pay", "reserve", "buy", "send", "schedule", "delete", "remove", "dispatch", "deliver"];
-    const requires_confirmation = 
+    const requires_confirmation =
       confirmationKeywords.some(keyword => tool.name.toLowerCase().includes(keyword)) ||
       tool.name.toLowerCase().startsWith("delete_") ||
       tool.name.toLowerCase().startsWith("remove_");
@@ -279,19 +375,28 @@ export class MCPClient {
       "product_id": "item_id"
     };
 
+    // Safely extract inputSchema properties with type guard
+    const inputSchemaProperties = typeof tool.inputSchema === 'object' && tool.inputSchema !== null
+      ? (tool.inputSchema as Record<string, unknown>).properties as Record<string, unknown> || {}
+      : {};
+
+    const inputSchemaRequired = typeof tool.inputSchema === 'object' && tool.inputSchema !== null
+      ? (tool.inputSchema as Record<string, unknown>).required as string[] || []
+      : [];
+
     return {
       name: tool.name,
       version: "1.0.0",
       description: tool.description || "",
       inputSchema: {
         type: "object",
-        properties: (tool.inputSchema as any).properties || {},
-        required: (tool.inputSchema as any).required || [],
+        properties: inputSchemaProperties,
+        required: inputSchemaRequired,
       },
       return_schema: return_schema as Record<string, unknown>,
       parameter_aliases,
       timeout_ms: 30000,
-      requires_confirmation: (tool as any).requiresConfirmation ?? (tool as any).requires_confirmation ?? requires_confirmation,
+      requires_confirmation: toolWithMetadata.requiresConfirmation ?? toolWithMetadata.requires_confirmation ?? requires_confirmation,
       category: "external",
       origin: this.serverUrl,
     };

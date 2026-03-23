@@ -1,15 +1,27 @@
 import { NextRequest } from 'next/server';
 import { db, restaurants, eq } from "@repo/database";
 import { redis } from './redis';
-import { verifyServiceToken, SecurityProvider } from '@repo/auth';
+import { verifyServiceToken, verifyScopedJWT, SecurityProvider, type ScopedJWTPayload } from '@repo/auth';
 
 export interface AuthContext {
   restaurantId?: string;
   isInternal?: boolean;
+  scopedPermissions?: ScopedJWTPayload['permissions'];
+  traceId?: string;
 }
 
 /**
- * Validates the API key or JWT service token and applies rate limiting.
+ * Validates authentication using Zero-Trust JWT tokens.
+ *
+ * Security Model:
+ * - Internal service-to-service: Requires Bearer JWT token
+ * - External clients: Requires API key (legacy, being phased out)
+ * - Scoped permissions: Optional JWT with tool-level permissions
+ *
+ * Removed: Raw INTERNAL_SYSTEM_KEY header check (insecure pattern)
+ *
+ * @param req - Next.js request
+ * @returns Auth context or error response
  */
 export async function validateRequest(req: NextRequest): Promise<{
   error?: string;
@@ -19,66 +31,90 @@ export async function validateRequest(req: NextRequest): Promise<{
   const authHeader = req.headers.get('authorization');
   const apiKey = req.headers.get('x-api-key');
 
-  // 0. Check for standardized internal system key
-  if (SecurityProvider.validateHeaders(req.headers)) {
-    return {
-      context: {
-        isInternal: true,
-      },
-    };
-  }
-
-  // Check for JWT service token first
+  // Priority 1: JWT Service Token (Zero-Trust Standard)
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.substring(7);
+
+    // Try scoped JWT first (has tool-level permissions)
+    const scopedPayload = await verifyScopedJWT(token, 'internal-service', 'table-stack');
+    if (scopedPayload) {
+      console.log(
+        `[Auth] Scoped JWT verified for service=${scopedPayload.iss}, ` +
+        `permissions=${scopedPayload.permissions?.length || 0} tools`
+      );
+      return {
+        context: {
+          isInternal: true,
+          restaurantId: scopedPayload.restaurantId as string | undefined,
+          scopedPermissions: scopedPayload.permissions,
+          traceId: scopedPayload.traceId as string | undefined,
+        },
+      };
+    }
+
+    // Fall back to standard service token
     const payload = await verifyServiceToken(token);
     if (payload) {
+      console.log(`[Auth] Service token verified for service=${(payload as any).service}`);
       return {
         context: {
           isInternal: true,
           restaurantId: payload.restaurantId as string | undefined,
+          traceId: payload.traceId as string | undefined,
         },
       };
     }
+
+    // Token present but invalid
+    console.warn('[Auth] Invalid or expired JWT token');
+    return {
+      error: 'Invalid or expired JWT token',
+      status: 401,
+    };
   }
 
-  // 1. Global Rate Limiting (IP-based) using Upstash Redis
-  const ip = req.headers.get('x-forwarded-for') || 'anonymous';
-  const limit = 100; // 100 requests
-  const window = 60; // per 60 seconds
-  
-  try {
-    const { success } = await rateLimit(ip, limit, window);
-    
-    if (!success) {
-      return { 
-        error: 'Too many requests', 
-        status: 429 
-      };
+  // Priority 2: API Key (Legacy - External Clients)
+  // Keep for backward compatibility with external integrations
+  if (apiKey) {
+    // Global Rate Limiting (IP-based) using Upstash Redis
+    const ip = req.headers.get('x-forwarded-for') || 'anonymous';
+    const limit = 100; // 100 requests
+    const window = 60; // per 60 seconds
+
+    try {
+      const { success } = await rateLimit(ip, limit, window);
+
+      if (!success) {
+        return {
+          error: 'Too many requests',
+          status: 429,
+        };
+      }
+    } catch (e) {
+      console.error('Rate limit error:', e);
+      // Continue if redis is down to avoid blocking traffic
     }
-  } catch (e) {
-    console.error('Rate limit error:', e);
-    // Continue if redis is down to avoid blocking traffic
+
+    // API Key Validation
+    const restaurant = await db.query.restaurants.findFirst({
+      where: eq(restaurants.apiKey, apiKey),
+    });
+
+    if (!restaurant) {
+      return { error: 'Invalid API key', status: 403 };
+    }
+
+    return {
+      context: {
+        restaurantId: restaurant.id,
+      },
+    };
   }
 
-  // 2. API Key Validation
-  // In a real app, we would cache this in Redis for a few minutes
-  if (!apiKey) {
-    return { error: 'Missing API key', status: 401 };
-  }
-
-  const restaurant = await db.query.restaurants.findFirst({
-    where: eq(restaurants.apiKey, apiKey),
-  });
-
-  if (!restaurant) {
-    return { error: 'Invalid API key', status: 403 };
-  }
-
+  // No authentication provided
   return {
-    context: {
-      restaurantId: restaurant.id,
-    },
+    error: 'Missing authentication. Provide either Bearer token or x-api-key header',
+    status: 401,
   };
 }
 

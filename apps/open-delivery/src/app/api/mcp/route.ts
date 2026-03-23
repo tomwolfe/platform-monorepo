@@ -384,7 +384,7 @@ server.tool(
       if (result.success) {
         console.log(
           `[Trace:${traceId}] Driver matched for fulfillment ${fulfillmentId}: ` +
-          `${result.driver?.full_name} (trust: ${result.driver?.trust_score})`
+          `${result.driver?.fullName} (trust: ${result.driver?.trustScore})`
         );
       } else {
         console.warn(

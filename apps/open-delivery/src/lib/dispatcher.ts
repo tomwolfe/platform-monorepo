@@ -11,8 +11,7 @@
  * - Driver ranking by trust score, proximity, and acceptance rate
  */
 
-import { db } from "@repo/database";
-import { sql } from "drizzle-orm";
+import { db, drivers as driversTable, orders as ordersTable, eq, and, gt, gte, sql as drizzleSql, desc } from "@repo/database";
 import { redis } from "./redis-client";
 import { RealtimeService } from "@repo/shared";
 import { geocode } from "@repo/shared/utils/geo";
@@ -20,17 +19,17 @@ import { randomUUID } from "crypto";
 
 export interface Driver {
   id: string;
-  clerk_id: string;
-  full_name: string;
+  clerkId: string;
+  fullName: string;
   email: string;
   phone?: string;
-  trust_score: number;
-  is_active: boolean;
-  vehicle_type?: "bike" | "car" | "van" | "truck";
-  current_lat?: number;
-  current_lng?: number;
-  accepted_orders?: number;
-  completed_orders?: number;
+  trustScore: number;
+  isActive: boolean;
+  vehicleType?: "bike" | "car" | "van" | "truck";
+  currentLat?: number;
+  currentLng?: number;
+  acceptedOrders?: number;
+  completedOrders?: number;
 }
 
 export interface OrderIntent {
@@ -90,29 +89,29 @@ function calculateDriverScore(
   let score = 0;
 
   // Trust score weight (0-100)
-  score += driver.trust_score * 0.4;
+  score += driver.trustScore * 0.4;
 
   // Vehicle compatibility (0-25)
-  if (driver.vehicle_type === requiredVehicle) {
+  if (driver.vehicleType === requiredVehicle) {
     score += 25;
   } else if (
-    (requiredVehicle === "bike" && ["car", "van"].includes(driver.vehicle_type || "")) ||
-    (requiredVehicle === "car" && ["van"].includes(driver.vehicle_type || ""))
+    (requiredVehicle === "bike" && ["car", "van"].includes(driver.vehicleType || "")) ||
+    (requiredVehicle === "car" && ["van"].includes(driver.vehicleType || ""))
   ) {
     score += 15; // Can upgrade vehicle
   }
 
   // Acceptance rate (0-25)
-  if (driver.accepted_orders && driver.completed_orders) {
-    const acceptanceRate = driver.completed_orders / driver.accepted_orders;
+  if (driver.acceptedOrders && driver.completedOrders) {
+    const acceptanceRate = driver.completedOrders / driver.acceptedOrders;
     score += acceptanceRate * 25;
   }
 
   // Proximity bonus (0-10) - simplified, in production use Haversine formula
-  if (driver.current_lat && driver.current_lng) {
+  if (driver.currentLat && driver.currentLng) {
     const distance = Math.sqrt(
-      Math.pow(driver.current_lat - pickupLat, 2) +
-      Math.pow(driver.current_lng - pickupLng, 2)
+      Math.pow(driver.currentLat - pickupLat, 2) +
+      Math.pow(driver.currentLng - pickupLng, 2)
     );
     // Closer drivers get higher score (max 10 points for < 1km)
     score += Math.max(0, 10 - distance * 10);
@@ -130,59 +129,18 @@ export async function findAvailableDrivers(
 ): Promise<Array<Driver & { matchScore: number }>> {
   const requiredVehicle = getRequiredVehicleType(orderIntent.items);
 
-  // Query active drivers from Postgres
-  const driversResult = await db.execute(
-    sql`
-      SELECT
-        id,
-        clerk_id,
-        full_name,
-        email,
-        phone,
-        trust_score,
-        is_active,
-        vehicle_type,
-        current_lat,
-        current_lng,
-        accepted_orders,
-        completed_orders
-      FROM drivers
-      WHERE is_active = TRUE
-        AND trust_score >= 50
-      ORDER BY trust_score DESC
-      LIMIT 20
-    `
-  );
-
-  interface DriverRow {
-    id: string;
-    clerk_id: string;
-    full_name: string;
-    email: string;
-    phone: string | null;
-    trust_score: number;
-    is_active: boolean;
-    vehicle_type: "bike" | "car" | "van" | "truck" | null;
-    current_lat: number | null;
-    current_lng: number | null;
-    accepted_orders: number | null;
-    completed_orders: number | null;
-  }
-
-  const drivers: Driver[] = driversResult.rows.map((row: DriverRow) => ({
-    id: row.id,
-    clerk_id: row.clerk_id,
-    full_name: row.full_name,
-    email: row.email,
-    phone: row.phone ?? undefined,
-    trust_score: row.trust_score,
-    is_active: row.is_active,
-    vehicle_type: row.vehicle_type ?? undefined,
-    current_lat: row.current_lat ?? undefined,
-    current_lng: row.current_lng ?? undefined,
-    accepted_orders: row.accepted_orders ?? undefined,
-    completed_orders: row.completed_orders ?? undefined,
-  }));
+  // Query active drivers from Postgres using Drizzle ORM
+  const drivers = await db
+    .select()
+    .from(driversTable)
+    .where(
+      and(
+        eq(driversTable.isActive, true),
+        gte(driversTable.trustScore, 50)
+      )
+    )
+    .orderBy(desc(driversTable.trustScore))
+    .limit(20);
 
   if (drivers.length === 0) {
     console.log(
@@ -217,17 +175,17 @@ export async function findAvailableDrivers(
     );
   }
 
-  const scoredDrivers = drivers.map((driver) => ({
+  const scoredDrivers = drivers.map((driver: typeof drivers[number]) => ({
     ...driver,
     matchScore: calculateDriverScore(driver, requiredVehicle, pickupLat, pickupLng),
   }));
 
   // Sort by score descending
-  scoredDrivers.sort((a, b) => b.matchScore - a.matchScore);
+  scoredDrivers.sort((a: { matchScore: number }, b: { matchScore: number }) => b.matchScore - a.matchScore);
 
   console.log(
     `[Dispatcher] Found ${scoredDrivers.length} drivers for order ${orderIntent.orderId}, ` +
-    `best match: ${scoredDrivers[0].full_name} (score: ${scoredDrivers[0].matchScore.toFixed(1)})`
+    `best match: ${scoredDrivers[0].fullName} (score: ${scoredDrivers[0].matchScore.toFixed(1)})`
   );
 
   return scoredDrivers;
@@ -242,23 +200,26 @@ export async function assignOrderToDriver(
   driverId: string
 ): Promise<boolean> {
   try {
-    const result = await db.execute(
-      sql`
-        UPDATE orders
-        SET
-          driver_id = ${driverId},
-          status = 'matched',
-          matched_at = NOW(),
-          updated_at = NOW()
-        WHERE
-          id = ${orderId}
-          AND status = 'pending'
-          AND driver_id IS NULL
-        RETURNING id
-      `
-    );
+    // Use Drizzle ORM update with optimistic locking
+    const result = await db
+      .update(ordersTable)
+      .set({
+        driverId,
+        status: 'matched',
+        matchedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(ordersTable.id, orderId),
+          eq(ordersTable.status, 'pending'),
+          // Optimistic locking: only update if driver_id is NULL
+          eq(ordersTable.driverId, null)
+        )
+      )
+      .returning({ id: ordersTable.id });
 
-    const assigned = result.rows.length > 0;
+    const assigned = result.length > 0;
 
     if (assigned) {
       console.log(`[Dispatcher] Order ${orderId} assigned to driver ${driverId}`);
@@ -380,20 +341,7 @@ async function createMatchResult(
 
   const matchResult: MatchResult = {
     success: true,
-    driver: {
-      id: driver.id,
-      clerk_id: driver.clerk_id,
-      full_name: driver.full_name,
-      email: driver.email,
-      phone: driver.phone || "+1-555-0000",
-      trust_score: driver.trust_score,
-      is_active: driver.is_active,
-      vehicle_type: driver.vehicle_type,
-      current_lat: driver.current_lat,
-      current_lng: driver.current_lng,
-      accepted_orders: driver.accepted_orders,
-      completed_orders: driver.completed_orders,
-    },
+    driver,
     orderId: orderIntent.orderId,
     fulfillmentId: orderIntent.fulfillmentId,
     matchedAt: now.toISOString(),
@@ -419,10 +367,10 @@ async function createMatchResult(
       orderId: orderIntent.orderId,
       fulfillmentId: orderIntent.fulfillmentId,
       driverId: driver.id,
-      driverName: driver.full_name,
+      driverName: driver.fullName,
       driverEmail: driver.email,
-      trustScore: driver.trust_score,
-      vehicleType: driver.vehicle_type,
+      trustScore: driver.trustScore,
+      vehicleType: driver.vehicleType,
       status: "matched",
       matchedAt: now.toISOString(),
       estimatedArrival: estimatedArrival.toISOString(),
@@ -444,7 +392,7 @@ async function createMatchResult(
   // Step 6: Send notification to matched driver (future: push notification)
   // For now, just log - in production, send SMS/push notification
   console.log(
-    `[Dispatcher:${traceId}] Driver ${driver.full_name} (${driver.email}) matched to order ${orderIntent.orderId}`
+    `[Dispatcher:${traceId}] Driver ${driver.fullName} (${driver.email}) matched to order ${orderIntent.orderId}`
   );
 
   return matchResult;

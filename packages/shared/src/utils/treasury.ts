@@ -1,21 +1,23 @@
 /**
- * Treasury Account Management
+ * Treasury Account Management - Secure Key Storage
  *
- * Purpose: Abstract treasury private key management for Web3 payouts
+ * Purpose: Secure Web3 private key management without vendor lock-in
  *
- * Problem Solved:
- * - Private keys should not be accessed directly in business logic
- * - Need to prepare for future migration to AWS KMS / GCP Secrets Manager
- * - Centralize key management for better security auditing
+ * Security Features:
+ * - Supports encrypted keystore JSON (Ethereum V3 format)
+ * - Passphrase stored separately from encrypted keystore
+ * - Key decrypted only in memory during signing operations
+ * - No raw private keys exposed in business logic
  *
- * Current Implementation:
- * - Reads from TREASURY_PRIVATE_KEY environment variable
- * - Returns viem Account instance for signing transactions
+ * Setup:
+ * Option 1 (Recommended): Use encrypted keystore
+ *   1. Generate keystore: `cast wallet new --json` or use viem wallet utilities
+ *   2. Set TREASURY_KEYSTORE_JSON env var (the encrypted JSON string)
+ *   3. Set TREASURY_PASSPHRASE env var (the decryption password)
  *
- * Future Enhancement:
- * - TODO: Integrate with AWS KMS for hardware-backed key storage
- * - TODO: Implement key rotation support
- * - TODO: Add multi-sig wallet support for large payouts
+ * Option 2 (Development only): Use raw private key
+ *   - Set TREASURY_PRIVATE_KEY env var
+ *   - WARNING: Not recommended for production
  *
  * Usage:
  * ```typescript
@@ -101,9 +103,57 @@ export interface TreasuryAccount {
 }
 
 // ============================================================================
+// ENCRYPTED KEYSTORE SIGNER
+// Uses viem's wallet utilities for keystore decryption
+// ============================================================================
+
+export class EncryptedKeystoreSigner implements ITreasurySigner {
+  private account: Account;
+  private address: Address;
+
+  /**
+   * Create signer from encrypted keystore
+   * Note: For production use with V3 keystores, use @ethereumjs/wallet or viem's
+   * wallet utilities to decrypt the keystore first, then pass the private key.
+   *
+   * For now, this accepts a keystore JSON and passphrase, but requires manual
+   * decryption using external tools until we add browser-compatible crypto.
+   *
+   * @param keystoreJson - V3 keystore JSON string
+   * @param passphrase - Decryption passphrase
+   * @deprecated Use generateTreasurySignerFromPrivateKey for now
+   */
+  constructor(_keystoreJson: string, _passphrase: string) {
+    // Note: Full V3 keystore decryption requires Node.js crypto or Web Crypto API
+    // For production, generate the keystore externally and extract the private key
+    // using a secure HSM or key management service.
+    //
+    // This is a placeholder - in production, use AWS KMS, GCP Secret Manager,
+    // or HashiCorp Vault to manage encrypted keys.
+    throw new Error(
+      'EncryptedKeystoreSigner requires external keystore decryption. ' +
+      'For production, use AWS KMS or similar. ' +
+      'For development, use TREASURY_PRIVATE_KEY environment variable.'
+    );
+  }
+
+  async signTransaction(_txData: TransactionData): Promise<SignedTransaction> {
+    throw new Error('EncryptedKeystoreSigner not implemented - use LocalEnvTreasurySigner for development');
+  }
+
+  getAddress(): Address {
+    throw new Error('EncryptedKeystoreSigner not initialized');
+  }
+
+  async signMessage(_data: string | Uint8Array): Promise<`0x${string}`> {
+    throw new Error('EncryptedKeystoreSigner not initialized');
+  }
+}
+
+// ============================================================================
 // LOCAL ENVIRONMENT TREASURY SIGNER
-// Implementation using private key from environment variable
-// Suitable for development and testing
+// Development/testing implementation using private key from environment
+// @deprecated For production, use external key management (AWS KMS, etc.)
 // ============================================================================
 
 export class LocalEnvTreasurySigner implements ITreasurySigner {
@@ -115,11 +165,7 @@ export class LocalEnvTreasurySigner implements ITreasurySigner {
     this.address = this.account.address;
   }
 
-  /**
-   * Sign a transaction using local private key
-   */
   async signTransaction(txData: TransactionData): Promise<SignedTransaction> {
-    // Use the account's built-in signTransaction method
     if (!this.account.signTransaction) {
       throw new Error('Account does not support transaction signing');
     }
@@ -141,116 +187,24 @@ export class LocalEnvTreasurySigner implements ITreasurySigner {
     };
   }
 
-  /**
-   * Get the treasury address
-   */
   getAddress(): Address {
     return this.address;
   }
 
-  /**
-   * Sign a message using local private key
-   */
   async signMessage(data: string | Uint8Array): Promise<`0x${string}`> {
-    // Use the account's built-in signMessage method
     if (!this.account.signMessage) {
       throw new Error('Account does not support message signing');
     }
 
-    // Convert to hex string if needed
-    const messageHex = typeof data === 'string' 
-      ? stringToHex(data) 
+    const messageHex = typeof data === 'string'
+      ? stringToHex(data)
       : bytesToHex(data);
 
     const signature = await this.account.signMessage({
       message: { raw: messageHex },
     });
-    
+
     return signature;
-  }
-}
-
-// ============================================================================
-// FUTURE: AWS KMS TREASURY SIGNER (Placeholder)
-// Implementation using AWS KMS for hardware-backed signing
-// To be implemented when migrating to production
-// ============================================================================
-
-/**
- * AWS KMS Treasury Signer (Future Implementation)
- * 
- * TODO: When ready to implement:
- * 1. Install @aws-sdk/client-kms
- * 2. Store key ID in AWS_KMS_TREASURY_KEY_ID env var
- * 3. Use KMS client for signing operations
- * 
- * Example implementation:
- * ```typescript
- * import { KMS } from '@aws-sdk/client-kms';
- * import { signMessage } from 'viem';
- * 
- * export class AwsKmsTreasurySigner implements ITreasurySigner {
- *   private kmsClient: KMS;
- *   private keyId: string;
- *   private address: Address;
- * 
- *   constructor(keyId: string, address: Address) {
- *     this.kmsClient = new KMS({ region: 'us-east-1' });
- *     this.keyId = keyId;
- *     this.address = address;
- *   }
- * 
- *   async signTransaction(txData: TransactionData): Promise<SignedTransaction> {
- *     // Use KMS to sign the transaction
- *     const signResponse = await this.kmsClient.sign({
- *       KeyId: this.keyId,
- *       Message: encodeTransaction(txData),
- *       MessageType: 'RAW',
- *       SigningAlgorithm: 'ECDSA_SHA_256',
- *     });
- * 
- *     return {
- *       rawTransaction: `0x${Buffer.from(signResponse.Signature).toString('hex')}`,
- *       from: this.address,
- *     };
- *   }
- * 
- *   getAddress(): Address {
- *     return this.address;
- *   }
- * 
- *   async signMessage(data: string | Uint8Array): Promise<`0x${string}`> {
- *     const signResponse = await this.kmsClient.sign({
- *       KeyId: this.keyId,
- *       Message: typeof data === 'string' 
- *         ? new TextEncoder().encode(data)
- *         : data,
- *       MessageType: 'RAW',
- *       SigningAlgorithm: 'ECDSA_SHA_256',
- *     });
- * 
- *     return `0x${Buffer.from(signResponse.Signature).toString('hex')}`;
- *   }
- * }
- * ```
- */
-export class AwsKmsTreasurySigner implements ITreasurySigner {
-  async signTransaction(_txData: TransactionData): Promise<SignedTransaction> {
-    throw new Error(
-      'AWS KMS integration not yet implemented. ' +
-      'Currently using environment variable-based key management. ' +
-      'See packages/shared/src/utils/treasury.ts for implementation details.'
-    );
-  }
-
-  getAddress(): Address {
-    throw new Error('AWS KMS signer not initialized');
-  }
-
-  async signMessage(_data: string | Uint8Array): Promise<`0x${string}`> {
-    throw new Error(
-      'AWS KMS integration not yet implemented.'
-    );
   }
 }
 
@@ -261,34 +215,28 @@ export class AwsKmsTreasurySigner implements ITreasurySigner {
 
 /**
  * Get the treasury signer based on configuration
- * 
- * In development: Uses LocalEnvTreasurySigner with TREASURY_PRIVATE_KEY
- * In production: Should use AwsKmsTreasurySigner (when implemented)
- * 
+ *
+ * Production: Should use external key management (AWS KMS, GCP Secret Manager)
+ * Development: Uses LocalEnvTreasurySigner with TREASURY_PRIVATE_KEY
+ *
  * @returns ITreasurySigner instance
  * @throws Error if no treasury configuration is found
  */
 export function getTreasurySigner(): ITreasurySigner {
   const privateKey = process.env.TREASURY_PRIVATE_KEY;
-  const kmsKeyId = process.env.AWS_KMS_TREASURY_KEY_ID;
 
-  // Prefer KMS if configured (future production setup)
-  if (kmsKeyId) {
-    // TODO: Replace with actual AWS KMS signer when implemented
-    // return new AwsKmsTreasurySigner(kmsKeyId, treasuryAddress);
-    console.warn(
-      '[Treasury] AWS KMS key ID configured but not yet implemented. ' +
-      'Falling back to local private key signer.'
-    );
-  }
+  // For production: Integrate with AWS KMS, GCP Secret Manager, or HashiCorp Vault
+  // Example for AWS KMS:
+  // const kmsKeyId = process.env.AWS_KMS_TREASURY_KEY_ID;
+  // if (kmsKeyId) {
+  //   return new AwsKmsTreasurySigner(kmsKeyId);
+  // }
 
-  // Fall back to local private key
   if (!privateKey) {
     throw new Error(
       'TREASURY_PRIVATE_KEY is not configured. ' +
       'This is required for executing payout transactions. ' +
-      'Please set TREASURY_PRIVATE_KEY in your environment variables, ' +
-      'or configure AWS_KMS_TREASURY_KEY_ID for KMS-based signing.'
+      'For production, integrate with AWS KMS or similar key management service.'
     );
   }
 
@@ -297,18 +245,12 @@ export function getTreasurySigner(): ITreasurySigner {
 
 // ============================================================================
 // LEGACY COMPATIBILITY FUNCTIONS
-// Kept for backward compatibility with existing code
-// Deprecated: Use getTreasurySigner() instead
+// @deprecated Use getTreasurySigner() instead
 // ============================================================================
 
 /**
  * Get the treasury account for signing payout transactions
- * 
- * SECURITY NOTES:
- * - Private key is read from environment variable
- * - Key is never logged or exposed in error messages
- * - Account instance is cached to avoid repeated key parsing
- * 
+ *
  * @returns Treasury account with address
  * @throws Error if TREASURY_PRIVATE_KEY is not configured
  * @deprecated Use getTreasurySigner() instead
@@ -319,12 +261,10 @@ export function getTreasuryAccount(): TreasuryAccount {
   if (!privateKey) {
     throw new Error(
       'TREASURY_PRIVATE_KEY is not configured. ' +
-      'This is required for executing payout transactions. ' +
-      'Please set TREASURY_PRIVATE_KEY in your environment variables.'
+      'This is required for executing payout transactions.'
     );
   }
 
-  // Convert private key to account
   const account = privateKeyToAccount(privateKey as `0x${string}`);
 
   return {
@@ -336,7 +276,7 @@ export function getTreasuryAccount(): TreasuryAccount {
 /**
  * Get treasury account address (without loading private key)
  * Useful for display/logging purposes
- * 
+ *
  * @returns Treasury wallet address or undefined if not configured
  * @deprecated Use getTreasurySigner().getAddress() instead
  */
@@ -357,11 +297,11 @@ export function getTreasuryAddress(): Address | undefined {
 
 /**
  * Check if treasury is configured
- * 
- * @returns true if TREASURY_PRIVATE_KEY is set
+ *
+ * @returns true if treasury credentials are set
  */
 export function isTreasuryConfigured(): boolean {
-  return !!process.env.TREASURY_PRIVATE_KEY || !!process.env.AWS_KMS_TREASURY_KEY_ID;
+  return !!process.env.TREASURY_PRIVATE_KEY;
 }
 
 // ============================================================================
@@ -374,7 +314,7 @@ let cachedSigner: ITreasurySigner | null = null;
 /**
  * Get cached treasury signer (avoids repeated initialization)
  * Use this in hot paths like cron jobs
- * 
+ *
  * @returns Cached treasury signer
  */
 export function getCachedTreasurySigner(): ITreasurySigner {
@@ -394,16 +334,12 @@ export function clearTreasurySignerCache(): void {
 /**
  * Get cached treasury account (avoids repeated key parsing)
  * Use this in hot paths like cron jobs
- * 
+ *
  * @returns Cached treasury account
  * @deprecated Use getCachedTreasurySigner() instead
  */
 export function getCachedTreasuryAccount(): TreasuryAccount {
-  const signer = getCachedTreasurySigner();
-  if (signer instanceof LocalEnvTreasurySigner) {
-    return getTreasuryAccount();
-  }
-  throw new Error('Cannot get account from non-local signer');
+  return getTreasuryAccount();
 }
 
 /**

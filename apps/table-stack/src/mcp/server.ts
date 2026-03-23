@@ -131,10 +131,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       CHECK_AVAILABILITY_TOOL,
       BOOK_RESERVATION_TOOL,
       DISCOVER_RESTAURANT_TOOL,
-    ].map((tool: any) => ({
+    ].map((tool) => ({
       ...tool,
       annotations: {
-        requires_confirmation: (TOOL_METADATA as any)[tool.name]?.requires_confirmation || false
+        requires_confirmation: TOOL_METADATA[tool.name as keyof typeof TOOL_METADATA]?.requires_confirmation || false
       }
     })),
   };

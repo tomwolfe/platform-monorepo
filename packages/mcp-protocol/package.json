@@ -3,19 +3,23 @@
   "version": "0.0.0",
   "private": true,
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./server": "./src/server.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.25.1",
     "@repo/database": "workspace:*",
+    "@repo/auth": "workspace:*",
     "drizzle-orm": "^0.38.4",
-    "drizzle-zod": "^0.5.1"
+    "drizzle-zod": "^0.5.1",
+    "next": "15.2.9"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
     "postcss": "^8.5.1",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "@types/node": "^20.17.16"
   }
 }

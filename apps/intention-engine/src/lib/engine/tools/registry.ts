@@ -319,16 +319,17 @@ export class ToolRegistry {
       const zodSchema = mapJsonSchemaToZod(definition.inputSchema);
       zodSchema.parse(parameters);
       return { valid: true };
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (error instanceof z.ZodError) {
         return {
           valid: false,
           error: error.issues.map((e) => `${e.path.join(".")}: ${e.message}`).join("; "),
         };
       }
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         valid: false,
-        error: error.message || "Unknown validation error",
+        error: errorMessage || "Unknown validation error",
       };
     }
   }
@@ -341,21 +342,22 @@ export class ToolRegistry {
     output: unknown
   ): { valid: boolean; error?: string } {
     try {
-      // For output, we don't always have the table name, 
+      // For output, we don't always have the table name,
       // but if the schema matches one of our reflected models, we can use it.
       const zodSchema = mapJsonSchemaToZod(schema);
       zodSchema.parse(output);
       return { valid: true };
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (error instanceof z.ZodError) {
         return {
           valid: false,
           error: error.issues.map((e) => `${e.path.join(".")}: ${e.message}`).join("; "),
         };
       }
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         valid: false,
-        error: error.message || "Unknown validation error",
+        error: errorMessage || "Unknown validation error",
       };
     }
   }
@@ -598,10 +600,11 @@ export function registerBuiltInTools(): void {
         success: true,
         output: { history },
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         success: false,
-        error: `Failed to retrieve history: ${error.message}`,
+        error: `Failed to retrieve history: ${errorMessage}`,
       };
     }
   });

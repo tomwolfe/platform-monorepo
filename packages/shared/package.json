@@ -26,6 +26,7 @@
     "@ai-sdk/openai": "^3.0.25",
     "@octokit/rest": "^21.0.0",
     "@repo/auth": "workspace:*",
+    "@repo/mcp-protocol": "workspace:*",
     "@upstash/qstash": "^2.1.0",
     "@upstash/redis": "^1.36.2",
     "ably": "^2.17.1",

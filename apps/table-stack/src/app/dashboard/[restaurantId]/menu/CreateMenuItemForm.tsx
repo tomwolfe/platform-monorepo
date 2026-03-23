@@ -15,8 +15,13 @@ export default function CreateMenuItemForm({ restaurantId }: CreateMenuItemFormP
   const handleSubmit = async (formData: FormData) => {
     setIsSubmitting(true);
     try {
-      await createMenuItem(restaurantId, formData);
-      setIsOpen(false);
+      const result = await createMenuItem(restaurantId, formData);
+      
+      if (!result.success) {
+        alert(`Failed to create menu item: ${result.error}`);
+      } else {
+        setIsOpen(false);
+      }
     } catch (error) {
       console.error('Failed to create menu item:', error);
       alert('Failed to create menu item. Please try again.');

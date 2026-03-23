@@ -9,18 +9,18 @@ interface DeleteMenuItemButtonProps {
   itemName: string;
 }
 
-export default function DeleteMenuItemButton({ 
-  productId, 
-  restaurantId, 
-  itemName 
+export default function DeleteMenuItemButton({
+  productId,
+  restaurantId,
+  itemName
 }: DeleteMenuItemButtonProps) {
-  
+
   const handleDelete = async () => {
     if (confirm(`Are you sure you want to delete "${itemName}"?`)) {
-      try {
-        await deleteMenuItem(productId, restaurantId);
-      } catch (error) {
-        alert("Failed to delete item");
+      const result = await deleteMenuItem(productId, restaurantId);
+      
+      if (!result.success) {
+        alert(`Failed to delete item: ${result.error}`);
       }
     }
   };

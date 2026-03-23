@@ -29,9 +29,13 @@ export class Tracer {
         const result = await fn(span);
         span.setStatus({ code: 1 }); // OK
         return result;
-      } catch (error: any) {
-        span.recordException(error);
-        span.setStatus({ code: 2, message: error.message }); // ERROR
+      } catch (error: unknown) {
+        if (error instanceof Error) {
+          span.recordException(error);
+          span.setStatus({ code: 2, message: error.message }); // ERROR
+        } else {
+          span.setStatus({ code: 2, message: String(error) }); // ERROR
+        }
         throw error;
       } finally {
         span.end();

@@ -340,3 +340,75 @@ export function isSuccessResponse<T>(
     response.success === true
   );
 }
+
+/**
+ * Standard server action response structure
+ * Provides consistent error handling for Next.js Server Actions
+ */
+export type ServerActionResponse<T> =
+  | { success: true; data: T }
+  | { success: false; error: string; code?: string };
+
+/**
+ * Wraps an async server action with standardized error handling
+ *
+ * Prevents raw errors from being thrown, which cause generic 500 errors.
+ * Instead, returns a discriminated union for predictable client-side handling.
+ *
+ * @param fn - The server action function to wrap
+ * @param options - Optional configuration
+ * @param options.errorCode - Default error code to use (for logging)
+ * @param options.transformError - Custom error message transformer
+ * @returns Wrapped function that returns ServerActionResponse
+ *
+ * @example
+ * ```typescript
+ * export const deleteReservation = withServerActionHandler(
+ *   async (reservationId: string, restaurantId: string) => {
+ *     await verifyOwnership(restaurantId);
+ *     await db.delete(...);
+ *     revalidatePath(`/dashboard/${restaurantId}`);
+ *     return { message: 'Deleted successfully' };
+ *   },
+ *   { errorCode: 'DELETE_FAILED' }
+ * );
+ * ```
+ *
+ * @see https://nextjs.org/docs/app/building-your-application/data-fetching/server-actions-and-mutations#error-handling
+ */
+export function withServerActionHandler<
+  TArgs extends unknown[],
+  TReturn
+>(
+  fn: (...args: TArgs) => Promise<TReturn>,
+  options?: {
+    errorCode?: string;
+    transformError?: (error: unknown) => string;
+  }
+) {
+  return async (
+    ...args: TArgs
+  ): Promise<ServerActionResponse<TReturn>> => {
+    try {
+      const result = await fn(...args);
+      return { success: true, data: result };
+    } catch (error) {
+      const errorMessage = options?.transformError
+        ? options.transformError(error)
+        : error instanceof Error
+          ? error.message
+          : String(error);
+
+      console.error(
+        `[ServerAction] Error${options?.errorCode ? ` (${options.errorCode})` : ""}:`,
+        errorMessage
+      );
+
+      return {
+        success: false,
+        error: errorMessage,
+        ...(options?.errorCode && { code: options.errorCode }),
+      };
+    }
+  };
+}

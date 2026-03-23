@@ -123,18 +123,18 @@ export async function GET(req: NextRequest) {
       transport: fallback(BASE_RPC_URLS.map((url) => http(url))),
     });
 
-    // CRITICAL: Use Promise.all for parallel verification (not sequential)
-    // This prevents the 10-second timeout issue
+    // CRITICAL: Use Promise.allSettled for fault-tolerant parallel verification
+    // This prevents batch crashes when individual RPC calls fail
     const verificationPromises = processingPayouts.map(async (order: { id: string; payoutTxHash: string | null; payoutStatus: string | null }) => {
       try {
         const hash = order.payoutTxHash as `0x${string}`;
-        
+
         // Get transaction receipt (non-blocking, parallel execution)
         const receipt = await publicClient.getTransactionReceipt({ hash });
 
         if (receipt.status === 'success') {
           console.log(`[Verify Payouts Cron] Payout confirmed on-chain: ${order.id}`);
-          
+
           // Mark as completed
           await db.update(orders)
             .set({
@@ -142,33 +142,48 @@ export async function GET(req: NextRequest) {
               payoutProcessedAt: new Date(),
             })
             .where(eq(orders.id, order.id));
-          
-          return { orderId: order.id, status: 'completed' };
+
+          return { orderId: order.id, status: 'completed' as const };
         } else {
           console.error(`[Verify Payouts Cron] Payout reverted on-chain: ${order.id}`);
-          
+
           // Mark as failed
           await db.update(orders)
             .set({ payoutStatus: 'failed' })
             .where(eq(orders.id, order.id));
-          
-          return { orderId: order.id, status: 'failed', reason: 'reverted' };
+
+          return { orderId: order.id, status: 'failed' as const, reason: 'reverted' };
         }
       } catch (error) {
         // Transaction not found yet (still pending) - leave as processing
         // It will be picked up on the next cron run
         console.log(`[Verify Payouts Cron] Payout still pending: ${order.id} - ${error instanceof Error ? error.message : 'Unknown error'}`);
-        return { orderId: order.id, status: 'pending' };
+        return { orderId: order.id, status: 'pending' as const };
       }
     });
 
-    // Wait for all verifications to complete
-    const results = await Promise.all(verificationPromises);
+    // Wait for all verifications to complete (fault-tolerant)
+    const results = await Promise.allSettled(verificationPromises);
+
+    // Process settled results - extract fulfilled values and log rejections
+    const processedResults = results.map((result, index) => {
+      if (result.status === 'fulfilled') {
+        return result.value;
+      } else {
+        // Promise rejected - log error and return pending status
+        const order = processingPayouts[index];
+        console.error(
+          `[Verify Payouts Cron] Verification promise rejected for ${order.id}:`,
+          result.reason instanceof Error ? result.reason.message : String(result.reason)
+        );
+        return { orderId: order.id, status: 'pending' as const, error: 'verification_failed' };
+      }
+    });
 
     // Count results
-    const completedCount = results.filter(r => r.status === 'completed').length;
-    const failedCount = results.filter(r => r.status === 'failed').length;
-    const pendingCount = results.filter(r => r.status === 'pending').length;
+    const completedCount = processedResults.filter(r => r.status === 'completed').length;
+    const failedCount = processedResults.filter(r => r.status === 'failed').length;
+    const pendingCount = processedResults.filter(r => r.status === 'pending').length;
 
     const result = {
       success: true,

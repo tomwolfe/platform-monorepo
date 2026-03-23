@@ -35,7 +35,21 @@ export default async function MenuManagementPage(props: { params: Promise<{ rest
     redirect('/onboarding');
   }
 
-  const menuItems = await getMenuItems(restaurantId);
+  const menuItemsResult = await getMenuItems(restaurantId);
+
+  // Handle ServerActionResponse - check for errors
+  if (!menuItemsResult.success) {
+    return (
+      <div className="p-8 max-w-7xl mx-auto">
+        <div className="bg-red-50 border border-red-200 rounded-xl p-6">
+          <h2 className="text-lg font-semibold text-red-900 mb-2">Failed to load menu items</h2>
+          <p className="text-red-700">{menuItemsResult.error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  const menuItems = menuItemsResult.data;
 
   // Group items by category
   const categories = Array.from(new Set(menuItems.map((item: { category: string }) => item.category))) as string[];

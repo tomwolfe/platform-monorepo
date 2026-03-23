@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { TOOLS } from "@repo/mcp-protocol";
-import { SecurityProvider } from "@repo/auth";
+import { createMcpServerRoutes, createResponse } from "@repo/mcp-protocol/server";
 import { randomUUID } from "crypto";
 import { db, orders, orderItems } from "@repo/database";
 import { eq } from "drizzle-orm";
@@ -566,85 +565,5 @@ server.tool(
   }
 );
 
-// Manage active transports
-let transport: SSEServerTransport | null = null;
-
-async function validateRequest(request: NextRequest) {
-  const authHeader = request.headers.get("Authorization");
-  const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
-  
-  if (token) {
-    const payload = await SecurityProvider.verifyServiceToken(token);
-    if (payload) return true;
-  }
-
-  // Fallback to standardized header validation for internal traffic
-  return SecurityProvider.validateHeaders(request.headers);
-}
-
-export async function GET(request: NextRequest) {
-  if (!(await validateRequest(request))) {
-    return new NextResponse("Unauthorized", { status: 401 });
-  }
-
-  const traceId = extractTraceId(request);
-  console.log(`[Trace:${traceId}] MCP SSE connection established`);
-
-  const { readable, writable } = new TransformStream();
-  const writer = writable.getWriter();
-  const encoder = new TextEncoder();
-
-  transport = new SSEServerTransport("/api/mcp", {
-    write: (data: string) => writer.write(encoder.encode(data)),
-    end: () => writer.close(),
-  } as any);
-
-  // Pass traceId to tool context
-  (transport as any).traceId = traceId;
-
-  await server.connect(transport);
-
-  return new NextResponse(readable, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'X-Trace-Id': traceId,
-    },
-  });
-}
-
-export async function POST(request: NextRequest) {
-  if (!(await validateRequest(request))) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  if (!transport) {
-    return NextResponse.json({ error: "No active transport" }, { status: 400 });
-  }
-
-  const traceId = extractTraceId(request);
-
-  try {
-    const body = await request.json();
-    // Attach traceId to transport for tool execution context
-    (transport as any).traceId = traceId;
-    await (transport as any).handlePostRequest(request, NextResponse as any);
-    
-    return new NextResponse("OK", {
-      headers: {
-        'X-Trace-Id': traceId,
-      },
-    });
-  } catch (error: any) {
-    return NextResponse.json({ 
-      error: error.message,
-      traceId,
-    }, { 
-      status: 500,
-      headers: {
-        'X-Trace-Id': traceId,
-      },
-    });
-  }
-}
+// Export standardized MCP routes using factory
+export const { GET, POST } = createMcpServerRoutes(server);

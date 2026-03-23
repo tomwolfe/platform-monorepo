@@ -10,6 +10,7 @@ import { z } from 'zod';
 import Ably from 'ably';
 import { NotifyService } from '@/lib/notifications';
 import { generateApiKey } from '@/lib/auth';
+import { withServerActionHandler, type ServerActionResponse } from '@repo/shared';
 
 const SettingsSchema = z.object({
   openingTime: z.string().nullable(),
@@ -32,6 +33,16 @@ async function verifyOwnership(restaurantId: string) {
 
   if (!restaurant) throw new Error('Forbidden');
   return restaurant;
+}
+
+// Wrapper for ownership-verified actions
+function withOwnership<T extends (...args: any[]) => Promise<any>>(
+  fn: T
+): T {
+  return (async (restaurantId: string, ...rest: any[]) => {
+    await verifyOwnership(restaurantId);
+    return fn(restaurantId, ...rest);
+  }) as T;
 }
 
 export async function redirectToStoreFront(restaurantId?: string) {
@@ -60,28 +71,25 @@ export async function goToDelivery() {
   redirect(`${satelliteUrl}/api/auth/bridge?token=${token}`);
 }
 
-export async function deleteReservation(reservationId: string, restaurantId: string) {
-  await verifyOwnership(restaurantId);
-  try {
+export const deleteReservation = withServerActionHandler(
+  withOwnership(async (reservationId: string, restaurantId: string) => {
     await db.delete(restaurantReservations)
       .where(and(
         eq(restaurantReservations.id, reservationId),
         eq(restaurantReservations.restaurantId, restaurantId)
       ));
     revalidatePath(`/dashboard/${restaurantId}`);
-  } catch (error) {
-    console.error('Failed to delete reservation:', error);
-    throw new Error('Failed to delete reservation');
-  }
-}
+    return { message: 'Reservation deleted successfully' };
+  }),
+  { errorCode: 'DELETE_RESERVATION_FAILED' }
+);
 
-export async function updateReservation(
-  reservationId: string, 
-  restaurantId: string, 
-  updates: { guestName?: string, partySize?: number, startTime?: Date }
-) {
-  await verifyOwnership(restaurantId);
-  try {
+export const updateReservation = withServerActionHandler(
+  withOwnership(async (
+    reservationId: string,
+    restaurantId: string,
+    updates: { guestName?: string, partySize?: number, startTime?: Date }
+  ) => {
     await db.update(restaurantReservations)
       .set({
         ...updates,
@@ -92,48 +100,40 @@ export async function updateReservation(
         eq(restaurantReservations.restaurantId, restaurantId)
       ));
     revalidatePath(`/dashboard/${restaurantId}`);
-  } catch (error) {
-    console.error('Failed to update reservation:', error);
-    throw new Error('Failed to update reservation');
-  }
-}
+    return { message: 'Reservation updated successfully' };
+  }),
+  { errorCode: 'UPDATE_RESERVATION_FAILED' }
+);
 
-export async function updateRestaurantSettings(
-  restaurantId: string,
-  formData: FormData
-) {
-  await verifyOwnership(restaurantId);
+export const updateRestaurantSettings = withServerActionHandler(
+  withOwnership(async (restaurantId: string, formData: FormData) => {
+    const rawData = {
+      openingTime: formData.get('openingTime'),
+      closingTime: formData.get('closingTime'),
+      daysOpen: formData.get('daysOpen'),
+      timezone: formData.get('timezone'),
+      defaultDurationMinutes: parseInt(formData.get('defaultDurationMinutes') as string || '90'),
+    };
 
-  const rawData = {
-    openingTime: formData.get('openingTime'),
-    closingTime: formData.get('closingTime'),
-    daysOpen: formData.get('daysOpen'),
-    timezone: formData.get('timezone'),
-    defaultDurationMinutes: parseInt(formData.get('defaultDurationMinutes') as string || '90'),
-  };
+    const validated = SettingsSchema.parse(rawData);
 
-  const validated = SettingsSchema.parse(rawData);
-
-  try {
     await db.update(restaurants)
       .set({
         ...validated,
       })
       .where(eq(restaurants.id, restaurantId));
-    
-    revalidatePath(`/dashboard/${restaurantId}`);
-  } catch (error) {
-    console.error('Failed to update restaurant settings:', error);
-    throw new Error('Failed to update settings');
-  }
-}
 
-export async function updateTablePositions(
-  tables: { id: string, xPos: number | null, yPos: number | null }[],
-  restaurantId: string
-) {
-  await verifyOwnership(restaurantId);
-  try {
+    revalidatePath(`/dashboard/${restaurantId}`);
+    return { message: 'Settings updated successfully' };
+  }),
+  { errorCode: 'UPDATE_SETTINGS_FAILED' }
+);
+
+export const updateTablePositions = withServerActionHandler(
+  withOwnership(async (
+    tables: { id: string, xPos: number | null, yPos: number | null }[],
+    restaurantId: string
+  ) => {
     for (const table of tables) {
       await db.update(restaurantTables)
         .set({ xPos: table.xPos, yPos: table.yPos, updatedAt: new Date() })
@@ -143,19 +143,17 @@ export async function updateTablePositions(
         ));
     }
     revalidatePath(`/dashboard/${restaurantId}`);
-  } catch (error) {
-    console.error('Failed to update table positions:', error);
-    throw new Error('Failed to update layout');
-  }
-}
+    return { message: 'Layout updated successfully' };
+  }),
+  { errorCode: 'UPDATE_LAYOUT_FAILED' }
+);
 
-export async function updateTableStatus(
-  tableId: string,
-  status: 'vacant' | 'occupied' | 'dirty',
-  restaurantId: string
-) {
-  await verifyOwnership(restaurantId);
-  try {
+export const updateTableStatus = withServerActionHandler(
+  withOwnership(async (
+    tableId: string,
+    status: 'vacant' | 'occupied' | 'dirty',
+    restaurantId: string
+  ) => {
     const [table] = await db.update(restaurantTables)
       .set({ status, updatedAt: new Date() })
       .where(and(
@@ -191,7 +189,7 @@ export async function updateTableStatus(
           venue: {
             id: restaurant.id,
             name: restaurant.name,
-            location: restaurant.timezone // Simplified, usually would be address
+            location: restaurant.timezone
           },
           table: {
             id: table.id,
@@ -202,7 +200,6 @@ export async function updateTableStatus(
         const { signPayload } = await import('@/lib/auth');
         const { signature, timestamp } = await signPayload(payload, webhookSecret);
 
-        // Fire and forget webhook to OpenDeliver
         fetch(openDeliverWebhookUrl, {
           method: 'POST',
           headers: {
@@ -215,14 +212,13 @@ export async function updateTableStatus(
       }
     }
 
-    // 3. Intention Engine: Notify when table is vacated for proactive re-engagement
+    // 3. Intention Engine: Notify when table is vacated
     const intentionEngineUrl = process.env.INTENTION_ENGINE_API_URL;
     const internalSystemKey = process.env.INTERNAL_SYSTEM_KEY;
 
-    // CRITICAL: Validate environment variables before attempting webhook
     if (status === 'vacant' && intentionEngineUrl) {
       if (!internalSystemKey) {
-        console.error('[NervousSystemObserver] CRITICAL: INTERNAL_SYSTEM_KEY is not configured. Proactive re-engagement disabled.');
+        console.error('[NervousSystemObserver] CRITICAL: INTERNAL_SYSTEM_KEY is not configured.');
       }
 
       const restaurant = await db.query.restaurants.findFirst({
@@ -247,21 +243,16 @@ export async function updateTableStatus(
           timestamp: new Date().toISOString(),
         };
 
-        // Webhook with retry logic for NervousSystemObserver
         const webhookHeaders: Record<string, string> = {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         };
 
-        // Only add internal key if available
         if (internalSystemKey) {
           webhookHeaders['x-internal-system-key'] = internalSystemKey;
         }
 
-        // Fire webhook with retry logic (3 attempts with exponential backoff)
         const maxRetries = 3;
-        let lastError: Error | null = null;
-
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
           try {
             const response = await fetch(`${intentionEngineUrl}/api/webhooks`, {
@@ -276,9 +267,9 @@ export async function updateTableStatus(
             }
 
             console.log(`[NervousSystemObserver] Webhook delivered successfully (attempt ${attempt})`);
-            break; // Success - exit retry loop
+            break;
           } catch (err) {
-            lastError = err instanceof Error ? err : new Error(String(err));
+            const lastError = err instanceof Error ? err : new Error(String(err));
 
             if (attempt < maxRetries) {
               const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
@@ -289,7 +280,7 @@ export async function updateTableStatus(
               await new Promise(resolve => setTimeout(resolve, backoffMs));
             } else {
               console.error(
-                `[NervousSystemObserver] CRITICAL: Webhook failed after ${maxRetries} attempts. Proactive re-engagement WILL NOT trigger for table ${table.id}.`,
+                `[NervousSystemObserver] CRITICAL: Webhook failed after ${maxRetries} attempts.`,
                 lastError
               );
             }
@@ -299,21 +290,18 @@ export async function updateTableStatus(
     }
 
     revalidatePath(`/dashboard/${restaurantId}`);
-  } catch (error) {
-    console.error('Failed to update table status:', error);
-    throw new Error('Failed to update status');
-  }
-}
+    return { message: 'Table status updated successfully' };
+  }),
+  { errorCode: 'UPDATE_TABLE_STATUS_FAILED' }
+);
 
-export async function addTable(restaurantId: string) {
-  await verifyOwnership(restaurantId);
-  try {
-    // Find highest table number to suggest next
+export const addTable = withServerActionHandler(
+  withOwnership(async (restaurantId: string) => {
     const existingTables = await db.query.restaurantTables.findMany({
       where: eq(restaurantTables.restaurantId, restaurantId),
     });
-    
-    const nextNumber = existingTables.length > 0 
+
+    const nextNumber = existingTables.length > 0
       ? (Math.max(...existingTables.map((t: any) => parseInt(t.tableNumber) || 0)) + 1).toString()
       : "1";
 
@@ -326,36 +314,32 @@ export async function addTable(restaurantId: string) {
       yPos: 50,
       status: 'vacant',
     });
-    
-    revalidatePath(`/dashboard/${restaurantId}`);
-  } catch (error) {
-    console.error('Failed to add table:', error);
-    throw new Error('Failed to add table');
-  }
-}
 
-export async function deleteTable(tableId: string, restaurantId: string) {
-  await verifyOwnership(restaurantId);
-  try {
+    revalidatePath(`/dashboard/${restaurantId}`);
+    return { message: 'Table added successfully', tableNumber: nextNumber };
+  }),
+  { errorCode: 'ADD_TABLE_FAILED' }
+);
+
+export const deleteTable = withServerActionHandler(
+  withOwnership(async (tableId: string, restaurantId: string) => {
     await db.delete(restaurantTables)
       .where(and(
         eq(restaurantTables.id, tableId),
         eq(restaurantTables.restaurantId, restaurantId)
       ));
     revalidatePath(`/dashboard/${restaurantId}`);
-  } catch (error) {
-    console.error('Failed to delete table:', error);
-    throw new Error('Failed to delete table');
-  }
-}
+    return { message: 'Table deleted successfully' };
+  }),
+  { errorCode: 'DELETE_TABLE_FAILED' }
+);
 
-export async function updateTableDetails(
-  tableId: string,
-  restaurantId: string,
-  details: { tableNumber: string, minCapacity: number, maxCapacity: number }
-) {
-  await verifyOwnership(restaurantId);
-  try {
+export const updateTableDetails = withServerActionHandler(
+  withOwnership(async (
+    tableId: string,
+    restaurantId: string,
+    details: { tableNumber: string, minCapacity: number, maxCapacity: number }
+  ) => {
     await db.update(restaurantTables)
       .set({
         tableNumber: details.tableNumber,
@@ -368,129 +352,100 @@ export async function updateTableDetails(
         eq(restaurantTables.restaurantId, restaurantId)
       ));
     revalidatePath(`/dashboard/${restaurantId}`);
-  } catch (error) {
-    console.error('Failed to update table details:', error);
-    throw new Error('Failed to update table details');
-  }
-}
+    return { message: 'Table details updated successfully' };
+  }),
+  { errorCode: 'UPDATE_TABLE_DETAILS_FAILED' }
+);
 
-export async function updateWaitlistStatus(
-  waitlistId: string,
-  restaurantId: string,
-  status: 'waiting' | 'notified' | 'seated'
-) {
-  await verifyOwnership(restaurantId);
+export const updateWaitlistStatus = withServerActionHandler(
+  withOwnership(async (
+    waitlistId: string,
+    restaurantId: string,
+    status: 'waiting' | 'notified' | 'seated'
+  ) => {
+    const [entry] = await db.update(restaurantWaitlist)
+      .set({ status, updatedAt: new Date() })
+      .where(and(
+        eq(restaurantWaitlist.id, waitlistId),
+        eq(restaurantWaitlist.restaurantId, restaurantId)
+      ))
+      .returning();
 
-  const [entry] = await db.update(restaurantWaitlist)
-    .set({ status, updatedAt: new Date() })
-    .where(and(
-      eq(restaurantWaitlist.id, waitlistId),
-      eq(restaurantWaitlist.restaurantId, restaurantId)
-    ))
-    .returning();
+    if (!entry) {
+      throw new Error("Waitlist entry not found");
+    }
 
-  if (!entry) throw new Error("Waitlist entry not found");
+    if (status === 'notified') {
+      await NotifyService.notifyGuestNext(entry.guestEmail, entry.guestName);
+    }
 
-  if (status === 'notified') {
-    await NotifyService.notifyGuestNext(entry.guestEmail, entry.guestName);
-  }
+    if (process.env.ABLY_API_KEY) {
+      const ably = new Ably.Rest(process.env.ABLY_API_KEY);
+      const channel = ably.channels.get(`restaurant:${restaurantId}`);
+      await channel.publish('restaurantWaitlist-updated', {
+        id: entry.id,
+        status: entry.status,
+      });
+    }
 
-  // Real-time update via Ably
-  if (process.env.ABLY_API_KEY) {
-    const ably = new Ably.Rest(process.env.ABLY_API_KEY);
-    const channel = ably.channels.get(`restaurant:${restaurantId}`);
-    await channel.publish('restaurantWaitlist-updated', {
-      id: entry.id,
-      status: entry.status,
-    });
-  }
+    revalidatePath(`/dashboard/${restaurantId}`);
+    return entry;
+  }),
+  { errorCode: 'UPDATE_WAITLIST_STATUS_FAILED' }
+);
 
-  revalidatePath(`/dashboard/${restaurantId}`);
-  return entry;
-}
+export const regenerateApiKey = withServerActionHandler(
+  withOwnership(async (restaurantId: string) => {
+    const newKey = generateApiKey();
 
-export async function regenerateApiKey(restaurantId: string) {
-  await verifyOwnership(restaurantId);
-  
-  const newKey = generateApiKey();
-  
-  await db.update(restaurants)
-    .set({ apiKey: newKey })
-    .where(eq(restaurants.id, restaurantId));
-    
-  revalidatePath(`/dashboard/${restaurantId}`);
-  return { apiKey: newKey };
-}
-
-/**
- * Link Restaurant Wallet Server Action
- *
- * Allows a restaurant owner to link their crypto wallet for receiving payments.
- * Stores the EIP-55 formatted wallet address in the database.
- *
- * Note: Stripe payments are deprecated - use crypto wallet payments instead.
- */
-export async function linkRestaurantWallet(
-  restaurantId: string,
-  walletAddress: string
-): Promise<{ success: boolean; error?: string }> {
-  await verifyOwnership(restaurantId);
-
-  // Validate wallet address format (basic EIP-55 check)
-  if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
-    return { success: false, error: 'Invalid wallet address format. Must be a valid Ethereum address (0x...)' };
-  }
-
-  try {
     await db.update(restaurants)
-      .set({
-        walletAddress,
-      })
+      .set({ apiKey: newKey })
       .where(eq(restaurants.id, restaurantId));
 
     revalidatePath(`/dashboard/${restaurantId}`);
-    return { success: true };
-  } catch (error) {
-    console.error('[LinkRestaurantWallet] Error:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to link wallet',
-    };
-  }
-}
+    return { apiKey: newKey };
+  }),
+  { errorCode: 'REGENERATE_API_KEY_FAILED' }
+);
+
+/**
+ * Link Restaurant Wallet Server Action
+ */
+export const linkRestaurantWallet = withServerActionHandler(
+  withOwnership(async (restaurantId: string, walletAddress: string) => {
+    if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
+      throw new Error('Invalid wallet address format. Must be a valid Ethereum address (0x...)');
+    }
+
+    await db.update(restaurants)
+      .set({ walletAddress })
+      .where(eq(restaurants.id, restaurantId));
+
+    revalidatePath(`/dashboard/${restaurantId}`);
+    return { message: 'Wallet linked successfully' };
+  }),
+  { errorCode: 'LINK_WALLET_FAILED' }
+);
 
 /**
  * Get Restaurant Wallet Server Action
- *
- * Returns the linked wallet address for the restaurant.
  */
-export async function getRestaurantWallet(
-  restaurantId: string
-): Promise<{ success: boolean; walletAddress?: string | null; error?: string }> {
-  try {
+export const getRestaurantWallet = withServerActionHandler(
+  async (restaurantId: string) => {
     const restaurant = await db.query.restaurants.findFirst({
       where: eq(restaurants.id, restaurantId),
-      columns: {
-        walletAddress: true,
-      },
+      columns: { walletAddress: true },
     });
 
-    return { success: true, walletAddress: restaurant?.walletAddress };
-  } catch (error) {
-    console.error('[GetRestaurantWallet] Error:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to get wallet',
-    };
-  }
-}
+    return { walletAddress: restaurant?.walletAddress };
+  },
+  { errorCode: 'GET_WALLET_FAILED' }
+);
 
 // Menu Management Actions
 
-export async function getMenuItems(restaurantId: string) {
-  await verifyOwnership(restaurantId);
-  
-  try {
+export const getMenuItems = withServerActionHandler(
+  withOwnership(async (restaurantId: string) => {
     const products = await db
       .select({
         id: restaurantProducts.id,
@@ -505,29 +460,22 @@ export async function getMenuItems(restaurantId: string) {
       .where(eq(restaurantProducts.restaurantId, restaurantId));
 
     return products;
-  } catch (error) {
-    console.error('Failed to fetch menu items:', error);
-    throw new Error('Failed to fetch menu items');
-  }
-}
+  }),
+  { errorCode: 'GET_MENU_ITEMS_FAILED' }
+);
 
-export async function createMenuItem(
-  restaurantId: string,
-  formData: FormData
-) {
-  await verifyOwnership(restaurantId);
+export const createMenuItem = withServerActionHandler(
+  withOwnership(async (restaurantId: string, formData: FormData) => {
+    const name = formData.get('name') as string;
+    const description = formData.get('description') as string;
+    const price = parseFloat(formData.get('price') as string);
+    const category = formData.get('category') as string;
+    const quantity = parseInt(formData.get('quantity') as string) || 50;
 
-  const name = formData.get('name') as string;
-  const description = formData.get('description') as string;
-  const price = parseFloat(formData.get('price') as string);
-  const category = formData.get('category') as string;
-  const quantity = parseInt(formData.get('quantity') as string) || 50;
+    if (!name || !price || !category) {
+      throw new Error('Name, price, and category are required');
+    }
 
-  if (!name || !price || !category) {
-    throw new Error('Name, price, and category are required');
-  }
-
-  try {
     const [product] = await db.insert(restaurantProducts).values({
       restaurantId,
       name,
@@ -536,28 +484,23 @@ export async function createMenuItem(
       category,
     }).returning();
 
-    // Create inventory entry
     await db.insert(inventoryLevels).values({
       productId: product.id,
       availableQuantity: quantity,
     });
 
     revalidatePath(`/dashboard/${restaurantId}`);
-    return { success: true, productId: product.id };
-  } catch (error) {
-    console.error('Failed to create menu item:', error);
-    throw new Error('Failed to create menu item');
-  }
-}
+    return { productId: product.id };
+  }),
+  { errorCode: 'CREATE_MENU_ITEM_FAILED' }
+);
 
-export async function updateMenuItem(
-  productId: string,
-  restaurantId: string,
-  updates: { name?: string; description?: string; price?: number; category?: string }
-) {
-  await verifyOwnership(restaurantId);
-
-  try {
+export const updateMenuItem = withServerActionHandler(
+  withOwnership(async (
+    productId: string,
+    restaurantId: string,
+    updates: { name?: string; description?: string; price?: number; category?: string }
+  ) => {
     await db.update(restaurantProducts)
       .set({
         ...updates,
@@ -569,41 +512,26 @@ export async function updateMenuItem(
       ));
 
     revalidatePath(`/dashboard/${restaurantId}`);
-    return { success: true };
-  } catch (error) {
-    console.error('Failed to update menu item:', error);
-    throw new Error('Failed to update menu item');
-  }
-}
+    return { message: 'Menu item updated successfully' };
+  }),
+  { errorCode: 'UPDATE_MENU_ITEM_FAILED' }
+);
 
-export async function updateMenuItemQuantity(
-  productId: string,
-  restaurantId: string,
-  quantity: number
-) {
-  await verifyOwnership(restaurantId);
-
-  try {
+export const updateMenuItemQuantity = withServerActionHandler(
+  withOwnership(async (productId: string, restaurantId: string, quantity: number) => {
     await db.update(inventoryLevels)
       .set({ availableQuantity: quantity, updatedAt: new Date() })
       .where(eq(inventoryLevels.productId, productId));
 
     revalidatePath(`/dashboard/${restaurantId}`);
-    return { success: true };
-  } catch (error) {
-    console.error('Failed to update quantity:', error);
-    throw new Error('Failed to update quantity');
-  }
-}
+    return { message: 'Quantity updated successfully' };
+  }),
+  { errorCode: 'UPDATE_QUANTITY_FAILED' }
+);
 
-export async function deleteMenuItem(productId: string, restaurantId: string) {
-  await verifyOwnership(restaurantId);
-
-  try {
-    // Delete inventory first (cascade should handle this, but being explicit)
+export const deleteMenuItem = withServerActionHandler(
+  withOwnership(async (productId: string, restaurantId: string) => {
     await db.delete(inventoryLevels).where(eq(inventoryLevels.productId, productId));
-    
-    // Delete product
     await db.delete(restaurantProducts)
       .where(and(
         eq(restaurantProducts.id, productId),
@@ -611,9 +539,7 @@ export async function deleteMenuItem(productId: string, restaurantId: string) {
       ));
 
     revalidatePath(`/dashboard/${restaurantId}`);
-    return { success: true };
-  } catch (error) {
-    console.error('Failed to delete menu item:', error);
-    throw new Error('Failed to delete menu item');
-  }
-}
+    return { message: 'Menu item deleted successfully' };
+  }),
+  { errorCode: 'DELETE_MENU_ITEM_FAILED' }
+);

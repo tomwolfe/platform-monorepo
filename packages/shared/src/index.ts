@@ -19,6 +19,9 @@ export * from './validation-middleware';
 export * from './security-middleware';
 export * from './security-audit';
 
+// Phase 2.1: Caching Strategy
+export * from './cache-middleware';
+
 // Phase 1: Golden Path (System Spine)
 export * from './golden-path';
 // Note: tracing exports ExecutionTraceEntry (type), ExecutionTraceEntrySchema (schema)

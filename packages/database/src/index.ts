@@ -240,6 +240,20 @@ export type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
 // Re-export sql directly
 export { sql } from 'drizzle-orm';
 
+// Database optimization utilities
+export {
+  INDEX_DEFINITIONS,
+  createDatabaseIndexes,
+  dropDatabaseIndexes,
+  getIndexStats,
+  getSlowQueries,
+  optimizeQuery,
+  batchLoad,
+  logSlowQuery,
+  measureQuery,
+  type QueryOptimizationOptions,
+} from './optimization';
+
 // Import drizzle-orm comparison functions with aliases
 import {
   eq as drizzleEq,

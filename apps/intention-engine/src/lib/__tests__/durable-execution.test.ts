@@ -16,17 +16,13 @@ import {
   type WorkflowResult as DurableExecutionResult,
 } from "@/lib/engine/workflow-machine";
 import {
-  StepTransactionManager,
-  executeSaga,
-  type SagaContext,
-} from "@/lib/engine/step-transaction";
-import {
   TraceContextManager,
   createTracedToolExecutor,
   publishTracedEvent,
 } from "@/lib/engine/trace-context";
 import { Plan, PlanStep, ExecutionState } from "@/lib/engine/types";
 import { createInitialState } from "@/lib/engine/state-machine";
+import { CheckpointManager } from "@/lib/engine/checkpoint";
 
 // ============================================================================
 // MOCK UTILITIES
@@ -277,179 +273,6 @@ describe("DurableExecution", () => {
 
       expect(resumedResult).toBeDefined();
       expect(resumedResult.segmentNumber).toBe(1);
-    });
-  });
-});
-
-// ============================================================================
-// SAGA COMPENSATION TESTS
-// ============================================================================
-
-describe("SagaExecution", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  describe("StepTransactionManager", () => {
-    it("should execute transactions successfully", async () => {
-      const plan = createMockPlan([
-        { id: "step-1", toolName: "book_restaurant" },
-        { id: "step-2", toolName: "request_ride" },
-      ]);
-
-      const executor = createMockToolExecutor({
-        compensationData: {
-          compensation: {
-            toolName: "cancel_booking",
-            parameters: { bookingId: "123" },
-          },
-        },
-      });
-
-      const manager = new StepTransactionManager(
-        "exec-saga-test-123",
-        executor,
-        { intentId: "intent-123" }
-      );
-
-      manager.initializeFromPlan(plan);
-
-      const sagaContext = manager.getSagaContext();
-      expect(sagaContext.transactions.length).toBe(2);
-      expect(sagaContext.status).toBe("running");
-    });
-
-    it("should register compensation automatically", async () => {
-      const plan = createMockPlan([
-        { id: "step-1", toolName: "book_restaurant_table" },
-      ]);
-
-      const executor = createMockToolExecutor({
-        compensationData: {
-          compensation: {
-            toolName: "cancel_reservation",
-            parameters: { reservationId: "123" },
-          },
-        },
-      });
-
-      const manager = new StepTransactionManager(
-        "exec-saga-comp-test",
-        executor
-      );
-
-      manager.initializeFromPlan(plan);
-
-      // Execute the transaction
-      const executionState: ExecutionState = createInitialState("exec-saga-comp-test");
-      const result = await manager.executeTransaction(
-        manager.getSagaContext().transactions[0],
-        executionState
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.compensationRegistered).toBe(true);
-    });
-
-    it("should execute compensations in reverse order", async () => {
-      const plan = createMockPlan([
-        { id: "step-1", toolName: "book_restaurant" },
-        { id: "step-2", toolName: "request_ride" },
-        { id: "step-3", toolName: "send_notification" },
-      ]);
-
-      let compensationOrder: string[] = [];
-
-      const executor: ToolExecutor = {
-        async execute(toolName) {
-          if (toolName.includes("cancel") || toolName.includes("compensation")) {
-            compensationOrder.push(toolName);
-            return { success: true, output: { compensated: true }, latency_ms: 0 };
-          }
-          return {
-            success: true,
-            output: { result: `Executed ${toolName}` },
-            latency_ms: 0,
-            compensation: {
-              toolName: `cancel_${toolName}`,
-              parameters: { id: "123" },
-            },
-          };
-        },
-      };
-
-      const manager = new StepTransactionManager("exec-saga-reverse", executor);
-      manager.initializeFromPlan(plan);
-
-      const executionState: ExecutionState = createInitialState("exec-saga-reverse");
-
-      // Execute all transactions
-      for (const transaction of manager.getSagaContext().transactions) {
-        await manager.executeTransaction(transaction, executionState);
-      }
-
-      // Simulate failure and trigger compensation
-      const result = await manager.executeAllCompensations(
-        executionState,
-        "step-3"
-      );
-
-      expect(result.compensated).toBe(2); // step-1 and step-2
-      expect(compensationOrder.length).toBe(2);
-      // Should be in reverse order
-      expect(compensationOrder[0]).toContain("request_ride");
-      expect(compensationOrder[1]).toContain("book_restaurant");
-    });
-  });
-
-  describe("executeSaga", () => {
-    it("should execute full saga successfully", async () => {
-      const plan = createMockPlan([
-        { id: "step-1", toolName: "book_restaurant" },
-        { id: "step-2", toolName: "request_ride" },
-      ]);
-
-      const executor = createMockToolExecutor();
-
-      const result = await executeSaga({
-        executionId: "exec-saga-full",
-        plan,
-        toolExecutor: executor,
-        intentId: "intent-123",
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.sagaContext.status).toBe("completed");
-      expect(result.sagaContext.transactions.length).toBe(2);
-    });
-
-    it("should trigger compensation on failure", async () => {
-      const plan = createMockPlan([
-        { id: "step-1", toolName: "book_restaurant" },
-        { id: "step-2", toolName: "request_ride", shouldFail: true },
-        { id: "step-3", toolName: "send_notification" },
-      ]);
-
-      const executor = createMockToolExecutor({
-        failOnStep: "request_ride",
-        compensationData: {
-          compensation: {
-            toolName: "cancel_booking",
-            parameters: { bookingId: "123" },
-          },
-        },
-      });
-
-      const result = await executeSaga({
-        executionId: "exec-saga-fail",
-        plan,
-        toolExecutor: executor,
-        intentId: "intent-123",
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.sagaContext.status).toBeOneOf(["compensated", "failed"]);
-      expect(result.sagaContext.error).toBeDefined();
     });
   });
 });

@@ -30,6 +30,10 @@ import { isTimingSafeEqual } from '@repo/shared/utils/crypto';
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
+// RELIABILITY FIX: Process orders in batches to avoid RPC rate limits
+const BATCH_SIZE = 5;
+const MAX_ORDERS_PER_RUN = 50;
+
 export async function POST(req: NextRequest) {
   try {
     // Verify cron authentication
@@ -188,7 +192,9 @@ export async function GET(req: NextRequest) {
   }
 
   const providedSecret = authHeader.substring(7);
-  if (!CRON_SECRET || providedSecret !== CRON_SECRET) {
+  
+  // TIMING-SAFE COMPARISON: Prevents timing attacks on secret validation
+  if (!CRON_SECRET || !isTimingSafeEqual(providedSecret, CRON_SECRET)) {
     return NextResponse.json(
       { error: 'Unauthorized' },
       { status: 401 }

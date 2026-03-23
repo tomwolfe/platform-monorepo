@@ -123,67 +123,84 @@ export async function GET(req: NextRequest) {
       transport: fallback(BASE_RPC_URLS.map((url) => http(url))),
     });
 
-    // CRITICAL: Use Promise.allSettled for fault-tolerant parallel verification
-    // This prevents batch crashes when individual RPC calls fail
-    const verificationPromises = processingPayouts.map(async (order: { id: string; payoutTxHash: string | null; payoutStatus: string | null }) => {
-      try {
-        const hash = order.payoutTxHash as `0x${string}`;
+    // RELIABILITY FIX: Process verifications in batches to avoid RPC rate limits
+    // Public RPC nodes (like mainnet.base.org) will return 429 Too Many Requests
+    // when hit with 50 concurrent requests. Process in batches of 5.
+    const BATCH_SIZE = 5;
+    const results: Array<{ orderId: string; status: 'completed' | 'failed' | 'pending'; reason?: string; error?: string }> = [];
 
-        // Get transaction receipt (non-blocking, parallel execution)
-        const receipt = await publicClient.getTransactionReceipt({ hash });
+    // Process in batches
+    for (let i = 0; i < processingPayouts.length; i += BATCH_SIZE) {
+      const batch = processingPayouts.slice(i, i + BATCH_SIZE);
+      console.log(`[Verify Payouts Cron] Processing batch ${Math.floor(i / BATCH_SIZE) + 1} (${batch.length} payouts)`);
 
-        if (receipt.status === 'success') {
-          console.log(`[Verify Payouts Cron] Payout confirmed on-chain: ${order.id}`);
+      const batchPromises = batch.map(async (order: { id: string; payoutTxHash: string | null; payoutStatus: string | null }) => {
+        try {
+          const hash = order.payoutTxHash as `0x${string}`;
 
-          // Mark as completed
-          await getDb().update(orders)
-            .set({
-              payoutStatus: 'completed',
-              payoutProcessedAt: new Date(),
-            })
-            .where(eq(orders.id, order.id));
+          // Get transaction receipt (parallel within batch)
+          const receipt = await publicClient.getTransactionReceipt({ hash });
 
-          return { orderId: order.id, status: 'completed' as const };
-        } else {
-          console.error(`[Verify Payouts Cron] Payout reverted on-chain: ${order.id}`);
+          if (receipt.status === 'success') {
+            console.log(`[Verify Payouts Cron] Payout confirmed on-chain: ${order.id}`);
 
-          // Mark as failed
-          await getDb().update(orders)
-            .set({ payoutStatus: 'failed' })
-            .where(eq(orders.id, order.id));
+            // Mark as completed
+            await getDb().update(orders)
+              .set({
+                payoutStatus: 'completed',
+                payoutProcessedAt: new Date(),
+              })
+              .where(eq(orders.id, order.id));
 
-          return { orderId: order.id, status: 'failed' as const, reason: 'reverted' };
+            return { orderId: order.id, status: 'completed' as const };
+          } else {
+            console.error(`[Verify Payouts Cron] Payout reverted on-chain: ${order.id}`);
+
+            // Mark as failed
+            await getDb().update(orders)
+              .set({ payoutStatus: 'failed' })
+              .where(eq(orders.id, order.id));
+
+            return { orderId: order.id, status: 'failed' as const, reason: 'reverted' };
+          }
+        } catch (error) {
+          // Transaction not found yet (still pending) - leave as processing
+          // It will be picked up on the next cron run
+          console.log(`[Verify Payouts Cron] Payout still pending: ${order.id} - ${error instanceof Error ? error.message : 'Unknown error'}`);
+          return { orderId: order.id, status: 'pending' as const };
         }
-      } catch (error) {
-        // Transaction not found yet (still pending) - leave as processing
-        // It will be picked up on the next cron run
-        console.log(`[Verify Payouts Cron] Payout still pending: ${order.id} - ${error instanceof Error ? error.message : 'Unknown error'}`);
-        return { orderId: order.id, status: 'pending' as const };
-      }
-    });
+      });
 
-    // Wait for all verifications to complete (fault-tolerant)
-    const results = await Promise.allSettled(verificationPromises);
+      // Wait for batch to complete before starting next batch
+      const batchResults = await Promise.allSettled(batchPromises);
 
-    // Process settled results - extract fulfilled values and log rejections
-    const processedResults = results.map((result, index) => {
-      if (result.status === 'fulfilled') {
-        return result.value;
-      } else {
-        // Promise rejected - log error and return pending status
-        const order = processingPayouts[index];
-        console.error(
-          `[Verify Payouts Cron] Verification promise rejected for ${order.id}:`,
-          result.reason instanceof Error ? result.reason.message : String(result.reason)
-        );
-        return { orderId: order.id, status: 'pending' as const, error: 'verification_failed' };
+      // Process batch results
+      for (let j = 0; j < batchResults.length; j++) {
+        const result = batchResults[j];
+        const order = batch[j];
+
+        if (result.status === 'fulfilled') {
+          results.push(result.value);
+        } else {
+          // Promise rejected - log error and return pending status
+          console.error(
+            `[Verify Payouts Cron] Verification promise rejected for ${order.id}:`,
+            result.reason instanceof Error ? result.reason.message : String(result.reason)
+          );
+          results.push({ orderId: order.id, status: 'pending' as const, error: 'verification_failed' });
+        }
       }
-    });
+
+      // Small delay between batches to avoid rate limiting
+      if (i + BATCH_SIZE < processingPayouts.length) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    }
 
     // Count results
-    const completedCount = processedResults.filter(r => r.status === 'completed').length;
-    const failedCount = processedResults.filter(r => r.status === 'failed').length;
-    const pendingCount = processedResults.filter(r => r.status === 'pending').length;
+    const completedCount = results.filter(r => r.status === 'completed').length;
+    const failedCount = results.filter(r => r.status === 'failed').length;
+    const pendingCount = results.filter(r => r.status === 'pending').length;
 
     const result = {
       success: true,

@@ -64,6 +64,7 @@ import { redis } from "../redis-client";
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { captureStateDiffOnSave } from "./state-diff-viewer";
+import { after } from "next/server";
 
 // ============================================================================
 // LLM CIRCUIT BREAKER CONFIGURATION
@@ -582,8 +583,15 @@ export class WorkflowMachine {
         }).catch(() => { /* Ignore */ }),
       ];
 
-      // Fire and forget - don't block execution
-      void Promise.all(warmPromises);
+      // RELIABILITY FIX: Use next/server's after() to prevent Vercel from freezing lambdas
+      // Without after(), these fetch requests would be terminated mid-flight
+      if (typeof after === 'function') {
+        // Production: Use after() to keep lambda alive for background tasks
+        after(() => Promise.all(warmPromises).catch(() => { /* Ignore errors */ }));
+      } else {
+        // Fallback for non-Next.js environments (tests, local dev)
+        void Promise.all(warmPromises);
+      }
 
       console.log(
         `[WorkflowMachine] Infrastructure-aware pre-warm for step ${nextStepIndex} ` +

@@ -56,8 +56,12 @@ import {
   getCompensation,
   mapCompensationParameters,
   IDEMPOTENT_TOOLS,
+  DB_REFLECTED_SCHEMAS,
+  ToolInput,
+  getTypedToolEntry,
+  validateToolParams,
+  type AllToolsMap,
 } from "@repo/mcp-protocol";
-import { DB_REFLECTED_SCHEMAS } from "@repo/mcp-protocol";
 import { NormalizationService, createFailoverPolicyEngine, FailoverPolicyEngine, getLLMFailureTriageService, createLLMFailureTriageService } from "@repo/shared";
 import { verifyPlan, DEFAULT_SAFETY_POLICY, SafetyPolicy } from "./verifier";
 import { redis } from "../redis-client";
@@ -210,7 +214,7 @@ export interface WorkflowResult {
     message: string;
     stepId?: string;
     stepToolName?: string;
-    logs?: any;
+    logs?: unknown;
   };
 }
 
@@ -1076,6 +1080,35 @@ export class WorkflowMachine {
           }
         }
 
+        // TYPE-SAFE PARAMETER VALIDATION
+        // Validate resolved parameters against Zod schema from @repo/mcp-protocol
+        // This replaces all `any` types with strictly inferred types from the tool registry
+        try {
+          const validatedParams = validateToolParams(step.tool_name, resolvedParameters);
+          // Replace resolvedParameters with validated (type-safe) version
+          Object.assign(resolvedParameters, validatedParams);
+        } catch (validationError) {
+          console.error(
+            `[WorkflowMachine] Parameter validation failed for step ${step.id} (${step.tool_name}):`,
+            validationError instanceof Error ? validationError.message : validationError
+          );
+
+          return {
+            stepState: {
+              step_id: step.id,
+              status: "failed",
+              error: {
+                code: "PARAMETER_VALIDATION_FAILED",
+                message: validationError instanceof Error ? validationError.message : "Parameter validation failed",
+                httpCode: 400,
+              },
+              completed_at: new Date().toISOString(),
+              latency_ms: 0,
+              attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+            },
+          };
+        }
+
         // IDEMPOTENCY CHECK - Enhanced with Semantic Checksum
         // Uses SHA-256(toolName + sortedParameters) for stricter idempotency
         // CRITICAL FIX: Salt hash with userId to prevent cross-user blocking
@@ -1880,7 +1913,17 @@ export class WorkflowMachine {
     actionType: string,
     step: PlanStep,
     originalParams: Record<string, unknown>,
-    policyResult: any
+    policyResult: {
+      recommended_action: {
+        type: string;
+        parameters?: Record<string, unknown>;
+        message_template?: string;
+      };
+      policy?: {
+        id: string;
+        name: string;
+      };
+    }
   ): Promise<Record<string, unknown> | null> {
     switch (actionType) {
       case 'SUGGEST_ALTERNATIVE_TIME': {

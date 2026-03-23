@@ -441,21 +441,34 @@ export async function verifyInternalToken(token: string) {
 
 /**
  * signServiceToken - For service-to-service communication
+ * 
+ * ZERO-TRUST UPGRADE: Now uses asymmetric JWT (RS256) instead of symmetric (HS256)
+ * - Private key stays in Intention Engine
+ * - Satellite apps verify with public key only
+ * - Compromise of satellite doesn't expose signing capability
  */
 export async function signServiceToken(payload: Record<string, unknown> = {}, expires: string = '5m') {
-  const secret = getSecret();
-  return await new SignJWT(payload)
-    .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt()
-    .setExpirationTime(expires)
-    .setIssuer('internal-service')
-    .sign(secret);
+  // Use asymmetric JWT for Zero-Trust security
+  return await signAsymmetricJWT(
+    payload,
+    { issuer: 'intention-engine', audience: 'internal-service', expiresIn: expires }
+  );
 }
 
 /**
  * verifyServiceToken - Verifies a service-to-service token
+ * 
+ * ZERO-TRUST UPGRADE: Now verifies using public key (RS256)
+ * Supports hybrid verification (RS256 preferred, HS256 fallback for migration)
  */
 export async function verifyServiceToken(token: string) {
+  // Try asymmetric verification first (RS256)
+  const asymmetricPayload = await verifyAsymmetricJWT(token, 'intention-engine', 'internal-service');
+  if (asymmetricPayload) {
+    return asymmetricPayload;
+  }
+
+  // Fallback to symmetric verification for migration period
   const secret = getSecret();
   try {
     const { payload } = await jwtVerify(token, secret, {

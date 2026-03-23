@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { getDb, restaurants, eq } from "@repo/database";
 import { redis } from './redis';
-import { verifyServiceToken, verifyScopedJWT, SecurityProvider, type ScopedJWTPayload } from '@repo/auth';
+import { verifyServiceToken, verifyScopedJWT, verifyAsymmetricJWT, SecurityProvider, type ScopedJWTPayload, type AsymmetricJWTPayload } from '@repo/auth';
 
 export interface AuthContext {
   restaurantId?: string;
@@ -14,9 +14,14 @@ export interface AuthContext {
  * Validates authentication using Zero-Trust JWT tokens.
  *
  * Security Model:
- * - Internal service-to-service: Requires Bearer JWT token
+ * - Internal service-to-service: Requires Bearer JWT token (RS256 asymmetric or HS256 fallback)
  * - External clients: Requires API key (legacy, being phased out)
  * - Scoped permissions: Optional JWT with tool-level permissions
+ *
+ * Zero-Trust Upgrade:
+ * - Prefers RS256 asymmetric verification (public key only, no shared secrets)
+ * - Falls back to HS256 symmetric verification for migration period
+ * - Each service has unique identity (iss/aud claims)
  *
  * Removed: Raw INTERNAL_SYSTEM_KEY header check (insecure pattern)
  *
@@ -31,11 +36,27 @@ export async function validateRequest(req: NextRequest): Promise<{
   const authHeader = req.headers.get('authorization');
   const apiKey = req.headers.get('x-api-key');
 
-  // Priority 1: JWT Service Token (Zero-Trust Standard)
+  // Priority 1: Asymmetric JWT (RS256 - Zero-Trust Standard)
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.substring(7);
 
-    // Try scoped JWT first (has tool-level permissions)
+    // Try asymmetric verification first (RS256 - public key)
+    const asymmetricPayload = await verifyAsymmetricJWT(token, 'intention-engine', 'table-stack');
+    if (asymmetricPayload) {
+      console.log(
+        `[Auth] Asymmetric JWT (RS256) verified for service=${asymmetricPayload.iss}, ` +
+        `sub=${asymmetricPayload.sub || 'unknown'}`
+      );
+      return {
+        context: {
+          isInternal: true,
+          restaurantId: asymmetricPayload.restaurantId as string | undefined,
+          traceId: asymmetricPayload.traceId as string | undefined,
+        },
+      };
+    }
+
+    // Try scoped JWT (has tool-level permissions)
     const scopedPayload = await verifyScopedJWT(token, 'internal-service', 'table-stack');
     if (scopedPayload) {
       console.log(
@@ -52,10 +73,10 @@ export async function validateRequest(req: NextRequest): Promise<{
       };
     }
 
-    // Fall back to standard service token
+    // Fall back to standard service token (HS256 - migration fallback)
     const payload = await verifyServiceToken(token);
     if (payload) {
-      console.log(`[Auth] Service token verified for service=${(payload as any).service}`);
+      console.log(`[Auth] Service token (HS256 fallback) verified for service=${(payload as any).service}`);
       return {
         context: {
           isInternal: true,
@@ -66,7 +87,7 @@ export async function validateRequest(req: NextRequest): Promise<{
     }
 
     // Token present but invalid
-    console.warn('[Auth] Invalid or expired JWT token');
+    console.warn('[Auth] Invalid or expired JWT token (all verification methods failed)');
     return {
       error: 'Invalid or expired JWT token',
       status: 401,

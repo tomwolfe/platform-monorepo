@@ -19,6 +19,7 @@ import { redis } from "@/lib/redis-client";
 import { getToolRegistry } from "@/lib/engine/tools/registry";
 import { loadExecutionState, saveExecutionState } from "@/lib/engine/memory";
 import { RealtimeService, QStashService, FailoverPolicyEngine, type PolicyEvaluationContext } from "@repo/shared";
+import { createRepairAgent, type ZombieSaga, type RepairResult } from "@repo/shared";
 import { ExecutionState } from "@/lib/engine/types";
 import { getCompletedSteps } from "@/lib/engine/state-machine";
 import { NervousSystemObserver } from "@/lib/listeners/nervous-system-observer";
@@ -464,7 +465,183 @@ export class StepExecutionService {
 
       await this.storeFailoverState(executionId, failoverResult, failoverEngine, failoverContext);
       await this.publishFailoverEvent(executionId, failoverResult);
+
+      // SELF-HEALING LOOP: Invoke RepairAgent for autonomous repair
+      const repairSuccessful = await this.invokeRepairAgent(
+        executionId,
+        state,
+        result,
+        executedStep,
+        traceContext
+      );
+
+      // If repair was successful, skip replanning (saga will resume with fixed params)
+      if (repairSuccessful) {
+        console.log(`[StepExecutionService] RepairAgent successfully repaired ${executionId}, skipping replanning`);
+        return;
+      }
+
+      // Repair failed or not attempted - trigger automatic replanning
       await this.triggerAutomaticReplanning(executionId, failoverResult, failoverEngine, failoverContext, state);
+    }
+  }
+
+  /**
+   * Invoke RepairAgent for autonomous self-healing
+   *
+   * Converts the failed execution into a ZombieSaga and attempts automated repair.
+   * If RepairAgent returns RETRY_WITH_MODIFIED_PARAMS, updates step parameters in Redis
+   * and re-triggers the step once.
+   *
+   * @param executionId - Execution ID
+   * @param state - Current execution state
+   * @param result - Step execution result
+   * @param executedStep - The failed step
+   * @param traceContext - Trace context
+   * @returns True if repair was successful and step will be retried
+   */
+  private async invokeRepairAgent(
+    executionId: string,
+    state: ExecutionState,
+    result: any,
+    executedStep: any,
+    traceContext: { traceId: string; correlationId: string }
+  ): Promise<boolean> {
+    try {
+      // Build ZombieSaga from failed execution
+      const zombieSaga: ZombieSaga = {
+        executionId,
+        workflowId: state.plan?.id || `workflow:${executionId}`,
+        intentId: state.intent?.id,
+        userId: state.context?.userId as string | undefined,
+        status: "failed",
+        lastActivityAt: new Date().toISOString(),
+        inactiveDurationMs: 0,
+        stepStates: state.step_states.map((s) => ({
+          step_id: s.step_id,
+          status: s.status,
+          error: s.error,
+          tool_name: executedStep?.tool_name,
+          parameters: s.input as Record<string, unknown> | undefined,
+        })),
+        compensationsRegistered: [],
+        requiresHumanIntervention: false,
+        recoveryAttempts: 0,
+        failureContext: {
+          errorCode: result.stepState.error?.code,
+          errorMessage: result.stepState.error?.message,
+          failedStepIndex: state.step_states.findIndex((s) => s.step_id === result.stepId),
+          failedTool: executedStep?.tool_name,
+        },
+      };
+
+      // Invoke RepairAgent
+      const repairAgent = createRepairAgent({ debug: true });
+      const repairResult = await repairAgent.analyzeAndRepair(zombieSaga);
+
+      if (repairResult.success && repairResult.action === "AUTO_REPAIRED") {
+        console.log(
+          `[StepExecutionService] RepairAgent auto-repaired ${executionId}: ` +
+          `${repairResult.repairAnalysis?.suggestedFix.type}`
+        );
+
+        // Extract adapted parameters if provided
+        const adaptedParams = repairResult.repairAnalysis?.suggestedFix.parameters;
+
+        if (adaptedParams && result.stepId) {
+          // Update step parameters in Redis for retry
+          await this.updateStepParametersForRetry(
+            executionId,
+            result.stepId,
+            adaptedParams,
+            traceContext
+          );
+          return true;
+        }
+      }
+
+      return false;
+    } catch (error) {
+      console.error(`[StepExecutionService] RepairAgent invocation failed:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Update step parameters in Redis and re-trigger the step
+   *
+   * Called when RepairAgent returns RETRY_WITH_MODIFIED_PARAMS.
+   * Updates the step's input parameters and triggers QStash to retry the step.
+   */
+  private async updateStepParametersForRetry(
+    executionId: string,
+    stepId: string,
+    adaptedParams: Record<string, unknown>,
+    traceContext: { traceId: string; correlationId: string }
+  ): Promise<void> {
+    try {
+      // Load current state
+      const state = await loadExecutionState(executionId);
+      if (!state || !state.plan) {
+        throw new Error(`Execution state not found for ${executionId}`);
+      }
+
+      // Find the step index
+      const stepIndex = state.plan.steps.findIndex((s) => s.id === stepId);
+      if (stepIndex === -1) {
+        throw new Error(`Step ${stepId} not found in plan`);
+      }
+
+      // Update step parameters in state
+      state.plan.steps[stepIndex].parameters = {
+        ...state.plan.steps[stepIndex].parameters,
+        ...adaptedParams,
+      };
+
+      // Reset step state to pending for retry
+      const stepStateIndex = state.step_states.findIndex((s) => s.step_id === stepId);
+      if (stepStateIndex !== -1) {
+        state.step_states[stepStateIndex] = {
+          step_id: stepId,
+          status: "pending",
+          attempts: 0,
+        };
+      }
+
+      // Save updated state
+      await saveExecutionState(state);
+
+      // Store retry marker in Redis
+      const retryKey = `exec:${executionId}:retry:${stepId}`;
+      await redis.setex(
+        retryKey,
+        300, // 5 minute TTL
+        JSON.stringify({
+          stepId,
+          adaptedParams,
+          retryCount: 1,
+          timestamp: new Date().toISOString(),
+          reason: "REPAIR_AGENT_MODIFIED_PARAMS",
+        })
+      );
+
+      // Re-trigger the step via QStash
+      const INTERNAL_SYSTEM_KEY = process.env.INTERNAL_SYSTEM_KEY || "";
+      const messageId = await QStashService.triggerNextStep({
+        executionId,
+        stepIndex,
+        internalKey: INTERNAL_SYSTEM_KEY,
+        traceId: traceContext.traceId,
+        correlationId: traceContext.correlationId,
+      });
+
+      console.log(
+        `[StepExecutionService] Re-triggering step ${stepId} with adapted parameters ` +
+        `[message: ${messageId || "fallback"}] [trace: ${traceContext.traceId}]`
+      );
+    } catch (error) {
+      console.error(`[StepExecutionService] Failed to update parameters for retry:`, error);
+      throw error;
     }
   }
 

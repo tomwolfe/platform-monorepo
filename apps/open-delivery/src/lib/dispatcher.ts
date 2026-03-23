@@ -15,6 +15,7 @@ import { db } from "@repo/database";
 import { sql } from "drizzle-orm";
 import { redis } from "./redis-client";
 import { RealtimeService } from "@repo/shared";
+import { geocode } from "@repo/shared/utils/geo";
 import { randomUUID } from "crypto";
 
 export interface Driver {
@@ -191,9 +192,30 @@ export async function findAvailableDrivers(
   }
 
   // Calculate match scores
-  // In production, you'd geocode the pickup address to get lat/lng
-  const pickupLat = 40.7128; // Default to NYC
-  const pickupLng = -74.0060;
+  // Geocode the pickup address to get lat/lng
+  let pickupLat = 40.7128; // Default to NYC
+  let pickupLng = -74.0060;
+
+  try {
+    const geocodeResult = await geocode(orderIntent.pickupAddress);
+    if (geocodeResult.success && geocodeResult.result) {
+      pickupLat = geocodeResult.result.lat;
+      pickupLng = geocodeResult.result.lng;
+      console.log(
+        `[Dispatcher] Geocoded pickup address "${orderIntent.pickupAddress}" to (${pickupLat}, ${pickupLng})`
+      );
+    } else {
+      console.warn(
+        `[Dispatcher] Geocoding failed for "${orderIntent.pickupAddress}": ${geocodeResult.error}. Using default NYC coordinates.`
+      );
+    }
+  } catch (error) {
+    console.warn(
+      `[Dispatcher] Geocoding error for "${orderIntent.pickupAddress}":`,
+      error instanceof Error ? error.message : String(error),
+      ". Using default NYC coordinates."
+    );
+  }
 
   const scoredDrivers = drivers.map((driver) => ({
     ...driver,

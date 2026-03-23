@@ -332,9 +332,9 @@ export function createHealthHandler(options?: {
 export function createReadyHandler() {
   return async function readyHandler(): Promise<Response> {
     const readiness = await performReadinessCheck();
-    
+
     const status = readiness.ready ? 200 : 503;
-    
+
     return new Response(JSON.stringify(readiness), {
       status,
       headers: {
@@ -344,19 +344,3 @@ export function createReadyHandler() {
     });
   };
 }
-
-// ============================================================================
-// EXPORTS
-// ============================================================================
-
-export {
-  HealthStatus,
-  HealthCheck,
-  checkDatabaseHealth,
-  checkRedisHealth,
-  checkMemoryHealth,
-  performHealthCheck,
-  performReadinessCheck,
-  createHealthHandler,
-  createReadyHandler,
-};

@@ -1,0 +1,69 @@
+# Prometheus Configuration
+# Phase 3.3: Monitoring & Alerting
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+# Load rules files
+rule_files:
+  - "alerts.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Vercel Edge Functions (via webhook exporter)
+  - job_name: 'vercel-edge'
+    webhook_configs:
+      - url: 'http://webhook-exporter:5001/metrics'
+    metrics_path: /metrics
+    scheme: http
+
+  # Node exporter (for any Node.js services)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # Redis exporter (Upstash via proxy)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  # PostgreSQL exporter (Neon via proxy)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  # Application metrics endpoint
+  - job_name: 'table-stack'
+    metrics_path: /api/metrics
+    static_configs:
+      - targets: ['table-stack:3000']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: service
+        replacement: table-stack
+
+  - job_name: 'intention-engine'
+    metrics_path: /api/metrics
+    static_configs:
+      - targets: ['intention-engine:3000']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: service
+        replacement: intention-engine
+
+  - job_name: 'open-delivery'
+    metrics_path: /api/metrics
+    static_configs:
+      - targets: ['open-delivery:3000']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: service
+        replacement: open-delivery

@@ -1,0 +1,149 @@
+# Prometheus Alert Rules
+# Phase 3.3: Monitoring & Alerting
+
+groups:
+  - name: application_alerts
+    interval: 30s
+    rules:
+      # High Error Rate
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) 
+          / sum(rate(http_requests_total[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes"
+
+      # High Latency
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service)) 
+          > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency detected"
+          description: "95th percentile latency is {{ $value | humanizeDuration }} for {{ $labels.service }}"
+
+      # Service Down
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.instance }} of job {{ $labels.job }} has been down for more than 1 minute"
+
+      # Database Connection Pool Exhausted
+      - alert: DatabasePoolExhausted
+        expr: |
+          db_pool_available_connections / db_pool_max_connections < 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database connection pool nearly exhausted"
+          description: "Only {{ $value | humanizePercentage }} of database connections available"
+
+      # Cache Hit Rate Low
+      - alert: LowCacheHitRate
+        expr: |
+          cache_hits / (cache_hits + cache_misses) < 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low cache hit rate"
+          description: "Cache hit rate is {{ $value | humanizePercentage }} for {{ $labels.service }}"
+
+      # Memory Usage High
+      - alert: HighMemoryUsage
+        expr: |
+          process_resident_memory_bytes / node_memory_MemTotal_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+
+      # Rate Limiting Active
+      - alert: RateLimitingActive
+        expr: |
+          sum(rate(rate_limit_exceeded_total[5m])) > 10
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "Rate limiting is active"
+          description: "{{ $value }} requests rate limited per second"
+
+      # Circuit Breaker Open
+      - alert: CircuitBreakerOpen
+        expr: circuit_breaker_state{state="open"} == 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Circuit breaker is open"
+          description: "Circuit breaker for {{ $labels.target }} is open, requests are being rejected"
+
+      # Saga Compensation Failed
+      - alert: SagaCompensationFailed
+        expr: |
+          sum(rate(saga_compensation_failed_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Saga compensation failed"
+          description: "{{ $value }} saga compensations failed in the last 5 minutes"
+
+      # DLQ Messages Accumulating
+      - alert: DLQAccumulating
+        expr: |
+          dlq_message_count > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dead letter queue accumulating messages"
+          description: "{{ $value }} messages in DLQ for {{ $labels.service }}"
+
+      # Health Check Failed
+      - alert: HealthCheckFailed
+        expr: |
+          probe_success{job="health-check"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Health check failed"
+          description: "Health check for {{ $labels.instance }} has failed"
+
+      # Reservation Conflicts High
+      - alert: ReservationConflictsHigh
+        expr: |
+          sum(rate(reservation_conflicts_total[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High reservation conflict rate"
+          description: "{{ $value }} reservation conflicts per second"
+
+      # Email Delivery Failures
+      - alert: EmailDeliveryFailures
+        expr: |
+          sum(rate(email_delivery_failed_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Email delivery failures"
+          description: "{{ $value }} email delivery failures in the last 5 minutes"

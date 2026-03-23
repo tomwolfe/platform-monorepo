@@ -16,11 +16,12 @@
  * Security Model:
  * - Heuristic scanning (pattern matching)
  * - Semantic analysis (intent classification)
- * - Rate limiting per user (token bucket)
+ * - Rate limiting per user (Redis-backed for serverless compatibility)
  * - Audit logging for security events
  */
 
 import { z } from "zod";
+import { RateLimiterService } from "./rate-limiter";
 
 // ============================================================================
 // CONFIGURATION
@@ -75,56 +76,32 @@ export interface DetectionResult {
 }
 
 // ============================================================================
-// RATE LIMITER (Token Bucket)
+// RATE LIMITER INTEGRATION
+// Uses RateLimiterService with Redis for serverless-compatible rate limiting
 // ============================================================================
 
-class TokenBucket {
-  private tokens: number;
-  private lastRefill: number;
-  private maxTokens: number;
-  private refillRate: number; // tokens per ms
+const rateLimiter = new RateLimiterService();
 
-  constructor(maxTokens: number, refillRatePerMs: number) {
-    this.maxTokens = maxTokens;
-    this.tokens = maxTokens;
-    this.lastRefill = Date.now();
-    this.refillRate = refillRatePerMs;
+/**
+ * Check rate limit for a user
+ * @param userId - User identifier
+ * @param maxRequests - Maximum requests per window
+ * @param windowMs - Window size in milliseconds
+ * @returns Whether the request is allowed
+ */
+async function checkRateLimit(
+  userId: string,
+  maxRequests: number,
+  windowMs: number
+): Promise<boolean> {
+  try {
+    const result = await rateLimiter.checkRateLimit(userId, "chat");
+    return result.allowed;
+  } catch (error) {
+    console.error("[PromptInjection] Rate limit check failed:", error);
+    // Fail open on rate limiter error to avoid blocking legitimate users
+    return true;
   }
-
-  private refill() {
-    const now = Date.now();
-    const elapsed = now - this.lastRefill;
-    const tokensToAdd = elapsed * this.refillRate;
-    this.tokens = Math.min(this.maxTokens, this.tokens + tokensToAdd);
-    this.lastRefill = now;
-  }
-
-  consume(tokens: number = 1): boolean {
-    this.refill();
-    if (this.tokens >= tokens) {
-      this.tokens -= tokens;
-      return true;
-    }
-    return false;
-  }
-
-  getTokens(): number {
-    this.refill();
-    return Math.floor(this.tokens);
-  }
-}
-
-// Global rate limiters per user
-const userRateLimiters = new Map<string, TokenBucket>();
-
-function getRateLimiter(userId: string, config: PromptInjectionConfig): TokenBucket {
-  if (!userRateLimiters.has(userId)) {
-    userRateLimiters.set(
-      userId,
-      new TokenBucket(config.rateLimitMaxRequests, config.rateLimitMaxRequests / config.rateLimitWindowMs)
-    );
-  }
-  return userRateLimiters.get(userId)!;
 }
 
 // ============================================================================
@@ -328,9 +305,14 @@ export async function detectPromptInjection(
 ): Promise<DetectionResult> {
   const finalConfig = { ...DEFAULT_CONFIG, ...config };
 
-  // Check rate limit first
-  const rateLimiter = getRateLimiter(userId, finalConfig);
-  if (!rateLimiter.consume()) {
+  // Check rate limit first (using Redis-backed RateLimiterService)
+  const rateLimitAllowed = await checkRateLimit(
+    userId,
+    finalConfig.rateLimitMaxRequests,
+    finalConfig.rateLimitWindowMs
+  );
+
+  if (!rateLimitAllowed) {
     return {
       isSafe: false,
       confidence: 0.95,
@@ -452,7 +434,7 @@ export async function promptInjectionMiddleware(
     };
   } catch (error) {
     console.error("[PromptInjection] Detection error:", error);
-    
+
     // Fail closed (block) on error
     return {
       allowed: false,
@@ -468,21 +450,3 @@ export async function promptInjectionMiddleware(
     };
   }
 }
-
-// ============================================================================
-// CLEANUP
-// Periodic cleanup of rate limiters
-// ============================================================================
-
-// Clean up rate limiters every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  const maxAge = 10 * 60 * 1000; // 10 minutes
-  
-  for (const [userId, limiter] of userRateLimiters.entries()) {
-    // Simple heuristic: if limiter is near full, user hasn't been active
-    if (limiter.getTokens() > DEFAULT_CONFIG.rateLimitMaxRequests * 0.9) {
-      userRateLimiters.delete(userId);
-    }
-  }
-}, 5 * 60 * 1000);

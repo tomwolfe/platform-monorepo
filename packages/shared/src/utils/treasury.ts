@@ -33,7 +33,8 @@
 
 import { privateKeyToAccount, type Account } from 'viem/accounts';
 import type { Address, Hash } from 'viem';
-import { stringToHex, bytesToHex } from 'viem';
+import { stringToHex, bytesToHex, hexToBytes } from 'viem';
+import { createCipheriv, createDecipheriv, randomBytes, scrypt } from 'crypto';
 
 // ============================================================================
 // TYPES
@@ -107,46 +108,208 @@ export interface TreasuryAccount {
 // Uses viem's wallet utilities for keystore decryption
 // ============================================================================
 
+/**
+ * Ethereum V3 Keystore Format
+ * Based on https://github.com/ethereum/wiki/wiki/Web3-Secret-Storage-Definition
+ */
+interface V3Keystore {
+  crypto: {
+    cipher: string;
+    cipherparams: {
+      iv: string;
+    };
+    ciphertext: string;
+    kdf: string;
+    kdfparams: {
+      dklen: number;
+      n?: number; // scrypt
+      r?: number; // scrypt
+      p?: number; // scrypt
+      salt: string;
+      c?: number; // pbkdf2
+      prf?: string; // pbkdf2
+    };
+    mac: string;
+  };
+  id: string;
+  version: number;
+}
+
+/**
+ * Decrypt Ethereum V3 keystore using scrypt KDF and AES-128-CTR
+ * @param keystore - V3 keystore JSON
+ * @param passphrase - Decryption passphrase
+ * @returns Decrypted private key as hex string
+ */
+function decryptV3Keystore(keystore: V3Keystore, passphrase: string): `0x${string}` {
+  const { crypto: cryptoData } = keystore;
+  const ciphertext = hexToBytes(`0x${cryptoData.ciphertext}`);
+  const iv = hexToBytes(`0x${cryptoData.cipherparams.iv}`);
+  const kdfParams = cryptoData.kdfparams;
+  const salt = hexToBytes(`0x${kdfParams.salt}`);
+
+  // Derive key using scrypt
+  let derivedKey: Buffer;
+  if (cryptoData.kdf === 'scrypt') {
+    derivedKey = scryptSync(
+      passphrase,
+      salt,
+      kdfParams.dklen,
+      {
+        N: kdfParams.n!,
+        r: kdfParams.r!,
+        p: kdfParams.p!,
+      }
+    );
+  } else if (cryptoData.kdf === 'pbkdf2') {
+    derivedKey = pbkdf2Sync(
+      passphrase,
+      salt,
+      kdfParams.c!,
+      kdfParams.dklen,
+      kdfParams.prf || 'sha256'
+    );
+  } else {
+    throw new Error(`Unsupported KDF: ${cryptoData.kdf}`);
+  }
+
+  // Verify MAC
+  const derivedKeyBuffer = Buffer.from(derivedKey);
+  const macData = Buffer.concat([
+    derivedKeyBuffer.subarray(16, 32),
+    Buffer.from(ciphertext),
+  ]);
+  const mac = require('crypto').createHash('keccak256').update(macData).digest('hex');
+  
+  if (mac !== cryptoData.mac) {
+    throw new Error('Invalid passphrase or corrupted keystore');
+  }
+
+  // Decrypt using AES-128-CTR
+  const decipher = createDecipheriv(
+    'aes-128-ctr',
+    derivedKeyBuffer.subarray(0, 16),
+    iv
+  );
+  decipher.setAutoPadding(false);
+  
+  const privateKeyBytes = Buffer.concat([
+    decipher.update(Buffer.from(ciphertext)),
+    decipher.final(),
+  ]);
+
+  return `0x${privateKeyBytes.toString('hex')}`;
+}
+
+/**
+ * Synchronous scrypt key derivation
+ */
+function scryptSync(
+  password: string,
+  salt: Uint8Array,
+  keylen: number,
+  options: { N: number; r: number; p: number }
+): Buffer {
+  return require('crypto').scryptSync(password, salt, keylen, options);
+}
+
+/**
+ * Synchronous PBKDF2 key derivation
+ */
+function pbkdf2Sync(
+  password: string,
+  salt: Uint8Array,
+  iterations: number,
+  keylen: number,
+  digest: string
+): Buffer {
+  return require('crypto').pbkdf2Sync(password, salt, iterations, keylen, digest);
+}
+
 export class EncryptedKeystoreSigner implements ITreasurySigner {
   private account: Account;
   private address: Address;
 
   /**
    * Create signer from encrypted keystore
-   * Note: For production use with V3 keystores, use @ethereumjs/wallet or viem's
-   * wallet utilities to decrypt the keystore first, then pass the private key.
-   *
-   * For now, this accepts a keystore JSON and passphrase, but requires manual
-   * decryption using external tools until we add browser-compatible crypto.
-   *
+   * 
+   * Accepts V3 keystore JSON and passphrase, decrypts the private key in memory,
+   * and creates a viem Account for signing operations.
+   * 
+   * The private key exists only in memory and is never logged or exposed.
+   * 
    * @param keystoreJson - V3 keystore JSON string
    * @param passphrase - Decryption passphrase
-   * @deprecated Use generateTreasurySignerFromPrivateKey for now
+   * @throws Error if keystore is invalid or passphrase is incorrect
    */
-  constructor(_keystoreJson: string, _passphrase: string) {
-    // Note: Full V3 keystore decryption requires Node.js crypto or Web Crypto API
-    // For production, generate the keystore externally and extract the private key
-    // using a secure HSM or key management service.
-    //
-    // This is a placeholder - in production, use AWS KMS, GCP Secret Manager,
-    // or HashiCorp Vault to manage encrypted keys.
-    throw new Error(
-      'EncryptedKeystoreSigner requires external keystore decryption. ' +
-      'For production, use AWS KMS or similar. ' +
-      'For development, use TREASURY_PRIVATE_KEY environment variable.'
-    );
+  constructor(keystoreJson: string, passphrase: string) {
+    try {
+      const keystore: V3Keystore = JSON.parse(keystoreJson);
+      
+      if (keystore.version !== 3) {
+        throw new Error(`Unsupported keystore version: ${keystore.version}. Expected V3.`);
+      }
+
+      // Decrypt the keystore to get the private key
+      const privateKey = decryptV3Keystore(keystore, passphrase);
+      
+      // Create viem account from decrypted private key
+      this.account = privateKeyToAccount(privateKey);
+      this.address = this.account.address;
+      
+      // Clear sensitive data from memory (best effort in JS)
+      Object.freeze(keystore);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Invalid passphrase')) {
+        throw error;
+      }
+      throw new Error(
+        `Failed to decrypt keystore: ${error instanceof Error ? error.message : String(error)}. ` +
+        'Ensure TREASURY_KEYSTORE_JSON is valid V3 format and TREASURY_PASSPHRASE is correct.'
+      );
+    }
   }
 
-  async signTransaction(_txData: TransactionData): Promise<SignedTransaction> {
-    throw new Error('EncryptedKeystoreSigner not implemented - use LocalEnvTreasurySigner for development');
+  async signTransaction(txData: TransactionData): Promise<SignedTransaction> {
+    if (!this.account.signTransaction) {
+      throw new Error('Account does not support transaction signing');
+    }
+
+    const signedTx = await this.account.signTransaction({
+      to: txData.to,
+      value: txData.value ?? BigInt(0),
+      data: txData.data ?? '0x',
+      nonce: txData.nonce ?? 0,
+      gas: txData.gasLimit ?? BigInt(21000),
+      maxFeePerGas: txData.maxFeePerGas ?? BigInt(1000000000),
+      maxPriorityFeePerGas: txData.maxPriorityFeePerGas ?? BigInt(1000000000),
+      chainId: txData.chainId ?? 1,
+    });
+
+    return {
+      rawTransaction: signedTx,
+      from: this.address,
+    };
   }
 
   getAddress(): Address {
-    throw new Error('EncryptedKeystoreSigner not initialized');
+    return this.address;
   }
 
-  async signMessage(_data: string | Uint8Array): Promise<`0x${string}`> {
-    throw new Error('EncryptedKeystoreSigner not initialized');
+  async signMessage(data: string | Uint8Array): Promise<`0x${string}`> {
+    if (!this.account.signMessage) {
+      throw new Error('Account does not support message signing');
+    }
+
+    const messageHex = typeof data === 'string'
+      ? stringToHex(data)
+      : bytesToHex(data);
+
+    const signature = await this.account.signMessage({
+      message: { raw: messageHex },
+    });
+
+    return signature;
   }
 }
 
@@ -216,31 +379,46 @@ export class LocalEnvTreasurySigner implements ITreasurySigner {
 /**
  * Get the treasury signer based on configuration
  *
- * Production: Should use external key management (AWS KMS, GCP Secret Manager)
- * Development: Uses LocalEnvTreasurySigner with TREASURY_PRIVATE_KEY
+ * Priority:
+ * 1. Encrypted Keystore (TREASURY_KEYSTORE_JSON + TREASURY_PASSPHRASE) - Recommended for production
+ * 2. Raw Private Key (TREASURY_PRIVATE_KEY) - Development only, logs security warning
  *
  * @returns ITreasurySigner instance
  * @throws Error if no treasury configuration is found
  */
 export function getTreasurySigner(): ITreasurySigner {
+  const keystoreJson = process.env.TREASURY_KEYSTORE_JSON;
+  const passphrase = process.env.TREASURY_PASSPHRASE;
   const privateKey = process.env.TREASURY_PRIVATE_KEY;
 
-  // For production: Integrate with AWS KMS, GCP Secret Manager, or HashiCorp Vault
-  // Example for AWS KMS:
-  // const kmsKeyId = process.env.AWS_KMS_TREASURY_KEY_ID;
-  // if (kmsKeyId) {
-  //   return new AwsKmsTreasurySigner(kmsKeyId);
-  // }
-
-  if (!privateKey) {
-    throw new Error(
-      'TREASURY_PRIVATE_KEY is not configured. ' +
-      'This is required for executing payout transactions. ' +
-      'For production, integrate with AWS KMS or similar key management service.'
-    );
+  // Priority 1: Use encrypted keystore (production-ready)
+  if (keystoreJson && passphrase) {
+    try {
+      return new EncryptedKeystoreSigner(keystoreJson, passphrase);
+    } catch (error) {
+      throw new Error(
+        `Failed to initialize EncryptedKeystoreSigner: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
-  return new LocalEnvTreasurySigner(privateKey as `0x${string}`);
+  // Priority 2: Fall back to raw private key (development only)
+  if (privateKey) {
+    console.warn(
+      '⚠️  SECURITY WARNING: Using raw private key from environment variable. ' +
+      'This is NOT recommended for production. ' +
+      'Please use TREASURY_KEYSTORE_JSON and TREASURY_PASSPHRASE instead. ' +
+      'See @repo/shared/utils/treasury for setup instructions.'
+    );
+    return new LocalEnvTreasurySigner(privateKey as `0x${string}`);
+  }
+
+  throw new Error(
+    'No treasury configuration found. ' +
+    'Set either: ' +
+    '1) TREASURY_KEYSTORE_JSON and TREASURY_PASSPHRASE (recommended), or ' +
+    '2) TREASURY_PRIVATE_KEY (development only, not secure for production)'
+  );
 }
 
 // ============================================================================

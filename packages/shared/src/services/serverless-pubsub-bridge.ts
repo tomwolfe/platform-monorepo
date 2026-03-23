@@ -23,9 +23,6 @@
  * - Easier to debug (no PL/pgSQL triggers)
  * - Configurable polling interval
  *
- * Note: The trigger setup methods are kept for backward compatibility
- * but are deprecated and not used by default.
- *
  * @package @repo/shared
  * @since 1.0.0
  */
@@ -187,154 +184,11 @@ export class ServerlessPubSubBridge {
   }
 
   /**
-   * Setup database trigger for automatic notification
-   *
-   * @deprecated This method relies on the Postgres http extension which creates vendor lock-in.
-   * The bridge now uses pure fallback polling by default. This method is kept for backward
-   * compatibility only and should not be used in new deployments.
-   *
-   * @deprecated Requires http extension (Neon/Supabase specific) - not portable
-   */
-  async setupTrigger(): Promise<void> {
-    const qstashToken = process.env.QSTASH_TOKEN;
-
-    if (!qstashToken) {
-      console.warn(
-        '[ServerlessPubSubBridge] QSTASH_TOKEN not configured. ' +
-        'Trigger setup skipped.'
-      );
-      return;
-    }
-
-    try {
-      // Set the qstash_token setting for use in PL/pgSQL
-      await this.db.execute(sql`
-        SELECT set_config('app.qstash_token', ${qstashToken}, FALSE)
-      `);
-
-      // Create the function and trigger
-      // Note: In production, this should be in a migration file
-      await this.db.execute(sql`
-        -- Create function to send HTTP request via http extension
-        CREATE OR REPLACE FUNCTION notify_outbox_via_http()
-        RETURNS trigger AS $$
-        DECLARE
-          qstash_url TEXT := 'https://qstash.upstash.io/v2/topics/${this.config.qstashTopic}';
-          qstash_token TEXT := current_setting('app.qstash_token', TRUE);
-          payload_json TEXT;
-          http_response RECORD;
-        BEGIN
-          -- Build payload
-          payload_json := json_build_object(
-            'outboxId', NEW.id,
-            'executionId', (NEW.payload->>'executionId'),
-            'eventType', NEW.eventType,
-            'timestamp', NOW()
-          )::text;
-
-          -- Send HTTP POST to QStash
-          SELECT * INTO http_response FROM http_post(
-            qstash_url,
-            payload_json,
-            'application/json',
-            ARRAY[
-              http_header('Authorization', 'Bearer ' || qstash_token),
-              http_header('Content-Type', 'application/json'),
-              http_header('x-outbox-bridge', 'true')
-            ]
-          );
-
-          -- Log result (optional)
-          IF http_response.status_code != 200 THEN
-            RAISE WARNING 'QStash notification failed: %', http_response.content;
-          END IF;
-
-          RETURN NEW;
-        END;
-        $$ LANGUAGE plpgsql;
-      `);
-
-      // Create trigger
-      await this.db.execute(sql`
-        DROP TRIGGER IF EXISTS outbox_http_notify ON outbox;
-        CREATE TRIGGER outbox_http_notify
-          AFTER INSERT ON outbox
-          FOR EACH ROW
-          EXECUTE FUNCTION notify_outbox_via_http();
-      `);
-
-      console.log(
-        '[ServerlessPubSubBridge] Trigger setup complete. ' +
-        'Outbox events will now trigger QStash notifications automatically.'
-      );
-    } catch (error) {
-      console.error(
-        '[ServerlessPubSubBridge] Trigger setup failed:',
-        error instanceof Error ? error.message : String(error)
-      );
-      throw error;
-    }
-  }
-
-  /**
-   * Remove the database trigger
-   *
-   * Useful for cleanup or switching back to polling-only mode
-   */
-  async removeTrigger(): Promise<void> {
-    try {
-      await this.db.execute(sql`
-        DROP TRIGGER IF EXISTS outbox_http_notify ON outbox;
-        DROP FUNCTION IF EXISTS notify_outbox_via_http();
-      `);
-
-      console.log('[ServerlessPubSubBridge] Trigger removed successfully');
-    } catch (error) {
-      console.error(
-        '[ServerlessPubSubBridge] Trigger removal failed:',
-        error instanceof Error ? error.message : String(error)
-      );
-      throw error;
-    }
-  }
-
-  /**
-   * Check if http extension is available
-   * @deprecated No longer used - bridge uses pure polling by default
-   */
-  async isHttpExtensionAvailable(): Promise<boolean> {
-    try {
-      const result = await this.db.execute(sql`
-        SELECT EXISTS (
-          SELECT 1 FROM pg_extension WHERE extname = 'http'
-        ) as available
-      `);
-
-      return (result.rows[0] as any)?.available === true;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
    * Get bridge statistics
    */
   async getStats(): Promise<{
-    httpExtensionAvailable: boolean;
-    triggerExists: boolean;
     pendingEvents: number;
   }> {
-    const httpAvailable = await this.isHttpExtensionAvailable();
-
-    // Check if trigger exists
-    const triggerResult = await this.db.execute(sql`
-      SELECT EXISTS (
-        SELECT 1 FROM pg_trigger
-        WHERE tgname = 'outbox_http_notify'
-      ) as exists
-    `);
-    const triggerExists = (triggerResult.rows[0] as any)?.exists === true;
-
     // Count pending events
     const pendingResult = await this.db.execute(sql`
       SELECT COUNT(*) as count
@@ -344,8 +198,6 @@ export class ServerlessPubSubBridge {
     const pendingEvents = parseInt((pendingResult.rows[0] as any)?.count || '0', 10);
 
     return {
-      httpExtensionAvailable: httpAvailable,
-      triggerExists,
       pendingEvents,
     };
   }

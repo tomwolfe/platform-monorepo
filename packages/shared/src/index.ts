@@ -3,6 +3,9 @@
 // Phase 1-5 Roadmap Implementation
 // ============================================================================
 
+// Error Handling (Phase 1: Standardized Errors)
+export * from './errors';
+
 // Phase 1: Golden Path (System Spine)
 export * from './golden-path';
 // Note: tracing exports ExecutionTraceEntry (type), ExecutionTraceEntrySchema (schema)

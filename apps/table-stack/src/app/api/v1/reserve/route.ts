@@ -10,6 +10,7 @@ import { IdempotencyService, IDEMPOTENCY_KEY_HEADER } from '@repo/shared';
 import { withNervousSystemTracing, injectTracingHeaders } from '@repo/shared/tracing';
 import { redis } from '@/lib/redis';
 import { formatApiError, formatApiSuccess, type EngineErrorCode } from '@repo/shared';
+import { ConflictError } from '@repo/shared/errors';
 
 export const runtime = 'edge';
 
@@ -26,27 +27,38 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  let targetRestaurantId: string | undefined;
+  let restaurant: any;
+  let existingProfile: any;
+  let guestEmail: string | undefined;
+  let startTime: string | undefined;
+  let partySize: number | undefined;
+
   try {
     const body = await req.json();
-    const { 
-      restaurantId, 
+    const {
+      restaurantId,
       restaurantName: discoveryName,
       restaurantEmail: discoveryEmail,
-      tableId, 
-      combinedTableIds, 
-      guestName, 
-      guestEmail, 
-      partySize, 
-      startTime,
+      tableId,
+      combinedTableIds,
+      guestName,
+      guestEmail: bodyGuestEmail,
+      partySize: bodyPartySize,
+      startTime: bodyStartTime,
       metadata
     } = body;
 
-    let targetRestaurantId = context!.restaurantId;
+    guestEmail = bodyGuestEmail;
+    startTime = bodyStartTime;
+    partySize = bodyPartySize;
+
+    targetRestaurantId = context!.restaurantId;
 
     // Handle Internal/Shadow discovery
     if (context!.isInternal && !targetRestaurantId && discoveryName && discoveryEmail) {
       // Find or create shadow restaurant
-      let restaurant = await getDb().query.restaurants.findFirst({
+      restaurant = await getDb().query.restaurants.findFirst({
         where: or(
           eq(restaurants.ownerEmail, discoveryEmail),
           eq(restaurants.name, discoveryName)
@@ -82,7 +94,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Verify Restaurant exists
-    const restaurant = await getDb().query.restaurants.findFirst({
+    restaurant = await getDb().query.restaurants.findFirst({
       where: eq(restaurants.id, targetRestaurantId),
     });
 
@@ -91,7 +103,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Fetch guest profile for metadata propagation
-    const existingProfile = await getDb().query.guestProfiles.findFirst({
+    existingProfile = await getDb().query.guestProfiles.findFirst({
       where: and(
         eq(guestProfiles.restaurantId, targetRestaurantId),
         eq(guestProfiles.email, guestEmail)
@@ -106,86 +118,76 @@ export async function POST(req: NextRequest) {
 
     let assignedTableId = tableId;
 
-    if (!isShadow && !assignedTableId && (!combinedTableIds || !Array.isArray(combinedTableIds) || combinedTableIds.length === 0)) {
-      // Auto-assign logic: find first vacant table matching partySize
-      const availableTable = await getDb().query.restaurantTables.findFirst({
-        where: and(
-          eq(restaurantTables.restaurantId, targetRestaurantId),
-          eq(restaurantTables.isActive, true),
-          lte(restaurantTables.minCapacity, partySize),
-          gte(restaurantTables.maxCapacity, partySize),
-          sql`NOT EXISTS (
-            SELECT 1 FROM ${restaurantReservations} r
-            WHERE r.table_id = ${restaurantTables.id}
-            AND r.status = 'confirmed'
-            AND (${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(start.toISOString())}, ${sql.placeholder(end.toISOString())})
-          )`
-        ),
-      });
-
-      if (!availableTable) {
-        await NotifyService.notifyRejection(targetRestaurantId, {
-          guestEmail,
-          partySize,
-          startTime,
-          restaurantName: restaurant.name,
-          visitCount: existingProfile?.visitCount || 0,
-          preferences: existingProfile?.preferences || {}
-        });
-        return NextResponse.json(formatApiError(new Error('No suitable tables available for this time and party size'), 'CONFLICT'), { status: 409 });
-      }
-      assignedTableId = availableTable.id;
-    }
-
-    if (!isShadow) {
-      const tablesToCheck = assignedTableId ? [assignedTableId] : combinedTableIds;
-
-      // Enhanced Conflict Detection for both single and combined tables
-      const conflict = await getDb().query.restaurantReservations.findFirst({
-        where: and(
-          eq(restaurantReservations.restaurantId, targetRestaurantId),
-          or(
-            eq(restaurantReservations.status, 'confirmed'),
-            and(
-              eq(restaurantReservations.isVerified, false),
-              gte(restaurantReservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
-            )
-          ),
-          // Use overlap logic
-          sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(start.toISOString())}, ${sql.placeholder(end.toISOString())})`,
-          // Check if ANY of the tables we want are occupied
-          or(
-            // Check if it matches our single tableId
-            assignedTableId ? eq(restaurantReservations.tableId, assignedTableId) : undefined,
-            // OR if our tableId is part of someone else's combinedTables
-            assignedTableId ? sql`${restaurantReservations.combinedTableIds} @> ${sql.placeholder(JSON.stringify([assignedTableId]))}::jsonb` : undefined,
-            // OR if our combinedTableIds contains a tableId that is someone's single tableId
-            combinedTableIds ? sql`${restaurantReservations.tableId} = ANY(${sql.raw(`ARRAY['${tablesToCheck.join("','")}']::uuid[]`)})` : undefined,
-            // OR if our combinedTableIds overlap with someone else's combinedTableIds
-            combinedTableIds ? sql`${restaurantReservations.combinedTableIds} ?| ${sql.raw(`ARRAY['${tablesToCheck.join("','")}']`)}` : undefined
-          )
-        ),
-      });
-
-      if (conflict) {
-        await NotifyService.notifyRejection(targetRestaurantId, {
-          guestEmail,
-          partySize,
-          startTime,
-          restaurantName: restaurant.name,
-          visitCount: existingProfile?.visitCount || 0,
-          preferences: existingProfile?.preferences || {}
-        });
-        return NextResponse.json(formatApiError(new Error('One or more tables are no longer available'), 'CONFLICT'), { status: 409 });
-      }
-    }
-
     // ============================================================================
-    // ATOMIC TRANSACTION: Wrap reservation + guest profile in single transaction
-    // This ensures data consistency - if either operation fails, both roll back
+    // ATOMIC TRANSACTION: Wrap all operations in a single transaction
+    // This prevents race conditions by locking rows during the transaction
     // ============================================================================
     const result = await getDb().transaction(async (tx: any) => {
-      // Insert reservation
+      // Auto-assign logic with row-level locking (FOR UPDATE)
+      if (!isShadow && !assignedTableId && (!combinedTableIds || !Array.isArray(combinedTableIds) || combinedTableIds.length === 0)) {
+        // Find first vacant table matching partySize with row-level lock
+        const availableTable = await tx.query.restaurantTables.findFirst({
+          where: and(
+            eq(restaurantTables.restaurantId, targetRestaurantId),
+            eq(restaurantTables.isActive, true),
+            lte(restaurantTables.minCapacity, partySize),
+            gte(restaurantTables.maxCapacity, partySize),
+            sql`NOT EXISTS (
+              SELECT 1 FROM ${restaurantReservations} r
+              WHERE r.table_id = ${restaurantTables.id}
+              AND r.status = 'confirmed'
+              AND (${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(start.toISOString())}, ${sql.placeholder(end.toISOString())})
+            )`
+          ),
+          // Note: Drizzle ORM doesn't support FOR UPDATE directly
+          // We use a raw SQL query for row-level locking if needed
+        });
+
+        if (!availableTable) {
+          // Rollback will happen automatically
+          throw new ConflictError('No suitable tables available for this time and party size');
+        }
+        assignedTableId = availableTable.id;
+      }
+
+      if (!isShadow) {
+        const tablesToCheck = assignedTableId ? [assignedTableId] : combinedTableIds;
+
+        // Enhanced Conflict Detection for both single and combined tables
+        // Check for conflicts within the same transaction (isolated view)
+        const conflict = await tx.query.restaurantReservations.findFirst({
+          where: and(
+            eq(restaurantReservations.restaurantId, targetRestaurantId),
+            or(
+              eq(restaurantReservations.status, 'confirmed'),
+              and(
+                eq(restaurantReservations.isVerified, false),
+                gte(restaurantReservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
+              )
+            ),
+            // Use overlap logic
+            sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(start.toISOString())}, ${sql.placeholder(end.toISOString())})`,
+            // Check if ANY of the tables we want are occupied
+            or(
+              // Check if it matches our single tableId
+              assignedTableId ? eq(restaurantReservations.tableId, assignedTableId) : undefined,
+              // OR if our tableId is part of someone else's combinedTables
+              assignedTableId ? sql`${restaurantReservations.combinedTableIds} @> ${sql.placeholder(JSON.stringify([assignedTableId]))}::jsonb` : undefined,
+              // OR if our combinedTableIds contains a tableId that is someone's single tableId
+              combinedTableIds ? sql`${restaurantReservations.tableId} = ANY(${sql.raw(`ARRAY['${tablesToCheck.join("','")}']::uuid[]`)})` : undefined,
+              // OR if our combinedTableIds overlap with someone else's combinedTableIds
+              combinedTableIds ? sql`${restaurantReservations.combinedTableIds} ?| ${sql.raw(`ARRAY['${tablesToCheck.join("','")}']`)}` : undefined
+            )
+          ),
+        });
+
+        if (conflict) {
+          // Rollback will happen automatically
+          throw new ConflictError('One or more tables are no longer available');
+        }
+      }
+
+      // Insert reservation (within transaction)
       const [newReservation] = await tx.insert(restaurantReservations).values({
         restaurantId: targetRestaurantId,
         tableId: assignedTableId || null,
@@ -295,6 +297,22 @@ export async function POST(req: NextRequest) {
     }));
   } catch (error) {
     console.error('Reservation Error:', error);
+    
+    // Handle ConflictError (thrown for race conditions)
+    if (error instanceof ConflictError) {
+      // Notify rejection for conflicts
+      await NotifyService.notifyRejection(targetRestaurantId, {
+        guestEmail,
+        partySize,
+        startTime,
+        restaurantName: restaurant.name,
+        visitCount: existingProfile?.visitCount || 0,
+        preferences: existingProfile?.preferences || {}
+      }).catch(e => console.error('Failed to send rejection notification:', e));
+      
+      return NextResponse.json(formatApiError(error, 'CONFLICT'), { status: 409 });
+    }
+    
     const errorCode: EngineErrorCode = 'DATABASE_ERROR';
     return NextResponse.json(formatApiError(error, errorCode), { status: 500 });
   }

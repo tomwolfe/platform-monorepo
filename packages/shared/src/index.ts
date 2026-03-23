@@ -6,6 +6,10 @@
 // Error Handling (Phase 1: Standardized Errors)
 export * from './errors';
 
+// Phase 1.2: Centralized Error Handler & Structured Logging
+export * from './error-handler';
+export * from './logger';
+
 // Phase 1: Golden Path (System Spine)
 export * from './golden-path';
 // Note: tracing exports ExecutionTraceEntry (type), ExecutionTraceEntrySchema (schema)

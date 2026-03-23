@@ -13,7 +13,7 @@
  * @since 1.0.0
  */
 
-import { CacheClient, getSharedCache } from './infrastructure/cache';
+import { CacheClient, getSharedCache } from '../infrastructure/cache';
 
 // ============================================================================
 // TYPES
@@ -371,20 +371,3 @@ export function withCacheMiddleware<T extends (...args: any[]) => Promise<Respon
     }
   }) as T;
 }
-
-// ============================================================================
-// EXPORTS
-// ============================================================================
-
-export {
-  CacheOptions,
-  CacheMetrics,
-  withCache,
-  withCacheMiddleware,
-  invalidateCache,
-  invalidateCacheByTag,
-  invalidateCacheByPattern,
-  generateCacheKey,
-  getCacheMetrics,
-  resetCacheMetrics,
-};

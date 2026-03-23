@@ -1,51 +1,49 @@
 /**
  * Planner Module - Unified Intent-to-Plan Pipeline
- * 
+ *
  * Main API:
  * ```typescript
- * import { generatePlan, verifyPlan } from '@/lib/engine/planner';
- * 
+ * import { generatePlan, verifyPlan, generatePlanWithRepair } from '@/lib/engine/planner';
+ *
  * const plan = await generatePlan(intent);
  * const verification = verifyPlan(plan, DEFAULT_SAFETY_POLICY);
+ * const repairedPlan = await generatePlanWithRepair(intent);
  * ```
- * 
- * Pipeline:
- * 1. generatePlan() - LLM generates plan from intent
- * 2. verifyPlan() - Deterministic safety validation  
- * 3. generatePlanWithRepair() - Auto-retry on validation failure
- * 
+ *
  * @module @/lib/engine/planner
+ * @see Phase 2.1: Consolidated into unified-planner.ts
  */
 
-// Main planning functions (from parent directory)
-export { 
+// Re-export everything from unified-planner.ts
+export {
   generatePlan,
   generatePlan as executeIntent, // Alias for unified API
-  convertRawPlanToPlan,
+  generatePlanWithRepair,
+  validatePlan,
   validatePlanDag,
   getTopologicalOrder,
+  executePlan,
+  freezePlan,
+  verifyPlan,
+  calculatePlanConfidence,
   DEFAULT_PLAN_CONSTRAINTS,
-} from '../planner';
+  DEFAULT_SAFETY_POLICY,
+} from '../unified-planner';
 
 export type {
-  PlannerResult,
-  PlannerContext,
-  RawPlanStep,
-  RawPlan,
-} from '../planner';
+  PlanningContext,
+  PlannerContext, // Alias for backward compatibility
+  PlanningResult,
+  PlannerResult, // Alias for backward compatibility
+  FrozenPlan,
+} from '../unified-planner';
 
-// Verification (from parent directory)
-export { 
-  verifyPlan, 
-  DEFAULT_SAFETY_POLICY,
-} from '../verifier';
-
-export type { 
-  SafetyPolicy, 
-  VerificationResult 
-} from '../verifier';
-
-// Repair middleware (from parent directory)
-export { 
-  generatePlanWithRepair,
-} from '../planner-repair';
+// Re-export types from types.ts
+export type {
+  Intent,
+  Plan,
+  PlanStep,
+  PlanConstraints,
+  ToolDefinition,
+  TraceEntry,
+} from '../types';

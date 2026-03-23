@@ -31,6 +31,7 @@
 
 import { privateKeyToAccount, type Account } from 'viem/accounts';
 import type { Address, Hash } from 'viem';
+import { stringToHex, bytesToHex } from 'viem';
 
 // ============================================================================
 // TYPES
@@ -118,12 +119,20 @@ export class LocalEnvTreasurySigner implements ITreasurySigner {
    * Sign a transaction using local private key
    */
   async signTransaction(txData: TransactionData): Promise<SignedTransaction> {
-    const { signTransaction } = await import('viem');
-    
-    // Create a mock client for signing (we only need the signing capability)
-    const signedTx = await signTransaction({
-      account: this.account,
-      ...txData,
+    // Use the account's built-in signTransaction method
+    if (!this.account.signTransaction) {
+      throw new Error('Account does not support transaction signing');
+    }
+
+    const signedTx = await this.account.signTransaction({
+      to: txData.to,
+      value: txData.value ?? BigInt(0),
+      data: txData.data ?? '0x',
+      nonce: txData.nonce ?? 0,
+      gas: txData.gasLimit ?? BigInt(21000),
+      maxFeePerGas: txData.maxFeePerGas ?? BigInt(1000000000),
+      maxPriorityFeePerGas: txData.maxPriorityFeePerGas ?? BigInt(1000000000),
+      chainId: txData.chainId ?? 1,
     });
 
     return {
@@ -143,12 +152,21 @@ export class LocalEnvTreasurySigner implements ITreasurySigner {
    * Sign a message using local private key
    */
   async signMessage(data: string | Uint8Array): Promise<`0x${string}`> {
-    const { signMessage } = await import('viem');
-    
-    return signMessage({
-      account: this.account,
-      message: typeof data === 'string' ? { raw: data as string } : { raw: data },
+    // Use the account's built-in signMessage method
+    if (!this.account.signMessage) {
+      throw new Error('Account does not support message signing');
+    }
+
+    // Convert to hex string if needed
+    const messageHex = typeof data === 'string' 
+      ? stringToHex(data) 
+      : bytesToHex(data);
+
+    const signature = await this.account.signMessage({
+      message: { raw: messageHex },
     });
+    
+    return signature;
   }
 }
 

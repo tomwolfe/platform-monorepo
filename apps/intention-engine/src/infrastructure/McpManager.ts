@@ -9,6 +9,7 @@ import {
   CallToolResult
 } from "@modelcontextprotocol/sdk/types.js";
 import * as zod from "zod";
+import { AllToolsMap, ToolInput, validateToolParams } from "@repo/mcp-protocol";
 
 /**
  * McpAdapter provides bi-directional compatibility between
@@ -95,6 +96,7 @@ export class McpAdapter {
 
 /**
  * McpManager handles MCP protocol handshake and transport.
+ * Enhanced with strict type safety using AllToolsMap from @repo/mcp-protocol
  */
 export class McpManager {
   private tools: Map<string, RegistryToolDefinition> = new Map();
@@ -116,15 +118,23 @@ export class McpManager {
 
   /**
    * Handles an MCP CallTool request.
+   * Enhanced with strict type validation using AllToolsMap
    */
-  async callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
-    const tool = this.tools.get(name);
+  async callTool<TToolName extends keyof AllToolsMap>(
+    name: TToolName,
+    args: Record<string, unknown>
+  ): Promise<CallToolResult> {
+    const tool = this.tools.get(name as string);
     if (!tool) {
       throw new Error(`Tool not found: ${name}`);
     }
 
     try {
-      const result = await tool.execute(args);
+      // Validate parameters using the Zod schema from AllToolsMap
+      // This ensures type safety at runtime
+      const validatedArgs = validateToolParams(name, args);
+
+      const result = await tool.execute(validatedArgs);
       return {
         content: [
           {

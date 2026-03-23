@@ -202,17 +202,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           // Haversine formula for filtering
           const filtered = restaurants.filter(r => {
             if (!r.lat || !r.lng) return false;
-            
+
             const R = 6371; // Earth radius in km
-            const dLat = (parseFloat(r.lat) - latitude) * Math.PI / 180;
-            const dLon = (parseFloat(r.lng) - longitude) * Math.PI / 180;
-            const a = 
+            const lat = typeof r.lat === 'number' ? r.lat : parseFloat(r.lat);
+            const lng = typeof r.lng === 'number' ? r.lng : parseFloat(r.lng);
+            const dLat = (lat - latitude) * Math.PI / 180;
+            const dLon = (lng - longitude) * Math.PI / 180;
+            const a =
               Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.cos(latitude * Math.PI / 180) * Math.cos(parseFloat(r.lat) * Math.PI / 180) * 
+              Math.cos(latitude * Math.PI / 180) * Math.cos(lat * Math.PI / 180) *
               Math.sin(dLon/2) * Math.sin(dLon/2);
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
             const d = R * c;
-            
+
             return d <= radius_km;
           });
 

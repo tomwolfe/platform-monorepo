@@ -79,17 +79,60 @@ if (wrappedClient && neonClient) {
   Object.assign(wrappedClient, neonClient);
 }
 
-// FIX: Export a Proxy to prevent crashes when DATABASE_URL is missing during build
-export const db = wrappedClient
-  ? drizzle(wrappedClient as any, { schema })
-  : new Proxy({} as any, {
-      get(_, prop) {
-        if (prop === 'then') return undefined;
-        return () => {
-          throw new Error(`Database operation failed: DATABASE_URL is not configured.`);
-        };
-      }
-    });
+// Lazy-initialized database instance
+let _dbInstance: ReturnType<typeof drizzle> | null = null;
+
+/**
+ * Get the database instance with lazy initialization.
+ * Throws a descriptive error only at runtime when a query is executed
+ * without a DATABASE_URL configured.
+ *
+ * @example
+ * ```typescript
+ * import { getDb } from '@repo/database';
+ *
+ * const db = getDb();
+ * const users = await db.select().from(users);
+ * ```
+ *
+ * @throws Error if DATABASE_URL is not configured
+ */
+export function getDb() {
+  if (_dbInstance) {
+    return _dbInstance;
+  }
+
+  if (!wrappedClient || !neonClient) {
+    throw new Error(
+      'DATABASE_URL is not configured. ' +
+      'Please set the DATABASE_URL environment variable to connect to the database.'
+    );
+  }
+
+  _dbInstance = drizzle(neonClient, { schema });
+  return _dbInstance;
+}
+
+/**
+ * Database instance - deprecated, use getDb() instead
+ * @deprecated Use getDb() for better error handling
+ */
+export const db = new Proxy({} as any, {
+  get(_, prop) {
+    if (prop === 'then') return undefined;
+    if (prop === 'getDb') return getDb;
+    
+    // Delegate to the actual database instance if available
+    try {
+      const dbInstance = getDb();
+      return (dbInstance as any)[prop];
+    } catch (error) {
+      return () => {
+        throw error;
+      };
+    }
+  }
+});
 
 export type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
 

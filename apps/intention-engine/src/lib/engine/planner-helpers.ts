@@ -1,14 +1,13 @@
 /**
  * Planner Helpers
- * 
+ *
  * Shared utilities for plan generation. Extracted from planner.ts
  * for use by unified-planner.ts
- * 
+ *
  * @see Phase 2.1: Consolidate planner layers
  */
 
 import { z } from "zod";
-import { randomUUID } from "crypto";
 import {
   Intent,
   Plan,
@@ -21,6 +20,21 @@ import {
   EngineErrorSchema,
 } from "./types";
 import { PARAMETER_ALIASES } from "@repo/mcp-protocol";
+
+/**
+ * Generate a random UUID (Edge runtime compatible)
+ */
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback for environments without crypto.randomUUID
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
 
 // ============================================================================
 // DEFAULT CONSTRAINTS
@@ -205,7 +219,7 @@ export function convertRawPlanToPlan(
   // Create step ID mapping
   const stepIdMap = new Map<number, string>();
   for (const step of expandedSteps) {
-    stepIdMap.set(step.step_number, randomUUID());
+    stepIdMap.set(step.step_number, generateUUID());
   }
 
   // Convert to canonical steps
@@ -237,7 +251,7 @@ export function convertRawPlanToPlan(
   const totalEstimatedTokens = steps.reduce((sum, step) => sum + (step.estimated_tokens || 0), 0);
 
   return PlanSchema.parse({
-    id: randomUUID(),
+    id: generateUUID(),
     intent_id: intent.id,
     steps,
     constraints,

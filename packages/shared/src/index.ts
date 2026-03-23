@@ -73,14 +73,13 @@ export * from './services/serverless-pubsub-bridge';
 export * from './outbox-relay';
 
 // Phase 2: Security & Hardening
-// Note: tool-sandbox is Node.js only, import directly from './services/sandbox/tool-sandbox'
+// DEPRECATED: tool-sandbox, wasm-sandbox, and chaos-engine are now exported from '@repo/shared/server'
+// These modules use Node.js worker_threads and are NOT compatible with Edge runtime
 export * from './services/migration-generator';
 export * from './services/mcp-security-scanner';
 export * from './services/circuit-breaker';
 
 // Phase 3: Advanced Autonomy
-// Note: wasm-sandbox is Node.js only, import directly from './services/sandbox/wasm-sandbox'
-// Note: chaos-engine is Node.js only, import directly from './services/chaos/chaos-engine'
 export * from './services/anomaly-detector';
 export * from './services/security-correlator';
 export * from './services/dlq-monitoring';

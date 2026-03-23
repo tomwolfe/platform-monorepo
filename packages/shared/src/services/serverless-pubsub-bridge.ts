@@ -190,7 +190,7 @@ export class ServerlessPubSubBridge {
     const now = new Date();
 
     // Fetch pending events (oldest first)
-    const pendingEvents = await db
+    const pendingEvents = await this.db
       .select()
       .from(outbox)
       .where(sql`

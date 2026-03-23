@@ -17,102 +17,15 @@
  */
 
 // ============================================================================
-// CORE DATABASE INTERFACE
+// CORE DATABASE TYPE
+// Use any to avoid circular dependency - actual type is DrizzleDatabase
 // ============================================================================
 
-export interface Database {
-  // Query methods
-  select: <T = any>() => SelectBuilder<T>;
-  insert: <T = any>(table: any) => InsertBuilder<T>;
-  update: <T = any>(table: any) => UpdateBuilder<T>;
-  delete: <T = any>(table: any) => DeleteBuilder<T>;
-  
-  // Direct query execution
-  execute: <T = any>(query: any) => Promise<{ rows: T[] }>;
-  
-  // Query helpers
-  query: {
-    [table: string]: {
-      findFirst: (options?: { where?: any; orderBy?: any; limit?: number }) => Promise<any>;
-      findMany: (options?: { where?: any; orderBy?: any; limit?: number }) => Promise<any[]>;
-    };
-  };
-}
-
-// ============================================================================
-// QUERY BUILDER INTERFACES
-// ============================================================================
-
-export interface SelectBuilder<T> {
-  from(table: any): SelectFromBuilder<T>;
-}
-
-export interface SelectFromBuilder<T> {
-  where(condition: any): SelectWhereBuilder<T>;
-  orderBy(...orders: any[]): SelectOrderByBuilder<T>;
-  limit(count: number): SelectLimitBuilder<T>;
-  leftJoin(table: any, condition: any): SelectJoinBuilder<T>;
-  innerJoin(table: any, condition: any): SelectJoinBuilder<T>;
-}
-
-export interface SelectWhereBuilder<T> {
-  orderBy(...orders: any[]): SelectOrderByBuilder<T>;
-  limit(count: number): SelectLimitBuilder<T>;
-}
-
-export interface SelectOrderByBuilder<T> {
-  limit(count: number): SelectLimitBuilder<T>;
-}
-
-export interface SelectLimitBuilder<T> {
-  then(resolve: (value: T[]) => void, reject: (reason?: any) => void): PromiseLike<T[]>;
-}
-
-export interface SelectJoinBuilder<T> {
-  where(condition: any): SelectWhereBuilder<T>;
-}
-
-export interface InsertBuilder<T> {
-  values(data: any | any[]): InsertValuesBuilder<T>;
-}
-
-export interface InsertValuesBuilder<T> {
-  returning(): InsertReturningBuilder<T>;
-}
-
-export interface InsertReturningBuilder<T> {
-  then(resolve: (value: T[]) => void, reject: (reason?: any) => void): PromiseLike<T[]>;
-}
-
-export interface UpdateBuilder<T> {
-  set(data: any): UpdateSetBuilder<T>;
-}
-
-export interface UpdateSetBuilder<T> {
-  where(condition: any): UpdateWhereBuilder<T>;
-}
-
-export interface UpdateWhereBuilder<T> {
-  returning(): UpdateReturningBuilder<T>;
-  then(resolve: (value: { rowCount: number }) => void, reject: (reason?: any) => void): PromiseLike<{ rowCount: number }>;
-}
-
-export interface UpdateReturningBuilder<T> {
-  then(resolve: (value: T[]) => void, reject: (reason?: any) => void): PromiseLike<T[]>;
-}
-
-export interface DeleteBuilder<T> {
-  where(condition: any): DeleteWhereBuilder<T>;
-}
-
-export interface DeleteWhereBuilder<T> {
-  returning(): DeleteReturningBuilder<T>;
-  then(resolve: (value: { rowCount: number }) => void, reject: (reason?: any) => void): PromiseLike<{ rowCount: number }>;
-}
-
-export interface DeleteReturningBuilder<T> {
-  then(resolve: (value: T[]) => void, reject: (reason?: any) => void): PromiseLike<T[]>;
-}
+/**
+ * Database instance type - matches @repo/database export
+ * Using any to avoid circular dependency during build
+ */
+export type Database = any;
 
 // ============================================================================
 // TABLE SCHEMAS (Type-only exports for type safety)

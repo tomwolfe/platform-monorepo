@@ -39,11 +39,11 @@
  */
 
 import type { Database } from '../types/database';
-import { eq, and, gte, lte, sql, desc, cosineSimilarity, type SQL } from 'drizzle-orm';
+import { eq, and, gte, lte, sql, desc, type SQL } from 'drizzle-orm';
 import type { VectorStore, VectorEntry, VectorSearchQuery, VectorSearchResult } from './vector-store';
 
-// Import table reference - type only, actual table passed via db
-import { semanticMemories } from '@repo/database';
+// Import table reference and cosineSimilarity from database package
+import { semanticMemories, cosineSimilarity } from '@repo/database';
 
 // ============================================================================
 // PGVECTOR STORE IMPLEMENTATION
@@ -109,7 +109,7 @@ export class PGVectorStore implements VectorStore {
     }
 
     // Insert into database
-    const inserted = await db.insert(semanticMemories).values({
+    const inserted = await this.db.insert(semanticMemories).values({
       id,
       userId: entry.userId,
       intentType: entry.intentType,
@@ -174,7 +174,7 @@ export class PGVectorStore implements VectorStore {
     const similarityExpr = cosineSimilarity(semanticMemories.embedding, queryVector);
 
     // Execute query
-    const results = await db
+    const results = await this.db
       .select({
         entry: semanticMemories,
         similarity: similarityExpr,
@@ -213,7 +213,7 @@ export class PGVectorStore implements VectorStore {
    * Get a vector entry by ID
    */
   async getVector(id: string): Promise<VectorEntry | null> {
-    const results = await db
+    const results = await this.db
       .select()
       .from(semanticMemories)
       .where(eq(semanticMemories.id as any, id))
@@ -244,7 +244,7 @@ export class PGVectorStore implements VectorStore {
    * Delete a vector entry by ID
    */
   async deleteVector(id: string): Promise<boolean> {
-    const result = await db
+    const result = await this.db
       .delete(semanticMemories)
       .where(eq(semanticMemories.id as any, id));
 
@@ -257,7 +257,7 @@ export class PGVectorStore implements VectorStore {
    * Delete all vectors for a user
    */
   async deleteByUserId(userId: string): Promise<number> {
-    const result = await db
+    const result = await this.db
       .delete(semanticMemories)
       .where(eq(semanticMemories.userId as any, userId));
 
@@ -273,7 +273,7 @@ export class PGVectorStore implements VectorStore {
     id: string,
     metadata: Record<string, unknown>
   ): Promise<boolean> {
-    const result = await db
+    const result = await this.db
       .update(semanticMemories)
       .set({
         metadata,
@@ -299,21 +299,21 @@ export class PGVectorStore implements VectorStore {
     avgVectorsPerUser: number;
   }> {
     // Get total vectors
-    const totalResult = await db
+    const totalResult = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(semanticMemories);
 
     const totalVectors = totalResult[0]?.count || 0;
 
     // Get unique users
-    const usersResult = await db
+    const usersResult = await this.db
       .select({ count: sql<number>`count(distinct ${semanticMemories.userId as any})` })
       .from(semanticMemories);
 
     const uniqueUsers = usersResult[0]?.count || 0;
 
     // Get unique restaurants
-    const restaurantsResult = await db
+    const restaurantsResult = await this.db
       .select({ count: sql<number>`count(distinct ${semanticMemories.restaurantId as any})` })
       .from(semanticMemories);
 
@@ -371,7 +371,7 @@ export class PGVectorStore implements VectorStore {
         };
       });
 
-      await db.insert(semanticMemories).values(values);
+      await this.db.insert(semanticMemories).values(values);
 
       console.log(
         `[PGVectorStore] Batch inserted ${batch.length} vectors (${i + batch.length}/${entries.length})`
@@ -385,7 +385,7 @@ export class PGVectorStore implements VectorStore {
    * Clear all vectors (use with caution!)
    */
   async clearAll(): Promise<number> {
-    const result = await db.delete(semanticMemories);
+    const result = await this.db.delete(semanticMemories);
     const deleted = result.rowCount || 0;
     console.log(`[PGVectorStore] Cleared all vectors (${deleted} rows)`);
     return deleted;

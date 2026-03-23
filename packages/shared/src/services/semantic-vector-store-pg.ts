@@ -38,7 +38,7 @@
  */
 
 import type { Database } from '../types/database';
-import { semanticMemories, type SemanticMemorySearchQuery, type SemanticMemorySearchResult } from '@repo/database';
+import { semanticMemories, cosineSimilarity, type SemanticMemorySearchQuery, type SemanticMemorySearchResult } from '@repo/database';
 import { sql, eq, and, gte, lte, isNull, or, desc, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -232,7 +232,7 @@ export class HybridSemanticStore {
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
     // Query with similarity threshold in HAVING clause for performance
-    const results = await db
+    const results = await this.db
       .select({
         id: semanticMemories.id,
         userId: semanticMemories.userId,
@@ -369,7 +369,7 @@ export class HybridSemanticStore {
     }
 
     // Build query with joins
-    let queryBuilder: any = db
+    let queryBuilder: any = this.db
       .select(selectColumns)
       .from(semanticMemories);
 
@@ -441,7 +441,7 @@ export class HybridSemanticStore {
   async deleteEntry(id: string): Promise<boolean> {
     await this.initialize();
 
-    const result = await db
+    const result = await this.db
       .delete(semanticMemories)
       .where(sql`${semanticMemories.id} = ${id}`);
 
@@ -454,7 +454,7 @@ export class HybridSemanticStore {
   async deleteByUserId(userId: string): Promise<number> {
     await this.initialize();
 
-    const result = await db
+    const result = await this.db
       .delete(semanticMemories)
       .where(sql`${semanticMemories.userId} = ${userId}`);
 
@@ -473,17 +473,17 @@ export class HybridSemanticStore {
     await this.initialize();
 
     // Get total entries
-    const totalResult = await db
+    const totalResult = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(semanticMemories);
 
     // Get unique users
-    const usersResult = await db
+    const usersResult = await this.db
       .select({ count: sql<number>`count(distinct ${semanticMemories.userId})` })
       .from(semanticMemories);
 
     // Get unique restaurants
-    const restaurantsResult = await db
+    const restaurantsResult = await this.db
       .select({ count: sql<number>`count(distinct ${semanticMemories.restaurantId})` })
       .from(semanticMemories);
 

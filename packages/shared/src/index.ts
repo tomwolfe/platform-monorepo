@@ -183,3 +183,6 @@ export * from './middleware/web3-replay-guard';
 // export * from './utils/treasury'; // Treasury account management - import directly
 // export * from './utils/crypto-price'; // Server-side only - import directly
 // export * from './utils/web3-verification'; // Server-side only - import directly
+
+// Phase 4.1: Accessibility
+export * from './accessibility';

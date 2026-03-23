@@ -84,8 +84,8 @@ export * from './services/anomaly-detector';
 export * from './services/security-correlator';
 export * from './services/dlq-monitoring';
 // Note: llm-failure-triage exports are qualified to avoid FailureReason conflict
-export { 
-  getLLMFailureTriageService, 
+export {
+  getLLMFailureTriageService,
   createLLMFailureTriageService,
   LLMFailureTriageService,
   FailureReasonSchema,
@@ -98,6 +98,9 @@ export {
 export * from './services/privacy-gateway';
 export * from './services/dry-run-simulator';
 export * from './services/shadow-dry-run';
+// Note: transaction-speedup is Node.js only (uses crypto module)
+// Import directly: import { ... } from '@repo/shared/services/transaction-speedup'
+// export * from './services/transaction-speedup';
 
 // Phase 4: Perfect Grade Enhancements (100/100)
 // Causal ordering with sequence IDs

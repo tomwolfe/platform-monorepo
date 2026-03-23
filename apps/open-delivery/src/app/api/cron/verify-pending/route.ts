@@ -4,6 +4,7 @@ import { RealtimeService } from "@repo/shared";
 import { verifyTransaction } from '@repo/shared/utils/web3-verification';
 import { type Address } from 'viem';
 import { isTimingSafeEqual } from '@repo/shared/utils/crypto';
+import { processStuckTransactions } from '@repo/shared/services/transaction-speedup';
 
 /**
  * Background Verification Sweeper Endpoint
@@ -57,6 +58,15 @@ export async function POST(req: NextRequest) {
     }
 
     console.log('[Verify Pending Cron] Starting background verification sweep...');
+
+    // WEB3 RESILIENCE: Process stuck transactions and speed them up
+    const speedUpResult = await processStuckTransactions({ maxTransactions: 10 });
+    if (speedUpResult.speedUpCount > 0) {
+      console.log(
+        `[Verify Pending Cron] Sped up ${speedUpResult.speedUpCount} stuck transactions ` +
+        `(${speedUpResult.failedCount} failed)`
+      );
+    }
 
     // Query orders that have payment hash but are still pending verification
     // These are orders where the user paid but may have closed browser

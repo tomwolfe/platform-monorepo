@@ -13,6 +13,7 @@
     "./utils/crypto-price": "./src/utils/crypto-price.ts",
     "./utils/web3-verification": "./src/utils/web3-verification.ts",
     "./utils/treasury": "./src/utils/treasury.ts",
+    "./services/transaction-speedup": "./src/services/transaction-speedup.ts",
     "./tracing": "./src/tracing.ts",
     "./idempotency": "./src/idempotency.ts",
     "./clients": "./src/clients.ts",

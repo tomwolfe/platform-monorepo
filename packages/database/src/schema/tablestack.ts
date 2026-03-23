@@ -276,6 +276,34 @@ export const processed_crypto_transactions = pgTable('processed_crypto_transacti
   };
 });
 
+/**
+ * Crypto Transaction Speed-Ups Tracking
+ * 
+ * Tracks replacement transactions sent with higher gas fees to unstuck pending payments.
+ * Used by the TransactionSpeedUpService to monitor gas bump attempts.
+ */
+export const crypto_transaction_speedups = pgTable('crypto_transaction_speedups', {
+  // Original transaction hash (references processed_crypto_transactions)
+  originalTxHash: text('original_tx_hash').primaryKey().notNull(),
+  // Replacement transaction hash with higher gas
+  replacementTxHash: text('replacement_tx_hash').notNull(),
+  // Associated entity ID (orderId, reservationId, etc.)
+  entityId: text('entity_id').notNull(),
+  // Gas bump percentage applied (e.g., 20 for 20% increase)
+  gasBumpPercentage: integer('gas_bump_percentage').notNull(),
+  // When the speed-up was created
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  // When the speed-up was last updated
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, (table) => {
+  return {
+    // Index for efficient lookup by entity
+    entityIdIdx: index('speedups_entity_id_idx').on(table.entityId),
+    // Index for efficient lookup by replacement tx hash
+    replacementTxIdx: index('speedups_replacement_tx_idx').on(table.replacementTxHash),
+  };
+});
+
 // OpenDeliver: Drivers table for delivery network
 export const drivers = pgTable('drivers', {
   id: uuid('id').primaryKey().defaultRandom(),

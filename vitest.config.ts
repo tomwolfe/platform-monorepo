@@ -34,16 +34,40 @@ export default defineConfig({
     },
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html'],
+      reporter: ['text', 'json', 'html', 'lcov'],
       include: [
-        'apps/open-delivery/src/**/*.{ts,tsx}',
-        'packages/shared/src/**/*.{ts,tsx}',
+        'apps/**/src/**/*.{ts,tsx}',
+        'packages/**/src/**/*.{ts,tsx}',
       ],
       exclude: [
         '**/*.test.{ts,tsx}',
         '**/test/**',
         '**/mocks/**',
+        '**/node_modules/**',
+        '**/dist/**',
+        '**/.next/**',
+        '**/packages/**/drizzle/**',
       ],
+      // Coverage thresholds - Phase 1.1: Testing Infrastructure
+      thresholds: {
+        global: {
+          branches: 75,
+          functions: 80,
+          lines: 80,
+          statements: 80,
+        },
+        // Per-file thresholds for critical modules
+        './packages/shared/src/**/*.ts': {
+          branches: 75,
+          functions: 80,
+          lines: 80,
+          statements: 80,
+        },
+      },
+      // Generate coverage for all files, not just tested ones
+      all: true,
+      // Skip files that are pure type definitions
+      skipFull: false,
     },
   },
   resolve: {

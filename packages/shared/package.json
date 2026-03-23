@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./server": "./src/server.ts",
+    "./test-utils": "./src/test-utils.ts",
     "./utils/geo": "./src/utils/geo.ts",
     "./utils/erc20-abi": "./src/utils/erc20-abi.ts",
     "./utils/crypto": "./src/utils/crypto.ts",

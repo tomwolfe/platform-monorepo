@@ -3,7 +3,7 @@
  * Objective 5: Shared Database Constraints
  */
 
-import { db, users, eq } from "@repo/database";
+import { getDb, users, eq } from "@repo/database";
 
 export interface InteractionContext {
   intentType: string;
@@ -46,7 +46,7 @@ export async function loadUserInteractionContext(
   clerkId: string
 ): Promise<InteractionContext | null> {
   try {
-    const user = await db.query.users.findFirst({
+    const user = await getDb().query.users.findFirst({
       where: eq(users.clerkId, clerkId),
     });
     

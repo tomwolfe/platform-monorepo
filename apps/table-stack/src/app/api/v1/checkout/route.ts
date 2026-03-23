@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { db, restaurantReservations, eq, restaurants } from "@repo/database";
+import { getDb, restaurantReservations, eq, restaurants } from "@repo/database";
 import { NotifyService } from '@/lib/notifications';
 import { createPublicClient, http, parseUnits } from 'viem';
 import { base } from 'viem/chains';
@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Fetch reservation with restaurant details
-    const reservation = await db.query.restaurantReservations.findFirst({
+    const reservation = await getDb().query.restaurantReservations.findFirst({
       where: eq(restaurantReservations.id, reservationId),
       with: {
         restaurant: true,
@@ -155,7 +155,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Mark reservation as verified
-    await db.update(restaurantReservations)
+    await getDb().update(restaurantReservations)
       .set({
         isVerified: true,
         status: 'confirmed',

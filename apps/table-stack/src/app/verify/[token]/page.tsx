@@ -1,4 +1,4 @@
-import { db } from "@repo/database";
+import { getDb } from "@repo/database";
 import { restaurantReservations } from "@repo/database";
 import { eq } from '@repo/database';
 import { notFound } from 'next/navigation';
@@ -8,7 +8,7 @@ export default async function VerifyPage(props: { params: Promise<{ token: strin
   const params = await props.params;
   const token = params.token;
 
-  const reservation = await db.query.restaurantReservations.findFirst({
+  const reservation = await getDb().query.restaurantReservations.findFirst({
     where: eq(restaurantReservations.verificationToken, token),
     with: {
       restaurant: true,
@@ -29,7 +29,7 @@ export default async function VerifyPage(props: { params: Promise<{ token: strin
   }
 
   // Update verification status
-  await db.update(restaurantReservations)
+  await getDb().update(restaurantReservations)
     .set({ isVerified: true, status: 'confirmed' })
     .where(eq(restaurantReservations.id, reservation.id));
 

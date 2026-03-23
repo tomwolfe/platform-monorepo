@@ -29,7 +29,7 @@ import {
 } from "viem";
 import { base, polygon, mainnet } from "viem/chains";
 import { ERC20_ABI } from "./erc20-abi";
-import { db, processed_crypto_transactions, eq } from "@repo/database";
+import { getDb, processed_crypto_transactions, eq } from "@repo/database";
 
 // ============================================================================
 // CONFIGURATION
@@ -199,7 +199,7 @@ export async function verifyTransaction(params: {
     // STEP 0: REPLAY PREVENTION CHECK
     // Check if this transaction has already been processed (globally across all apps)
     // ============================================================================
-    const existingTx = await db.query.processed_crypto_transactions.findFirst({
+    const existingTx = await getDb().query.processed_crypto_transactions.findFirst({
       where: eq(processed_crypto_transactions.txHash, txHash),
     });
 
@@ -366,7 +366,7 @@ export async function verifyTransaction(params: {
     // Record this transaction to prevent future replay attacks
     // ============================================================================
     try {
-      await db.insert(processed_crypto_transactions).values({
+      await getDb().insert(processed_crypto_transactions).values({
         txHash: txHash,
         appSource: appSource,
         entityId: orderId,

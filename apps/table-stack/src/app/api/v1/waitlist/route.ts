@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { db, restaurantWaitlist } from "@repo/database";
+import { getDb, restaurantWaitlist } from "@repo/database";
 import { and, eq } from '@repo/database';
 import { validateRequest } from '@/lib/auth';
 
@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const entries = await db.query.restaurantWaitlist.findMany({
+    const entries = await getDb().query.restaurantWaitlist.findMany({
       where: and(
         eq(restaurantWaitlist.restaurantId, restaurantId),
         eq(restaurantWaitlist.status, 'waiting')

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, orders, orderItems, restaurants, drivers, eq, sql, and } from "@repo/database";
+import { getDb, orders, orderItems, restaurants, drivers, eq, sql, and } from "@repo/database";
 import { createWalletClient, createPublicClient, http, fallback, parseAbi, parseUnits, type Address } from 'viem';
 import { base } from 'viem/chains';
 import { ERC20_ABI } from '@repo/shared/utils/erc20-abi';
@@ -98,7 +98,7 @@ export async function GET(req: NextRequest) {
       console.log(`[Payout Cron] Recovering ${orphanedPayouts.length} orphaned payouts stuck in 'processing'`);
       
       for (const order of orphanedPayouts) {
-        await db.update(orders)
+        await getDb().update(orders)
           .set({ payoutStatus: 'pending', payoutProcessedAt: null })
           .where(eq(orders.id, order.id));
       }
@@ -290,7 +290,7 @@ export async function GET(req: NextRequest) {
         for (const payout of restaurantPayouts) {
           try {
             // Mark as processing first (idempotency)
-            await db.update(orders)
+            await getDb().update(orders)
               .set({ payoutStatus: 'processing' })
               .where(eq(orders.id, payout.orderId));
 
@@ -306,7 +306,7 @@ export async function GET(req: NextRequest) {
 
             // CRITICAL FIX: Do NOT wait for transaction receipt (Vercel 10s timeout)
             // Instead, save the tx hash and let verify-payouts cron confirm asynchronously
-            await db.update(orders)
+            await getDb().update(orders)
               .set({
                 payoutTxHash: hash,
               })
@@ -316,7 +316,7 @@ export async function GET(req: NextRequest) {
           } catch (error) {
             console.error(`[Payout Cron] Failed to execute restaurant payout ${payout.orderId}:`, error);
             // Mark as failed
-            await db.update(orders)
+            await getDb().update(orders)
               .set({ payoutStatus: 'failed' })
               .where(eq(orders.id, payout.orderId));
           }
@@ -326,7 +326,7 @@ export async function GET(req: NextRequest) {
         for (const payout of driverPayouts) {
           try {
             // Mark as processing first (idempotency)
-            await db.update(orders)
+            await getDb().update(orders)
               .set({ payoutStatus: 'processing' })
               .where(eq(orders.id, payout.orderId));
 
@@ -342,7 +342,7 @@ export async function GET(req: NextRequest) {
 
             // CRITICAL FIX: Do NOT wait for transaction receipt (Vercel 10s timeout)
             // Instead, save the tx hash and let verify-payouts cron confirm asynchronously
-            await db.update(orders)
+            await getDb().update(orders)
               .set({
                 payoutTxHash: hash,
               })
@@ -352,7 +352,7 @@ export async function GET(req: NextRequest) {
           } catch (error) {
             console.error(`[Payout Cron] Failed to execute driver payout ${payout.orderId}:`, error);
             // Mark as failed
-            await db.update(orders)
+            await getDb().update(orders)
               .set({ payoutStatus: 'failed' })
               .where(eq(orders.id, payout.orderId));
           }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@repo/database";
+import { getDb } from "@repo/database";
 import { sql } from "drizzle-orm";
 import { currentUser } from "@clerk/nextjs/server";
 
@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 2. Look up driver profile
-    const driverResult = await db.execute(
+    const driverResult = await getDb().execute(
       sql`SELECT id, full_name, email, trust_score, is_active FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`
     );
 

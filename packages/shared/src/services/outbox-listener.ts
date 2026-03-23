@@ -40,7 +40,7 @@
  * @since 1.0.0
  */
 
-import { db, outbox } from '@repo/database';
+import { getDb, outbox } from '@repo/database';
 import { sql, eq, and, lt, isNull } from 'drizzle-orm';
 import { Redis } from '@upstash/redis';
 import { getRedisClient, ServiceNamespace } from '../redis';

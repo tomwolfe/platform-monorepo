@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from "@repo/database";
+import { getDb } from "@repo/database";
 import { restaurants, restaurantReservations, guestProfiles, restaurantTables } from "@repo/database";
 import { and, eq, gte, lte, or, sql } from '@repo/database';
 import { addMinutes, parseISO } from 'date-fns';
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     // Handle Internal/Shadow discovery
     if (context!.isInternal && !targetRestaurantId && discoveryName && discoveryEmail) {
       // Find or create shadow restaurant
-      let restaurant = await db.query.restaurants.findFirst({
+      let restaurant = await getDb().query.restaurants.findFirst({
         where: or(
           eq(restaurants.ownerEmail, discoveryEmail),
           eq(restaurants.name, discoveryName)
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
 
       if (!restaurant) {
         const slug = discoveryName.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
-        const [newShadow] = await db.insert(restaurants).values({
+        const [newShadow] = await getDb().insert(restaurants).values({
           name: discoveryName,
           slug: `${slug}-${Math.random().toString(36).substring(2, 6)}`,
           ownerEmail: discoveryEmail,
@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Verify Restaurant exists
-    const restaurant = await db.query.restaurants.findFirst({
+    const restaurant = await getDb().query.restaurants.findFirst({
       where: eq(restaurants.id, targetRestaurantId),
     });
 
@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Fetch guest profile for metadata propagation
-    const existingProfile = await db.query.guestProfiles.findFirst({
+    const existingProfile = await getDb().query.guestProfiles.findFirst({
       where: and(
         eq(guestProfiles.restaurantId, targetRestaurantId),
         eq(guestProfiles.email, guestEmail)
@@ -107,7 +107,7 @@ export async function POST(req: NextRequest) {
 
     if (!isShadow && !assignedTableId && (!combinedTableIds || !Array.isArray(combinedTableIds) || combinedTableIds.length === 0)) {
       // Auto-assign logic: find first vacant table matching partySize
-      const availableTable = await db.query.restaurantTables.findFirst({
+      const availableTable = await getDb().query.restaurantTables.findFirst({
         where: and(
           eq(restaurantTables.restaurantId, targetRestaurantId),
           eq(restaurantTables.isActive, true),
@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
       const tablesToCheck = assignedTableId ? [assignedTableId] : combinedTableIds;
 
       // Enhanced Conflict Detection for both single and combined tables
-      const conflict = await db.query.restaurantReservations.findFirst({
+      const conflict = await getDb().query.restaurantReservations.findFirst({
         where: and(
           eq(restaurantReservations.restaurantId, targetRestaurantId),
           or(
@@ -183,7 +183,7 @@ export async function POST(req: NextRequest) {
     // ATOMIC TRANSACTION: Wrap reservation + guest profile in single transaction
     // This ensures data consistency - if either operation fails, both roll back
     // ============================================================================
-    const result = await db.transaction(async (tx: any) => {
+    const result = await getDb().transaction(async (tx: any) => {
       // Insert reservation
       const [newReservation] = await tx.insert(restaurantReservations).values({
         restaurantId: targetRestaurantId,

@@ -1,4 +1,4 @@
-import { db, restaurants, eq } from "@repo/database";
+import { getDb, restaurants, eq } from "@repo/database";
 import { currentUser } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 
@@ -8,7 +8,7 @@ export default async function DashboardRootPage() {
     redirect('/sign-in');
   }
 
-  const restaurant = await db.query.restaurants.findFirst({
+  const restaurant = await getDb().query.restaurants.findFirst({
     where: eq(restaurants.ownerId, user.id),
   });
 

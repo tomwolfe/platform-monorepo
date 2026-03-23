@@ -186,13 +186,13 @@ export async function fetchLiveOperationalState(
             restaurants: restaurantsTable,
             restaurantTables,
           } = await import("@repo/database");
-          const restaurant = await db.query.restaurants.findFirst({
+          const restaurant = await getDb().query.restaurants.findFirst({
             where: eq(restaurantsTable.slug, restaurantRef),
           });
 
           if (restaurant) {
             // Fetch table availability
-            const tables = await db.query.restaurantTables.findMany({
+            const tables = await getDb().query.restaurantTables.findMany({
               where: eq(restaurantTables.restaurantId, restaurant.id),
             });
 

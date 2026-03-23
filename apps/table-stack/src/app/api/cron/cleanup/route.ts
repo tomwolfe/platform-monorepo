@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, eq, lt, and } from "@repo/database";
+import { getDb, eq, lt, and } from "@repo/database";
 import { restaurantReservations, restaurantTables } from "@repo/database";
 
 export const runtime = 'edge';
@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
     const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000);
 
     // 1. Remove expired unverified restaurantReservations
-    const deletedReservations = await db.delete(restaurantReservations)
+    const deletedReservations = await getDb().delete(restaurantReservations)
       .where(
         and(
           eq(restaurantReservations.isVerified, false),
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
       );
 
     // 2. Auto-archive "dirty" tables to "vacant"
-    const cleanedTables = await db.update(restaurantTables)
+    const cleanedTables = await getDb().update(restaurantTables)
       .set({ status: 'vacant', updatedAt: new Date() })
       .where(
         and(

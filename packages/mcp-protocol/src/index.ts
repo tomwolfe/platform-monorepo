@@ -71,7 +71,7 @@ export type {
 
 import { MobilityRequestSchema, RouteEstimateSchema } from "./schemas/mobility";
 import { GetAvailabilitySchema, BookTableSchema, TableReservationSchema } from "./schemas/booking";
-import { CalculateQuoteSchema, GetDriverLocationSchema } from "./schemas/opendelivery";
+import { CalculateQuoteSchema, GetDriverLocationSchema, CheckKitchenLoadSchema, GetLocalVendorsSchema, QuoteDeliverySchema, DispatchIntentSchema } from "./schemas/opendelivery";
 import { CommunicationSchema } from "./schemas/communication";
 import { WeatherSchema, WeatherDataSchema } from "./schemas/context";
 import { GetLiveOperationalStateSchema, LiveStateSchema } from "./schemas/operational_state";
@@ -94,6 +94,9 @@ import {
   AddToWaitlistSchema,
   UpdateWaitlistStatusSchema,
   ValidateReservationSchema,
+  CheckAvailabilitySchema,
+  BookTablestackReservationSchema,
+  DiscoverRestaurantSchema,
 } from "./schemas/table_management";
 import {
   CalculateDeliveryQuoteSchema,

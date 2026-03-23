@@ -11,7 +11,7 @@
  * - Driver ranking by trust score, proximity, and acceptance rate
  */
 
-import { db, drivers as driversTable, orders as ordersTable, eq, and, gt, gte, sql as drizzleSql, desc } from "@repo/database";
+import { getDb, drivers as driversTable, orders as ordersTable, eq, and, gt, gte, sql as drizzleSql, desc } from "@repo/database";
 import { redis } from "./redis-client";
 import { RealtimeService } from "@repo/shared";
 import { geocode } from "@repo/shared/utils/geo";

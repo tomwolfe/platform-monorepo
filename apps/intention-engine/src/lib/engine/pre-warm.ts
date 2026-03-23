@@ -339,7 +339,7 @@ export async function handlePreWarmRequest(
     try {
       const { db } = await import("@repo/database");
       // Perform a minimal query to warm the connection
-      await db.execute("SELECT 1");
+      await getDb().execute("SELECT 1");
     } catch (error) {
       // Ignore DB errors - this is just warming
       if (PRE_WARM_CONFIG.debug) {

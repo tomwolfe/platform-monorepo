@@ -221,7 +221,7 @@ const serviceChecks: ServiceCheck[] = [
         const { db } = await import('@repo/database');
         
         // Simple query to test connection
-        await db.execute('SELECT 1');
+        await getDb().execute('SELECT 1');
         
         return {
           passed: true,

@@ -1,4 +1,4 @@
-import { db, restaurantReservations, eq } from "@repo/database";
+import { getDb, restaurantReservations, eq } from "@repo/database";
 import { notFound } from "next/navigation";
 import { format } from "date-fns";
 import { Calendar, Clock, Users, MapPin, XCircle, CheckCircle } from "lucide-react";
@@ -9,7 +9,7 @@ export default async function ManageBookingPage(props: { params: Promise<{ id: s
   const params = await props.params;
   const reservationId = params.id;
 
-  const reservation = await db.query.restaurantReservations.findFirst({
+  const reservation = await getDb().query.restaurantReservations.findFirst({
     where: eq(restaurantReservations.id, reservationId),
     with: {
       restaurant: true,

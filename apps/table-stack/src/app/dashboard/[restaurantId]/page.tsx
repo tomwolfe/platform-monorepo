@@ -1,4 +1,4 @@
-import { db, restaurants, restaurantReservations, restaurantWaitlist, eq, desc } from "@repo/database";
+import { getDb, restaurants, restaurantReservations, restaurantWaitlist, eq, desc } from "@repo/database";
 import { notFound, redirect } from 'next/navigation';
 import { currentUser } from '@clerk/nextjs/server';
 import FloorPlan from '@/components/dashboard/FloorPlan';
@@ -22,7 +22,7 @@ export default async function DashboardPage(props: { params: Promise<{ restauran
   // UUID regex check
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(restaurantId);
 
-  const restaurant = await db.query.restaurants.findFirst({
+  const restaurant = await getDb().query.restaurants.findFirst({
     where: isUuid
       ? eq(restaurants.id, restaurantId)
       : eq(restaurants.slug, restaurantId),

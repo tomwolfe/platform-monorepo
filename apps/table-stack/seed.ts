@@ -1,10 +1,10 @@
 import 'dotenv/config';
-import { db, restaurants, restaurantTables, restaurantProducts, inventoryLevels, eq } from "@repo/database";
+import { getDb, restaurants, restaurantTables, restaurantProducts, inventoryLevels, eq } from "@repo/database";
 
 async function seed() {
   console.log('🌱 Seeding demo restaurant...');
 
-  const [restaurant] = await db.insert(restaurants).values({
+  const [restaurant] = await getDb().insert(restaurants).values({
     name: 'The Pesto Place',
     slug: 'demo',
     ownerEmail: 'owner@pestoplace.com',
@@ -23,7 +23,7 @@ async function seed() {
   console.log(`✅ Created/Updated restaurant: ${restaurant.name} (ID: ${restaurant.id})`);
 
   // Clear existing tables for this restaurant to avoid duplicates
-  await db.delete(restaurantTables).where(eq(restaurantTables.restaurantId, restaurant.id));
+  await getDb().delete(restaurantTables).where(eq(restaurantTables.restaurantId, restaurant.id));
 
   const tables = [
     { tableNumber: '1', minCapacity: 2, maxCapacity: 2, xPos: 100, yPos: 100, tableType: 'square' },
@@ -34,7 +34,7 @@ async function seed() {
   ];
 
   for (const table of tables) {
-    await db.insert(restaurantTables).values({
+    await getDb().insert(restaurantTables).values({
       ...table,
       restaurantId: restaurant.id,
     });
@@ -43,7 +43,7 @@ async function seed() {
   console.log(`✅ Created ${tables.length} tables`);
 
   // Clear existing menu items and inventory for this restaurant to avoid duplicates
-  await db.delete(restaurantProducts).where(eq(restaurantProducts.restaurantId, restaurant.id));
+  await getDb().delete(restaurantProducts).where(eq(restaurantProducts.restaurantId, restaurant.id));
 
   const menuItems = [
     {
@@ -109,13 +109,13 @@ async function seed() {
   ];
 
   for (const item of menuItems) {
-    const [product] = await db.insert(restaurantProducts).values({
+    const [product] = await getDb().insert(restaurantProducts).values({
       ...item,
       restaurantId: restaurant.id,
     }).returning();
 
     // Create inventory entry for each product
-    await db.insert(inventoryLevels).values({
+    await getDb().insert(inventoryLevels).values({
       productId: product.id,
       availableQuantity: 50, // Default stock
     });

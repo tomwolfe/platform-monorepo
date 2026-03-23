@@ -1,6 +1,6 @@
 "use server";
 
-import { db, restaurants, orders, orderItems, users, sql, restaurantProducts, eq, type CryptoAmount } from "@repo/database";
+import { getDb, restaurants, orders, orderItems, users, sql, restaurantProducts, eq, type CryptoAmount } from "@repo/database";
 import { currentUser } from "@clerk/nextjs/server";
 import { RealtimeService } from "@repo/shared";
 import { revalidatePath } from "next/cache";
@@ -43,7 +43,7 @@ export async function getRealVendors(userLat?: number, userLng?: number): Promis
     // Distance = sqrt( (lat2-lat1)^2 + (lng2-lng1)^2 )
     // Use NULLIF to handle empty TEXT coordinates safely
     // Filter by radius to only show nearby restaurants
-    const data = await db.execute(sql`
+    const data = await getDb().execute(sql`
       SELECT id, name, address, slug, lat, lng,
         sqrt(
           pow(cast(NULLIF(lat, '') as double precision) - ${userLat}, 2) +
@@ -109,7 +109,7 @@ export async function getRestaurantWallet(restaurantId: string): Promise<{
   error?: string;
 }> {
   try {
-    const restaurant = await db.query.restaurants.findFirst({
+    const restaurant = await getDb().query.restaurants.findFirst({
       where: eq(restaurants.id, restaurantId),
       columns: {
         walletAddress: true,
@@ -164,7 +164,7 @@ export async function placeRealOrder(
     throw new Error("You must be logged in to place an order.");
   }
 
-  const restaurant = await db.query.restaurants.findFirst({
+  const restaurant = await getDb().query.restaurants.findFirst({
     where: sql`${restaurants.id} = ${vendorId}`,
   });
 
@@ -250,7 +250,7 @@ export async function placeRealOrder(
     // CRITICAL FIX: Wrap order creation in a database transaction
     // This prevents race conditions where the same paymentTxHash could be
     // submitted to multiple orders before the UNIQUE constraint locks it down
-    const result = await db.transaction(async (tx: typeof db) => {
+    const result = await getDb().transaction(async (tx: typeof db) => {
       let userRecord = await tx
         .select()
         .from(users)

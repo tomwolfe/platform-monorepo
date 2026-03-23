@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOLS } from "@repo/mcp-protocol";
-import { db, restaurants, restaurantTables, restaurantReservations, eq, gte, or, and } from "@repo/database";
+import { getDb, restaurants, restaurantTables, restaurantReservations, eq, gte, or, and } from "@repo/database";
 import { sql } from 'drizzle-orm';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
@@ -126,7 +126,7 @@ server.tool(
   async ({ restaurantId, date, partySize }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
     
-    const restaurant = await db.query.restaurants.findFirst({
+    const restaurant = await getDb().query.restaurants.findFirst({
       where: eq(restaurants.id, restaurantId),
     });
 
@@ -199,7 +199,7 @@ server.tool(
   async ({ restaurantId, tableId, guestName, guestEmail, partySize, startTime }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
     
-    const restaurant = await db.query.restaurants.findFirst({
+    const restaurant = await getDb().query.restaurants.findFirst({
       where: eq(restaurants.id, restaurantId),
     });
 
@@ -214,7 +214,7 @@ server.tool(
     const isCombined = tableId.includes('+');
     const tableIds = isCombined ? tableId.split('+') : [tableId];
 
-    const [newReservation] = await db.insert(restaurantReservations).values({
+    const [newReservation] = await getDb().insert(restaurantReservations).values({
       restaurantId,
       tableId: isCombined ? null : tableId,
       combinedTableIds: isCombined ? tableIds : null,
@@ -249,7 +249,7 @@ server.tool(
   async ({ restaurantId, date, partySize }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
     
-    const restaurant = await db.query.restaurants.findFirst({
+    const restaurant = await getDb().query.restaurants.findFirst({
       where: eq(restaurants.id, restaurantId),
     });
 

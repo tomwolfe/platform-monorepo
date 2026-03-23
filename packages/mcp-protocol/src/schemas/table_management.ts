@@ -164,6 +164,42 @@ export const ReservationValidationResultSchema = z.object({
 });
 
 // ============================================================================
+// TABLESTACK MCP SERVER SPECIFIC SCHEMAS
+// These schemas are used by the table-stack MCP server implementation
+// ============================================================================
+
+/**
+ * CheckAvailabilitySchema - TableStack MCP server tool
+ * Note: Uses snake_case field names for consistency with MCP protocol
+ */
+export const CheckAvailabilitySchema = z.object({
+  restaurantId: z.string().uuid().describe("The internal ID of the restaurant"),
+  date: z.string().datetime().describe("ISO 8601 date/time for the reservation"),
+  partySize: z.number().int().positive().describe("Number of guests"),
+});
+
+/**
+ * BookTablestackReservationSchema - TableStack MCP server tool
+ * Note: This is the MCP-specific version (different from create_reservation)
+ */
+export const BookTablestackReservationSchema = z.object({
+  restaurantId: z.string().uuid().describe("The internal ID of the restaurant"),
+  tableId: z.string().uuid().describe("The ID of the table to book (can be combined like 'table1+table2')"),
+  guestName: z.string().min(1).max(100).describe("Name of the guest"),
+  guestEmail: z.string().email().describe("Email address of the guest"),
+  partySize: z.number().int().positive().max(100).describe("Number of guests"),
+  startTime: z.string().datetime().describe("ISO 8601 date/time for the reservation"),
+  is_confirmed: z.boolean().optional().describe("Whether the booking has been confirmed"),
+});
+
+/**
+ * DiscoverRestaurantSchema - TableStack MCP server tool
+ */
+export const DiscoverRestaurantSchema = z.object({
+  restaurant_slug: z.string().describe("The slug/URL-friendly name of the restaurant"),
+});
+
+// ============================================================================
 // TYPE EXPORTS
 // ============================================================================
 
@@ -179,3 +215,7 @@ export type AddToWaitlist = z.infer<typeof AddToWaitlistSchema>;
 export type UpdateWaitlistStatus = z.infer<typeof UpdateWaitlistStatusSchema>;
 export type ValidateReservation = z.infer<typeof ValidateReservationSchema>;
 export type ReservationValidationResult = z.infer<typeof ReservationValidationResultSchema>;
+// TableStack MCP server specific types
+export type CheckAvailability = z.infer<typeof CheckAvailabilitySchema>;
+export type BookTablestackReservation = z.infer<typeof BookTablestackReservationSchema>;
+export type DiscoverRestaurant = z.infer<typeof DiscoverRestaurantSchema>;

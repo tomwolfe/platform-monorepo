@@ -7,7 +7,7 @@ import type { Intent } from "./schema";
 import { normalizeIntent } from "./normalization";
 import { resolveAmbiguity } from "./ambiguity";
 import type { IntentHypotheses } from "./ambiguity";
-import { db, eq, users } from "@repo/database";
+import { getDb, eq, users } from "@repo/database";
 import { getUserAuditLogs } from "./audit";
 
 const customOpenAI = createOpenAI({
@@ -36,7 +36,7 @@ export async function getLastInteractionContextByClerkId(clerkId: string): Promi
   if (!db) return null;
 
   try {
-    const userRecord = await db.query.users.findFirst({
+    const userRecord = await getDb().query.users.findFirst({
       where: eq(users.clerkId, clerkId),
     });
 
@@ -98,7 +98,7 @@ export async function saveInteractionContextByClerkId(
   if (!db) return;
 
   try {
-    const userRecord = await db.query.users.findFirst({
+    const userRecord = await getDb().query.users.findFirst({
       where: eq(users.clerkId, clerkId),
     });
 
@@ -112,7 +112,7 @@ export async function saveInteractionContextByClerkId(
       executionId,
     };
 
-    await db.update(users).set({
+    await getDb().update(users).set({
       lastInteractionContext: context,
       updatedAt: new Date(),
     }).where(eq(users.id, userRecord.id));

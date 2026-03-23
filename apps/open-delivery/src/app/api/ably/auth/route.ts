@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Ably from "ably";
 import { currentUser } from "@clerk/nextjs/server";
-import { db, drivers } from "@repo/database";
+import { getDb, drivers } from "@repo/database";
 import { sql } from "drizzle-orm";
 import { verifyInternalToken } from "@repo/auth";
 
@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
 
     // 2. Verify user is an active driver
     // Using raw SQL query to avoid type issues with drizzle-orm version conflicts
-    const driverResult = await db.execute(
+    const driverResult = await getDb().execute(
       sql`SELECT * FROM drivers WHERE clerk_id = ${userId} LIMIT 1`
     );
     
@@ -70,7 +70,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 3. Update last online timestamp
-    await db.execute(
+    await getDb().execute(
       sql`UPDATE drivers SET last_online = NOW() WHERE id = ${driver.id}`
     );
 

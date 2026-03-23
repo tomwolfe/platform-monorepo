@@ -1,6 +1,6 @@
 'use server';
 
-import { db, restaurantTables, restaurants, restaurantReservations, restaurantWaitlist, restaurantProducts, inventoryLevels } from '@repo/database';
+import { getDb, restaurantTables, restaurants, restaurantReservations, restaurantWaitlist, restaurantProducts, inventoryLevels } from '@repo/database';
 import { signBridgeToken } from '@repo/auth';
 import { redirect } from 'next/navigation';
 import { currentUser } from '@clerk/nextjs/server';
@@ -24,7 +24,7 @@ async function verifyOwnership(restaurantId: string) {
   const user = await currentUser();
   if (!user) throw new Error('Unauthorized');
 
-  const restaurant = await db.query.restaurants.findFirst({
+  const restaurant = await getDb().query.restaurants.findFirst({
     where: and(
       eq(restaurants.id, restaurantId),
       eq(restaurants.ownerId, user.id)
@@ -73,7 +73,7 @@ export async function goToDelivery() {
 
 export const deleteReservation = withServerActionHandler(
   withOwnership(async (reservationId: string, restaurantId: string) => {
-    await db.delete(restaurantReservations)
+    await getDb().delete(restaurantReservations)
       .where(and(
         eq(restaurantReservations.id, reservationId),
         eq(restaurantReservations.restaurantId, restaurantId)
@@ -90,7 +90,7 @@ export const updateReservation = withServerActionHandler(
     restaurantId: string,
     updates: { guestName?: string, partySize?: number, startTime?: Date }
   ) => {
-    await db.update(restaurantReservations)
+    await getDb().update(restaurantReservations)
       .set({
         ...updates,
         ...(updates.startTime ? { endTime: new Date(updates.startTime.getTime() + 90 * 60000) } : {}), // Default to 90 min if updated
@@ -117,7 +117,7 @@ export const updateRestaurantSettings = withServerActionHandler(
 
     const validated = SettingsSchema.parse(rawData);
 
-    await db.update(restaurants)
+    await getDb().update(restaurants)
       .set({
         ...validated,
       })
@@ -135,7 +135,7 @@ export const updateTablePositions = withServerActionHandler(
     restaurantId: string
   ) => {
     for (const table of tables) {
-      await db.update(restaurantTables)
+      await getDb().update(restaurantTables)
         .set({ xPos: table.xPos, yPos: table.yPos, updatedAt: new Date() })
         .where(and(
           eq(restaurantTables.id, table.id),
@@ -154,7 +154,7 @@ export const updateTableStatus = withServerActionHandler(
     status: 'vacant' | 'occupied' | 'dirty',
     restaurantId: string
   ) => {
-    const [table] = await db.update(restaurantTables)
+    const [table] = await getDb().update(restaurantTables)
       .set({ status, updatedAt: new Date() })
       .where(and(
         eq(restaurantTables.id, tableId),
@@ -188,7 +188,7 @@ export const updateTableStatus = withServerActionHandler(
     }
 
     if (status === 'vacant' && openDeliverWebhookUrl) {
-      const restaurant = await db.query.restaurants.findFirst({
+      const restaurant = await getDb().query.restaurants.findFirst({
         where: eq(restaurants.id, restaurantId),
       });
 
@@ -230,7 +230,7 @@ export const updateTableStatus = withServerActionHandler(
         console.error('[NervousSystemObserver] CRITICAL: INTERNAL_SYSTEM_KEY is not configured.');
       }
 
-      const restaurant = await db.query.restaurants.findFirst({
+      const restaurant = await getDb().query.restaurants.findFirst({
         where: eq(restaurants.id, restaurantId),
       });
 
@@ -306,7 +306,7 @@ export const updateTableStatus = withServerActionHandler(
 
 export const addTable = withServerActionHandler(
   withOwnership(async (restaurantId: string) => {
-    const existingTables = await db.query.restaurantTables.findMany({
+    const existingTables = await getDb().query.restaurantTables.findMany({
       where: eq(restaurantTables.restaurantId, restaurantId),
     });
 
@@ -314,7 +314,7 @@ export const addTable = withServerActionHandler(
       ? (Math.max(...existingTables.map((t: any) => parseInt(t.tableNumber) || 0)) + 1).toString()
       : "1";
 
-    await db.insert(restaurantTables).values({
+    await getDb().insert(restaurantTables).values({
       restaurantId,
       tableNumber: nextNumber,
       minCapacity: 2,
@@ -332,7 +332,7 @@ export const addTable = withServerActionHandler(
 
 export const deleteTable = withServerActionHandler(
   withOwnership(async (tableId: string, restaurantId: string) => {
-    await db.delete(restaurantTables)
+    await getDb().delete(restaurantTables)
       .where(and(
         eq(restaurantTables.id, tableId),
         eq(restaurantTables.restaurantId, restaurantId)
@@ -349,7 +349,7 @@ export const updateTableDetails = withServerActionHandler(
     restaurantId: string,
     details: { tableNumber: string, minCapacity: number, maxCapacity: number }
   ) => {
-    await db.update(restaurantTables)
+    await getDb().update(restaurantTables)
       .set({
         tableNumber: details.tableNumber,
         minCapacity: details.minCapacity,
@@ -372,7 +372,7 @@ export const updateWaitlistStatus = withServerActionHandler(
     restaurantId: string,
     status: 'waiting' | 'notified' | 'seated'
   ) => {
-    const [entry] = await db.update(restaurantWaitlist)
+    const [entry] = await getDb().update(restaurantWaitlist)
       .set({ status, updatedAt: new Date() })
       .where(and(
         eq(restaurantWaitlist.id, waitlistId),
@@ -407,7 +407,7 @@ export const regenerateApiKey = withServerActionHandler(
   withOwnership(async (restaurantId: string) => {
     const newKey = generateApiKey();
 
-    await db.update(restaurants)
+    await getDb().update(restaurants)
       .set({ apiKey: newKey })
       .where(eq(restaurants.id, restaurantId));
 
@@ -426,7 +426,7 @@ export const linkRestaurantWallet = withServerActionHandler(
       throw new Error('Invalid wallet address format. Must be a valid Ethereum address (0x...)');
     }
 
-    await db.update(restaurants)
+    await getDb().update(restaurants)
       .set({ walletAddress })
       .where(eq(restaurants.id, restaurantId));
 
@@ -441,7 +441,7 @@ export const linkRestaurantWallet = withServerActionHandler(
  */
 export const getRestaurantWallet = withServerActionHandler(
   async (restaurantId: string) => {
-    const restaurant = await db.query.restaurants.findFirst({
+    const restaurant = await getDb().query.restaurants.findFirst({
       where: eq(restaurants.id, restaurantId),
       columns: { walletAddress: true },
     });
@@ -485,7 +485,7 @@ export const createMenuItem = withServerActionHandler(
       throw new Error('Name, price, and category are required');
     }
 
-    const [product] = await db.insert(restaurantProducts).values({
+    const [product] = await getDb().insert(restaurantProducts).values({
       restaurantId,
       name,
       description,
@@ -493,7 +493,7 @@ export const createMenuItem = withServerActionHandler(
       category,
     }).returning();
 
-    await db.insert(inventoryLevels).values({
+    await getDb().insert(inventoryLevels).values({
       productId: product.id,
       availableQuantity: quantity,
     });
@@ -510,7 +510,7 @@ export const updateMenuItem = withServerActionHandler(
     restaurantId: string,
     updates: { name?: string; description?: string; price?: number; category?: string }
   ) => {
-    await db.update(restaurantProducts)
+    await getDb().update(restaurantProducts)
       .set({
         ...updates,
         updatedAt: new Date(),
@@ -528,7 +528,7 @@ export const updateMenuItem = withServerActionHandler(
 
 export const updateMenuItemQuantity = withServerActionHandler(
   withOwnership(async (productId: string, restaurantId: string, quantity: number) => {
-    await db.update(inventoryLevels)
+    await getDb().update(inventoryLevels)
       .set({ availableQuantity: quantity, updatedAt: new Date() })
       .where(eq(inventoryLevels.productId, productId));
 
@@ -540,8 +540,8 @@ export const updateMenuItemQuantity = withServerActionHandler(
 
 export const deleteMenuItem = withServerActionHandler(
   withOwnership(async (productId: string, restaurantId: string) => {
-    await db.delete(inventoryLevels).where(eq(inventoryLevels.productId, productId));
-    await db.delete(restaurantProducts)
+    await getDb().delete(inventoryLevels).where(eq(inventoryLevels.productId, productId));
+    await getDb().delete(restaurantProducts)
       .where(and(
         eq(restaurantProducts.id, productId),
         eq(restaurantProducts.restaurantId, restaurantId)

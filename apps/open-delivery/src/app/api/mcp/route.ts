@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOLS } from "@repo/mcp-protocol";
 import { createMcpServerRoutes, createResponse } from "@repo/mcp-protocol/server";
 import { randomUUID } from "crypto";
-import { db, orders, orderItems } from "@repo/database";
+import { getDb, orders, orderItems } from "@repo/database";
 import { eq } from "drizzle-orm";
 import { RealtimeService } from "@repo/shared";
 import { dispatchOrder } from "@/lib/dispatcher";
@@ -294,7 +294,7 @@ server.tool(
 
     // 1. Write to Postgres (Durable storage)
     try {
-      await db.insert(orders).values({
+      await getDb().insert(orders).values({
         id: orderId,
         userId: params.customerId,
         status: 'pending',
@@ -308,7 +308,7 @@ server.tool(
 
       // Insert order items
       if (params.items && params.items.length > 0) {
-        await db.insert(orderItems).values(
+        await getDb().insert(orderItems).values(
           params.items.map((item: any) => ({
             orderId,
             name: item.name,

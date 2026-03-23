@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { db, restaurants, restaurantTables, users, restaurantReservations, restaurantWaitlist, eq } from "@repo/database";
+import { getDb, restaurants, restaurantTables, users, restaurantReservations, restaurantWaitlist, eq } from "@repo/database";
 
 /**
  * Enhanced Seed Script
@@ -20,7 +20,7 @@ async function seed() {
   
   console.log('🍽️  Creating restaurants...');
   
-  const [restaurant] = await db.insert(restaurants).values({
+  const [restaurant] = await getDb().insert(restaurants).values({
     name: 'The Pesto Place',
     slug: 'demo',
     ownerEmail: 'owner@pestoplace.com',
@@ -42,7 +42,7 @@ async function seed() {
   console.log(`   ✅ ${restaurant.name} (ID: ${restaurant.id})`);
 
   // Create a second restaurant for alternative suggestions
-  const [restaurant2] = await db.insert(restaurants).values({
+  const [restaurant2] = await getDb().insert(restaurants).values({
     name: 'Bella Italia',
     slug: 'bella-italia',
     ownerEmail: 'owner@bellaitalia.com',
@@ -66,7 +66,7 @@ async function seed() {
 
   console.log('\n🪑  Creating tables...');
 
-  await db.delete(restaurantTables).where(eq(restaurantTables.restaurantId, restaurant.id));
+  await getDb().delete(restaurantTables).where(eq(restaurantTables.restaurantId, restaurant.id));
 
   const tables = [
     { tableNumber: '1', minCapacity: 2, maxCapacity: 2, xPos: 100, yPos: 100, tableType: 'square', status: 'available' },
@@ -77,14 +77,14 @@ async function seed() {
   ];
 
   for (const table of tables) {
-    await db.insert(restaurantTables).values({
+    await getDb().insert(restaurantTables).values({
       ...table,
       restaurantId: restaurant.id,
     });
   }
 
   // Query created tables to get their IDs
-  const createdTables = await db.query.restaurantTables.findMany({
+  const createdTables = await getDb().query.restaurantTables.findMany({
     where: eq(restaurantTables.restaurantId, restaurant.id),
     orderBy: restaurantTables.tableNumber,
   });
@@ -218,7 +218,7 @@ async function seed() {
   ];
 
   for (const userData of usersData) {
-    await db.insert(users).values(userData).onConflictDoUpdate({
+    await getDb().insert(users).values(userData).onConflictDoUpdate({
       target: users.clerkId,
       set: {
         name: userData.name,
@@ -260,7 +260,7 @@ async function seed() {
   ];
 
   for (const reservation of reservations) {
-    await db.insert(restaurantReservations).values(reservation);
+    await getDb().insert(restaurantReservations).values(reservation);
     console.log(`   ✅ Reservation for ${reservation.guestName} at ${reservation.startTime.toLocaleTimeString()}`);
   }
 
@@ -288,7 +288,7 @@ async function seed() {
   ];
 
   for (const entry of waitlistEntries) {
-    await db.insert(restaurantWaitlist).values(entry);
+    await getDb().insert(restaurantWaitlist).values(entry);
     console.log(`   ✅ Waitlist: ${entry.guestName} (party of ${entry.partySize})`);
   }
 

@@ -1,6 +1,6 @@
 "use server";
 
-import { db } from "@repo/database";
+import { getDb } from "@repo/database";
 import { restaurants, restaurantTables } from "@repo/database";
 import { currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
@@ -36,7 +36,7 @@ export async function createRestaurant(data: z.infer<typeof onboardingSchema>) {
   const validated = onboardingSchema.parse(data);
 
   // Check if slug is already taken
-  const existing = await db.query.restaurants.findFirst({
+  const existing = await getDb().query.restaurants.findFirst({
     where: (rest: any, { eq }: any) => eq(rest.slug, validated.slug),
   });
 
@@ -59,7 +59,7 @@ export async function createRestaurant(data: z.infer<typeof onboardingSchema>) {
 
   const apiKey = `ts_${crypto.randomBytes(16).toString("hex")}`;
 
-  const [restaurant] = await db.insert(restaurants).values({
+  const [restaurant] = await getDb().insert(restaurants).values({
     name: validated.name,
     slug: validated.slug,
     ownerEmail: user.emailAddresses[0].emailAddress,
@@ -78,7 +78,7 @@ export async function createRestaurant(data: z.infer<typeof onboardingSchema>) {
   }).returning();
 
   if (validated.tables.length > 0) {
-    await db.insert(restaurantTables).values(
+    await getDb().insert(restaurantTables).values(
       validated.tables.map(table => ({
         restaurantId: restaurant.id,
         tableNumber: table.tableNumber,

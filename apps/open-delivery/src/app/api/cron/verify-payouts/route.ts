@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, orders, eq, and, isNotNull, inArray } from "@repo/database";
+import { getDb, orders, eq, and, isNotNull, inArray } from "@repo/database";
 import { createPublicClient, http, fallback, type Address } from 'viem';
 import { base } from 'viem/chains';
 import { timingSafeEqual } from 'crypto';
@@ -136,7 +136,7 @@ export async function GET(req: NextRequest) {
           console.log(`[Verify Payouts Cron] Payout confirmed on-chain: ${order.id}`);
 
           // Mark as completed
-          await db.update(orders)
+          await getDb().update(orders)
             .set({
               payoutStatus: 'completed',
               payoutProcessedAt: new Date(),
@@ -148,7 +148,7 @@ export async function GET(req: NextRequest) {
           console.error(`[Verify Payouts Cron] Payout reverted on-chain: ${order.id}`);
 
           // Mark as failed
-          await db.update(orders)
+          await getDb().update(orders)
             .set({ payoutStatus: 'failed' })
             .where(eq(orders.id, order.id));
 

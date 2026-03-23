@@ -1,6 +1,6 @@
 "use server";
 
-import { db } from "@repo/database";
+import { getDb } from "@repo/database";
 import { sql } from "drizzle-orm";
 import { currentUser } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
@@ -25,7 +25,7 @@ export async function registerDriver(fullName: string, email: string): Promise<R
     }
 
     // 2. Check if driver already exists
-    const existingDriver = await db.execute(
+    const existingDriver = await getDb().execute(
       sql`SELECT * FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`
     );
 
@@ -34,7 +34,7 @@ export async function registerDriver(fullName: string, email: string): Promise<R
     }
 
     // 3. Check if email is already registered
-    const existingEmail = await db.execute(
+    const existingEmail = await getDb().execute(
       sql`SELECT * FROM drivers WHERE email = ${email.toLowerCase()} LIMIT 1`
     );
 
@@ -43,7 +43,7 @@ export async function registerDriver(fullName: string, email: string): Promise<R
     }
 
     // 4. Create driver profile
-    const result = await db.execute(
+    const result = await getDb().execute(
       sql`
         INSERT INTO drivers (clerk_id, full_name, email, trust_score, is_active, created_at)
         VALUES (${user.id}, ${fullName}, ${email.toLowerCase()}, 80, true, NOW())

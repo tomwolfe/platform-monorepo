@@ -23,7 +23,7 @@
  */
 
 import { getAblyClient, RealtimeService, MemoryClient, getMemoryClient as getSharedMemoryClient, parseJsonWithFallback } from "@repo/shared";
-import { db, eq, users, restaurants, restaurantReservations } from "@repo/database";
+import { getDb, eq, users, restaurants, restaurantReservations } from "@repo/database";
 import { createSystemEvent, SystemEvent, createTypedSystemEvent, SystemEventType } from "@repo/mcp-protocol";
 import { signServiceToken } from "@repo/auth";
 import { generateText } from "../engine/llm";
@@ -309,7 +309,7 @@ export class NervousSystemObserver {
 
       // Query users with relevant last_interaction_context
       // Focus on users whose last interaction FAILED
-      const allUsers = await db.query.users.findMany({
+      const allUsers = await getDb().query.users.findMany({
         where: eq(users.role, "shopper"),
       });
 
@@ -849,7 +849,7 @@ Respond with ONLY a JSON object in this format:
     restaurantId: string
   ): Promise<typeof restaurants.$inferSelect | null> {
     try {
-      const restaurant = await db.query.restaurants.findFirst({
+      const restaurant = await getDb().query.restaurants.findFirst({
         where: eq(restaurants.id, restaurantId),
       });
       return restaurant || null;

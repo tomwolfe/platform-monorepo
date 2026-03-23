@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, restaurantProducts, inventoryLevels } from "@repo/database";
+import { getDb, restaurantProducts, inventoryLevels } from "@repo/database";
 import { eq } from '@repo/database';
 import { SecurityProvider } from '@repo/auth';
 

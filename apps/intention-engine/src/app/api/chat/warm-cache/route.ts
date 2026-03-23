@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
           }
 
           // Fetch table availability
-          const tables = await db.query.restaurantTables.findMany({
+          const tables = await getDb().query.restaurantTables.findMany({
             where: eq(restaurantTables.restaurantId, restaurant.id),
           });
 

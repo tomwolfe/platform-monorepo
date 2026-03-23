@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@repo/database";
+import { getDb } from "@repo/database";
 import { sql } from "drizzle-orm";
 
 /**
@@ -11,7 +11,7 @@ import { sql } from "drizzle-orm";
 export async function GET(request: NextRequest) {
   try {
     // Fetch all pending orders (not yet assigned to a driver)
-    const pendingOrders = await db.execute(
+    const pendingOrders = await getDb().execute(
       sql`
         SELECT
           o.id,

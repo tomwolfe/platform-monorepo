@@ -1,6 +1,6 @@
 "use server";
 
-import { db } from "@repo/database";
+import { getDb } from "@repo/database";
 import { sql } from "drizzle-orm";
 import { currentUser } from "@clerk/nextjs/server";
 import { RealtimeService } from "@repo/shared";
@@ -29,7 +29,7 @@ export async function acceptDelivery(orderId: string): Promise<AcceptDeliveryRes
     }
 
     // 2. Verify driver identity and active status
-    const driverResult = await db.execute(
+    const driverResult = await getDb().execute(
       sql`SELECT * FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`
     );
     
@@ -51,7 +51,7 @@ export async function acceptDelivery(orderId: string): Promise<AcceptDeliveryRes
 
     // 3. Atomic update: Claim the order
     // Uses WHERE clause to ensure order is still pending and unassigned
-    const updateResult = await db.execute(
+    const updateResult = await getDb().execute(
       sql`
         UPDATE orders 
         SET 
@@ -161,7 +161,7 @@ export async function linkDriverWallet(walletAddress: string): Promise<{ success
     }
 
     // Atomic update to link the EIP-55 address to the driver profile
-    const updateResult = await db.execute(
+    const updateResult = await getDb().execute(
       sql`
         UPDATE drivers
         SET
@@ -205,7 +205,7 @@ export async function getDriverWallet(): Promise<{ success: boolean; walletAddre
       return { success: false, error: "Unauthorized" };
     }
 
-    const result = await db.execute(
+    const result = await getDb().execute(
       sql`SELECT wallet_address FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`
     );
 

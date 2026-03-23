@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from "@repo/database";
+import { getDb } from "@repo/database";
 import { restaurants } from "@repo/database";
 import { eq } from '@repo/database';
 import { validateRequest } from '@/lib/auth';
@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   // Allow internal access by ID
   if (id && isInternal) {
     try {
-      const restaurant = await db.query.restaurants.findFirst({
+      const restaurant = await getDb().query.restaurants.findFirst({
         where: eq(restaurants.id, id),
       });
       if (!restaurant) {
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
   // Allow public access if slug is provided
   if (slug) {
     try {
-      const restaurant = await db.query.restaurants.findFirst({
+      const restaurant = await getDb().query.restaurants.findFirst({
         where: eq(restaurants.slug, slug),
       });
 
@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
   // If internal and no slug, return all restaurants
   if (isInternal) {
     try {
-      const allRestaurants = await db.query.restaurants.findMany();
+      const allRestaurants = await getDb().query.restaurants.findMany();
       return NextResponse.json(allRestaurants);
     } catch (error) {
       console.error('All Restaurants Fetch Error:', error);
@@ -77,7 +77,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ message: 'Restaurant ID not found in context' }, { status: 403 });
     }
 
-    const restaurant = await db.query.restaurants.findFirst({
+    const restaurant = await getDb().query.restaurants.findFirst({
       where: eq(restaurants.id, restaurantId),
     });
 

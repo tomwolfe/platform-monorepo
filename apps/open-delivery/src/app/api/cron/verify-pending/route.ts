@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, orders, restaurants, eq, and, sql } from "@repo/database";
+import { getDb, orders, restaurants, eq, and, sql } from "@repo/database";
 import { RealtimeService } from "@repo/shared";
 import { verifyTransaction } from '@repo/shared/utils/web3-verification';
 import { type Address } from 'viem';
@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
 
         // Transaction verified successfully!
         // Update order status and dispatch driver
-        await db.update(orders)
+        await getDb().update(orders)
           .set({
             status: 'pending', // Now move to normal pending state
           })

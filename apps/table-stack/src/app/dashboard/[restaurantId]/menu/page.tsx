@@ -1,4 +1,4 @@
-import { db } from "@repo/database";
+import { getDb } from "@repo/database";
 import { restaurants, restaurantProducts, inventoryLevels } from "@repo/database";
 import { eq, desc } from '@repo/database';
 import { notFound, redirect } from 'next/navigation';
@@ -21,7 +21,7 @@ export default async function MenuManagementPage(props: { params: Promise<{ rest
   // UUID regex check
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(restaurantId);
 
-  const restaurant = await db.query.restaurants.findFirst({
+  const restaurant = await getDb().query.restaurants.findFirst({
     where: isUuid
       ? eq(restaurants.id, restaurantId)
       : eq(restaurants.slug, restaurantId),

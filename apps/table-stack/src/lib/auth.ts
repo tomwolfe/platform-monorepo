@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { db, restaurants, eq } from "@repo/database";
+import { getDb, restaurants, eq } from "@repo/database";
 import { redis } from './redis';
 import { verifyServiceToken, verifyScopedJWT, SecurityProvider, type ScopedJWTPayload } from '@repo/auth';
 
@@ -96,7 +96,7 @@ export async function validateRequest(req: NextRequest): Promise<{
     }
 
     // API Key Validation
-    const restaurant = await db.query.restaurants.findFirst({
+    const restaurant = await getDb().query.restaurants.findFirst({
       where: eq(restaurants.apiKey, apiKey),
     });
 

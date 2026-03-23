@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from "@repo/database";
+import { getDb } from "@repo/database";
 import { restaurantTables, restaurantReservations, restaurants } from "@repo/database";
 import { and, eq, gte, or, sql } from '@repo/database';
 import { addMinutes, parseISO } from 'date-fns';
@@ -143,7 +143,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const restaurant = await db.query.restaurants.findFirst({
+    const restaurant = await getDb().query.restaurants.findFirst({
       where: eq(restaurants.id, targetRestaurantId),
     });
 

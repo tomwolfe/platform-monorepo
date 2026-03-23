@@ -3,7 +3,7 @@
  * Run with: pnpm --filter @repo/open-delivery tsx ../../scripts/seed-drivers.ts
  */
 
-import { db } from "../packages/database/src/index";
+import { getDb } from "../packages/database/src/index";
 import { drivers } from "../packages/database/src/schema/tablestack";
 import { sql } from "drizzle-orm";
 
@@ -15,13 +15,13 @@ export async function seedDrivers() {
   
   try {
     // Check if driver already exists
-    const existing = await db.execute(
+    const existing = await getDb().execute(
       sql`SELECT * FROM drivers WHERE clerk_id = ${TEST_CLERK_ID} LIMIT 1`
     );
 
     if (existing.rows.length > 0) {
       console.log("ℹ️  Driver already exists, updating...");
-      await db.execute(
+      await getDb().execute(
         sql`UPDATE drivers SET 
           is_active = true, 
           trust_score = 95,
@@ -29,7 +29,7 @@ export async function seedDrivers() {
         WHERE clerk_id = ${TEST_CLERK_ID}`
       );
     } else {
-      await db.execute(
+      await getDb().execute(
         sql`INSERT INTO drivers (clerk_id, full_name, email, trust_score, is_active)
          VALUES (${TEST_CLERK_ID}, 'Demo Driver', 'driver@demo.com', 95, true)
          ON CONFLICT (clerk_id) DO UPDATE SET

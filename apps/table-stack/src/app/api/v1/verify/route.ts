@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from "@repo/database";
+import { getDb } from "@repo/database";
 import { restaurantReservations } from "@repo/database";
 import { eq } from '@repo/database';
 import { NotifyService } from '@/lib/notifications';
@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const reservation = await db.query.restaurantReservations.findFirst({
+    const reservation = await getDb().query.restaurantReservations.findFirst({
       where: eq(restaurantReservations.verificationToken, token),
       with: {
         restaurant: true,
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Mark as verified
-    await db.update(restaurantReservations)
+    await getDb().update(restaurantReservations)
       .set({ isVerified: true, status: 'confirmed' })
       .where(eq(restaurantReservations.id, reservation.id));
 

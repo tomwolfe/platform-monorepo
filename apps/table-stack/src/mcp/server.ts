@@ -9,12 +9,15 @@ import {
   BOOK_RESERVATION_TOOL,
   DISCOVER_RESTAURANT_TOOL,
   TOOL_METADATA,
+  CheckAvailabilitySchema,
+  BookTablestackReservationSchema,
+  DiscoverRestaurantSchema,
+  validateToolParams,
 } from "@repo/mcp-protocol";
-import { db, restaurants, restaurantTables, restaurantReservations, restaurantWaitlist, eq, gte, or, and } from "@repo/database";
+import { getDb, restaurants, restaurantTables, restaurantReservations, restaurantWaitlist, eq, gte, or, and } from "@repo/database";
 import { sql } from 'drizzle-orm';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
-import { z } from "zod";
 
 const server = new Server(
   {
@@ -146,12 +149,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case "check_availability": {
-        // Validate arguments using Zod schema
-        const parseResult = z.object({
-          restaurantId: z.string().uuid(),
-          date: z.string().datetime(),
-          partySize: z.number().int().positive(),
-        }).safeParse(args);
+        // Validate arguments using shared Zod schema
+        const parseResult = CheckAvailabilitySchema.safeParse(args);
 
         if (!parseResult.success) {
           return {
@@ -161,8 +160,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         const { restaurantId, date, partySize } = parseResult.data;
-        
-        const restaurant = await db.query.restaurants.findFirst({
+
+        const restaurant = await getDb().query.restaurants.findFirst({
           where: eq(restaurants.id, restaurantId),
         });
 
@@ -226,16 +225,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "book_tablestack_reservation": {
-        // Validate arguments using Zod schema
-        const parseResult = z.object({
-          restaurantId: z.string().uuid(),
-          tableId: z.string().uuid(),
-          guestName: z.string().min(1).max(100),
-          guestEmail: z.string().email(),
-          partySize: z.number().int().positive().max(100),
-          startTime: z.string().datetime(),
-          is_confirmed: z.boolean().optional(),
-        }).safeParse(args);
+        // Validate arguments using shared Zod schema
+        const parseResult = BookTablestackReservationSchema.safeParse(args);
 
         if (!parseResult.success) {
           return {
@@ -253,7 +244,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         }
 
-        const restaurant = await db.query.restaurants.findFirst({
+        const restaurant = await getDb().query.restaurants.findFirst({
           where: eq(restaurants.id, restaurantId),
         });
 
@@ -268,7 +259,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const isCombined = tableId.includes('+');
         const tableIds = isCombined ? tableId.split('+') : [tableId];
 
-        const [newReservation] = await db.insert(restaurantReservations).values({
+        const [newReservation] = await getDb().insert(restaurantReservations).values({
           restaurantId,
           tableId: isCombined ? null : tableId,
           combinedTableIds: isCombined ? tableIds : null,
@@ -294,10 +285,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "discover_restaurant": {
-        // Validate arguments using Zod schema
-        const parseResult = z.object({
-          restaurant_slug: z.string(),
-        }).safeParse(args);
+        // Validate arguments using shared Zod schema
+        const parseResult = DiscoverRestaurantSchema.safeParse(args);
 
         if (!parseResult.success) {
           return {
@@ -307,8 +296,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         const { restaurant_slug } = parseResult.data;
-        
-        const restaurant = await db.query.restaurants.findFirst({
+
+        const restaurant = await getDb().query.restaurants.findFirst({
           where: eq(restaurants.slug, restaurant_slug),
         });
 

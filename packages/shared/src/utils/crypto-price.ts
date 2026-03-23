@@ -15,7 +15,7 @@
  */
 
 import { getRedisClient, ServiceNamespace } from "../redis";
-import { db } from "@repo/database";
+import { getDb } from "@repo/database";
 import { sql } from "drizzle-orm";
 
 const COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price";

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, drivers as driversTable, orders as ordersTable, eq, sql, and, gte, lt } from "@repo/database";
+import { getDb, drivers as driversTable, orders as ordersTable, eq, sql, and, gte, lt } from "@repo/database";
 import { currentUser } from "@clerk/nextjs/server";
 
 interface DriverStats {

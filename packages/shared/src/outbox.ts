@@ -13,7 +13,7 @@
  * @since 1.0.0
  */
 
-import { db, outbox, outboxStatusEnum } from '@repo/database';
+import { getDb, outbox, outboxStatusEnum } from '@repo/database';
 import { sql } from 'drizzle-orm';
 import { Redis } from '@upstash/redis';
 import { getRedisClient, ServiceNamespace } from './redis';
@@ -269,7 +269,7 @@ export class OutboxService {
    */
   async cleanupExpiredEvents(): Promise<number> {
     const now = new Date();
-    const result = await db.delete(outbox).where(sql`${outbox.expiresAt} < ${now}`);
+    const result = await getDb().delete(outbox).where(sql`${outbox.expiresAt} < ${now}`);
     return result.rowCount || 0;
   }
 
@@ -282,7 +282,7 @@ export class OutboxService {
     processed: number;
     failed: number;
   }> {
-    const stats = await db
+    const stats = await getDb()
       .select({
         status: outbox.status,
         count: sql<number>`count(*)`,

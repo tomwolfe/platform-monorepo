@@ -1,6 +1,6 @@
 "use server";
 
-import { db, restaurants, restaurantReservations, restaurantWaitlist, eq } from "@repo/database";
+import { getDb, restaurants, restaurantReservations, restaurantWaitlist, eq } from "@repo/database";
 import { revalidatePath } from "next/cache";
 import { NotifyService } from "@/lib/notifications";
 
@@ -25,7 +25,7 @@ export async function createReservation(data: {
   const requiresDeposit = data.depositAmount && data.depositAmount > 0;
   const isVerified = !requiresDeposit || !!data.paymentTxHash;
 
-  const [reservation] = await db.insert(restaurantReservations).values({
+  const [reservation] = await getDb().insert(restaurantReservations).values({
     restaurantId: data.restaurantId,
     tableId: data.tableId,
     guestName: data.guestName,
@@ -39,7 +39,7 @@ export async function createReservation(data: {
     paymentTxHash: data.paymentTxHash,
   }).returning();
 
-  const restaurant = await db.query.restaurants.findFirst({
+  const restaurant = await getDb().query.restaurants.findFirst({
     where: eq(restaurants.id, data.restaurantId),
   });
 
@@ -66,7 +66,7 @@ export async function createReservation(data: {
 }
 
 export async function cancelReservation(reservationId: string) {
-  const [reservation] = await db.update(restaurantReservations)
+  const [reservation] = await getDb().update(restaurantReservations)
     .set({ status: 'cancelled' })
     .where(eq(restaurantReservations.id, reservationId))
     .returning();
@@ -89,13 +89,13 @@ export async function addToWaitlist(data: {
   guestEmail: string;
   partySize: number;
 }) {
-  const restaurant = await db.query.restaurants.findFirst({
+  const restaurant = await getDb().query.restaurants.findFirst({
     where: eq(restaurants.id, data.restaurantId),
   });
 
   if (!restaurant) throw new Error("Restaurant not found");
 
-  const [entry] = await db.insert(restaurantWaitlist).values({
+  const [entry] = await getDb().insert(restaurantWaitlist).values({
     restaurantId: data.restaurantId,
     guestName: data.guestName,
     guestEmail: data.guestEmail,

@@ -10,8 +10,11 @@ import {
   CHECK_KITCHEN_LOAD_TOOL,
   DISPATCH_INTENT_TOOL,
   TOOL_METADATA,
+  CheckKitchenLoadSchema,
+  GetLocalVendorsSchema,
+  QuoteDeliverySchema,
+  DispatchIntentSchema,
 } from "@repo/mcp-protocol";
-import { z } from "zod";
 import { redis } from "./lib/redis-client.js";
 import { Pool } from '@neondatabase/serverless';
 import { signServiceToken, signPayload } from "@repo/auth";
@@ -70,8 +73,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case "check_kitchen_load": {
-        // Validate arguments using Zod schema
-        const parseResult = z.object({ restaurant_id: z.string().uuid() }).safeParse(args);
+        // Validate arguments using shared Zod schema
+        const parseResult = CheckKitchenLoadSchema.safeParse(args);
         if (!parseResult.success) {
           return {
             content: [{ type: "text", text: `Invalid arguments: ${parseResult.error.message}` }],
@@ -156,12 +159,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "get_local_vendors": {
-        // Validate arguments using Zod schema
-        const parseResult = z.object({
-          latitude: z.number(),
-          longitude: z.number(),
-          radius_km: z.number().optional().default(5),
-        }).safeParse(args);
+        // Validate arguments using shared Zod schema
+        const parseResult = GetLocalVendorsSchema.safeParse(args);
 
         if (!parseResult.success) {
           return {
@@ -240,13 +239,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "quote_delivery": {
-        // Validate arguments using Zod schema
-        const parseResult = z.object({
-          pickup_address: z.string(),
-          delivery_address: z.string(),
-          restaurant_id: z.string().uuid().optional(),
-          system_key: z.string().optional(),
-        }).safeParse(args);
+        // Validate arguments using shared Zod schema
+        const parseResult = QuoteDeliverySchema.safeParse(args);
 
         if (!parseResult.success) {
           return {
@@ -306,16 +300,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "dispatch_intent": {
-        // Validate arguments using Zod schema
-        const parseResult = z.object({
-          order_id: z.string(),
-          pickup_address: z.string(),
-          delivery_address: z.string(),
-          customer_id: z.string(),
-          max_price: z.number().optional(),
-          restaurant_id: z.string().uuid().optional(),
-          priority: z.boolean().optional(),
-        }).safeParse(args);
+        // Validate arguments using shared Zod schema
+        const parseResult = DispatchIntentSchema.safeParse(args);
 
         if (!parseResult.success) {
           return {

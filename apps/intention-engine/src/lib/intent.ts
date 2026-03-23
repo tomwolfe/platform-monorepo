@@ -50,33 +50,6 @@ export async function getLastInteractionContextByClerkId(clerkId: string): Promi
 }
 
 /**
- * Retrieve last interaction context from Postgres using email (legacy support).
- * @deprecated Use getLastInteractionContextByClerkId instead
- */
-export async function getLastInteractionContext(userEmail: string): Promise<{
-  intentType?: string;
-  rawText?: string;
-  parameters?: Record<string, unknown>;
-  timestamp?: string;
-} | null> {
-  // Delegate to clerkId version if possible, otherwise use email fallback
-  if (!db) return null;
-
-  try {
-    const userRecord = await db.query.users.findFirst({
-      where: eq(users.email, userEmail),
-    });
-
-    if (!userRecord?.lastInteractionContext) return null;
-
-    return userRecord.lastInteractionContext;
-  } catch (error) {
-    console.warn("[ContextualMemory] Failed to retrieve last interaction context:", error);
-    return null;
-  }
-}
-
-/**
  * Retrieve last 3 successful intents from Redis audit logs for contextual continuity.
  * This enables the LLM to understand conversation history and resolve pronouns.
  * Uses clerkId for user identification (from auth headers).
@@ -127,41 +100,6 @@ export async function saveInteractionContextByClerkId(
   try {
     const userRecord = await db.query.users.findFirst({
       where: eq(users.clerkId, clerkId),
-    });
-
-    if (!userRecord) return;
-
-    const context = {
-      intentType: intent.type,
-      rawText: intent.rawText,
-      parameters: intent.parameters,
-      timestamp: new Date().toISOString(),
-      executionId,
-    };
-
-    await db.update(users).set({
-      lastInteractionContext: context,
-      updatedAt: new Date(),
-    }).where(eq(users.id, userRecord.id));
-  } catch (error) {
-    console.warn("[ContextualMemory] Failed to save interaction context:", error);
-  }
-}
-
-/**
- * Save current interaction context to Postgres using email (legacy support).
- * @deprecated Use saveInteractionContextByClerkId instead
- */
-export async function saveInteractionContext(
-  userEmail: string,
-  intent: Intent,
-  executionId?: string
-): Promise<void> {
-  if (!db) return;
-
-  try {
-    const userRecord = await db.query.users.findFirst({
-      where: eq(users.email, userEmail),
     });
 
     if (!userRecord) return;

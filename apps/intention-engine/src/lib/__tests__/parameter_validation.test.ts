@@ -1,128 +1,72 @@
 
-import { normalizeIntent } from "../normalization";
+import { describe, it, expect } from 'vitest';
+import { normalizeIntent } from '../normalization';
 
-interface TestResult {
-  name: string;
-  passed: boolean;
-  error?: string;
-}
+describe('Deep Semantic Parameter Validation', () => {
+  const modelId = 'test-model';
 
-const testResults: TestResult[] = [];
+  describe('Temporal Expression Validation', () => {
+    it('should penalize confidence for past dates in SCHEDULE intents', () => {
+      const pastDate = new Date();
+      pastDate.setFullYear(pastDate.getFullYear() - 1);
 
-function assert(name: string, condition: boolean, errorMessage?: string): void {
-  if (condition) {
-    testResults.push({ name, passed: true });
-    console.log(`✓ PASS: ${name}`);
-  } else {
-    testResults.push({ name, passed: false, error: errorMessage });
-    console.error(`✗ FAIL: ${name}${errorMessage ? ` - ${errorMessage}` : ""}`);
-  }
-}
+      const candidatePast = {
+        type: 'SCHEDULE' as const,
+        confidence: 0.95,
+        parameters: {
+          action: 'SCHEDULE',
+          temporal_expression: pastDate.toISOString(),
+          topic: 'Past meeting',
+        },
+        explanation: 'Scheduling a meeting in the past.',
+      };
 
-function printSummary(): void {
-  console.log("\n" + "=".repeat(60));
-  console.log("TEST SUMMARY");
-  console.log("=".repeat(60));
-  
-  const passed = testResults.filter(r => r.passed).length;
-  const failed = testResults.filter(r => !r.passed).length;
-  
-  console.log(`Total: ${testResults.length}`);
-  console.log(`Passed: ${passed}`);
-  console.log(`Failed: ${failed}`);
-  
-  if (failed > 0) {
-    process.exit(1);
-  }
-}
+      const normalizedPast = normalizeIntent(candidatePast, 'Schedule a meeting for last year', modelId);
 
-async function testParameterValidation() {
-  console.log("\n--- TEST: Deep Semantic Parameter Validation ---");
-  const modelId = "test-model";
+      expect(normalizedPast.confidence).toBeLessThan(0.85);
+      expect(normalizedPast.explanation?.toLowerCase()).toContain('past');
+    });
 
-  // Test 1: Past dates in SCHEDULE
-  const pastDate = new Date();
-  pastDate.setFullYear(pastDate.getFullYear() - 1);
-  
-  const candidatePast = {
-    type: "SCHEDULE",
-    confidence: 0.95,
-    parameters: {
-      action: "SCHEDULE",
-      temporal_expression: pastDate.toISOString(),
-      topic: "Past meeting"
-    },
-    explanation: "Scheduling a meeting in the past."
-  };
+    it('should accept relative time expressions in SCHEDULE intents with high confidence', () => {
+      const candidateRelative = {
+        type: 'SCHEDULE' as const,
+        confidence: 0.95,
+        parameters: {
+          action: 'SCHEDULE',
+          temporal_expression: 'tomorrow at 5pm',
+          topic: 'Relative meeting',
+        },
+        explanation: 'Scheduling a meeting using a relative time expression.',
+      };
 
-  const normalizedPast = normalizeIntent(candidatePast, "Schedule a meeting for last year", modelId);
-  
-  assert(
-    "Should penalize confidence for past dates in SCHEDULE intents",
-    normalizedPast.confidence < 0.85,
-    `Confidence ${normalizedPast.confidence} is not less than 0.85`
-  );
+      const normalizedRelative = normalizeIntent(
+        candidateRelative,
+        'Schedule a meeting for tomorrow at 5pm',
+        modelId
+      );
 
-  assert(
-    "Should include reason in explanation for past date penalty",
-    normalizedPast.explanation?.toLowerCase().includes("past") ?? false,
-    "Explanation does not mention 'past'"
-  );
+      expect(normalizedRelative.confidence).toBe(0.95);
+    });
 
-  // Test 1.5: Relative time expressions in SCHEDULE
-  const candidateRelative = {
-    type: "SCHEDULE",
-    confidence: 0.95,
-    parameters: {
-      action: "SCHEDULE",
-      temporal_expression: "tomorrow at 5pm",
-      topic: "Relative meeting"
-    },
-    explanation: "Scheduling a meeting using a relative time expression."
-  };
+    it('should accept future dates in SCHEDULE intents with high confidence', () => {
+      const futureDate = new Date();
+      futureDate.setFullYear(futureDate.getFullYear() + 1);
 
-  const normalizedRelative = normalizeIntent(candidateRelative, "Schedule a meeting for tomorrow at 5pm", modelId);
-  
-  assert(
-    "Should accept relative time expressions in SCHEDULE intents with high confidence",
-    normalizedRelative.confidence === 0.95,
-    `Confidence ${normalizedRelative.confidence} was penalized for a relative time expression`
-  );
+      const candidateFuture = {
+        type: 'SCHEDULE' as const,
+        confidence: 0.95,
+        parameters: {
+          action: 'SCHEDULE',
+          temporal_expression: futureDate.toISOString(),
+          topic: 'Future meeting',
+        },
+        explanation: 'Scheduling a meeting in the future.',
+      };
 
-  // Test 2: Future dates in SCHEDULE
-  const futureDate = new Date();
-  futureDate.setFullYear(futureDate.getFullYear() + 1);
-  
-  const candidateFuture = {
-    type: "SCHEDULE",
-    confidence: 0.95,
-    parameters: {
-      action: "SCHEDULE",
-      temporal_expression: futureDate.toISOString(),
-      topic: "Future meeting"
-    },
-    explanation: "Scheduling a meeting in the future."
-  };
+      const normalizedFuture = normalizeIntent(candidateFuture, 'Schedule a meeting for next year', modelId);
 
-  const normalizedFuture = normalizeIntent(candidateFuture, "Schedule a meeting for next year", modelId);
-  
-  assert(
-    "Should accept future dates in SCHEDULE intents with high confidence",
-    normalizedFuture.confidence === 0.95 && normalizedFuture.type === "SCHEDULE",
-    `Confidence is ${normalizedFuture.confidence}, type is ${normalizedFuture.type}`
-  );
-
-  console.log("Parameter validation tests completed");
-}
-
-async function runTests() {
-  try {
-    await testParameterValidation();
-    printSummary();
-  } catch (error) {
-    console.error("Test runner crashed:", error);
-    process.exit(1);
-  }
-}
-
-runTests();
+      expect(normalizedFuture.confidence).toBe(0.95);
+      expect(normalizedFuture.type).toBe('SCHEDULE');
+    });
+  });
+});

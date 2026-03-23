@@ -9,6 +9,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { getQuickJS, QuickJSWASMModule, QuickJSContext } from 'quickjs-emscripten';
 
 // ============================================================================
 // WASM SANDBOX CONFIGURATION
@@ -74,6 +75,8 @@ export class WasmSandbox extends EventEmitter {
   private config: WasmSandboxConfig;
   private stats: WasmSandboxStats;
   private isInitialized = false;
+  private quickJSModule: QuickJSWASMModule | null = null;
+  private context: QuickJSContext | null = null;
 
   constructor(config: Partial<WasmSandboxConfig> = {}) {
     super();
@@ -102,10 +105,17 @@ export class WasmSandbox extends EventEmitter {
       return;
     }
 
-    this.isInitialized = true;
+    try {
+      this.quickJSModule = await getQuickJS();
+      this.context = this.quickJSModule.newContext();
+      this.isInitialized = true;
 
-    if (this.config.debug) {
-      console.log('[WasmSandbox] Initialized successfully');
+      if (this.config.debug) {
+        console.log('[WasmSandbox] QuickJS initialized successfully');
+      }
+    } catch (error) {
+      console.error('[WasmSandbox] Failed to initialize QuickJS:', error);
+      throw error;
     }
   }
 
@@ -120,34 +130,79 @@ export class WasmSandbox extends EventEmitter {
       await this.initialize();
     }
 
-    try {
-      // For now, use a simple Function-based sandbox
-      // Note: This is not as secure as WASM but works across all environments
-      const sandboxedContext = {
-        ...context,
-        console: {
-          log: (...args: unknown[]) => {
-            if (this.config.debug) {
-              console.log('[Sandbox]', ...args);
-            }
-          },
-        },
+    if (!this.context || !this.quickJSModule) {
+      return {
+        success: false,
+        error: 'QuickJS not initialized',
+        errorCode: 'INITIALIZATION_ERROR',
+        executionTimeMs: Date.now() - startTime,
       };
+    }
 
-      // Create a function with the context variables
-      const contextKeys = Object.keys(sandboxedContext);
-      const contextValues = Object.values(sandboxedContext);
+    try {
+      // Set up timeout handling using interrupt handler
+      const deadline = Date.now() + this.config.timeoutMs;
+      this.context.runtime.setInterruptHandler(() => {
+        return Date.now() > deadline;
+      });
+
+      // Inject context variables into the QuickJS environment
+      if (context) {
+        for (const [key, value] of Object.entries(context)) {
+          try {
+            const valueStr = JSON.stringify(value);
+            const valueHandle = this.context.newString(valueStr);
+            this.context.setProp(this.context.global, key, valueHandle);
+            valueHandle.dispose();
+          } catch (error) {
+            throw new Error(`Failed to inject context variable ${key}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
+        }
+      }
+
+      // Execute the code safely in QuickJS VM
+      const result = this.context.evalCode(code);
+
+      if (result.error) {
+        // Handle execution error
+        const errorHandle = result.error;
+        const errorDesc = this.context.getString(errorHandle);
+        errorHandle.dispose();
+        throw new Error(errorDesc);
+      }
+
+      // Extract the result
+      const outputHandle = result.value;
+      let output: unknown = undefined;
       
-      // eslint-disable-next-line no-new-func
-      const fn = new Function(...contextKeys, `return (async () => { ${code} })();`);
-      const result = await fn(...contextValues);
+      if (outputHandle) {
+        const outputType = this.context.typeof(outputHandle);
+        if (outputType === 'string') {
+          output = this.context.getString(outputHandle);
+        } else if (outputType === 'number') {
+          output = this.context.getNumber(outputHandle);
+        } else if (outputType === 'boolean') {
+          // For booleans, check if it's the true or false handle
+          const stringified = this.context.getString(outputHandle);
+          output = stringified === 'true';
+        } else if (outputType === 'object' || outputType === 'array') {
+          // For objects/arrays, convert to JSON string then parse
+          const jsonStr = this.context.getString(outputHandle);
+          try {
+            output = JSON.parse(jsonStr);
+          } catch {
+            output = jsonStr;
+          }
+        }
+        outputHandle.dispose();
+      }
 
       const executionTime = Date.now() - startTime;
       this.stats.successfulExecutions++;
 
       return {
         success: true,
-        output: result,
+        output,
         executionTimeMs: executionTime,
       };
     } catch (error) {
@@ -156,9 +211,15 @@ export class WasmSandbox extends EventEmitter {
 
       let errorCode = 'EXECUTION_ERROR';
       if (error instanceof Error) {
-        if (error.message.includes('timeout')) {
+        if (error.message.includes('Interrupt') || error.message.includes('timeout')) {
           errorCode = 'TIMEOUT';
           this.stats.timeoutExecutions++;
+        } else if (error.message.includes('memory')) {
+          errorCode = 'MEMORY_LIMIT';
+          this.stats.memoryLimitExecutions++;
+        } else if (error.message.includes('instruction')) {
+          errorCode = 'INSTRUCTION_LIMIT';
+          this.stats.instructionLimitExecutions++;
         }
       }
 
@@ -194,6 +255,17 @@ export class WasmSandbox extends EventEmitter {
    * Dispose of all resources
    */
   async dispose(): Promise<void> {
+    // Dispose the context first
+    if (this.context) {
+      this.context.dispose();
+      this.context = null;
+    }
+    
+    // Dispose the module (this will be handled by GC, but we clear references)
+    if (this.quickJSModule) {
+      this.quickJSModule = null;
+    }
+    
     await this.reset();
     this.removeAllListeners();
 

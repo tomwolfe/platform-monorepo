@@ -1,22 +1,21 @@
-import { verifyPlan, SafetyPolicy, DEFAULT_SAFETY_POLICY } from "../engine/verifier";
-import { generateIntentHash } from "../engine/intent";
-import { Plan } from "../engine/types";
-import { randomUUID } from "crypto";
+import { describe, it, expect } from 'vitest';
+import { verifyPlan, SafetyPolicy } from '../engine/verifier';
+import { generateIntentHash } from '../engine/intent';
+import { Plan } from '../engine/types';
+import { randomUUID } from 'crypto';
 
-async function runTests() {
-  console.log("--- STARTING VERIFICATION TESTS ---");
-
+describe('Plan Verification', () => {
   const mockPlan: Plan = {
     id: randomUUID(),
     intent_id: randomUUID(),
     steps: [
       {
-        id: "step-1",
+        id: 'step-1',
         step_number: 0,
-        tool_name: "reserve_table",
+        tool_name: 'reserve_table',
         parameters: { party_size: 10 },
         dependencies: [],
-        description: "Book a table",
+        description: 'Book a table',
         requires_confirmation: false,
         timeout_ms: 30000,
       },
@@ -27,114 +26,129 @@ async function runTests() {
       max_execution_time_ms: 60000,
     },
     metadata: {
-      version: "1.0.0",
+      version: '1.0.0',
       created_at: new Date().toISOString(),
-      planning_model_id: "test-model",
+      planning_model_id: 'test-model',
       estimated_total_tokens: 100,
       estimated_latency_ms: 1000,
     },
-    summary: "Mock plan",
+    summary: 'Mock plan',
   };
 
   const policy: SafetyPolicy = {
-    forbiddenSequences: [
-      ["search", "delete_account"],
-    ],
+    forbiddenSequences: [['search', 'delete_account']],
     parameterLimits: [
       {
-        tool: "reserve_table",
-        parameter: "party_size",
+        tool: 'reserve_table',
+        parameter: 'party_size',
         max: 20,
       },
     ],
   };
 
-  // Test 1: Valid Plan
-  const result1 = verifyPlan(mockPlan, policy);
-  console.log(`Test 1 (Valid Plan): ${result1.valid ? "PASSED" : "FAILED"}`);
+  describe('Valid Plan', () => {
+    it('should validate a plan with acceptable parameters', () => {
+      const result = verifyPlan(mockPlan, policy);
+      expect(result.valid).toBe(true);
+    });
+  });
 
-  // Test 2: Parameter Limit Exceeded
-  const invalidPlan: Plan = {
-    ...mockPlan,
-    steps: [
-      {
-        ...mockPlan.steps[0],
-        parameters: { party_size: 100 },
-      },
-    ],
-  };
-  const result2 = verifyPlan(invalidPlan, policy);
-  console.log(`Test 2 (Limit Exceeded): ${!result2.valid && result2.violation === "PARAMETER_LIMIT_EXCEEDED" ? "PASSED" : "FAILED"}`);
-  if (!result2.valid) console.log(`  Reason: ${result2.reason}`);
+  describe('Parameter Limit Validation', () => {
+    it('should reject a plan when parameter limits are exceeded', () => {
+      const invalidPlan: Plan = {
+        ...mockPlan,
+        steps: [
+          {
+            ...mockPlan.steps[0],
+            parameters: { party_size: 100 },
+          },
+        ],
+      };
 
-  // Test 3: Forbidden Sequence
-  const sequencePlan: Plan = {
-    ...mockPlan,
-    steps: [
-      {
-        id: "step-1",
-        step_number: 0,
-        tool_name: "search",
-        parameters: { query: "user" },
-        dependencies: [],
-        description: "Search for user",
-        requires_confirmation: false,
-        timeout_ms: 30000,
-      },
-      {
-        id: "step-2",
-        step_number: 1,
-        tool_name: "delete_account",
-        parameters: { id: "123" },
-        dependencies: ["step-1"],
-        description: "Delete user",
-        requires_confirmation: false,
-        timeout_ms: 30000,
-      },
-    ],
-  };
-  const result3 = verifyPlan(sequencePlan, policy);
-  console.log(`Test 3 (Forbidden Sequence): ${!result3.valid && result3.violation === "FORBIDDEN_SEQUENCE" ? "PASSED" : "FAILED"}`);
-  if (!result3.valid) console.log(`  Reason: ${result3.reason}`);
+      const result = verifyPlan(invalidPlan, policy);
+      expect(result.valid).toBe(false);
+      expect(result.violation).toBe('PARAMETER_LIMIT_EXCEEDED');
+      expect(result.reason).toBeDefined();
+    });
+  });
 
-  // Test 4: Safe Sequence
-  const safeSequencePlan: Plan = {
-    ...mockPlan,
-    steps: [
-      {
-        id: "step-1",
-        step_number: 0,
-        tool_name: "search",
-        parameters: { query: "restaurant" },
-        dependencies: [],
-        description: "Search for restaurant",
-        requires_confirmation: false,
-        timeout_ms: 30000,
-      },
-      {
-        id: "step-2",
-        step_number: 1,
-        tool_name: "reserve_table",
-        parameters: { party_size: 4 },
-        dependencies: ["step-1"],
-        description: "Book table",
-        requires_confirmation: false,
-        timeout_ms: 30000,
-      },
-    ],
-  };
-  const result4 = verifyPlan(safeSequencePlan, policy);
-  console.log(`Test 4 (Safe Sequence): ${result4.valid ? "PASSED" : "FAILED"}`);
+  describe('Forbidden Sequence Validation', () => {
+    it('should reject a plan with forbidden tool sequences', () => {
+      const sequencePlan: Plan = {
+        ...mockPlan,
+        steps: [
+          {
+            id: 'step-1',
+            step_number: 0,
+            tool_name: 'search',
+            parameters: { query: 'user' },
+            dependencies: [],
+            description: 'Search for user',
+            requires_confirmation: false,
+            timeout_ms: 30000,
+          },
+          {
+            id: 'step-2',
+            step_number: 1,
+            tool_name: 'delete_account',
+            parameters: { id: '123' },
+            dependencies: ['step-1'],
+            description: 'Delete user',
+            requires_confirmation: false,
+            timeout_ms: 30000,
+          },
+        ],
+      };
 
-  // Test 5: Intent Hashing
-  const hash1 = generateIntentHash("SCHEDULE", { time: "2pm", date: "today" });
-  const hash2 = generateIntentHash("SCHEDULE", { date: "today", time: "2pm" });
-  console.log(`Test 5 (Deterministic Hash): ${hash1 === hash2 ? "PASSED" : "FAILED"}`);
-  
-  const hash3 = generateIntentHash("SCHEDULE", { time: "3pm" });
-  console.log(`Test 6 (Different Hashes): ${hash1 !== hash3 ? "PASSED" : "FAILED"}`);
+      const result = verifyPlan(sequencePlan, policy);
+      expect(result.valid).toBe(false);
+      expect(result.violation).toBe('FORBIDDEN_SEQUENCE');
+      expect(result.reason).toBeDefined();
+    });
 
-  console.log("--- TESTS COMPLETED ---");
-}
+    it('should accept a plan with safe tool sequences', () => {
+      const safeSequencePlan: Plan = {
+        ...mockPlan,
+        steps: [
+          {
+            id: 'step-1',
+            step_number: 0,
+            tool_name: 'search',
+            parameters: { query: 'restaurant' },
+            dependencies: [],
+            description: 'Search for restaurant',
+            requires_confirmation: false,
+            timeout_ms: 30000,
+          },
+          {
+            id: 'step-2',
+            step_number: 1,
+            tool_name: 'reserve_table',
+            parameters: { party_size: 4 },
+            dependencies: ['step-1'],
+            description: 'Book table',
+            requires_confirmation: false,
+            timeout_ms: 30000,
+          },
+        ],
+      };
 
-runTests().catch(console.error);
+      const result = verifyPlan(safeSequencePlan, policy);
+      expect(result.valid).toBe(true);
+    });
+  });
+
+  describe('Intent Hashing', () => {
+    it('should generate deterministic hashes for the same intent', () => {
+      const hash1 = generateIntentHash('SCHEDULE', { time: '2pm', date: 'today' });
+      const hash2 = generateIntentHash('SCHEDULE', { date: 'today', time: '2pm' });
+      expect(hash1).toBe(hash2);
+    });
+
+    it('should generate different hashes for different intents', () => {
+      const hash1 = generateIntentHash('SCHEDULE', { time: '2pm', date: 'today' });
+      const hash3 = generateIntentHash('SCHEDULE', { time: '3pm' });
+      expect(hash1).not.toBe(hash3);
+    });
+  });
+});

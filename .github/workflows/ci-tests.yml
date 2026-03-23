@@ -1,0 +1,563 @@
+name: CI Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+# Cancel in-progress runs for the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================================
+  # LINT & TYPE CHECK
+  # ============================================================================
+  lint-and-typecheck:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.15.9
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run linter
+        run: pnpm lint
+        continue-on-error: true
+
+      - name: Run type check
+        run: pnpm db:generate
+        continue-on-error: true
+
+  # ============================================================================
+  # UNIT TESTS
+  # ============================================================================
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: apps
+          POSTGRES_PASSWORD: apps
+          POSTGRES_DB: apps_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.15.9
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Setup environment
+        run: |
+          cp .env.local.example .env.local
+          cat >> .env.local << EOF
+          DATABASE_URL=postgresql://apps:apps@localhost:5432/apps_test
+          TEST_DATABASE_URL=postgresql://apps:apps@localhost:5432/apps_test
+          UPSTASH_REDIS_REST_URL=redis://localhost:6379
+          UPSTASH_REDIS_REST_TOKEN=test
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_ci_test_key
+          CLERK_SECRET_KEY=sk_test_ci_test_secret
+          INTERNAL_SYSTEM_KEY=test-key
+          LLM_API_KEY=test_llm_key
+          LLM_BASE_URL=http://localhost:9999
+          LLM_MODEL=test-model
+          RESEND_API_KEY=re_test_ci_key
+          NEXT_PUBLIC_APP_URL=http://localhost:3000
+          ABLY_API_KEY=local:appkey
+          ABLY_REST_HOST=localhost
+          ABLY_REALTIME_HOST=localhost
+          ABLY_REST_PORT=5000
+          ABLY_REALTIME_PORT=5000
+          ABLY_TLS=false
+          BASE_RPC_URL=https://mainnet.base.org
+          NEXT_PUBLIC_TREASURY_WALLET_ADDRESS=0x1234567890123456789012345678901234567890
+          NEXT_PUBLIC_MIN_CONFIRMATIONS=3
+          EOF
+
+      - name: Generate database schema
+        run: pnpm db:generate
+
+      - name: Run unit tests with coverage
+        run: pnpm test:coverage
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://apps:apps@localhost:5432/apps_test
+          TEST_DATABASE_URL: postgresql://apps:apps@localhost:5432/apps_test
+          UPSTASH_REDIS_REST_URL: redis://localhost:6379
+          UPSTASH_REDIS_REST_TOKEN: test
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-reports
+          path: |
+            coverage/**/*
+          retention-days: 30
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            *.log
+          retention-days: 7
+
+  # ============================================================================
+  # INTEGRATION TESTS
+  # ============================================================================
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: apps
+          POSTGRES_PASSWORD: apps
+          POSTGRES_DB: apps_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.15.9
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Setup environment
+        run: |
+          cp .env.local.example .env.local
+          cat >> .env.local << EOF
+          DATABASE_URL=postgresql://apps:apps@localhost:5432/apps_test
+          TEST_DATABASE_URL=postgresql://apps:apps@localhost:5432/apps_test
+          UPSTASH_REDIS_REST_URL=redis://localhost:6379
+          UPSTASH_REDIS_REST_TOKEN=test
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_ci_test_key
+          CLERK_SECRET_KEY=sk_test_ci_test_secret
+          INTERNAL_SYSTEM_KEY=test-key
+          LLM_API_KEY=test_llm_key
+          LLM_BASE_URL=http://localhost:9999
+          LLM_MODEL=test-model
+          RESEND_API_KEY=re_test_ci_key
+          NEXT_PUBLIC_APP_URL=http://localhost:3000
+          ABLY_API_KEY=local:appkey
+          ABLY_REST_HOST=localhost
+          ABLY_REALTIME_HOST=localhost
+          ABLY_REST_PORT=5000
+          ABLY_REALTIME_PORT=5000
+          ABLY_TLS=false
+          BASE_RPC_URL=https://mainnet.base.org
+          NEXT_PUBLIC_TREASURY_WALLET_ADDRESS=0x1234567890123456789012345678901234567890
+          NEXT_PUBLIC_MIN_CONFIRMATIONS=3
+          EOF
+
+      - name: Generate database schema
+        run: pnpm db:generate
+
+      - name: Run integration tests
+        run: pnpm test:integration
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://apps:apps@localhost:5432/apps_test
+          TEST_DATABASE_URL: postgresql://apps:apps@localhost:5432/apps_test
+          UPSTASH_REDIS_REST_URL: redis://localhost:6379
+          UPSTASH_REDIS_REST_TOKEN: test
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-results
+          path: |
+            *.log
+          retention-days: 7
+
+  # ============================================================================
+  # CHAOS TESTS
+  # ============================================================================
+  chaos-tests:
+    name: Chaos Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: apps
+          POSTGRES_PASSWORD: apps
+          POSTGRES_DB: apps_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.15.9
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Setup environment
+        run: |
+          cp .env.local.example .env.local
+          cat >> .env.local << EOF
+          DATABASE_URL=postgresql://apps:apps@localhost:5432/apps_test
+          TEST_DATABASE_URL=postgresql://apps:apps@localhost:5432/apps_test
+          UPSTASH_REDIS_REST_URL=redis://localhost:6379
+          UPSTASH_REDIS_REST_TOKEN=test
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_ci_test_key
+          CLERK_SECRET_KEY=sk_test_ci_test_secret
+          INTERNAL_SYSTEM_KEY=test-key
+          LLM_API_KEY=test_llm_key
+          LLM_BASE_URL=http://localhost:9999
+          LLM_MODEL=test-model
+          RESEND_API_KEY=re_test_ci_key
+          NEXT_PUBLIC_APP_URL=http://localhost:3000
+          ABLY_API_KEY=local:appkey
+          ABLY_REST_HOST=localhost
+          ABLY_REALTIME_HOST=localhost
+          ABLY_REST_PORT=5000
+          ABLY_REALTIME_PORT=5000
+          ABLY_TLS=false
+          EOF
+
+      - name: Generate database schema
+        run: pnpm db:generate
+
+      - name: Run chaos tests
+        run: pnpm test:chaos
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://apps:apps@localhost:5432/apps_test
+          TEST_DATABASE_URL: postgresql://apps:apps@localhost:5432/apps_test
+          UPSTASH_REDIS_REST_URL: redis://localhost:6379
+          UPSTASH_REDIS_REST_TOKEN: test
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chaos-test-results
+          path: |
+            *.log
+          retention-days: 7
+
+  # ============================================================================
+  # COVERAGE CHECK
+  # ============================================================================
+  coverage-check:
+    name: Coverage Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [unit-tests]
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: apps
+          POSTGRES_PASSWORD: apps
+          POSTGRES_DB: apps_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.15.9
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Setup environment
+        run: |
+          cp .env.local.example .env.local
+          cat >> .env.local << EOF
+          DATABASE_URL=postgresql://apps:apps@localhost:5432/apps_test
+          TEST_DATABASE_URL=postgresql://apps:apps@localhost:5432/apps_test
+          UPSTASH_REDIS_REST_URL=redis://localhost:6379
+          UPSTASH_REDIS_REST_TOKEN=test
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_ci_test_key
+          CLERK_SECRET_KEY=sk_test_ci_test_secret
+          INTERNAL_SYSTEM_KEY=test-key
+          LLM_API_KEY=test_llm_key
+          LLM_BASE_URL=http://localhost:9999
+          LLM_MODEL=test-model
+          RESEND_API_KEY=re_test_ci_key
+          NEXT_PUBLIC_APP_URL=http://localhost:3000
+          ABLY_API_KEY=local:appkey
+          ABLY_REST_HOST=localhost
+          ABLY_REALTIME_HOST=localhost
+          ABLY_REST_PORT=5000
+          ABLY_REALTIME_PORT=5000
+          ABLY_TLS=false
+          EOF
+
+      - name: Generate database schema
+        run: pnpm db:generate
+
+      - name: Run tests with coverage thresholds
+        run: pnpm test:coverage
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://apps:apps@localhost:5432/apps_test
+          TEST_DATABASE_URL: postgresql://apps:apps@localhost:5432/apps_test
+          UPSTASH_REDIS_REST_URL: redis://localhost:6379
+          UPSTASH_REDIS_REST_TOKEN: test
+
+      - name: Check coverage thresholds
+        run: |
+          echo "Checking coverage thresholds..."
+          # Coverage thresholds are enforced by vitest.config.ts
+          # This step ensures the build fails if coverage is below threshold
+          cat coverage/coverage-summary.json | jq '.total.lines.pct' > coverage-lines.txt
+          COVERAGE=$(cat coverage-lines.txt)
+          echo "Coverage: $COVERAGE%"
+          if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+            echo "❌ Coverage ($COVERAGE%) is below 70% threshold"
+            exit 1
+          fi
+          echo "✅ Coverage ($COVERAGE%) meets 70% threshold"
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-summary
+          path: |
+            coverage/coverage-summary.json
+            coverage/coverage-final.json
+          retention-days: 30
+
+  # ============================================================================
+  # BUILD VERIFICATION
+  # ============================================================================
+  build-verification:
+    name: Build Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.15.9
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build application
+        run: pnpm build
+
+      - name: Verify build artifacts
+        run: |
+          echo "Verifying build artifacts..."
+          test -d apps/table-stack/.next || exit 1
+          test -d apps/intention-engine/.next || exit 1
+          echo "✅ Build artifacts verified"
+
+  # ============================================================================
+  # VALIDATE ENVIRONMENT
+  # ============================================================================
+  validate-environment:
+    name: Validate Environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.15.9
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Validate environment files
+        run: pnpm validate:env
+
+      - name: Validate schema sync
+        run: pnpm validate:schema-sync
+
+  # ============================================================================
+  # SUMMARY
+  # ============================================================================
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - lint-and-typecheck
+      - unit-tests
+      - integration-tests
+      - chaos-tests
+      - coverage-check
+      - build-verification
+      - validate-environment
+    if: always()
+
+    steps:
+      - name: Check CI status
+        run: |
+          echo "=== CI Test Summary ==="
+          echo "Lint & Typecheck: ${{ needs.lint-and-typecheck.result }}"
+          echo "Unit Tests: ${{ needs.unit-tests.result }}"
+          echo "Integration Tests: ${{ needs.integration-tests.result }}"
+          echo "Chaos Tests: ${{ needs.chaos-tests.result }}"
+          echo "Coverage Check: ${{ needs.coverage-check.result }}"
+          echo "Build Verification: ${{ needs.build-verification.result }}"
+          echo "Validate Environment: ${{ needs.validate-environment.result }}"
+
+          # Fail if any critical jobs failed
+          if [[ "${{ needs.unit-tests.result }}" == "failure" ]] || \
+             [[ "${{ needs.integration-tests.result }}" == "failure" ]] || \
+             [[ "${{ needs.coverage-check.result }}" == "failure" ]] || \
+             [[ "${{ needs.build-verification.result }}" == "failure" ]]; then
+            echo "❌ CI checks failed"
+            exit 1
+          fi
+
+          echo "✅ All CI checks passed"

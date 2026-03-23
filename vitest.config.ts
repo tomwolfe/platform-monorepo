@@ -21,6 +21,7 @@ export default defineConfig({
     reporters: ['verbose'],
     setupFiles: [
       './apps/open-delivery/src/test/setup.ts',
+      './apps/table-stack/src/test/vitest-setup.ts',
     ],
     server: {
       deps: {

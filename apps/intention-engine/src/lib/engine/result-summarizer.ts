@@ -33,6 +33,7 @@
 
 import { ExecutionState, Plan, PlanStep } from "./types";
 import { getCompletedSteps, getFailedSteps } from "./state-machine";
+import { generateText, SUMMARIZATION_PROMPT } from "./llm";
 
 // ============================================================================
 // CONFIGURATION
@@ -485,12 +486,49 @@ export class ResultSummarizer {
    * Fallback LLM summarization
    */
   private async summarizeWithLLM(result: ExecutionResult): Promise<SummarizeResult> {
-    // In production, this would call the LLM
-    // For now, return a structured fallback
     console.log("[ResultSummarizer] Falling back to LLM summarization");
+
+    // Build the summarization prompt using the template from llm.ts
+    const intent = result.state.intent?.content || JSON.stringify(result.state.intent);
+    const planSummary = result.state.plan?.summary || "No plan summary available";
     
-    // Placeholder - would call generateText() with summarization prompt
-    return this.createFallbackSummary(result);
+    // Extract tool outputs from completed steps
+    const toolOutputs = result.state.step_states
+      .filter(s => s.status === "completed" && s.output)
+      .map((s, idx) => ({
+        step_number: idx + 1,
+        step_id: s.step_id,
+        output: s.output,
+      }));
+
+    const toolOutputsJson = JSON.stringify(toolOutputs, null, 2);
+
+    // Construct prompt using SUMMARIZATION_PROMPT template
+    const prompt = SUMMARIZATION_PROMPT
+      .replace("{intent}", intent)
+      .replace("{plan_summary}", planSummary)
+      .replace("{tool_outputs}", toolOutputsJson);
+
+    try {
+      // Call the LLM for summarization
+      const response = await generateText({
+        modelType: "summarization",
+        prompt,
+        systemPrompt: "You are a concise execution summarizer. Provide clear, accurate summaries of workflow execution results.",
+        temperature: 0.2,
+        maxTokens: 500,
+        timeoutMs: 10000,
+      });
+
+      return {
+        summary: response.content,
+        source: "llm",
+      };
+    } catch (error) {
+      console.warn("[ResultSummarizer] LLM summarization failed, using fallback:", error);
+      // Fall back to generic summary if LLM fails
+      return this.createFallbackSummary(result);
+    }
   }
 
   /**

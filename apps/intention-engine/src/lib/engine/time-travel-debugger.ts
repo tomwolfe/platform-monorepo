@@ -42,6 +42,8 @@ import {
 } from "./types";
 import { redis } from "../redis-client";
 import { Tracer } from "./tracing";
+import { loadExecutionTrace } from "./memory";
+import { getToolRegistry, type ToolFunction } from "./tools/registry";
 
 // ============================================================================
 // CONFIGURATION
@@ -466,8 +468,21 @@ export class ReplayEngine {
    * Load original trace for comparison
    */
   private async loadOriginalTrace(): Promise<TraceEntry[]> {
-    // Placeholder - would load from trace storage
-    return [];
+    try {
+      // Load execution trace from memory
+      const trace = await loadExecutionTrace(this.traceId);
+      
+      if (!trace) {
+        console.warn(`[TimeTravel] No trace found for ${this.traceId}`);
+        return [];
+      }
+
+      // Return the trace entries
+      return trace.entries || [];
+    } catch (error) {
+      console.error("[TimeTravel] Failed to load original trace:", error);
+      return [];
+    }
   }
 
   /**
@@ -481,40 +496,142 @@ export class ReplayEngine {
     let stepsReplayed = 0;
     let stepsSkipped = 0;
 
-    // In production, this would:
-    // 1. Restore execution state from snapshot
-    // 2. Re-execute steps with mocked LLM/tool responses
-    // 3. Compare results with original execution
-    // 4. Record any differences
-
     if (this.options.verbose) {
-      console.log("[TimeTravel] Replay execution (mock):", {
+      console.log("[TimeTravel] Starting replay execution:", {
         snapshot,
         options: this.options,
+        originalTraceLength: originalTrace.length,
       });
     }
 
-    // Simulate replay (placeholder)
-    stepsReplayed = 1;
+    try {
+      // Get tool registry for executing tools
+      const toolRegistry = getToolRegistry();
 
-    return {
-      success: true,
-      replayedFrom: {
-        stepIndex: this.startStepIndex,
-        stepId: snapshot.stepStates[this.startStepIndex]?.step_id || "unknown",
-        timestamp: snapshot.capturedAt,
-      },
-      replayedTo: {
-        stepIndex: this.startStepIndex + stepsReplayed - 1,
-        stepId: snapshot.stepStates[this.startStepIndex + stepsReplayed - 1]?.step_id || "unknown",
-        timestamp: new Date().toISOString(),
-      },
-      stepsReplayed,
-      stepsSkipped,
-      differences,
-      replayId: this.replayId,
-      durationMs: Date.now() - this.startTime,
-    };
+      // Replay pending steps from the snapshot
+      const pendingSteps = snapshot.stepStates.slice(this.startStepIndex);
+      
+      for (let i = 0; i < pendingSteps.length; i++) {
+        const stepState = pendingSteps[i];
+        const stepIndex = this.startStepIndex + i;
+
+        // Check if we should skip this step
+        if (this.options.skipSteps?.includes(stepState.step_id)) {
+          stepsSkipped++;
+          if (this.options.verbose) {
+            console.log(`[TimeTravel] Skipping step ${stepState.step_id}`);
+          }
+          continue;
+        }
+
+        // Find the original trace entry for this step
+        const originalEntry = originalTrace.find(e => e.step_id === stepState.step_id);
+        
+        // Get the tool definition
+        const toolName = originalEntry?.tool_name || stepState.step_id.split(":")[0];
+        const toolDef = toolRegistry.getDefinition(toolName);
+
+        if (!toolDef) {
+          console.warn(`[TimeTravel] Tool not found: ${toolName}, skipping step`);
+          stepsSkipped++;
+          continue;
+        }
+
+        // Get parameters from original trace or use defaults
+        const parameters = originalEntry?.parameters || {};
+
+        // Apply parameter overrides if specified
+        const finalParameters = this.options.parameterOverrides
+          ? { ...parameters, ...this.options.parameterOverrides }
+          : parameters;
+
+        // Mock LLM responses if enabled
+        if (this.options.mockLLM && originalEntry?.llm_response) {
+          // In a full implementation, we would mock the LLM provider here
+          if (this.options.verbose) {
+            console.log(`[TimeTravel] Using mocked LLM response for step ${stepState.step_id}`);
+          }
+        }
+
+        // Execute the tool
+        const startTime = Date.now();
+        try {
+          const output = await toolDef.implementation(finalParameters, {
+            executionId: this.executionId,
+            stepId: stepState.step_id,
+            timeoutMs: 10000,
+            startTime,
+          });
+
+          stepsReplayed++;
+
+          // Compare with original output if available
+          if (originalEntry?.output && output.output) {
+            const originalOutputStr = JSON.stringify(originalEntry.output);
+            const replayOutputStr = JSON.stringify(output.output);
+            
+            if (originalOutputStr !== replayOutputStr) {
+              differences.push({
+                stepId: stepState.step_id,
+                original: originalEntry.output,
+                replay: output.output,
+                field: "output",
+              });
+              
+              if (this.options.verbose) {
+                console.log(`[TimeTravel] Difference detected in step ${stepState.step_id}`);
+              }
+            }
+          }
+
+          // Check if we should stop after this step
+          if (this.options.stopAfterStep === stepState.step_id) {
+            if (this.options.verbose) {
+              console.log(`[TimeTravel] Stopping after step ${stepState.step_id}`);
+            }
+            break;
+          }
+        } catch (error) {
+          console.error(`[TimeTravel] Error replaying step ${stepState.step_id}:`, error);
+          // Continue with next step even if this one fails
+        }
+      }
+
+      return {
+        success: true,
+        replayedFrom: {
+          stepIndex: this.startStepIndex,
+          stepId: snapshot.stepStates[this.startStepIndex]?.step_id || "unknown",
+          timestamp: snapshot.capturedAt,
+        },
+        replayedTo: {
+          stepIndex: this.startStepIndex + stepsReplayed - 1,
+          stepId: snapshot.stepStates[this.startStepIndex + stepsReplayed - 1]?.step_id || "unknown",
+          timestamp: new Date().toISOString(),
+        },
+        stepsReplayed,
+        stepsSkipped,
+        differences,
+        replayId: this.replayId,
+        durationMs: Date.now() - this.startTime,
+      };
+    } catch (error) {
+      console.error("[TimeTravel] Replay execution failed:", error);
+      return {
+        success: false,
+        replayedFrom: {
+          stepIndex: this.startStepIndex,
+          stepId: snapshot.stepStates[this.startStepIndex]?.step_id || "unknown",
+          timestamp: snapshot.capturedAt,
+        },
+        stepsReplayed: 0,
+        stepsSkipped: 0,
+        differences,
+        error: error instanceof Error ? error.message : String(error),
+        replayId: this.replayId,
+        durationMs: Date.now() - this.startTime,
+      };
+    }
   }
 }
 

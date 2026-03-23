@@ -243,13 +243,33 @@ async function buildToolExecutor(traceId?: string): Promise<ToolExecutor> {
 
         console.log(`[MeshResume] Executing local tool ${toolName}`);
 
-        // Execute local tool - return not implemented for now
-        // Local tools should be executed via the engine's orchestrator
-        return {
-          success: false,
-          error: `Local tool execution not supported in mesh resume: ${toolName}`,
-          latency_ms: Date.now() - startTime,
-        };
+        // Execute local tool using the engine's standard execution context
+        // We need to construct a proper execution context for the tool
+        const executionId = state.execution_id || executionId;
+        const stepId = `resume:${toolName}:${Date.now()}`;
+        
+        try {
+          const output = await localTool.execute(parameters, { 
+            executionId, 
+            stepId, 
+            timeoutMs,
+            startTime: Date.now(),
+            traceId,
+          });
+
+          return {
+            success: true,
+            output,
+            latency_ms: Date.now() - startTime,
+          };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return {
+            success: false,
+            error: errorMessage,
+            latency_ms: Date.now() - startTime,
+          };
+        }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         return {

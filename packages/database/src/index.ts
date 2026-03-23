@@ -1,4 +1,4 @@
-import { neon } from '@neondatabase/serverless';
+import { neon, neonConfig } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import * as tablestackSchema from './schema/tablestack';
 import * as pgvectorSchema from './schema/pgvector';
@@ -61,6 +61,131 @@ export {
   type SemanticMemorySearchResult,
 } from './schema/pgvector';
 
+// ============================================================================
+// DATABASE CONFIGURATION & CONNECTION POOLING
+// Phase 2.1: Performance & Reliability
+// ============================================================================
+
+/**
+ * Database configuration options
+ */
+export interface DatabaseConfig {
+  /** Connection pool size (default: 10) */
+  poolSize?: number;
+  /** Connection timeout in ms (default: 30000) */
+  connectionTimeout?: number;
+  /** Query timeout in ms (default: 60000) */
+  queryTimeout?: number;
+  /** Enable slow query logging (default: true) */
+  enableSlowQueryLogging?: boolean;
+  /** Slow query threshold in ms (default: 1000) */
+  slowQueryThresholdMs?: number;
+  /** Enable query logging (default: false) */
+  enableQueryLogging?: boolean;
+}
+
+/**
+ * Query statistics for monitoring
+ */
+export interface QueryStats {
+  /** Total queries executed */
+  totalQueries: number;
+  /** Average query time in ms */
+  avgQueryTimeMs: number;
+  /** Slow queries count */
+  slowQueries: number;
+  /** Errors count */
+  errors: number;
+  /** Last query time */
+  lastQueryTime?: Date;
+}
+
+// Default configuration
+const DEFAULT_DB_CONFIG: DatabaseConfig = {
+  poolSize: 10,
+  connectionTimeout: 30000,
+  queryTimeout: 60000,
+  enableSlowQueryLogging: true,
+  slowQueryThresholdMs: 1000,
+  enableQueryLogging: false,
+};
+
+// Runtime configuration
+let dbConfig: DatabaseConfig = { ...DEFAULT_DB_CONFIG };
+
+// Query statistics
+let queryStats: QueryStats = {
+  totalQueries: 0,
+  avgQueryTimeMs: 0,
+  slowQueries: 0,
+  errors: 0,
+  lastQueryTime: undefined,
+};
+
+// Running total for average calculation
+let totalQueryTimeMs = 0;
+
+/**
+ * Configure database connection pooling and query monitoring
+ * 
+ * @param config - Database configuration options
+ * 
+ * @example
+ * ```typescript
+ * configureDatabase({
+ *   poolSize: 20,
+ *   queryTimeout: 30000,
+ *   enableSlowQueryLogging: true,
+ *   slowQueryThresholdMs: 500,
+ * });
+ * ```
+ */
+export function configureDatabase(config: DatabaseConfig): void {
+  dbConfig = { ...DEFAULT_DB_CONFIG, ...config };
+  
+  // Configure neon connection pool
+  if (dbConfig.poolSize) {
+    neonConfig.poolSize = dbConfig.poolSize;
+  }
+  if (dbConfig.connectionTimeout) {
+    neonConfig.connectionTimeoutMillis = dbConfig.connectionTimeout;
+  }
+  
+  console.log(
+    `[Database] Configured with poolSize=${dbConfig.poolSize}, ` +
+    `queryTimeout=${dbConfig.queryTimeout}ms, ` +
+    `slowQueryThreshold=${dbConfig.slowQueryThresholdMs}ms`
+  );
+}
+
+/**
+ * Get current database configuration
+ */
+export function getDatabaseConfig(): DatabaseConfig {
+  return { ...dbConfig };
+}
+
+/**
+ * Get query statistics
+ */
+export function getQueryStats(): QueryStats {
+  return { ...queryStats };
+}
+
+/**
+ * Reset query statistics (for testing)
+ */
+export function resetQueryStats(): void {
+  queryStats = {
+    totalQueries: 0,
+    avgQueryTimeMs: 0,
+    slowQueries: 0,
+    errors: 0,
+    lastQueryTime: undefined,
+  };
+  totalQueryTimeMs = 0;
+}
+
 const databaseUrl = process.env.DATABASE_URL;
 
 // We avoid calling neon() if databaseUrl is missing, which can happen during build
@@ -100,6 +225,13 @@ export function getDb() {
   }
 
   _dbInstance = drizzle(neonClient, { schema });
+  
+  // Log configuration on first initialization
+  console.log(
+    `[Database] Initialized with poolSize=${neonConfig.poolSize || 10}, ` +
+    `connectionTimeout=${neonConfig.connectionTimeoutMillis || 30000}ms`
+  );
+  
   return _dbInstance;
 }
 

@@ -37,6 +37,12 @@ export {
 export * from './runtime-registry'; // Unified registry (tools, MCP, services)
 export * from './infrastructure/cache'; // Standardized Redis cache layer
 
+// Phase 2.2: Request Caching
+export * from './middleware/cache-middleware';
+
+// Phase 2.3: Health Checks
+export * from './middleware/health-check';
+
 // Tool types
 export * from './types/tool';
 

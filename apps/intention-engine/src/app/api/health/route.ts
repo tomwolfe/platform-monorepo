@@ -1,26 +1,13 @@
-import { NextResponse } from "next/server";
-import { redis } from "@/lib/redis-client";
+/**
+ * Health Check Endpoint
+ * 
+ * Returns the health status of the Intention Engine service.
+ * Used by Kubernetes liveness probes and load balancers.
+ */
 
-export const runtime = "nodejs";
+import { createHealthHandler } from '@repo/shared/health';
 
-export async function GET() {
-  try {
-    // CI optimization: Don't let a slow Redis proxy block the health check
-    const isCi = process.env.CI === "true";
-    
-    const redisStatus = await Promise.race([
-      redis.ping().catch(() => "down"),
-      new Promise<string>((r) => setTimeout(() => r("timeout"), 1000)),
-    ]);
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
-    return NextResponse.json({
-      status: "healthy",
-      redis: (redisStatus === "PONG" || isCi) ? "up" : "degraded",
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    // In CI, we want to return 200 even if Redis is briefly unreachable 
-    // to allow the server to start and internal retries to handle the rest.
-    return NextResponse.json({ status: "healthy", degraded: true }, { status: 200 });
-  }
-}
+export const GET = createHealthHandler({ verbose: false });

@@ -1,8 +1,10 @@
 /**
  * Health Check Endpoint
  * 
- * Returns the health status of the Open Delivery service.
+ * Returns the health status of the Table Stack service.
  * Used by Kubernetes liveness probes and load balancers.
+ * 
+ * @see https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
  */
 
 import { createHealthHandler } from '@repo/shared/health';

@@ -155,6 +155,44 @@ export async function cancel_ride(params: { ride_id?: string; service?: string; 
 
 import { geocode_location } from "./location_search";
 
+/**
+ * Calculate distance between two coordinates using Haversine formula
+ * Returns distance in kilometers
+ */
+function haversineDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const R = 6371; // Earth's radius in km
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/**
+ * Calculate estimated duration based on distance and travel mode
+ * Returns duration in minutes
+ */
+function estimateDuration(distanceKm: number, travelMode: string): number {
+  const speeds: Record<string, number> = {
+    driving: 40, // km/h (urban average)
+    walking: 5,
+    bicycling: 15,
+    transit: 30,
+  };
+  const speed = speeds[travelMode] || speeds.driving;
+  return Math.round((distanceKm / speed) * 60);
+}
+
 export async function get_route_estimate(params: RouteEstimateParams): Promise<{ success: boolean; result?: any; error?: string }> {
   const validated = RouteEstimateSchema.safeParse(params);
   if (!validated.success) {
@@ -203,7 +241,7 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
 
     return await withNervousSystemTracing(async ({ correlationId }) => {
       let response: Response;
-      
+
       try {
         response = await fetch(url, {
           headers: injectTracingHeaders({}, correlationId),
@@ -211,23 +249,13 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
         });
       } catch (fetchError: any) {
         clearTimeout(timeoutId);
-        
-        // Handle AbortError (timeout) or network errors
-        if (fetchError.name === 'AbortError') {
-          console.warn('[get_route_estimate] OSRM API timeout, returning graceful fallback');
-          return {
-            success: true,
-            result: {
-              origin: normalizedOrigin,
-              destination: normalizedDestination,
-              distance_km: 0,
-              duration_minutes: 0,
-              traffic_status: "unavailable",
-              warning: 'Route estimation temporarily unavailable. Please try again later.'
-            }
-          };
+
+        // Handle AbortError (timeout) or network errors - FALLBACK TO HAVERSINE
+        if (fetchError.name === 'AbortError' || fetchError.message?.includes('fetch')) {
+          console.warn('[get_route_estimate] OSRM API timeout, using Haversine fallback');
+          return getHaversineFallback(normalizedOrigin, normalizedDestination, originCoords, destCoords, travel_mode);
         }
-        
+
         throw fetchError;
       }
 
@@ -236,43 +264,24 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
       // Handle HTTP error status codes
       if (!response.ok) {
         const statusCode = response.status;
-        
-        // Handle rate limiting (429) or service unavailable (503)
-        if (statusCode === 429) {
-          console.warn('[get_route_estimate] OSRM API rate limited (429), returning graceful fallback');
-          return {
-            success: true,
-            result: {
-              origin: normalizedOrigin,
-              destination: normalizedDestination,
-              distance_km: 0,
-              duration_minutes: 0,
-              traffic_status: "unavailable",
-              warning: 'Route estimation is currently rate-limited. Please try again in a moment.'
-            }
-          };
+
+        // Handle rate limiting (429) or service unavailable (503) - FALLBACK TO HAVERSINE
+        if (statusCode === 429 || statusCode === 503 || statusCode >= 500) {
+          console.warn(`[get_route_estimate] OSRM API ${statusCode}, using Haversine fallback`);
+          return getHaversineFallback(normalizedOrigin, normalizedDestination, originCoords, destCoords, travel_mode);
         }
-        
-        if (statusCode === 503 || statusCode >= 500) {
-          console.warn('[get_route_estimate] OSRM API unavailable, returning graceful fallback');
-          return {
-            success: true,
-            result: {
-              origin: normalizedOrigin,
-              destination: normalizedDestination,
-              distance_km: 0,
-              duration_minutes: 0,
-              traffic_status: "unavailable",
-              warning: 'Route estimation is temporarily unavailable. Please try again later.'
-            }
-          };
-        }
-        
-        throw new Error("Routing API error");
+
+        // For other errors (400, 404), try Haversine as fallback
+        console.warn(`[get_route_estimate] OSRM API error ${statusCode}, using Haversine fallback`);
+        return getHaversineFallback(normalizedOrigin, normalizedDestination, originCoords, destCoords, travel_mode);
       }
 
       const data = await response.json();
-      if (!data.routes || data.routes.length === 0) throw new Error("No route found");
+      if (!data.routes || data.routes.length === 0) {
+        // No route found - use Haversine fallback
+        console.warn('[get_route_estimate] No route found, using Haversine fallback');
+        return getHaversineFallback(normalizedOrigin, normalizedDestination, originCoords, destCoords, travel_mode);
+      }
 
       const route = data.routes[0];
       let distanceKm = route.distance / 1000;
@@ -297,8 +306,57 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
       };
     });
   } catch (error: any) {
-    return { success: false, error: error.message };
+    // Final fallback: return Haversine-based estimate
+    console.warn('[get_route_estimate] OSRM failed, using Haversine fallback:', error.message);
+    try {
+      const originCoords = await resolveCoords(origin);
+      const destCoords = await resolveCoords(destination);
+      const normalizedOrigin = normalizeLocation(origin);
+      const normalizedDestination = normalizeLocation(destination);
+      
+      return getHaversineFallback(normalizedOrigin, normalizedDestination, originCoords, destCoords, travel_mode);
+    } catch (fallbackError: any) {
+      return { success: false, error: error.message };
+    }
   }
+}
+
+/**
+ * Haversine-based fallback for route estimation
+ * Returns straight-line distance estimate when OSRM is unavailable
+ */
+async function getHaversineFallback(
+  normalizedOrigin: string,
+  normalizedDestination: string,
+  originCoords: { lat: number; lon: number },
+  destCoords: { lat: number; lon: number },
+  travelMode: string
+): Promise<{ success: boolean; result: any }> {
+  const distanceKm = haversineDistance(
+    originCoords.lat,
+    originCoords.lon,
+    destCoords.lat,
+    destCoords.lon
+  );
+  
+  const durationMins = estimateDuration(distanceKm, travelMode);
+  
+  console.log(
+    `[get_route_estimate] Haversine fallback: ${distanceKm.toFixed(1)}km, ~${durationMins}min (${travelMode})`
+  );
+
+  return {
+    success: true,
+    result: {
+      origin: normalizedOrigin,
+      destination: normalizedDestination,
+      distance_km: parseFloat(distanceKm.toFixed(1)),
+      duration_minutes: durationMins,
+      traffic_status: "n/a",
+      warning: 'Using straight-line estimate (OSRM unavailable). Actual route may differ.',
+      method: 'haversine',
+    },
+  };
 }
 
 export const mobilityRequestToolDefinition: ToolDefinitionMetadata = {

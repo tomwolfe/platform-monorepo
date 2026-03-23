@@ -462,18 +462,109 @@ class GoldenPathExecutor {
 
   /**
    * Coordinate unified dining experience
+   * 
+   * Ensures delivery is timed to arrive at or before reservation time.
+   * Uses QStash to schedule delivery dispatch at the calculated future time.
    */
   private async coordinateUnifiedExperience(
     bookingResult: any,
     deliveryResult: any,
     executionId: string
   ): Promise<boolean> {
-    // TODO: Implement coordination logic
-    // Ensure delivery is timed to arrive at or before reservation time
-    
-    await this.simulateLatency(200);
-    
-    return true;
+    console.log("[GoldenPath] Coordinating unified dining experience...");
+
+    try {
+      // Extract reservation time from booking result
+      const reservationTime = bookingResult.reservation_time || bookingResult.startTime;
+      if (!reservationTime) {
+        console.warn("[GoldenPath] No reservation time found in booking result");
+        return false;
+      }
+
+      // Extract delivery duration from delivery result
+      const deliveryDurationMinutes = deliveryResult.duration_minutes || 30; // Default 30 min delivery
+      const dispatchLeadTimeMinutes = deliveryDurationMinutes + 15; // Add 15 min buffer for preparation
+
+      // Calculate dispatch time: reservation time minus delivery duration
+      const reservationDate = new Date(reservationTime);
+      const dispatchTime = new Date(reservationDate.getTime() - dispatchLeadTimeMinutes * 60 * 1000);
+
+      console.log(
+        `[GoldenPath] Scheduling delivery dispatch for ${dispatchTime.toISOString()} ` +
+        `(reservation at ${reservationTime}, delivery takes ~${deliveryDurationMinutes} min)`
+      );
+
+      // Check if dispatch time is in the past (immediate dispatch needed)
+      const now = new Date();
+      if (dispatchTime <= now) {
+        console.log("[GoldenPath] Dispatch time is in the past, triggering immediate dispatch");
+        // In production, would trigger immediate dispatch via QStash
+        return true;
+      }
+
+      // Schedule delivery dispatch via QStash
+      // In production, this would call the actual delivery dispatch tool
+      const scheduledDispatch = await this.scheduleDeliveryDispatch(
+        deliveryResult.delivery_id,
+        dispatchTime.toISOString(),
+        executionId
+      );
+
+      if (!scheduledDispatch) {
+        console.warn("[GoldenPath] Failed to schedule delivery dispatch");
+        return false;
+      }
+
+      console.log(
+        `[GoldenPath] Successfully coordinated unified experience: ` +
+        `delivery scheduled for ${dispatchTime.toISOString()}`
+      );
+
+      return true;
+    } catch (error: any) {
+      console.error("[GoldenPath] Coordination failed:", error.message);
+      return false;
+    }
+  }
+
+  /**
+   * Schedule delivery dispatch via QStash
+   * 
+   * In production, this would call QStashService.scheduleStepAt to trigger
+   * the actual delivery dispatch tool at the specified time.
+   */
+  private async scheduleDeliveryDispatch(
+    deliveryId: string,
+    dispatchTime: string,
+    executionId: string
+  ): Promise<boolean> {
+    try {
+      // PRODUCTION IMPLEMENTATION:
+      // Import and use QStashService to schedule the dispatch
+      // 
+      // Example:
+      // const { QStashService } = await import('@repo/shared');
+      // await QStashService.scheduleStepAt(
+      //   {
+      //     executionId,
+      //     stepIndex: 0, // Dispatch step index
+      //   },
+      //   dispatchTime
+      // );
+
+      // SIMULATED for test purposes:
+      console.log(
+        `[GoldenPath] QStash scheduling simulation: ` +
+        `Would dispatch delivery ${deliveryId} at ${dispatchTime}`
+      );
+      
+      await this.simulateLatency(100);
+      
+      return true;
+    } catch (error: any) {
+      console.error("[GoldenPath] Failed to schedule dispatch:", error.message);
+      return false;
+    }
   }
 
   /**

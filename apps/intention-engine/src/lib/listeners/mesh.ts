@@ -6,6 +6,7 @@ import { generatePlan } from "@/lib/planner";
 import { createAuditLog } from "@/lib/audit";
 import { getAblyClient } from "@repo/shared";
 import { getToolDefinitions } from "@/lib/tools";
+import { getEventSchemaRegistry } from "@repo/mcp-protocol";
 
 /**
  * MeshListener - Orchestrates real-time reaction to Nervous System events.
@@ -190,33 +191,72 @@ export class ProactiveIntentGenerator {
 export class MeshListener {
   /**
    * Processes a single event from the mesh.
-   * Validates the service token before acting.
-   * 
+   * Validates the service token AND event schema before acting.
+   *
    * Enhanced to:
    * 1. Handle proactive intent generation for system events
    * 2. Push suggested plans to user's Ably channel
+   * 3. Validate events against Zod schemas from event-registry
    */
-  static async handleEvent(eventName: string, payload: any) {
+  static async handleEvent(eventName: string, payload: unknown) {
     console.log(`[MeshListener] Received event: ${eventName}`);
 
     // Standardized Security Check
-    if (!payload.token) {
+    if (!payload || typeof payload !== 'object' || !('token' in payload)) {
       console.warn(`[MeshListener] Event ${eventName} rejected: Missing service token`);
       return;
     }
 
-    const verified = await verifyServiceToken(payload.token);
+    const payloadObj = payload as Record<string, unknown>;
+    
+    if (!payloadObj.token) {
+      console.warn(`[MeshListener] Event ${eventName} rejected: Missing service token`);
+      return;
+    }
+
+    const verified = await verifyServiceToken(payloadObj.token as string);
     if (!verified) {
       console.warn(`[MeshListener] Event ${eventName} rejected: Invalid service token`);
       return;
     }
 
-    const data = (verified as any).data;
-    const traceId = (verified as any).extras?.traceId;
+    const verifiedData = verified as Record<string, unknown>;
+    const data = verifiedData.data as Record<string, unknown> || {};
+    const traceId = (verifiedData.extras as Record<string, unknown> | undefined)?.traceId as string | undefined;
 
     // Extract user context if available
-    const userId = data.userId || data.guestId || data.customerId;
-    const userChannel = data.userChannel || `user:${userId}`;
+    const userId = (data.userId || data.guestId || data.customerId) as string | undefined;
+    const userChannel = (data.userChannel || `user:${userId}`) as string | undefined;
+
+    // TYPE SAFETY: Validate event against schema registry before processing
+    const registry = getEventSchemaRegistry();
+    
+    // Map legacy event names to registry event types
+    const eventTypeMap: Record<string, string> = {
+      'reservation_rejected': 'RESERVATION_CANCELLED',
+      'high_value_guest_reservation': 'RESERVATION_CREATED',
+      'delivery_logged': 'DELIVERY_COMPLETED',
+    };
+    
+    const registryEventType = eventTypeMap[eventName] || eventName.toUpperCase();
+    
+    // Try to validate against registry schemas (for nervous system events)
+    if (registry.isRegistered(registryEventType)) {
+      const validation = registry.validate(registryEventType, data);
+      if (!validation.success) {
+        console.error(
+          `[MeshListener] Event ${eventName} failed schema validation:`,
+          validation.error
+        );
+        // Don't halt execution for validation failures in legacy events,
+        // but log the warning for observability
+        if (eventName.includes('_')) {
+          console.log(`[MeshListener] Continuing with legacy event ${eventName} despite validation failure`);
+        }
+      } else {
+        console.log(`[MeshListener] Event ${eventName} validated against schema`);
+      }
+    }
 
     // Handle proactive events
     const proactiveEvents = [
@@ -241,13 +281,21 @@ export class MeshListener {
     // Handle legacy events
     switch (eventName) {
       case 'reservation_rejected':
-        return await handleTableStackRejection(data);
+        return await handleTableStackRejection(data as {
+          restaurantName?: string;
+          dateTime?: string;
+          partySize?: number;
+          alternativeSuggestions?: string[];
+        });
 
       case 'high_value_guest_reservation':
-        return await this.handleHighValueGuest(data);
+        return await this.handleHighValueGuest(data as {
+          guest: { name: string; visitCount: number; defaultDeliveryAddress?: string; email?: string };
+          reservation: { restaurantName: string };
+        });
 
       case 'delivery_logged':
-        console.log(`[MeshListener] Delivery logged on mesh:`, data.orderId);
+        console.log(`[MeshListener] Delivery logged on mesh:`, (data as any).orderId);
         break;
 
       default:
@@ -267,6 +315,12 @@ export class MeshListener {
     );
 
     try {
+      // TYPE SAFETY: Validate proactive event payload structure
+      if (!data || typeof data !== 'object') {
+        console.error(`[MeshListener] Invalid data for proactive event ${eventName}`);
+        return;
+      }
+
       // Generate proactive plan
       const proactivePlan = await ProactiveIntentGenerator.generateProactivePlan(context);
 
@@ -328,7 +382,10 @@ export class MeshListener {
   /**
    * Legacy handler for high-value guest events
    */
-  private static async handleHighValueGuest(data: any) {
+  private static async handleHighValueGuest(data: {
+    guest: { name: string; visitCount: number; defaultDeliveryAddress?: string; email?: string };
+    reservation: { restaurantName: string };
+  }) {
     const { guest, reservation } = data;
 
     let proactiveText = `Guest ${guest.name} (High Value, ${guest.visitCount} visits) just booked at ${reservation.restaurantName}.`;

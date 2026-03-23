@@ -222,6 +222,20 @@ export class RepairAgent {
    * @returns Repair result
    */
   async analyzeAndRepair(zombie: ZombieSaga): Promise<RepairResult> {
+    // FEATURE FLAG: Check if repair agent is enabled
+    const { getFeatureFlags } = await import('../feature-flags');
+    const flags = getFeatureFlags();
+    
+    if (!flags.ENABLE_REPAIR_AGENT) {
+      // Feature disabled - return early without repair
+      return {
+        repairSuccessful: false,
+        requiresHumanIntervention: true,
+        escalationReason: 'Repair agent feature is disabled via feature flag',
+        analysis: null,
+      };
+    }
+
     try {
       if (this.config.debug) {
         console.log(`[RepairAgent] Analyzing zombie saga ${zombie.executionId}`);

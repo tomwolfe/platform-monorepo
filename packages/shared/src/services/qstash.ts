@@ -75,12 +75,11 @@ export class QStashService {
    */
   static initialize(config: QStashConfig = {}): void {
     const token = config.token || process.env.QSTASH_TOKEN || process.env.UPSTASH_QSTASH_TOKEN;
-    const baseUrl = config.baseUrl || process.env.QSTASH_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
     const enabled = config.enabled ?? (token !== undefined && token !== "");
 
     this.config = {
       token,
-      baseUrl: baseUrl.replace(/\/$/, ""), // Remove trailing slash
+      baseUrl: (config.baseUrl || process.env.QSTASH_URL || process.env.NEXT_PUBLIC_APP_URL)?.replace(/\/$/, "") || "",
       enabled,
       retry: config.retry || {
         retries: 3,

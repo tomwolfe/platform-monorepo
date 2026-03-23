@@ -87,7 +87,8 @@ export class ServerlessPubSubBridge {
     executionId: string,
     eventType: string
   ): Promise<string | null> {
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const { AppConfig } = await import('../config');
+    const baseUrl = AppConfig.getIntentionEngineApiUrl();
     const url = `${baseUrl}/api/engine/outbox-relay`;
 
     const payload: PubSubBridgeNotification = {
@@ -97,9 +98,16 @@ export class ServerlessPubSubBridge {
       timestamp: new Date().toISOString(),
     };
 
+    // SECURITY: Generate short-lived JWT for internal service-to-service communication
+    const { signInternalJWT } = await import('@repo/auth');
+    const authToken = await signInternalJWT(
+      { action: 'outbox_bridge', executionId, outboxId, eventType },
+      { issuer: 'pubsub-bridge', audience: 'intention-engine' }
+    );
+
     const headers = {
       'Content-Type': 'application/json',
-      'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
+      'Authorization': `Bearer ${authToken}`,
       'x-outbox-bridge': 'true',
     };
 

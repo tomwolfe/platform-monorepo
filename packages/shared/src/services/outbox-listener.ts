@@ -433,8 +433,9 @@ export async function triggerOutboxRelay(
   outboxId: string
 ): Promise<string | null> {
   const { QStashService } = await import('../services/qstash');
+  const { AppConfig } = await import('../config');
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const baseUrl = AppConfig.getIntentionEngineApiUrl();
   const url = `${baseUrl}/api/engine/outbox-relay`;
 
   const payload = {
@@ -443,9 +444,16 @@ export async function triggerOutboxRelay(
     timestamp: new Date().toISOString(),
   };
 
+  // SECURITY: Generate short-lived JWT for internal service-to-service communication
+  const { signInternalJWT } = await import('@repo/auth');
+  const authToken = await signInternalJWT(
+    { action: 'outbox_relay', executionId, outboxId },
+    { issuer: 'outbox-listener', audience: 'intention-engine' }
+  );
+
   const headers = {
     'Content-Type': 'application/json',
-    'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
+    'Authorization': `Bearer ${authToken}`,
   };
 
   try {

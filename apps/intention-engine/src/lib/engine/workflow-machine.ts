@@ -39,7 +39,7 @@ import {
   getFailedSteps,
 } from "./state-machine";
 import { saveExecutionState, loadExecutionState, getMemoryClient } from "./memory";
-import { RealtimeService, MemoryClient, getMemoryClient as getSharedMemoryClient } from "@repo/shared";
+import { RealtimeService, MemoryClient, getMemoryClient as getSharedMemoryClient, AppConfig } from "@repo/shared";
 import { getAblyClient, TaskState, TaskStatus } from "@repo/shared";
 import { Tracer } from "./tracing";
 import { getToolRegistry } from "./tools/registry";
@@ -514,19 +514,26 @@ export class WorkflowMachine {
 
     // Only pre-warm if we predict the next step will push us over the threshold
     if (elapsedInSegment + estimatedNextStepTime > ADAPTIVE_BATCHING_CONFIG.vercelHardTimeoutMs * ADAPTIVE_BATCHING_CONFIG.predictivePingerThreshold) {
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+      const baseUrl = AppConfig.getIntentionEngineApiUrl();
       const preWarmUrl = `${baseUrl}/api/engine/execute-step`;
 
       // ENHANCEMENT: Generate pre-warm hint based on next step's tool type
       const preWarmHint = this.generatePreWarmHint(nextStep?.tool_name || '');
 
       // INFRASTRUCTURE-AWARE WARMING: Fire multiple warm endpoints in parallel
+      // SECURITY: Use JWT authentication instead of raw internal key
+      const { signInternalJWT } = await import('@repo/auth');
+      const authToken = await signInternalJWT(
+        { action: 'pre_warm', executionId: this.executionId, nextStepIndex },
+        { issuer: 'workflow-machine', audience: 'intention-engine' }
+      );
+
       const warmPromises = [
         // Warm lambda endpoint WITH PRE-WARM HINT
         fetch(preWarmUrl, {
           method: 'POST',
           headers: {
-            'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
+            'Authorization': `Bearer ${authToken}`,
             'x-preflight-ping': 'true',
             'x-execution-id': this.executionId,
             'x-next-step-index': nextStepIndex.toString(),
@@ -546,7 +553,7 @@ export class WorkflowMachine {
         fetch(`${baseUrl}/api/warm-db`, {
           method: 'POST',
           headers: {
-            'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
+            'Authorization': `Bearer ${authToken}`,
             'x-execution-id': this.executionId,
             'x-pre-warm-hint': preWarmHint,
           },
@@ -561,7 +568,7 @@ export class WorkflowMachine {
         fetch(`${baseUrl}/api/warm-cache`, {
           method: 'POST',
           headers: {
-            'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
+            'Authorization': `Bearer ${authToken}`,
             'x-execution-id': this.executionId,
             'x-pre-warm-hint': preWarmHint,
           },

@@ -217,6 +217,20 @@ export class PrivacyGatewayService {
    * Scrub PII from text and return tokens for potential reversal
    */
   async scrub(text: string): Promise<ScrubbingResult> {
+    // FEATURE FLAG: Check if privacy gateway is enabled
+    const { getFeatureFlags } = await import('../feature-flags');
+    const flags = getFeatureFlags();
+    
+    if (!flags.ENABLE_PRIVACY_GATEWAY) {
+      // Feature disabled - return text as-is
+      return {
+        scrubbedText: text,
+        detectedPii: [],
+        tokenMap: {},
+        canReverse: false,
+      };
+    }
+
     const detectedPii = this.detectPii(text);
 
     if (detectedPii.length === 0) {

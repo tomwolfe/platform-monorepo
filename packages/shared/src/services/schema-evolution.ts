@@ -116,6 +116,15 @@ export class SchemaEvolutionService {
    * @returns The recorded event ID
    */
   async recordMismatch(event: Omit<MismatchEvent, 'id' | 'processed'>): Promise<string> {
+    // FEATURE FLAG: Check if schema evolution is enabled
+    const { getFeatureFlags } = await import('../feature-flags');
+    const flags = getFeatureFlags();
+    
+    if (!flags.ENABLE_SCHEMA_EVOLUTION) {
+      // Feature disabled - skip recording
+      return 'disabled';
+    }
+
     const eventId = `mismatch:${Date.now()}:${crypto.randomUUID().substring(0, 8)}`;
     const timestamp = new Date().toISOString();
 

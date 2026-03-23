@@ -55,7 +55,8 @@ export async function redirectToStoreFront(restaurantId?: string) {
     restaurantId,
   });
 
-  const storesUrl = process.env.STORES_URL || 'http://localhost:3000';
+  const { AppConfig } = await import('@repo/shared');
+  const storesUrl = AppConfig.getStoresUrl();
   redirect(`${storesUrl}/api/auth/bridge?bridge_token=${token}`);
 }
 
@@ -67,7 +68,8 @@ export async function goToDelivery() {
     clerkUserId: user.id,
   });
 
-  const satelliteUrl = process.env.OPEN_DELIVERY_URL || 'http://localhost:3001';
+  const { AppConfig } = await import('@repo/shared');
+  const satelliteUrl = AppConfig.getOpenDeliveryUrl();
   redirect(`${satelliteUrl}/api/auth/bridge?token=${token}`);
 }
 

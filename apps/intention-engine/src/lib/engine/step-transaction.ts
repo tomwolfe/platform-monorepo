@@ -1,13 +1,32 @@
 /**
- * StepTransaction - Unified Saga Pattern Implementation
+ * @deprecated StepTransactionManager is deprecated. Use WorkflowMachine instead.
  * 
+ * The StepTransactionManager and executeSaga have been consolidated into WorkflowMachine
+ * to provide a single source of truth for workflow execution and compensation handling.
+ * 
+ * Migration Guide:
+ * - Replace `StepTransactionManager` with `WorkflowMachine`
+ * - Replace `executeSaga` with `executeWorkflow`
+ * - Compensation handling is now automatic in WorkflowMachine
+ * 
+ * This file is maintained for backward compatibility only.
+ * 
+ * @see workflow-machine.ts
+ * @see Phase 1.2: Merge StepTransactionManager into WorkflowMachine
+ */
+
+/**
+ * StepTransaction - Unified Saga Pattern Implementation
+ *
  * Wraps every tool call in a 'Step Transaction' that:
  * 1. Persists compensating actions before execution
  * 2. Tracks execution state for recovery
  * 3. Automatically triggers compensation on failure
- * 
+ *
  * This unifies the fragmented saga logic from orchestrator.ts and saga.ts
  * into a single, coherent transaction model.
+ * 
+ * @deprecated Use WorkflowMachine instead
  */
 
 import {
@@ -637,3 +656,35 @@ export async function executeSaga(
     };
   }
 }
+
+// ============================================================================
+// BACKWARD COMPATIBILITY RE-EXPORTS
+// Redirect to WorkflowMachine for new code
+// ============================================================================
+
+/**
+ * @deprecated Use `executeWorkflow` from workflow-machine.ts instead
+ */
+export async function executeSagaLegacy(
+  options: Parameters<typeof executeSaga>[0]
+): Promise<ReturnType<typeof executeSaga>> {
+  console.warn(
+    "[DEPRECATION] executeSaga is deprecated. Use executeWorkflow from workflow-machine.ts instead."
+  );
+  
+  // Import dynamically to avoid circular dependencies
+  const { executeWorkflow } = await import("./workflow-machine");
+  const { getToolRegistry } = await import("./tools/registry");
+  
+  const registry = getToolRegistry();
+  const toolExecutor = registry.createToolExecutor();
+  
+  return executeWorkflow(options.plan, toolExecutor as any, {
+    executionId: options.executionId,
+    intentId: options.intentId,
+    traceId: options.traceId,
+  });
+}
+
+// Re-export types for backward compatibility
+export type { WorkflowCheckpoint, WorkflowResult, WorkflowStatus } from "./workflow-machine";

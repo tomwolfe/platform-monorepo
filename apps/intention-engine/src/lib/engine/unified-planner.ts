@@ -30,6 +30,7 @@ import {
   EngineErrorSchema,
 } from "./types";
 import { generateStructured, type GenerateStructuredResult } from "./llm";
+import type { ToolExecutor } from "./workflow-machine";
 import {
   DEFAULT_PLAN_CONSTRAINTS,
   RawPlanSchema,
@@ -436,18 +437,69 @@ export function validatePlan(
 }
 
 // ============================================================================
-// EXECUTE PLAN (stub for pipeline)
+// EXECUTE PLAN
+// Wires frozen plan into WorkflowMachine for durable execution
 // ============================================================================
 
 export async function executePlan(
   plan: FrozenPlan,
   context: PlanningContext = {}
-): Promise<{ success: boolean; error?: string }> {
-  // Stub - actual execution happens in engine
+): Promise<{ success: boolean; error?: string; result?: any }> {
   if (!plan.is_frozen) {
     return { success: false, error: "Plan must be frozen before execution" };
   }
-  return { success: true };
+
+  try {
+    // Import workflow execution dynamically to avoid circular dependencies
+    const { executeWorkflow } = await import("./workflow-machine");
+    const { getToolRegistry } = await import("./tools/registry");
+
+    // Create tool executor wrapper
+    const toolExecutor: ToolExecutor = {
+      execute: async (toolName, parameters, timeoutMs, signal) => {
+        const registry = getToolRegistry();
+        const result = await registry.execute(toolName, parameters, {
+          executionId: context.execution_id || plan.plan.id,
+          stepId: toolName,
+          timeoutMs,
+          startTime: performance.now(),
+          abortSignal: signal,
+        });
+        return {
+          success: result.success,
+          output: result.output,
+          error: result.error,
+          latency_ms: result.latency_ms,
+        };
+      },
+    };
+
+    // Execute the workflow
+    const result = await executeWorkflow(plan.plan, toolExecutor, {
+      executionId: context.execution_id,
+      intentId: context.execution_id,
+      traceId: context.execution_id,
+    });
+
+    return {
+      success: result.success,
+      result: {
+        workflowId: result.workflowId,
+        completedSteps: result.completedSteps,
+        failedSteps: result.failedSteps,
+        totalSteps: result.totalSteps,
+        executionTimeMs: result.executionTimeMs,
+        error: result.error,
+      },
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error("[UnifiedPlanner] executePlan failed:", errorMessage);
+    return {
+      success: false,
+      error: errorMessage,
+    };
+  }
 }
 
 // ============================================================================

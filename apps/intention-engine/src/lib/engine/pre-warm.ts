@@ -29,6 +29,7 @@
 import { redis } from "../redis-client";
 import { ExecutionState, PlanStep } from "./types";
 import { getCompletedSteps, getPendingSteps } from "./state-machine";
+import { AppConfig } from "@repo/shared";
 
 // ============================================================================
 // CONFIGURATION
@@ -43,8 +44,8 @@ const PRE_WARM_CONFIG = {
   preWarmStateTTL: 300, // 5 minutes
   // Pre-warm request timeout (ms)
   preWarmRequestTimeout: 2000,
-  // Base URL for pre-warm requests (uses current host if not set)
-  baseUrl: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+  // Base URL for pre-warm requests (uses AppConfig for consistency)
+  baseUrl: AppConfig.getIntentionEngineApiUrl(),
   // Enable pre-warm logging
   debug: false,
 };

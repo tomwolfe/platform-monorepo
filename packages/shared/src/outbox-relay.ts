@@ -105,7 +105,8 @@ export class OutboxRelayService {
 
     try {
       // Use QStash for reliable delivery
-      const url = `${effectiveConfig.baseUrl || 'http://localhost:3000'}/api/engine/outbox-relay`;
+      const { AppConfig } = await import('./config');
+      const url = `${effectiveConfig.baseUrl || AppConfig.getIntentionEngineApiUrl()}/api/engine/outbox-relay`;
       const payload = JSON.stringify({
         executionId,
         timestamp: new Date().toISOString(),

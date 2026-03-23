@@ -5,7 +5,7 @@ import { createMcpServerRoutes, createResponse } from "@repo/mcp-protocol/server
 import { randomUUID } from "crypto";
 import { getDb, orders, orderItems } from "@repo/database";
 import { eq } from "drizzle-orm";
-import { RealtimeService } from "@repo/shared";
+import { RealtimeService, AppConfig } from "@repo/shared";
 import { dispatchOrder } from "@/lib/dispatcher";
 
 // Lazy load Redis to avoid build-time initialization
@@ -405,7 +405,7 @@ server.tool(
         delivery: "40-50 minutes",
       },
       tracking: {
-        url: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/track/${orderId}`,
+        url: `${AppConfig.getStoresUrl()}/track/${orderId}`,
         code: orderId.slice(0, 8).toUpperCase(),
       },
     }, traceId);

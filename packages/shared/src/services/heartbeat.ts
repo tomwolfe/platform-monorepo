@@ -135,7 +135,8 @@ export class HeartbeatService {
     });
 
     // Schedule QStash webhook call
-    const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/engine/heartbeat-check`;
+    const { AppConfig } = await import('../config');
+    const webhookUrl = `${AppConfig.getIntentionEngineApiUrl()}/api/engine/heartbeat-check`;
     const payload = {
       executionId,
       expectedStepIndex: nextStepIndex,

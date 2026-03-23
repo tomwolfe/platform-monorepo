@@ -54,12 +54,17 @@ export class NotifyService {
       };
 
       try {
+        const { signInternalJWT } = await import('@repo/auth');
+        const token = await signInternalJWT(
+          { action: 'webhook_notification', restaurantId: data.restaurantId },
+          { issuer: 'table-stack', audience: 'intention-engine' }
+        );
+
         await fetch(`${intentionEngineUrl}/api/webhooks`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
-            'x-internal-system-key': process.env.INTERNAL_SYSTEM_KEY || '',
           },
           body: JSON.stringify(webhookPayload),
         });

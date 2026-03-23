@@ -25,14 +25,14 @@
 import { redis } from "@/lib/redis-client";
 import { loadExecutionState, saveExecutionState } from "@/lib/engine/memory";
 import { transitionState, ExecutionState } from "@/lib/engine/types";
-import { QStashService } from "@repo/shared";
+import { QStashService, AppConfig } from "@repo/shared";
+import { signServiceToken } from "@repo/auth";
 
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
 
 const CONFIRMATION_TTL_SECONDS = 15 * 60; // 15 minutes
-const INTERNAL_SYSTEM_KEY = process.env.INTERNAL_SYSTEM_KEY || "internal-system-key-change-in-production";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -256,12 +256,23 @@ export class ConfirmationService {
     correlationId?: string
   ): Promise<boolean> {
     try {
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+      // Use AppConfig for centralized URL management
+      const baseUrl = AppConfig.getIntentionEngineApiUrl();
       const url = `${baseUrl}/api/engine/execute-step`;
+
+      // SECURITY: Generate short-lived JWT for internal service-to-service communication
+      const authToken = await signServiceToken(
+        {
+          service: "confirmation-service",
+          executionId,
+          action: "resume-saga",
+        },
+        "5m"
+      );
 
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        "x-internal-system-key": INTERNAL_SYSTEM_KEY,
+        Authorization: `Bearer ${authToken}`,
       };
 
       if (traceId) {

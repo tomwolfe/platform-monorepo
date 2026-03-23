@@ -48,6 +48,7 @@ import { WorkflowMachine } from "@/lib/engine/workflow-machine";
 import type { ToolExecutor as WorkflowToolExecutor } from "@/lib/engine/workflow-machine";
 import { FailoverPolicyEngine, type PolicyEvaluationContext } from "@repo/shared";
 import { LockingService } from "@/lib/engine/locking";
+import { verifyServiceToken } from "@repo/auth";
 
 // ============================================================================
 // TOOL EXECUTOR ADAPTER
@@ -276,24 +277,55 @@ async function executeStepHandler(
       (correlationId !== traceId ? ` [correlation: ${correlationId}]` : '')
     );
 
-    // SECURITY: Check internal system key for recursive calls
-    // Allow first call without key (from /api/execute or /api/chat)
-    const internalKey = request.headers.get("x-internal-system-key");
-    const isRecursiveCall = internalKey !== null;
+    // SECURITY: Verify JWT for internal service-to-service communication
+    // Allow first call without token (from /api/execute or /api/chat)
+    // QStash webhook calls will have signature verification, direct calls need JWT
+    const authHeader = request.headers.get("authorization");
+    const hasAuthToken = authHeader?.startsWith("Bearer ");
 
-    if (isRecursiveCall && internalKey !== INTERNAL_SYSTEM_KEY) {
-      console.warn(`[ExecuteStep] Invalid internal key for ${executionId} [trace: ${traceId}]`);
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: "UNAUTHORIZED",
-            message: "Invalid internal system key",
+    if (hasAuthToken) {
+      const token = authHeader.substring(7);
+      const payload = await verifyServiceToken(token);
+
+      if (!payload) {
+        console.warn(`[ExecuteStep] Invalid JWT token for ${executionId} [trace: ${traceId}]`);
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: "UNAUTHORIZED",
+              message: "Invalid or expired JWT token",
+            },
           },
-        },
-        { status: 401 }
+          { status: 401 }
+        );
+      }
+
+      // Optional: Validate token payload contains expected service/execution info
+      const service = (payload as any).service;
+      const tokenExecutionId = (payload as any).executionId;
+
+      if (tokenExecutionId && tokenExecutionId !== executionId) {
+        console.warn(
+          `[ExecuteStep] JWT executionId mismatch: token=${tokenExecutionId}, request=${executionId}`
+        );
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: "FORBIDDEN",
+              message: "JWT token execution ID does not match request",
+            },
+          },
+          { status: 403 }
+        );
+      }
+
+      console.log(
+        `[ExecuteStep] JWT verified for service=${service} [trace: ${traceId}]`
       );
     }
+    // Note: If no auth token, allow the request (backward compat for initial trigger)
 
     // IDEMPOTENCY CHECK - Prevent double execution of same step
     // This is critical for QStash retries

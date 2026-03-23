@@ -22,6 +22,7 @@
  */
 
 import { QStashService } from './services/qstash';
+import { signServiceToken } from '@repo/auth';
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -110,14 +111,20 @@ export class OutboxRelayService {
         timestamp: new Date().toISOString(),
       });
 
+      // SECURITY: Generate short-lived JWT for internal service-to-service communication
+      const authToken = await signServiceToken(
+        {
+          service: 'outbox-relay',
+          executionId,
+          action: 'trigger-relay',
+        },
+        '5m'
+      );
+
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
       };
-
-      // Add internal system key for auth
-      if (effectiveConfig.internalKey) {
-        headers['x-internal-system-key'] = effectiveConfig.internalKey;
-      }
 
       // Propagate trace context
       if (effectiveConfig.traceId) {
@@ -190,15 +197,22 @@ export class OutboxRelayService {
     try {
       // Use dynamic import to avoid breaking non-Next.js environments
       const { after } = await import('next/server');
-      
+
+      // SECURITY: Generate short-lived JWT for internal service-to-service communication
+      const authToken = await signServiceToken(
+        {
+          service: 'outbox-relay',
+          executionId,
+          action: 'trigger-relay',
+        },
+        '5m'
+      );
+
       after(() => {
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
         };
-
-        if (config.internalKey) {
-          headers['x-internal-system-key'] = config.internalKey;
-        }
 
         if (config.traceId) {
           headers['x-trace-id'] = config.traceId;
@@ -231,13 +245,20 @@ export class OutboxRelayService {
       console.warn("[OutboxRelay:Fallback] after() not available, using setTimeout (dev only)");
       setTimeout(async () => {
         try {
+          // SECURITY: Generate short-lived JWT for internal service-to-service communication
+          const authToken = await signServiceToken(
+            {
+              service: 'outbox-relay',
+              executionId,
+              action: 'trigger-relay',
+            },
+            '5m'
+          );
+
           const headers: Record<string, string> = {
             'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`,
           };
-
-          if (config.internalKey) {
-            headers['x-internal-system-key'] = config.internalKey;
-          }
 
           if (config.traceId) {
             headers['x-trace-id'] = config.traceId;

@@ -15,7 +15,7 @@ import { z } from "zod";
 import { redis } from "./lib/redis-client.js";
 import { Pool } from '@neondatabase/serverless';
 import { signServiceToken, signPayload } from "@repo/auth";
-import { getAblyClient } from "@repo/shared";
+import { getAblyClient, AppConfig } from "@repo/shared";
 
 const ably = getAblyClient();
 
@@ -52,7 +52,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // Add requires_confirmation to the description or as a custom field if the SDK allows
       // IntentionEngine will look for this in its internal tool registration.
       annotations: {
-        requires_confirmation: (TOOL_METADATA as any)[tool.name]?.requires_confirmation || false
+        requires_confirmation: TOOL_METADATA[tool.name as keyof typeof TOOL_METADATA]?.requires_confirmation || false
       }
     })),
   };
@@ -63,7 +63,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
  */
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  const traceId = (args as any)?._trace_id || "no-trace-id";
+  // Safely extract trace_id from args using optional chaining
+  const traceId = args?._trace_id as string | undefined || "no-trace-id";
   console.error(`[TRACE:${traceId}] Tool call: ${name}`);
 
   try {
@@ -78,24 +79,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         }
         const { restaurant_id } = parseResult.data;
-        
+
         try {
-          const baseUrl = process.env.TABLESTACK_API_URL || "https://table-stack.vercel.app/api/v1";
+          // Use AppConfig for centralized URL management
+          const baseUrl = AppConfig.getTableStackApiUrl();
           const token = await signServiceToken({ service: 'opendeliver', traceId });
           const now = new Date().toISOString();
-          
+
+          // Define response types for type safety
+          interface AvailabilityResponse {
+            availableTables?: Array<{ id: string }>;
+          }
+
+          interface WaitlistResponse {
+            waitlistCount?: number;
+          }
+
           // 1. Query availability (reservations)
           const availUrl = `${baseUrl}/availability?restaurantId=${restaurant_id}&date=${now}&partySize=2`;
           const availResponse = await fetch(availUrl, {
-            headers: { 
+            headers: {
               "Authorization": `Bearer ${token}`,
               "x-trace-id": traceId
             }
           });
-          
+
           let reservationsCount = 0;
           if (availResponse.ok) {
-            const data = await availResponse.json() as any;
+            const data = await availResponse.json() as AvailabilityResponse;
             // This is a proxy: if fewer tables available, higher load
             // In a real system, we'd have a direct "active reservations" count
             reservationsCount = 10 - (data.availableTables?.length || 0);
@@ -104,15 +115,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           // 2. Query Waitlist (New Task 2 requirement)
           const waitlistUrl = `${baseUrl}/waitlist?restaurantId=${restaurant_id}`;
           const waitlistResponse = await fetch(waitlistUrl, {
-            headers: { 
+            headers: {
               "Authorization": `Bearer ${token}`,
               "x-trace-id": traceId
             }
           });
-          
+
           let waitlistCount = 0;
           if (waitlistResponse.ok) {
-            const data = await waitlistResponse.json() as any;
+            const data = await waitlistResponse.json() as WaitlistResponse;
             waitlistCount = data.waitlistCount || 0;
           }
 
@@ -160,23 +171,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         const { latitude, longitude, radius_km = 5 } = parseResult.data;
-        
+
         try {
-          const baseUrl = process.env.TABLESTACK_API_URL || "https://table-stack.vercel.app/api/v1";
+          // Use AppConfig for centralized URL management
+          const baseUrl = AppConfig.getTableStackApiUrl();
           const token = await signServiceToken({ service: 'opendeliver', traceId });
-          
+
+          // Define response type for type safety
+          interface RestaurantResponse {
+            id: string;
+            name: string;
+            address: string;
+            lat?: string | number;
+            lng?: string | number;
+          }
+
           const response = await fetch(`${baseUrl}/restaurant`, {
-            headers: { 
+            headers: {
               "Authorization": `Bearer ${token}`,
               "x-trace-id": traceId
             }
           });
-          
+
           if (!response.ok) {
             throw new Error(`Failed to fetch restaurants: ${response.statusText}`);
           }
-          
-          const restaurants = await response.json() as any[];
+
+          const restaurants = await response.json() as RestaurantResponse[];
           
           // Haversine formula for filtering
           const filtered = restaurants.filter(r => {
@@ -242,7 +263,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         if (restaurant_id) {
           try {
-            const baseUrl = process.env.TABLESTACK_API_URL || "https://table-stack.vercel.app/api/v1";
+            // Use AppConfig for centralized URL management
+            const baseUrl = AppConfig.getTableStackApiUrl();
             const apiKey = process.env.TABLESTACK_INTERNAL_API_KEY;
             const now = new Date().toISOString();
             
@@ -251,9 +273,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const response = await fetch(url, {
               headers: apiKey ? { "x-api-key": apiKey } : {}
             });
-            
+
             if (response.ok) {
-              const data = await response.json() as any;
+              interface AvailabilityData {
+                availableTables?: Array<unknown>;
+              }
+              const data = await response.json() as AvailabilityData;
               const availableCount = data.availableTables?.length || 0;
               // If less than 2 tables are available, add kitchen buffer
               if (availableCount < 2) {
@@ -342,13 +367,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (restaurant_id) {
           try {
             const { RealtimeService } = await import('@repo/shared');
+            // Safely extract price_details using optional chaining
+            const priceDetails = args?.price_details as Record<string, unknown> | undefined;
             await RealtimeService.publish('nervous-system:delivery-updates', 'delivery_logged', {
               restaurantId: restaurant_id,
               orderId: order_id,
               pickupAddress: pickup_address,
               deliveryAddress: delivery_address,
               customerId: customer_id,
-              priceDetails: (args as any).price_details,
+              priceDetails,
               priority,
               traceId
             });

@@ -22,6 +22,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getOutboxService, QStashService, verifyQStashWebhook, AppConfig } from '@repo/shared';
 import { redis } from '@/lib/redis-client';
+import { verifyServiceToken } from '@repo/auth';
 
 // ============================================================================
 // CONFIGURATION
@@ -180,21 +181,46 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // No webhook signature - direct API call
-    // Check internal system key
-    const internalKey = request.headers.get('x-internal-system-key');
+    // Verify JWT for internal service-to-service communication
+    const authHeader = request.headers.get('authorization');
+    const hasAuthToken = authHeader?.startsWith('Bearer ');
 
-    if (internalKey !== INTERNAL_SYSTEM_KEY) {
-      console.warn(`[OutboxRelay] Invalid or missing internal system key`);
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'UNAUTHORIZED',
-            message: 'Invalid or missing internal system key',
+    if (hasAuthToken) {
+      const token = authHeader.substring(7);
+      const payload = await verifyServiceToken(token);
+
+      if (!payload) {
+        console.warn('[OutboxRelay] Invalid JWT token');
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'UNAUTHORIZED',
+              message: 'Invalid or expired JWT token',
+            },
           },
-        },
-        { status: 401 }
-      );
+          { status: 401 }
+        );
+      }
+
+      console.log(`[OutboxRelay] JWT verified for service=${(payload as any).service}`);
+    } else {
+      // Fallback to internal system key for backward compatibility
+      const internalKey = request.headers.get('x-internal-system-key');
+
+      if (internalKey !== INTERNAL_SYSTEM_KEY) {
+        console.warn(`[OutboxRelay] Invalid or missing internal system key`);
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'UNAUTHORIZED',
+              message: 'Invalid or missing internal system key',
+            },
+          },
+          { status: 401 }
+        );
+      }
     }
 
     // Parse and validate request

@@ -19,6 +19,7 @@
  */
 
 import { Client } from "@upstash/qstash";
+import { signServiceToken } from "@repo/auth";
 
 // ============================================================================
 // CONFIGURATION
@@ -206,14 +207,21 @@ export class QStashService {
         startStepIndex: options.stepIndex,
       });
 
+      // SECURITY: Generate short-lived JWT for internal service-to-service communication
+      // This replaces the static x-internal-system-key with Zero-Trust authentication
+      const authToken = await signServiceToken(
+        {
+          service: "intention-engine",
+          executionId: options.executionId,
+          action: "execute-step",
+        },
+        "5m"
+      );
+
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
       };
-
-      // Add internal system key if provided
-      if (options.internalKey) {
-        headers["x-internal-system-key"] = options.internalKey;
-      }
 
       // CRITICAL: Propagate trace context for distributed tracing
       // This closes the "Ghost in the Machine" debugging gap
@@ -270,13 +278,20 @@ export class QStashService {
         startStepIndex: options.stepIndex,
       });
 
+      // SECURITY: Generate short-lived JWT for internal service-to-service communication
+      const authToken = await signServiceToken(
+        {
+          service: "intention-engine",
+          executionId: options.executionId,
+          action: "execute-step",
+        },
+        "5m"
+      );
+
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
       };
-
-      if (options.internalKey) {
-        headers["x-internal-system-key"] = options.internalKey;
-      }
 
       const result = await client.publish({
         url,
@@ -323,17 +338,24 @@ export class QStashService {
         startStepIndex: options.stepIndex,
       });
 
+      // SECURITY: Generate short-lived JWT for internal service-to-service communication
+      const authToken = await signServiceToken(
+        {
+          service: "intention-engine",
+          executionId: options.executionId,
+          action: "execute-step",
+        },
+        "5m"
+      );
+
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
       };
-
-      if (options.internalKey) {
-        headers["x-internal-system-key"] = options.internalKey;
-      }
 
       // Check if time is a cron expression or ISO timestamp
       const isCron = time.includes(" ") || time.startsWith("*/");
-      
+
       const result = await client.publish({
         url,
         body: payload,
@@ -480,15 +502,22 @@ export class QStashService {
     try {
       // Use dynamic import to avoid breaking non-Next.js environments
       const { after } = await import('next/server');
-      
+
+      // SECURITY: Generate short-lived JWT for internal service-to-service communication
+      const authToken = await signServiceToken(
+        {
+          service: "intention-engine",
+          executionId: options.executionId,
+          action: "execute-step",
+        },
+        "5m"
+      );
+
       after(() => {
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
         };
-
-        if (options.internalKey) {
-          headers["x-internal-system-key"] = options.internalKey;
-        }
 
         // Propagate trace context even in fallback mode
         if (options.traceId) {
@@ -522,13 +551,20 @@ export class QStashService {
       console.warn("[FallbackFetch] after() not available, using setTimeout (dev only)");
       setTimeout(async () => {
         try {
+          // SECURITY: Generate short-lived JWT for internal service-to-service communication
+          const authToken = await signServiceToken(
+            {
+              service: "intention-engine",
+              executionId: options.executionId,
+              action: "execute-step",
+            },
+            "5m"
+          );
+
           const headers: Record<string, string> = {
             "Content-Type": "application/json",
+            Authorization: `Bearer ${authToken}`,
           };
-
-          if (options.internalKey) {
-            headers["x-internal-system-key"] = options.internalKey;
-          }
 
           // Propagate trace context even in fallback mode
           if (options.traceId) {

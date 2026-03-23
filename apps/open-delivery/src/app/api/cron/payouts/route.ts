@@ -4,7 +4,7 @@ import { createWalletClient, createPublicClient, http, fallback, parseAbi, parse
 import { base } from 'viem/chains';
 import { ERC20_ABI } from '@repo/shared/utils/erc20-abi';
 import { isTimingSafeEqual } from '@repo/shared/utils/crypto';
-import { getCachedTreasuryAccount } from '@repo/shared/utils/treasury';
+import { getCachedTreasurySigner, type TransactionData } from '@repo/shared/utils/treasury';
 
 /**
  * Payout Ledger Cron Endpoint
@@ -265,11 +265,12 @@ export async function GET(req: NextRequest) {
           "https://base.publicnode.com",
         ];
 
-        // Get treasury account (abstracted key management)
-        const treasuryAccount = getCachedTreasuryAccount();
+        // Get treasury signer (abstracted key management - supports KMS migration)
+        const treasurySigner = getCachedTreasurySigner();
+        const treasuryAddress = treasurySigner.getAddress();
 
         const walletClient = createWalletClient({
-          account: treasuryAccount.account,
+          account: treasuryAddress,
           chain: base,
           transport: fallback(BASE_RPC_URLS.map((url) => http(url))),
         });
@@ -280,7 +281,7 @@ export async function GET(req: NextRequest) {
           transport: fallback(BASE_RPC_URLS.map((url) => http(url))),
         });
 
-        console.log(`[Payout Cron] Executing ${restaurantPayouts.length + driverPayouts.length} payouts from ${treasuryAccount.address}`);
+        console.log(`[Payout Cron] Executing ${restaurantPayouts.length + driverPayouts.length} payouts from ${treasuryAddress}`);
 
         // USDC contract address on Base
         const USDC_CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913') as Address;

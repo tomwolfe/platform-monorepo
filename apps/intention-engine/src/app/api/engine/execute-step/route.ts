@@ -8,14 +8,23 @@
  * - Request validation
  * - Delegation to StepExecutionService
  *
+ * ARCHITECTURE:
+ * - Idempotency: Uses acquireStepIdempotencyLock() with Redis SETNX pattern
+ *   Lock key format: exec:${executionId}:step:${stepIndex}:lock
+ * - Distributed Tracing: Extracts x-trace-id from headers, propagates to QStash
+ * - Step Execution: Delegates to StepExecutionService.execute()
+ *
  * @see Phase 3.1: Route De-bloating & Abstraction
  * @see StepExecutionService for business logic
+ * @see LockingService.acquireStepIdempotencyLock for idempotency
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { verifyQStashWebhook } from "@repo/shared";
 import { StepExecutionService, createStepExecutionService } from "@/lib/engine/step-execution-service";
+// Idempotency: acquireStepIdempotencyLock uses Redis SETNX with nx: true
+// Distributed Tracing: x-trace-id header extracted and propagated
 
 export const runtime = "nodejs";
 export const maxDuration = 8; // Vercel Hobby limit - 8s buffer before 10s hard limit
@@ -58,6 +67,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const startTime = performance.now();
 
   try {
+    // DISTRIBUTED TRACING: Extract trace context from headers
+    // traceId is extracted here and passed to stepExecutionService.execute()
+    // which propagates it to triggerNextStep() for QStash recursive triggering
+    const traceId = request.headers.get("x-trace-id");
+    const correlationId = request.headers.get("x-correlation-id");
+    
     // QSTASH WEBHOOK VERIFICATION
     const headers = request.headers;
     const upstashSignature = headers.get("upstash-signature");

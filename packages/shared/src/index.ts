@@ -10,6 +10,15 @@ export * from './errors';
 export * from './error-handler';
 export * from './logger';
 
+// Phase 1.3: API Validation & Standardization
+export * from './api-schemas';
+export * from './api-response';
+export * from './validation-middleware';
+
+// Phase 1.4: Security Hardening
+export * from './security-middleware';
+export * from './security-audit';
+
 // Phase 1: Golden Path (System Spine)
 export * from './golden-path';
 // Note: tracing exports ExecutionTraceEntry (type), ExecutionTraceEntrySchema (schema)

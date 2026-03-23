@@ -20,6 +20,7 @@ import {
   fallback,
   type Hash,
   type Address,
+  type PublicClient,
   parseEventLogs,
   type Log,
   hexToString,
@@ -84,7 +85,7 @@ export function getPublicClient(chainId?: number) {
       transport: fallback(
         RPC_URLS.polygon.map((url) => http(url))
       ),
-    });
+    }) as PublicClient;
   }
 
   if (chain === mainnet.id) {
@@ -93,7 +94,7 @@ export function getPublicClient(chainId?: number) {
       transport: fallback(
         RPC_URLS.ethereum.map((url) => http(url))
       ),
-    });
+    }) as PublicClient;
   }
 
   // Default to Base
@@ -102,7 +103,7 @@ export function getPublicClient(chainId?: number) {
     transport: fallback(
       RPC_URLS.base.map((url) => http(url))
     ),
-  });
+  }) as PublicClient;
 }
 
 // ============================================================================

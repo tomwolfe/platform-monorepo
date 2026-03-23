@@ -176,10 +176,11 @@ export class ToolSandbox extends EventEmitter {
         resolved = true;
         clearTimeout(timeoutId);
 
-        if (response.type === 'error') {
+        // Type guard to check if this is a WorkerError
+        if ('type' in response && response.type === 'error') {
           this.stats.failedExecutions++;
           cleanup();
-          
+
           resolve({
             success: false,
             error: response.message,
@@ -191,15 +192,15 @@ export class ToolSandbox extends EventEmitter {
 
         // Update statistics
         const executionTime = Date.now() - startTime;
-        this.updateStats(response, executionTime);
+        this.updateStats(response as WorkerResponse, executionTime);
         this.stats.successfulExecutions++;
-        
+
         cleanup();
-        
-        this.emit('complete', { toolName, response, executionTime });
-        
+
+        this.emit('complete', { toolName, response: response as WorkerResponse, executionTime });
+
         resolve({
-          ...response,
+          ...(response as WorkerResponse),
           executionTimeMs: executionTime,
         });
       });

@@ -241,7 +241,7 @@ export class TimestampedEventBus {
   /**
    * Publish an event with Lamport timestamp
    */
-  publish<T = any>(
+  publish<T extends Record<string, unknown> = Record<string, unknown>>(
     eventType: string,
     payload: T,
     options?: {

@@ -10,7 +10,7 @@ import {
   getUserFriendlyMessage,
   USER_FRIENDLY_MESSAGES,
   type FailureReason,
-} from "../../../packages/shared/src/policies/failover-policy";
+} from "../failover-policy";
 
 describe("Crypto Failover Policies", () => {
   describe("FailureReasonSchema", () => {

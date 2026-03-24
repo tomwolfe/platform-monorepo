@@ -79,7 +79,7 @@ export class CacheClient {
   // GET
   // ========================================================================
 
-  async get<T>(key: string): Promise<T | null> {
+  async get<T = unknown>(key: string): Promise<T | null> {
     const fullKey = this.buildKey(key);
     const data = await this.redis.get<string>(fullKey);
     if (!data) return null;
@@ -89,7 +89,7 @@ export class CacheClient {
       return entry.value;
     } catch {
       // If parsing fails, return raw value
-      return data as T;
+      return data as unknown as T;
     }
   }
 
@@ -97,7 +97,7 @@ export class CacheClient {
   // SET
   // ========================================================================
 
-  async set<T>(
+  async set<T = unknown>(
     key: string,
     value: T,
     options?: { ttlSeconds?: number; version?: number }
@@ -176,7 +176,7 @@ export class CacheClient {
   // SET IF NOT EXISTS (NX)
   // ========================================================================
 
-  async setNx<T>(key: string, value: T, ttlSeconds?: number): Promise<boolean> {
+  async setNx<T = unknown>(key: string, value: T, ttlSeconds?: number): Promise<boolean> {
     const fullKey = this.buildKey(key);
     const entry = JSON.stringify({
       key: fullKey,

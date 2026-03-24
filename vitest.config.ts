@@ -26,10 +26,8 @@ export default defineConfig({
       '**/apps/intention-engine/src/lib/__tests__/engine_failure_simulation.test.ts', // No vitest tests
       '**/apps/table-stack/src/app/api/v1/reserve/__tests__/route.test.ts', // Module resolution issues
       '**/apps/open-delivery/src/components/__tests__/CryptoCheckout.test.tsx', // Missing testing-library
-      '**/apps/intention-engine/src/__tests__/chaos-engineering.test.ts', // Complex mocking issues
-      '**/apps/intention-engine/src/__tests__/saga-integration.test.ts', // Complex mocking issues
-      '**/apps/table-stack/src/__tests__/integration/reservation-flow.test.ts', // Complex mocking issues - TODO fix
-      '**/apps/table-stack/src/__tests__/integration/api-endpoints.test.ts', // Drizzle ORM issues - TODO fix
+      '**/apps/intention-engine/src/__tests__/chaos-engineering.test.ts', // Complex mocking issues - TODO fix
+      '**/apps/intention-engine/src/__tests__/saga-integration.test.ts', // Complex mocking issues - TODO fix
     ],
     timeout: 30000,
     reporters: ['verbose'],

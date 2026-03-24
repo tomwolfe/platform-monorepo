@@ -81,6 +81,107 @@ vi.mock('@tablestack/lib/redis', () => ({
   },
 }));
 
+/**
+ * Mock @repo/database for integration tests
+ * FIX: Properly mock Drizzle's transaction pattern
+ */
+vi.mock('@repo/database', async () => {
+  const actual = await vi.importActual('@repo/database');
+  
+  // Create mock query objects
+  const mockRestaurantsQuery = {
+    findFirst: vi.fn(),
+    findMany: vi.fn(),
+  };
+  
+  const mockRestaurantReservationsQuery = {
+    findFirst: vi.fn(),
+    findMany: vi.fn(),
+  };
+  
+  const mockRestaurantTablesQuery = {
+    findFirst: vi.fn(),
+    findMany: vi.fn(),
+  };
+  
+  const mockGuestProfilesQuery = {
+    findFirst: vi.fn(),
+    findMany: vi.fn(),
+  };
+
+  // Create mock transaction executor
+  const createMockTransaction = () => ({
+    execute: vi.fn().mockResolvedValue([]),
+    query: {
+      restaurants: mockRestaurantsQuery,
+      restaurantReservations: mockRestaurantReservationsQuery,
+      restaurantTables: mockRestaurantTablesQuery,
+      guestProfiles: mockGuestProfilesQuery,
+    },
+    insert: vi.fn().mockImplementation((table: any) => ({
+      values: vi.fn().mockReturnThis(),
+      returning: vi.fn().mockResolvedValue([]),
+    })),
+    update: vi.fn().mockImplementation((table: any) => ({
+      set: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      returning: vi.fn().mockResolvedValue([]),
+    })),
+    delete: vi.fn().mockImplementation((table: any) => ({
+      where: vi.fn().mockReturnThis(),
+      returning: vi.fn().mockResolvedValue([]),
+    })),
+    select: vi.fn().mockReturnThis(),
+    from: vi.fn().mockReturnThis(),
+    where: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
+    orderBy: vi.fn().mockReturnThis(),
+  });
+
+  return {
+    ...(actual as any),
+    getDb: vi.fn(() => ({
+      query: {
+        restaurants: mockRestaurantsQuery,
+        restaurantReservations: mockRestaurantReservationsQuery,
+        restaurantTables: mockRestaurantTablesQuery,
+        guestProfiles: mockGuestProfilesQuery,
+      },
+      insert: vi.fn().mockImplementation((table: any) => ({
+        values: vi.fn().mockReturnThis(),
+        returning: vi.fn().mockResolvedValue([]),
+      })),
+      update: vi.fn().mockImplementation((table: any) => ({
+        set: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        returning: vi.fn().mockResolvedValue([]),
+      })),
+      delete: vi.fn().mockImplementation((table: any) => ({
+        where: vi.fn().mockReturnThis(),
+        returning: vi.fn().mockResolvedValue([]),
+      })),
+      select: vi.fn().mockReturnThis(),
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      transaction: vi.fn(async (fn: any) => {
+        // Properly call the function with a mock transaction object
+        return await fn(createMockTransaction());
+      }),
+    })),
+    restaurants: {
+      apiKey: 'apiKey',
+      id: 'id',
+    },
+    restaurantReservations: {
+      verificationToken: 'verificationToken',
+      id: 'id',
+    },
+    eq: vi.fn(),
+  };
+});
+
 // ============================================================================
 // IMPORTS (after mocks)
 // ============================================================================

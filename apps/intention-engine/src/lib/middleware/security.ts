@@ -319,60 +319,27 @@ export async function verifyRequestSignature(
 
 /**
  * Verify internal service-to-service JWT token
- * 
+ *
  * Zero-Trust Security Model:
  * - Validates JWT signature and expiration
  * - Checks issuer (iss) and audience (aud) claims
  * - Short TTL (5 minutes) limits exposure window
- * 
+ *
  * @param request - Request with Authorization header
  * @returns True if valid JWT from trusted service
  */
 export function verifyInternalJWT(request: Request): boolean {
   const authHeader = request.headers.get("authorization");
-  
+
   if (!authHeader?.startsWith("Bearer ")) {
     return false;
   }
 
   const token = authHeader.substring(7);
-  
+
   // JWT verification is handled by validateRequest in table-stack
   // This is a placeholder for additional JWT validation logic if needed
   return true;
-}
-
-/**
- * Legacy internal system key verification (DEPRECATED)
- * 
- * @deprecated Use JWT-based authentication instead
- * This function is kept for backward compatibility during migration period
- */
-function verifyInternalSystemKeyLegacy(request: Request): boolean {
-  const internalKey = request.headers.get("x-internal-system-key");
-
-  if (!internalKey) {
-    return false;
-  }
-
-  try {
-    const expectedKey = AppConfig.getInternalSystemKey();
-
-    // Timing-safe comparison
-    if (internalKey.length !== expectedKey.length) {
-      return false;
-    }
-
-    let diff = 0;
-    for (let i = 0; i < internalKey.length; i++) {
-      diff |= internalKey.charCodeAt(i) ^ expectedKey.charCodeAt(i);
-    }
-
-    return diff === 0;
-  } catch (error) {
-    console.error("[Security] Internal key validation error:", error);
-    return false;
-  }
 }
 
 // ============================================================================
@@ -499,43 +466,36 @@ export async function securityMiddleware(
     }
     
     // 4. Check internal system key (if required)
-    // DEPRECATED: Use JWT-based authentication instead
-    // This check is kept for backward compatibility during migration
+    // Zero-Trust: Only JWT-based authentication is supported
     if (finalConfig.requireInternalKey) {
-      // Prefer JWT verification
-      if (verifyInternalJWT(request)) {
-        auditData.checksPassed.push("jwt_auth");
-      } else {
-        // Fallback to legacy key check (migration only)
-        if (!verifyInternalSystemKeyLegacy(request)) {
-          auditData.checksFailed.push("internal_key");
-          auditData.action = "blocked";
-          auditData.riskLevel = "high";
+      if (!verifyInternalJWT(request)) {
+        auditData.checksFailed.push("jwt_auth");
+        auditData.action = "blocked";
+        auditData.riskLevel = "high";
 
-          await logSecurityAudit(auditData);
+        await logSecurityAudit(auditData);
 
-          return {
-            allowed: false,
-            requestId,
-            response: new Response(
-              JSON.stringify({
-                error: "Unauthorized",
-                message: "Invalid or missing internal system key. Use Bearer JWT token instead.",
-              }),
-              {
-                status: 401,
-                headers: {
-                  "Content-Type": "application/json",
-                  ...headers,
-                },
-              }
-            ),
-            headers,
-            auditData,
-          };
-        }
-        auditData.checksPassed.push("internal_key_legacy");
+        return {
+          allowed: false,
+          requestId,
+          response: new Response(
+            JSON.stringify({
+              error: "Unauthorized",
+              message: "Invalid or missing Bearer JWT token",
+            }),
+            {
+              status: 401,
+              headers: {
+                "Content-Type": "application/json",
+                ...headers,
+              },
+            }
+          ),
+          headers,
+          auditData,
+        };
       }
+      auditData.checksPassed.push("jwt_auth");
     }
     
     // 5. Check rate limiting
@@ -854,7 +814,7 @@ export {
   sanitizeInput,
   signRequest,
   verifyRequestSignature,
-  verifyInternalSystemKey,
+  verifyInternalJWT,
   logSecurityAudit,
   getSecurityHeaders,
   createSecurityMiddleware,

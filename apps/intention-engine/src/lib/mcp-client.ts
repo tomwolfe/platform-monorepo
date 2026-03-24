@@ -14,6 +14,7 @@ import {
 } from "@repo/mcp-protocol";
 import { createSchemaEvolutionService } from "@repo/shared";
 import * as zod from "zod";
+import { mapJsonSchemaToZod } from "./engine/schema-utils";
 
 /**
  * MCP Client - Enhanced with Dynamic Tool Discovery and Schema Evolution
@@ -261,7 +262,7 @@ export class DynamicMcpClientManager {
    *
    * ENHANCEMENT: Added strict Zod validation for discovered tool schemas
    * to prevent malformed tools from crashing the orchestrator
-   * TYPE SAFETY: Replaced 'any' with 'unknown' and proper type narrowing
+   * TYPE SAFETY: Uses mapJsonSchemaToZod for proper schema conversion
    */
   private async connectToService(
     service: ServiceRegistryEntry
@@ -289,8 +290,9 @@ export class DynamicMcpClientManager {
 
       // Register tools with strict schema validation
       for (const tool of tools.tools) {
-        // TYPE SAFETY: Validate tool input schema structure using 'unknown'
+        // TYPE SAFETY: Convert JSON Schema to Zod using mapJsonSchemaToZod
         let validatedInputSchema: Record<string, unknown> | undefined = undefined;
+        let zodSchema: zod.ZodTypeAny | undefined = undefined;
 
         if (tool.inputSchema) {
           try {
@@ -300,7 +302,7 @@ export class DynamicMcpClientManager {
             // Ensure it has the basic JSON Schema structure
             if (typeof schemaObj === 'object' && schemaObj !== null) {
               const schemaRecord = schemaObj as Record<string, unknown>;
-              
+
               // Validate 'type' field if present
               if ('type' in schemaRecord) {
                 const schemaType = schemaRecord.type;
@@ -316,6 +318,8 @@ export class DynamicMcpClientManager {
                 const properties = schemaRecord.properties;
                 if (typeof properties === 'object' && properties !== null) {
                   validatedInputSchema = schemaRecord;
+                  // Convert to Zod schema for strict validation
+                  zodSchema = mapJsonSchemaToZod(schemaRecord);
                 } else {
                   console.warn(
                     `[DynamicMcpClient] Tool ${tool.name} has invalid properties field, skipping schema`
@@ -324,6 +328,7 @@ export class DynamicMcpClientManager {
               } else {
                 // Schema without properties is valid (empty params)
                 validatedInputSchema = schemaRecord;
+                zodSchema = mapJsonSchemaToZod(schemaRecord);
               }
             }
           } catch (schemaError) {
@@ -339,6 +344,7 @@ export class DynamicMcpClientManager {
           name: tool.name,
           description: tool.description || "",
           inputSchema: validatedInputSchema,
+          zodSchema, // Store Zod schema for runtime validation
           requires_confirmation: false, // Will be determined from metadata
           origin: service.mcpUrl,
         });
@@ -372,7 +378,14 @@ export class DynamicMcpClientManager {
   /**
    * Get discovered tool registry
    */
-  getToolRegistry(): Map<string, { name: string; description: string; inputSchema?: Record<string, unknown>; requires_confirmation?: boolean; origin?: string }> {
+  getToolRegistry(): Map<string, { 
+    name: string; 
+    description: string; 
+    inputSchema?: Record<string, unknown>; 
+    zodSchema?: zod.ZodTypeAny;
+    requires_confirmation?: boolean; 
+    origin?: string 
+  }> {
     return this.toolRegistry;
   }
 
@@ -421,21 +434,35 @@ export class DynamicMcpClientManager {
     }
 
     try {
-      // Validate parameters using Zod schema from AllToolsMap (if tool is in AllToolsMap)
-      // For dynamic tools not in AllToolsMap, skip strict validation
+      // Validate parameters using Zod schema from registry
       let validatedParams = parameters;
-      try {
-        validatedParams = validateToolParams(toolName as keyof AllToolsMap, parameters);
-      } catch {
-        // Tool not in AllToolsMap or validation failed - use original parameters
-        // This allows dynamic tools to work
-        validatedParams = parameters;
+      
+      // Use stored Zod schema for validation if available
+      if (toolDef.zodSchema) {
+        try {
+          validatedParams = toolDef.zodSchema.parse(parameters);
+        } catch (validationError) {
+          console.warn(
+            `[DynamicMcpClient] Zod validation failed for ${toolName as string}:`,
+            validationError instanceof zod.ZodError ? validationError.errors : validationError
+          );
+          // Fall back to original parameters
+          validatedParams = parameters;
+        }
+      } else {
+        // Fallback to AllToolsMap validation for known tools
+        try {
+          validatedParams = validateToolParams(toolName as keyof AllToolsMap, parameters);
+        } catch {
+          // Tool not in AllToolsMap or validation failed - use original parameters
+          validatedParams = parameters;
+        }
       }
 
       // Apply parameter aliasing
       const resolvedParams = this.parameterAliaser.applyAliases(
         validatedParams,
-        toolDef.inputSchema as unknown as zod.ZodType | undefined
+        toolDef.zodSchema || toolDef.inputSchema as unknown as zod.ZodType | undefined
       ) as Record<string, unknown>;
 
       console.log(

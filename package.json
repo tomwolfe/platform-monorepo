@@ -74,6 +74,7 @@
   },
   "packageManager": "pnpm@8.15.9",
   "dependencies": {
+    "chrono-node": "^2.9.0",
     "crypto-browserify": "^3.12.1"
   }
 }

@@ -14,11 +14,16 @@
  * 3. Time-Series Anomaly Detection
  * 4. Behavioral Pattern Matching
  *
+ * SERVERLESS COMPATIBILITY:
+ * All state is stored in Redis to support serverless environments (Vercel).
+ * No in-memory state is maintained to avoid cold start issues and split-brain scenarios.
+ *
  * @package @repo/shared
  * @since 1.0.0
  */
 
-import { EventEmitter } from 'events';
+import { Redis } from '@upstash/redis';
+import { getRedisClient, ServiceNamespace } from '../redis';
 
 // ============================================================================
 // ANOMALY DETECTION CONFIGURATION
@@ -37,6 +42,8 @@ export interface AnomalyDetectionConfig {
   debug: boolean;
   /** Decay factor for exponential moving average (0-1) */
   emaDecay: number;
+  /** Redis client (optional, will create one if not provided) */
+  redis?: Redis;
 }
 
 const DEFAULT_CONFIG: AnomalyDetectionConfig = {
@@ -108,23 +115,93 @@ export interface UserBehaviorProfile {
 // ANOMALY DETECTOR CLASS
 // ============================================================================
 
-export class AnomalyDetector extends EventEmitter {
+export class AnomalyDetector {
   private config: AnomalyDetectionConfig;
-  private profiles: Map<string, UserBehaviorProfile> = new Map();
+  private redis: Redis;
+  private keyPrefix = 'anomaly:';
 
   constructor(config: Partial<AnomalyDetectionConfig> = {}) {
-    super();
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.redis = config.redis ?? getRedisClient(ServiceNamespace.SHARED);
   }
 
   /**
-   * Get or create user behavior profile
+   * Get Redis key for user profile
    */
-  private getProfile(userId: string): UserBehaviorProfile {
-    if (!this.profiles.has(userId)) {
-      this.profiles.set(userId, this.createProfile(userId));
+  private getProfileKey(userId: string): string {
+    return `${this.keyPrefix}profile:${userId}`;
+  }
+
+  /**
+   * Get Redis key for rate samples
+   */
+  private getSamplesKey(userId: string): string {
+    return `${this.keyPrefix}samples:${userId}`;
+  }
+
+  /**
+   * Get or create user behavior profile from Redis
+   */
+  private async getProfile(userId: string): Promise<UserBehaviorProfile> {
+    const profileKey = this.getProfileKey(userId);
+    const profileData = await this.redis.get<Record<string, unknown>>(profileKey);
+
+    if (profileData) {
+      return {
+        userId: profileData.userId as string,
+        createdAt: profileData.createdAt as number,
+        lastUpdated: profileData.lastUpdated as number,
+        meanRate: profileData.meanRate as number,
+        stdDevRate: profileData.stdDevRate as number,
+        exponentialMovingAvg: profileData.exponentialMovingAvg as number,
+        rateSamples: profileData.rateSamples as number[],
+        sampleTimestamps: profileData.sampleTimestamps as number[],
+        typicalHours: profileData.typicalHours as number[],
+        typicalDays: profileData.typicalDays as number[],
+        avgRequestSize: profileData.avgRequestSize as number,
+        anomalyCount: profileData.anomalyCount as number,
+        lastAnomalyAt: profileData.lastAnomalyAt as number | null,
+        riskScore: profileData.riskScore as number,
+      };
     }
-    return this.profiles.get(userId)!;
+
+    // Create new profile if not exists
+    const profile = this.createProfile(userId);
+    await this.saveProfile(profile);
+    return profile;
+  }
+
+  /**
+   * Save user behavior profile to Redis
+   */
+  private async saveProfile(profile: UserBehaviorProfile): Promise<void> {
+    const profileKey = this.getProfileKey(profile.userId);
+    // Keep profiles for 30 days
+    await this.redis.setex(profileKey, 30 * 24 * 60 * 60, profile);
+  }
+
+  /**
+   * Add rate sample to Redis sorted set
+   */
+  private async addRateSample(userId: string, timestamp: number): Promise<void> {
+    const samplesKey = this.getSamplesKey(userId);
+    // Use sorted set with timestamp as score
+    await this.redis.zadd(samplesKey, { score: timestamp, member: timestamp.toString() });
+    // Cleanup old samples (keep only recent window)
+    const cutoff = timestamp - this.config.rateWindowMs * this.config.movingAverageWindow;
+    await this.redis.zremrangebyscore(samplesKey, 0, cutoff);
+  }
+
+  /**
+   * Get recent rate samples from Redis
+   */
+  private async getRateSamples(userId: string, limit = 1000): Promise<number[]> {
+    const samplesKey = this.getSamplesKey(userId);
+    const now = Date.now();
+    const cutoff = now - this.config.rateWindowMs * this.config.movingAverageWindow;
+    // Get recent samples from sorted set
+    const results = await this.redis.zrangebyscore(samplesKey, cutoff, now, { limit });
+    return results.map((s) => parseInt(s as string, 10));
   }
 
   /**
@@ -162,13 +239,16 @@ export class AnomalyDetector extends EventEmitter {
       userAgent?: string;
     }
   ): Promise<AnomalyDetectionResult> {
-    const profile = this.getProfile(userId);
+    const profile = await this.getProfile(userId);
     const now = Date.now();
     const currentHour = new Date().getHours();
     const currentDay = new Date().getDay();
 
+    // Add rate sample to Redis
+    await this.addRateSample(userId, now);
+
     // Update profile with current request
-    this.updateProfile(profile, now, currentHour, currentDay, metadata?.requestSize);
+    await this.updateProfile(profile, now, currentHour, currentDay, metadata?.requestSize);
 
     // Check if we have enough samples
     if (profile.rateSamples.length < this.config.minSamples) {
@@ -185,20 +265,20 @@ export class AnomalyDetector extends EventEmitter {
     }
 
     // Calculate current rate
-    const currentRate = this.calculateCurrentRate(userId);
-    
+    const currentRate = await this.calculateCurrentRate(userId);
+
     // Calculate z-score
     const zScore = this.calculateZScore(currentRate, profile.meanRate, profile.stdDevRate);
-    
+
     // Detect anomaly type
     const anomalyType = this.detectAnomalyType(zScore, profile, currentHour, currentDay);
-    
+
     // Calculate confidence
     const confidence = this.calculateConfidence(zScore, anomalyType);
-    
+
     // Determine recommended action
     const recommendedAction = this.getRecommendedAction(confidence, anomalyType, profile.riskScore);
-    
+
     // Generate explanation
     const explanation = this.generateExplanation(zScore, currentRate, profile, anomalyType);
 
@@ -211,15 +291,17 @@ export class AnomalyDetector extends EventEmitter {
       profile.riskScore = Math.max(0, profile.riskScore - 1);
     }
 
-    // Emit event if anomalous
-    if (anomalyType) {
-      this.emit('anomaly', {
+    // Save updated profile
+    await this.saveProfile(profile);
+
+    // Emit event if anomalous (via console log since we removed EventEmitter)
+    if (anomalyType && this.config.debug) {
+      console.log('[AnomalyDetector] Anomaly detected:', {
         userId,
         anomalyType,
         confidence,
         zScore,
         currentRate,
-        profile,
       });
     }
 
@@ -242,21 +324,20 @@ export class AnomalyDetector extends EventEmitter {
   /**
    * Update user profile with new request
    */
-  private updateProfile(
+  private async updateProfile(
     profile: UserBehaviorProfile,
     timestamp: number,
     hour: number,
     day: number,
     requestSize?: number
-  ): void {
-    // Add rate sample
-    profile.rateSamples.push(timestamp);
-    profile.sampleTimestamps.push(timestamp);
+  ): Promise<void> {
+    // Add rate sample to Redis
+    await this.addRateSample(profile.userId, timestamp);
 
-    // Keep only recent samples within window
-    const cutoff = timestamp - this.config.rateWindowMs * this.config.movingAverageWindow;
-    profile.rateSamples = profile.rateSamples.filter(t => t > cutoff);
-    profile.sampleTimestamps = profile.sampleTimestamps.filter(t => t > cutoff);
+    // Get fresh samples from Redis
+    const samples = await this.getRateSamples(profile.userId);
+    profile.rateSamples = samples;
+    profile.sampleTimestamps = samples;
 
     // Update hourly patterns
     if (!profile.typicalHours.includes(hour)) {
@@ -277,8 +358,8 @@ export class AnomalyDetector extends EventEmitter {
 
     // Update EMA
     const currentRate = this.calculateCurrentRateFromSamples(profile.rateSamples);
-    profile.exponentialMovingAvg = 
-      this.config.emaDecay * currentRate + 
+    profile.exponentialMovingAvg =
+      this.config.emaDecay * currentRate +
       (1 - this.config.emaDecay) * profile.exponentialMovingAvg;
 
     profile.lastUpdated = timestamp;
@@ -313,9 +394,9 @@ export class AnomalyDetector extends EventEmitter {
   /**
    * Calculate current request rate
    */
-  private calculateCurrentRate(userId: string): number {
-    const profile = this.getProfile(userId);
-    return this.calculateCurrentRateFromSamples(profile.rateSamples);
+  private async calculateCurrentRate(userId: string): Promise<number> {
+    const samples = await this.getRateSamples(userId);
+    return this.calculateCurrentRateFromSamples(samples);
   }
 
   /**
@@ -458,35 +539,55 @@ export class AnomalyDetector extends EventEmitter {
   /**
    * Get user profile
    */
-  getProfileData(userId: string): UserBehaviorProfile | null {
-    const profile = this.profiles.get(userId);
-    return profile ? { ...profile } : null;
+  async getProfileData(userId: string): Promise<UserBehaviorProfile | null> {
+    return await this.getProfile(userId);
   }
 
   /**
    * Reset user profile
    */
-  resetProfile(userId: string): void {
-    this.profiles.set(userId, this.createProfile(userId));
+  async resetProfile(userId: string): Promise<void> {
+    const profile = this.createProfile(userId);
+    await this.saveProfile(profile);
+    // Clear samples
+    const samplesKey = this.getSamplesKey(userId);
+    await this.redis.del(samplesKey);
   }
 
   /**
-   * Get all profiles
+   * Get all profiles (limited to first 100 for performance)
    */
-  getAllProfiles(): Map<string, UserBehaviorProfile> {
-    return new Map(this.profiles);
+  async getAllProfiles(): Promise<Map<string, UserBehaviorProfile>> {
+    const pattern = `${this.keyPrefix}profile:*`;
+    const keys = await this.redis.keys(pattern);
+    const profiles = new Map<string, UserBehaviorProfile>();
+
+    for (const key of keys.slice(0, 100)) {
+      const profile = await this.redis.get<UserBehaviorProfile>(key);
+      if (profile) {
+        profiles.set(profile.userId, profile);
+      }
+    }
+
+    return profiles;
   }
 
   /**
    * Cleanup old profiles
    */
-  cleanupOldProfiles(maxAgeDays: number = 30): number {
+  async cleanupOldProfiles(maxAgeDays: number = 30): Promise<number> {
     const cutoff = Date.now() - (maxAgeDays * 24 * 60 * 60 * 1000);
+    const pattern = `${this.keyPrefix}profile:*`;
+    const keys = await this.redis.keys(pattern);
     let cleaned = 0;
 
-    for (const [userId, profile] of this.profiles.entries()) {
-      if (profile.lastUpdated < cutoff && profile.anomalyCount === 0) {
-        this.profiles.delete(userId);
+    for (const key of keys) {
+      const profile = await this.redis.get<UserBehaviorProfile>(key);
+      if (profile && profile.lastUpdated < cutoff && profile.anomalyCount === 0) {
+        await this.redis.del(key);
+        // Also delete associated samples
+        const samplesKey = this.getSamplesKey(profile.userId);
+        await this.redis.del(samplesKey);
         cleaned++;
       }
     }
@@ -497,21 +598,28 @@ export class AnomalyDetector extends EventEmitter {
   /**
    * Get statistics
    */
-  getStats(): {
+  async getStats(): Promise<{
     totalProfiles: number;
     anomalousProfiles: number;
     highRiskProfiles: number;
-  } {
+  }> {
+    const pattern = `${this.keyPrefix}profile:*`;
+    const keys = await this.redis.keys(pattern);
+    let totalProfiles = 0;
     let anomalousProfiles = 0;
     let highRiskProfiles = 0;
 
-    for (const profile of this.profiles.values()) {
-      if (profile.anomalyCount > 0) anomalousProfiles++;
-      if (profile.riskScore > 50) highRiskProfiles++;
+    for (const key of keys) {
+      const profile = await this.redis.get<UserBehaviorProfile>(key);
+      if (profile) {
+        totalProfiles++;
+        if (profile.anomalyCount > 0) anomalousProfiles++;
+        if (profile.riskScore > 50) highRiskProfiles++;
+      }
     }
 
     return {
-      totalProfiles: this.profiles.size,
+      totalProfiles,
       anomalousProfiles,
       highRiskProfiles,
     };

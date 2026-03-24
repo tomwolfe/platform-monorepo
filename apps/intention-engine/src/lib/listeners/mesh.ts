@@ -237,7 +237,8 @@ export class MeshListener {
     const userId = (data.userId || data.guestId || data.customerId) as string | undefined;
     const userChannel = (data.userChannel || `user:${userId}`) as string | undefined;
 
-    // TYPE SAFETY: Validate event against schema registry before processing
+    // TYPE SAFETY: Validate event against schema registry BEFORE processing
+    // ALL events MUST pass validation (fail-closed)
     const registry = getEventSchemaRegistry();
 
     // Map legacy event names to registry event types
@@ -249,22 +250,18 @@ export class MeshListener {
 
     const registryEventType = eventTypeMap[eventName] || eventName.toUpperCase();
 
-    // Try to validate against registry schemas (for nervous system events)
+    // Validate against registry schemas if registered - FAIL-CLOSED
     if (registry.isRegistered(registryEventType)) {
       const validation = registry.validate(registryEventType, data);
       if (!validation.success) {
+        // FAIL-CLOSED: Drop event if it fails schema validation
         console.error(
-          `[MeshListener] Event ${eventName} failed schema validation:`,
+          `[MeshListener] Event ${eventName} FAILED schema validation, DROPPING:`,
           validation.error
         );
-        // Don't halt execution for validation failures in legacy events,
-        // but log the warning for observability
-        if (eventName.includes('_')) {
-          console.log(`[MeshListener] Continuing with legacy event ${eventName} despite validation failure`);
-        }
-      } else {
-        console.log(`[MeshListener] Event ${eventName} validated against schema`);
+        return;
       }
+      console.log(`[MeshListener] Event ${eventName} validated against schema`);
     }
 
     // Handle proactive events with strict Zod validation
@@ -294,12 +291,15 @@ export class MeshListener {
       });
     }
 
-    // Handle legacy events with strict Zod validation
+    // Handle legacy events with strict Zod validation (FAIL-CLOSED)
     switch (eventName) {
       case 'reservation_rejected': {
         const validated = ReservationEventPayloadSchema.partial().safeParse(data);
         if (!validated.success) {
-          console.error(`[MeshListener] reservation_rejected failed validation:`, validated.error);
+          console.error(
+            `[MeshListener] Event ${eventName} FAILED validation, DROPPING:`,
+            validated.error
+          );
           return;
         }
         return await handleTableStackRejection(validated.data);
@@ -308,7 +308,10 @@ export class MeshListener {
       case 'high_value_guest_reservation': {
         const validated = HighValueGuestEventPayloadSchema.safeParse(data);
         if (!validated.success) {
-          console.error(`[MeshListener] high_value_guest_reservation failed validation:`, validated.error);
+          console.error(
+            `[MeshListener] Event ${eventName} FAILED validation, DROPPING:`,
+            validated.error
+          );
           return;
         }
         return await this.handleHighValueGuest(validated.data);
@@ -317,7 +320,10 @@ export class MeshListener {
       case 'delivery_logged': {
         const validated = DeliveryEventPayloadSchema.partial().safeParse(data);
         if (!validated.success) {
-          console.error(`[MeshListener] delivery_logged failed validation:`, validated.error);
+          console.error(
+            `[MeshListener] Event ${eventName} FAILED validation, DROPPING:`,
+            validated.error
+          );
           return;
         }
         console.log(`[MeshListener] Delivery logged on mesh:`, validated.data.orderId);

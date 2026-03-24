@@ -10,27 +10,75 @@
  * @see Phase 3: Integration Testing
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { randomUUID } from 'crypto';
+import { vi } from 'vitest';
 
-// Mock external dependencies
+// ============================================================================
+// MOCKS - MUST BE HOISTED BEFORE ANY OTHER IMPORTS
+// ============================================================================
+
+/**
+ * Mock @tablestack/lib/auth for integration tests
+ */
+vi.mock('@tablestack/lib/auth', () => ({
+  validateRequest: vi.fn(() => Promise.resolve({
+    context: { 
+      restaurantId: 'mock-restaurant-id', 
+      isInternal: true 
+    }
+  })),
+}));
+
+/**
+ * Mock @tablestack/lib/notifications for integration tests
+ */
+vi.mock('@tablestack/lib/notifications', () => ({
+  NotifyService: {
+    broadcast: vi.fn(() => Promise.resolve()),
+    notifyExternalDelivery: vi.fn(() => Promise.resolve()),
+    notifyRejection: vi.fn(() => Promise.resolve()),
+    sendEmail: vi.fn(() => Promise.resolve()),
+  },
+}));
+
+/**
+ * Mock @repo/database for integration tests
+ */
 vi.mock('@repo/database', async () => {
   const actual = await vi.importActual('@repo/database');
+  const mockRestaurantData = {
+    id: 'mock-restaurant-id',
+    name: 'Test Restaurant',
+    slug: 'test-restaurant',
+    ownerEmail: 'owner@test.com',
+    ownerId: 'owner-123',
+    apiKey: 'ts_test_key',
+    timezone: 'America/New_York',
+    openingTime: '09:00',
+    closingTime: '22:00',
+    daysOpen: 'monday,tuesday,wednesday,thursday,friday,saturday,sunday',
+    defaultDurationMinutes: 90,
+  };
+
+  const restaurantsFindFirstMock = vi.fn();
+  const restaurantReservationsFindFirstMock = vi.fn();
+  const restaurantTablesFindFirstMock = vi.fn();
+  const guestProfilesFindFirstMock = vi.fn();
+
   return {
     ...(actual as any),
     getDb: () => ({
       query: {
         restaurants: {
-          findFirst: vi.fn(),
+          findFirst: restaurantsFindFirstMock,
         },
         restaurantReservations: {
-          findFirst: vi.fn(),
+          findFirst: restaurantReservationsFindFirstMock,
         },
         restaurantTables: {
-          findFirst: vi.fn(),
+          findFirst: restaurantTablesFindFirstMock,
         },
         guestProfiles: {
-          findFirst: vi.fn(),
+          findFirst: guestProfilesFindFirstMock,
         },
       },
       insert: vi.fn(),
@@ -39,19 +87,31 @@ vi.mock('@repo/database', async () => {
         execute: vi.fn(),
         query: {
           restaurantReservations: {
-            findFirst: vi.fn(),
+            findFirst: restaurantReservationsFindFirstMock,
           },
         },
         insert: vi.fn(),
         update: vi.fn(),
       })),
     }),
+    restaurants: {
+      apiKey: 'apiKey',
+      id: 'id',
+    },
+    restaurantReservations: {
+      verificationToken: 'verificationToken',
+      id: 'id',
+    },
+    eq: vi.fn(),
   };
 });
 
+import { describe, it, expect, beforeEach } from 'vitest';
+import { randomUUID } from 'crypto';
+
 describe('Integration: Reservation Flow', () => {
   const mockRestaurant = {
-    id: randomUUID(),
+    id: 'mock-restaurant-id',
     name: 'Test Restaurant',
     slug: 'test-restaurant',
     ownerEmail: 'owner@test.com',
@@ -283,7 +343,7 @@ describe('Integration: Reservation Flow', () => {
     });
   });
 
-  describe('POST /api/v1/verify', () => {
+  describe('GET /api/v1/verify', () => {
     it('should verify reservation with valid token', async () => {
       const verificationToken = randomUUID();
       const reservationId = randomUUID();
@@ -291,7 +351,7 @@ describe('Integration: Reservation Flow', () => {
       const { getDb } = await import('@repo/database');
       const db = getDb();
 
-      (db.query.restaurantReservations.findFirst as any).mockResolvedValue({
+      (db.query.restaurantReservations.findFirst as any).mockResolvedValueOnce({
         id: reservationId,
         verificationToken,
         isVerified: false,
@@ -299,37 +359,27 @@ describe('Integration: Reservation Flow', () => {
         restaurant: mockRestaurant,
       });
 
-      const req = new Request('http://localhost:3000/api/v1/verify', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ token: verificationToken }),
+      const req = new Request(`http://localhost:3000/api/v1/verify?token=${verificationToken}`, {
+        method: 'GET',
       });
 
-      const { POST } = await import('../../app/api/v1/verify/route');
-      const response = await POST(req as any);
+      const { GET } = await import('../../app/api/v1/verify/route');
+      const response = await GET(req as any);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
-      expect(data.success).toBe(true);
     });
 
     it('should return 404 for invalid token', async () => {
       const { getDb } = await import('@repo/database');
       const db = getDb();
-      (db.query.restaurantReservations.findFirst as any).mockResolvedValue(null);
+      (db.query.restaurantReservations.findFirst as any).mockResolvedValueOnce(null);
 
-      const req = new Request('http://localhost:3000/api/v1/verify', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ token: 'invalid-token' }),
+      const req = new Request(`http://localhost:3000/api/v1/verify?token=${randomUUID()}`, {
+        method: 'GET',
       });
 
-      const { POST } = await import('../../app/api/v1/verify/route');
-      const response = await POST(req as any);
+      const { GET } = await import('../../app/api/v1/verify/route');
+      const response = await GET(req as any);
 
       expect(response.status).toBe(404);
     });
@@ -337,22 +387,18 @@ describe('Integration: Reservation Flow', () => {
     it('should return 200 for already verified reservation', async () => {
       const { getDb } = await import('@repo/database');
       const db = getDb();
-      (db.query.restaurantReservations.findFirst as any).mockResolvedValue({
+      (db.query.restaurantReservations.findFirst as any).mockResolvedValueOnce({
         id: randomUUID(),
         isVerified: true,
         status: 'confirmed',
       });
 
-      const req = new Request('http://localhost:3000/api/v1/verify', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ token: randomUUID() }),
+      const req = new Request(`http://localhost:3000/api/v1/verify?token=${randomUUID()}`, {
+        method: 'GET',
       });
 
-      const { POST } = await import('../../app/api/v1/verify/route');
-      const response = await POST(req as any);
+      const { GET } = await import('../../app/api/v1/verify/route');
+      const response = await GET(req as any);
 
       expect(response.status).toBe(200);
     });

@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb, restaurantReservations, eq, restaurants } from "@repo/database";
-import { NotifyService } from '@/lib/notifications';
+import { NotifyService } from '@tablestack/lib/notifications';
 import { createPublicClient, http, parseUnits } from 'viem';
 import { base } from 'viem/chains';
 import { isValidTxHash } from '@repo/shared/utils/web3-verification';

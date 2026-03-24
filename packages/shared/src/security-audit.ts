@@ -447,18 +447,7 @@ export function getOWASPMapping(
   return mapping;
 }
 
-// ============================================================================
-// Value exports
-export {
-  SECURITY_AUDIT_CHECKLIST,
-  runSecurityAudit,
-  getCriticalItems,
-  getItemsByCategory,
-  getFailedItems,
-  getOWASPMapping,
-};
-
-// Type re-exports
+// Type re-exports only (values are already exported inline)
 export type {
   SecurityAuditItem,
   SecurityCategory,

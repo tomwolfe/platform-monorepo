@@ -23,7 +23,7 @@
  */
 
 import { Logger } from './logger';
-import { errorResponse, forbiddenErrorResponse, rateLimitErrorResponse } from './api-response';
+import { errorResponse, forbiddenErrorResponse, rateLimitErrorResponse, type ApiErrorResponse } from './api-response';
 
 // ============================================================================
 // TYPES
@@ -433,7 +433,7 @@ const DEFAULT_SECURITY_HEADERS: Required<SecurityHeadersConfig> = {
 /**
  * Generate security headers
  */
-function generateSecurityHeaders(config: SecurityHeadersConfig): Record<string, string> {
+export function generateSecurityHeaders(config: SecurityHeadersConfig): Record<string, string> {
   const {
     contentSecurityPolicy = DEFAULT_SECURITY_HEADERS.contentSecurityPolicy,
     strictTransportSecurity = DEFAULT_SECURITY_HEADERS.strictTransportSecurity,
@@ -499,7 +499,7 @@ function generateSecurityHeaders(config: SecurityHeadersConfig): Record<string, 
 /**
  * Sanitize string input
  */
-function sanitizeString(
+export function sanitizeString(
   input: string,
   config: InputSanitizationConfig
 ): string {
@@ -542,7 +542,7 @@ function sanitizeString(
 /**
  * Sanitize object recursively
  */
-function sanitizeObject(
+export function sanitizeObject(
   obj: unknown,
   config: InputSanitizationConfig,
   excludeFields: string[] = [],
@@ -625,7 +625,7 @@ function createInputSanitizationMiddleware(
 /**
  * Generate CORS headers
  */
-function generateCORSHeaders(config: CORSConfig): Record<string, string> {
+export function generateCORSHeaders(config: CORSConfig): Record<string, string> {
   const {
     origins = ['*'],
     methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -717,7 +717,12 @@ export function withSecurityMiddleware<T extends (...args: any[]) => Promise<any
     if (csrfMiddleware) {
       const csrfResult = await csrfMiddleware(req);
       if (!csrfResult.valid) {
-        return csrfResult.error as ReturnType<T>;
+        // Convert error object to Response
+        const errorResponse = csrfResult.error as ApiErrorResponse;
+        return new Response(JSON.stringify(errorResponse), {
+          status: csrfResult.status || 403,
+          headers: { 'Content-Type': 'application/json' },
+        }) as ReturnType<T>;
       }
     }
 
@@ -742,9 +747,17 @@ export function withSecurityMiddleware<T extends (...args: any[]) => Promise<any
       const sanitizationResult = await sanitizationMiddleware(req);
       if (sanitizationResult.valid && sanitizationResult.sanitizedBody) {
         // Create new request with sanitized body
+        // Convert headers to plain object to avoid compatibility issues
+        const headersObj: Record<string, string> = {};
+        if (typeof req.headers.forEach === 'function') {
+          req.headers.forEach((value, key) => {
+            headersObj[key] = value;
+          });
+        }
+        
         sanitizedReq = new Request(req.url, {
           method: req.method,
-          headers: req.headers,
+          headers: headersObj,
           body: JSON.stringify(sanitizationResult.sanitizedBody),
         });
         // Replace first argument with sanitized request

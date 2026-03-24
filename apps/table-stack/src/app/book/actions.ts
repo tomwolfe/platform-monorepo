@@ -2,7 +2,7 @@
 
 import { getDb, restaurants, restaurantReservations, restaurantWaitlist, eq } from "@repo/database";
 import { revalidatePath } from "next/cache";
-import { NotifyService } from "@/lib/notifications";
+import { NotifyService } from "@tablestack/lib/notifications";
 
 export async function createReservation(data: {
   restaurantId: string;

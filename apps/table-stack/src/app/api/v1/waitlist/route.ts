@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb, restaurantWaitlist } from "@repo/database";
 import { and, eq } from '@repo/database';
-import { validateRequest } from '@/lib/auth';
+import { validateRequest } from '@tablestack/lib/auth';
 
 export const runtime = 'edge';
 

@@ -2,26 +2,14 @@
  * Vitest Setup File for TableStack
  *
  * Global test configuration, mocks, and setup for table-stack tests.
- * This file is automatically loaded by Vitest before running tests.
  *
- * @see vitest.config.ts at project root
+ * @see Phase 1.1: Testing Infrastructure
  */
 
 import { vi, beforeEach, afterEach, afterAll } from 'vitest';
-import { cleanupTestDatabase } from '../test/setup';
 
 // ============================================================================
-// GLOBAL TIMEOUT CONFIGURATION
-// ============================================================================
-
-// Set global test timeout to 30 seconds for integration tests
-vi.setConfig({
-  testTimeout: 30000,
-  hookTimeout: 30000,
-});
-
-// ============================================================================
-// GLOBAL MOCKS
+// MOCKS - MUST BE HOISTED BEFORE IMPORTS
 // ============================================================================
 
 /**
@@ -57,25 +45,56 @@ vi.mock('next/server', async (importActual) => {
 });
 
 /**
- * Mock date-fns to use consistent test dates
+ * Mock @tablestack/lib/auth for integration tests
  */
-vi.mock('date-fns', async () => {
-  const actual = await vi.importActual('date-fns');
-  return {
-    ...(actual as any),
-    // Keep actual implementations for now
-  };
-});
+vi.mock('@tablestack/lib/auth', () => ({
+  validateRequest: vi.fn(() => Promise.resolve({
+    context: { restaurantId: 'test-restaurant', isInternal: true }
+  })),
+}));
 
 /**
- * Mock date-fns-tz for timezone handling
+ * Mock @tablestack/lib/notifications for integration tests
  */
-vi.mock('date-fns-tz', async () => {
-  const actual = await vi.importActual('date-fns-tz');
-  return {
-    ...(actual as any),
-    // Keep actual implementations for now
-  };
+vi.mock('@tablestack/lib/notifications', () => ({
+  NotifyService: {
+    broadcast: vi.fn(() => Promise.resolve()),
+    notifyExternalDelivery: vi.fn(() => Promise.resolve()),
+    notifyRejection: vi.fn(() => Promise.resolve()),
+    sendEmail: vi.fn(() => Promise.resolve()),
+  },
+}));
+
+/**
+ * Mock @tablestack/lib/redis for integration tests
+ */
+vi.mock('@tablestack/lib/redis', () => ({
+  redis: {
+    get: vi.fn(() => Promise.resolve(null)),
+    set: vi.fn(() => Promise.resolve('OK')),
+    setex: vi.fn(() => Promise.resolve('OK')),
+    del: vi.fn(() => Promise.resolve(0)),
+    lpush: vi.fn(() => Promise.resolve(1)),
+    rpush: vi.fn(() => Promise.resolve(1)),
+    lrange: vi.fn(() => Promise.resolve([])),
+    expire: vi.fn(() => Promise.resolve(1)),
+  },
+}));
+
+// ============================================================================
+// IMPORTS (after mocks)
+// ============================================================================
+
+import { cleanupTestDatabase } from '../test/setup';
+
+// ============================================================================
+// GLOBAL TIMEOUT CONFIGURATION
+// ============================================================================
+
+// Set global test timeout to 30 seconds for integration tests
+vi.setConfig({
+  testTimeout: 30000,
+  hookTimeout: 30000,
 });
 
 // ============================================================================
@@ -116,43 +135,6 @@ afterAll(async () => {
     console.warn('Test database cleanup skipped:', error);
   }
 });
-
-// ============================================================================
-// GLOBAL TEST UTILITIES
-// ============================================================================
-
-/**
- * Wait for a specified number of milliseconds
- * Useful for testing async operations and race conditions
- */
-globalThis.waitFor = (ms: number): Promise<void> => {
-  return new Promise(resolve => setTimeout(resolve, ms));
-};
-
-/**
- * Create a promise that never resolves
- * Useful for testing timeout behavior
- */
-globalThis.neverResolves = (): Promise<never> => {
-  return new Promise(() => {});
-};
-
-/**
- * Suppress console output during tests
- * Useful for reducing noise in test output
- */
-globalThis.suppressConsole = () => {
-  vi.spyOn(console, 'log').mockImplementation(() => {});
-  vi.spyOn(console, 'error').mockImplementation(() => {});
-  vi.spyOn(console, 'warn').mockImplementation(() => {});
-};
-
-/**
- * Restore console output
- */
-globalThis.restoreConsole = () => {
-  vi.restoreAllMocks();
-};
 
 // ============================================================================
 // TYPE DECLARATIONS

@@ -193,16 +193,23 @@ export async function placeRealOrder(
       throw new Error("Failed to fetch ETH price from oracle");
     }
 
-    // Convert USD to ETH: ETH amount = USD / price
-    const subtotalEth = subtotalFiat / ethPriceUsd;
-    const tipEth = tipFiat / ethPriceUsd;
-    const totalEth = totalFiat / ethPriceUsd;
-
-    // CRITICAL FIX: Use parseEther directly instead of .toFixed(18) + parseUnits
-    // .toFixed(18) can produce scientific notation (e.g., 1e-7) which parseUnits rejects
-    subtotalCrypto = parseEther(subtotalEth.toString()).toString();
-    tipCrypto = parseEther(tipEth.toString()).toString();
-    totalCrypto = parseEther(totalEth.toString()).toString();
+    // CRITICAL: Use BigInt math to avoid floating-point precision errors
+    // Convert USD to ETH using basis points (10000 = 1.0) for precision
+    // Formula: ETH_Wei = (USD_cents * 10^20) / (ETH_price_USD_scaled)
+    const BASIS_POINTS = 10_000n;
+    const ethPriceScaled = BigInt(Math.round(ethPriceUsd * Number(BASIS_POINTS)));
+    
+    // Convert fiat amounts to cents first (integer), then to Wei
+    // Multiplier: 10^20 to convert cents to Wei with price scaling (18 decimals + 2 for cents)
+    const CENTS_TO_WEI_MULTIPLIER = 10n ** 20n;
+    
+    const subtotalCents = BigInt(Math.round(subtotalFiat * 100));
+    const tipCents = BigInt(Math.round(tipFiat * 100));
+    const totalCents = BigInt(Math.round(totalFiat * 100));
+    
+    subtotalCrypto = ((subtotalCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled).toString();
+    tipCrypto = ((tipCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled).toString();
+    totalCrypto = ((totalCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled).toString();
   } else {
     // USDC: 6 decimals, assume 1 USD = 1 USDC
     subtotalCrypto = parseUnits(subtotalFiat.toFixed(6), 6).toString();

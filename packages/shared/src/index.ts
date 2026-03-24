@@ -186,5 +186,5 @@ export * from './middleware/web3-replay-guard';
 // export * from './utils/crypto-price'; // Server-side only - import directly
 // export * from './utils/web3-verification'; // Server-side only - import directly
 
-// Phase 4.1: Accessibility
-export * from './accessibility';
+// Phase 4.1: Accessibility - React components, not exported for tests
+// export * from './accessibility.tsx'; // React-specific, import directly if needed

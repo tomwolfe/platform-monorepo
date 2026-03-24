@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { validateRequest, verifySignature } from '@/lib/auth';
-import { NotifyService } from '@/lib/notifications';
+import { validateRequest, verifySignature } from '@tablestack/lib/auth';
+import { NotifyService } from '@tablestack/lib/notifications';
 
 export const runtime = 'edge';
 

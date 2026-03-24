@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { resend } from '@/lib/resend';
+import { resend } from '@tablestack/lib/resend';
 
 export async function POST(req: NextRequest) {
   try {

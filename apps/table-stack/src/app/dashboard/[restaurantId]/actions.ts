@@ -8,8 +8,8 @@ import { revalidatePath } from 'next/cache';
 import { eq, and } from '@repo/database';
 import { z } from 'zod';
 import Ably from 'ably';
-import { NotifyService } from '@/lib/notifications';
-import { generateApiKey } from '@/lib/auth';
+import { NotifyService } from '@tablestack/lib/notifications';
+import { generateApiKey } from '@tablestack/lib/auth';
 import { withServerActionHandler, type ServerActionResponse } from '@repo/shared';
 
 const SettingsSchema = z.object({
@@ -208,7 +208,7 @@ export const updateTableStatus = withServerActionHandler(
           }
         });
 
-        const { signPayload } = await import('@/lib/auth');
+        const { signPayload } = await import('@tablestack/lib/auth');
         const { signature, timestamp } = await signPayload(payload, webhookSecret);
 
         fetch(openDeliverWebhookUrl, {

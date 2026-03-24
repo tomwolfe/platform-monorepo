@@ -63,10 +63,18 @@ export function CryptoCheckout({
   const subtotalFiat = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const totalFiat = subtotalFiat + tip;
 
-  // Convert to USDC (6 decimals) - 1 USDC = 1 USD
-  const totalUSDC = parseUnits(totalFiat.toFixed(6), 6);
-  const subtotalUSDC = parseUnits(subtotalFiat.toFixed(6), 6);
-  const tipUSDC = parseUnits(tip.toFixed(6), 6);
+  // CRITICAL: Convert to USDC (6 decimals) using integer cents to avoid floating-point errors
+  // 1 USD = 1 USDC, so we convert USD -> cents -> atomic USDC units
+  // Formula: USDC_atomic = (USD_cents * 10^6) / 100 = USD_cents * 10^4
+  const USDC_CENTS_MULTIPLIER = 10_000n; // Convert cents to USDC atomic units
+  
+  const subtotalCents = BigInt(Math.round(subtotalFiat * 100));
+  const tipCents = BigInt(Math.round(tip * 100));
+  const totalCents = BigInt(Math.round(totalFiat * 100));
+  
+  const totalUSDC = totalCents * USDC_CENTS_MULTIPLIER;
+  const subtotalUSDC = subtotalCents * USDC_CENTS_MULTIPLIER;
+  const tipUSDC = tipCents * USDC_CENTS_MULTIPLIER;
 
   // Transaction state - added "signing" step for signature before transaction
   const [step, setStep] = useState<"review" | "signing" | "sending" | "confirming" | "completed" | "error">("review");
@@ -90,9 +98,32 @@ export function CryptoCheckout({
     fetchEthPrice();
   }, []);
 
-  // Calculate ETH amount if paying with ETH
-  const totalEth = paymentCurrency === "ETH" ? totalFiat / ethPrice : 0;
-  const totalEthWei = paymentCurrency === "ETH" ? parseUnits(totalEth.toFixed(18), 18) : BigInt(0);
+  // CRITICAL: Use BigInt math to avoid floating-point precision errors
+  // Convert USD to ETH using basis points (10000 = 1.0) for precision
+  // Formula: ETH_Wei = (USD_cents * 10^20) / (ETH_price_USD_scaled)
+  const BASIS_POINTS = 10_000n;
+  const ethPriceScaled = BigInt(Math.round(ethPrice * Number(BASIS_POINTS)));
+  
+  // Convert fiat amounts to cents first (integer), then to Wei
+  // Multiplier: 10^20 to convert cents to Wei with price scaling (18 decimals + 2 for cents)
+  const CENTS_TO_WEI_MULTIPLIER = 10n ** 20n;
+  
+  // Calculate ETH amounts in Wei using BigInt division
+  const subtotalEthWei = paymentCurrency === "ETH" 
+    ? (subtotalCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled 
+    : BigInt(0);
+  const tipEthWei = paymentCurrency === "ETH"
+    ? (tipCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
+    : BigInt(0);
+  const totalEthWei = paymentCurrency === "ETH" 
+    ? (totalCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled 
+    : BigInt(0);
+  
+  // Calculate display ETH amounts (for UI only, not for transactions)
+  const { formatUnits } = require("viem");
+  const totalEth = paymentCurrency === "ETH" 
+    ? parseFloat(formatUnits(totalEthWei, 18)) 
+    : 0;
 
   // Send transaction hook (for native ETH)
   const {

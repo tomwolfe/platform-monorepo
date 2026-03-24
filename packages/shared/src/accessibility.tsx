@@ -571,25 +571,4 @@ export async function runAccessibilityAudit(): Promise<AccessibilityReport> {
 }
 
 // ============================================================================
-// EXPORTS
-// ============================================================================
-
-export {
-  useKeyboardFocus,
-  useScreenReader,
-  useFocusTrap,
-  useKeyboardInteractive,
-  VisuallyHidden,
-  AriaButton,
-  LiveRegion,
-  SkipLink,
-  generateAriaId,
-  isFocusable,
-  getFocusableElements,
-  moveFocus,
-  announceToScreenReader,
-  checkColorContrast,
-  runAccessibilityAudit,
-  type AccessibilityReport,
-  type AccessibilityIssue,
-};
+// END OF FILE

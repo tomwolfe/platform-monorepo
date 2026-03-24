@@ -22,7 +22,7 @@ import {
   notFoundErrorResponse,
 } from '@repo/shared';
 import { Logger } from '@repo/shared';
-import { validateRequest as validateAuth } from '@/lib/auth';
+import { validateRequest as validateAuth } from '@tablestack/lib/auth';
 import { getDb, restaurants, restaurantReservations } from '@repo/database';
 import { eq } from '@repo/database';
 

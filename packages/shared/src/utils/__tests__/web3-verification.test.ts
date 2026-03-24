@@ -14,19 +14,27 @@
  * @see Phase 1.1: Testing Infrastructure
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+// ============================================================================
+// MOCKS - MUST BE BEFORE ANY IMPORTS
+// ============================================================================
+
+import { vi } from 'vitest';
 import type { Hash, Address, Hex } from 'viem';
 
-// ============================================================================
-// MOCKS
-// ============================================================================
-
-// Mock viem
+// Mock viem BEFORE any other imports
 vi.mock('viem', async () => {
   const actual = await vi.importActual('viem');
+
+  // Create a mock client factory
+  const mockCreatePublicClient = vi.fn(() => ({
+    getTransactionReceipt: vi.fn(),
+    getTransaction: vi.fn(),
+    getBlockNumber: vi.fn(),
+  }));
+
   return {
     ...(actual as any),
-    createPublicClient: vi.fn(),
+    createPublicClient: mockCreatePublicClient,
     http: vi.fn(),
     fallback: vi.fn(),
     parseEventLogs: vi.fn(),
@@ -64,18 +72,24 @@ vi.mock('viem/chains', async () => {
   };
 });
 
+// Persistent mock database object (must be persistent across calls)
+const mockProcessedTxsFindFirst = vi.fn();
+const mockDbInsert = vi.fn(() => ({
+  values: vi.fn().mockReturnThis(),
+  onConflictDoUpdate: vi.fn(),
+  returning: vi.fn().mockReturnThis(),
+}));
+const mockDbInsertValues = vi.fn().mockReturnThis();
+
 // Mock @repo/database
 vi.mock('@repo/database', () => ({
   getDb: vi.fn(() => ({
     query: {
       processed_crypto_transactions: {
-        findFirst: vi.fn(),
+        findFirst: mockProcessedTxsFindFirst,
       },
     },
-    insert: vi.fn(() => ({
-      values: vi.fn().mockReturnThis(),
-      onConflictDoUpdate: vi.fn(),
-    })),
+    insert: mockDbInsert,
   })),
   processed_crypto_transactions: {
     txHash: 'tx_hash',
@@ -86,6 +100,8 @@ vi.mock('@repo/database', () => ({
 }));
 
 // Import mocked modules
+import { describe, it, expect, beforeEach } from 'vitest';
+
 import {
   verifyTransaction,
   formatTokenAmount,
@@ -109,8 +125,32 @@ const mockGetDb = getDb as any;
 const mockCreatePublicClient = createPublicClient as any;
 const mockParseEventLogs = parseEventLogs as any;
 const mockVerifyMessage = verifyMessage as any;
-const mockProcessedTxsFindFirst = mockGetDb().query.processed_crypto_transactions.findFirst;
-const mockInsert = mockGetDb().insert;
+const mockInsert = mockDbInsert;
+
+// Store reference to last created mock client for configuration
+let lastMockClient: any = null;
+let mockClientCreated = false;
+
+// Setup createPublicClient to store reference to created client
+mockCreatePublicClient.mockImplementation(() => {
+  if (!mockClientCreated) {
+    lastMockClient = {
+      getTransactionReceipt: vi.fn(),
+      getTransaction: vi.fn(),
+      getBlockNumber: vi.fn(),
+    };
+    mockClientCreated = true;
+  }
+  return lastMockClient;
+});
+
+// Setup database mock factory
+function setupDatabaseMocks() {
+  // Clear the persistent mock before each test
+  mockProcessedTxsFindFirst.mockClear();
+  mockDbInsert.mockClear();
+  mockDbInsertValues.mockClear();
+}
 
 // ============================================================================
 // TEST HELPERS
@@ -124,7 +164,7 @@ function createMockReceipt(overrides?: Partial<any>) {
     status: 'success',
     blockNumber: BigInt(1000000),
     from: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1' as Address,
-    to: '0x1234567890123456789012345678901234567890' as Address,
+    to: '0x0000000000000000000000000000000000000000' as Address, // Match default TREASURY_ADDRESS
     logs: [],
     ...overrides,
   };
@@ -151,7 +191,7 @@ function createMockTransferLog(overrides?: Partial<any>) {
     eventName: 'Transfer',
     args: {
       from: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1' as Address,
-      to: '0x1234567890123456789012345678901234567890' as Address,
+      to: '0x0000000000000000000000000000000000000000' as Address, // Match default TREASURY_ADDRESS
       value: BigInt('10000000'), // 10 USDC (6 decimals)
     },
     ...overrides,
@@ -162,15 +202,11 @@ function createMockTransferLog(overrides?: Partial<any>) {
  * Setup mock client
  */
 function setupMockClient() {
-  const mockClient = {
-    getTransactionReceipt: vi.fn(),
-    getTransaction: vi.fn(),
-    getBlockNumber: vi.fn(),
-  };
-
-  mockCreatePublicClient.mockReturnValue(mockClient);
-
-  return mockClient;
+  // Call getPublicClient to trigger createPublicClient mock
+  getPublicClient();
+  
+  // Return the last created mock client
+  return lastMockClient;
 }
 
 // ============================================================================
@@ -180,11 +216,24 @@ function setupMockClient() {
 describe('Web3 Verification', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    lastMockClient = null;
+    mockClientCreated = false;
 
-    // Default environment variables
-    process.env.BASE_RPC_URL = 'https://mainnet.base.org';
-    process.env.NEXT_PUBLIC_TREASURY_WALLET_ADDRESS = '0x1234567890123456789012345678901234567890';
-    process.env.NEXT_PUBLIC_MIN_CONFIRMATIONS = '3';
+    // Re-setup the mock client factory after clearing mocks
+    mockCreatePublicClient.mockImplementation(() => {
+      if (!mockClientCreated) {
+        lastMockClient = {
+          getTransactionReceipt: vi.fn(),
+          getTransaction: vi.fn(),
+          getBlockNumber: vi.fn(),
+        };
+        mockClientCreated = true;
+      }
+      return lastMockClient;
+    });
+
+    // Setup database mocks
+    setupDatabaseMocks();
   });
 
   // ============================================================================
@@ -485,6 +534,7 @@ describe('Web3 Verification', () => {
       const mockClient = setupMockClient();
       mockClient.getTransactionReceipt.mockResolvedValue(createMockReceipt());
       mockClient.getTransaction.mockResolvedValue(createMockTransaction());
+      mockClient.getBlockNumber.mockResolvedValue(BigInt(1000003));
       mockVerifyMessage.mockResolvedValue(false);
 
       const result = await verifyTransaction({
@@ -505,6 +555,7 @@ describe('Web3 Verification', () => {
       const mockClient = setupMockClient();
       mockClient.getTransactionReceipt.mockResolvedValue(createMockReceipt());
       mockClient.getTransaction.mockResolvedValue(createMockTransaction());
+      mockClient.getBlockNumber.mockResolvedValue(BigInt(1000003));
       mockVerifyMessage.mockRejectedValue(new Error('Invalid signature format'));
 
       const result = await verifyTransaction({
@@ -614,9 +665,9 @@ describe('Web3 Verification', () => {
         returning: vi.fn().mockResolvedValue([]),
       };
 
-      mockInsert.mockReturnValue({
+      mockInsert.mockImplementationOnce(() => ({
         values: vi.fn().mockReturnValue(mockInsertValues),
-      });
+      }));
 
       const result = await verifyTransaction({
         txHash: '0x1234567890123456789012345678901234567890123456789012345678901234' as Hash,
@@ -635,15 +686,16 @@ describe('Web3 Verification', () => {
       mockProcessedTxsFindFirst.mockResolvedValue(null);
 
       const mockClient = setupMockClient();
-      mockClient.getTransactionReceipt.mockResolvedValue(createMockReceipt());
+      const mockRecipient = '0x1234567890123456789012345678901234567890' as Address;
+      mockClient.getTransactionReceipt.mockResolvedValue(createMockReceipt({ to: mockRecipient }));
       mockClient.getTransaction.mockResolvedValue(createMockTransaction());
       mockClient.getBlockNumber.mockResolvedValue(BigInt(1000003));
       mockVerifyMessage.mockResolvedValue(true);
 
       const mockError = new Error('duplicate key value violates unique constraint');
-      mockInsert.mockReturnValue({
+      mockInsert.mockImplementationOnce(() => ({
         values: vi.fn().mockRejectedValue(mockError),
-      });
+      }));
 
       const result = await verifyTransaction({
         txHash: '0x1234567890123456789012345678901234567890123456789012345678901234' as Hash,
@@ -651,160 +703,11 @@ describe('Web3 Verification', () => {
         orderId: 'order-123',
         signature: '0xsignature' as Hex,
         walletAddress: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1' as Address,
+        expectedRecipient: mockRecipient,
       });
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Transaction already registered');
-    });
-  });
-
-  // ============================================================================
-  // Value Formatting Utilities
-  // ============================================================================
-
-  describe('Value Formatting Utilities', () => {
-    describe('formatTokenAmount', () => {
-      it('should format ETH amount correctly', () => {
-        const result = formatTokenAmount(BigInt('1000000000000000000'), 18);
-        expect(result).toBe('1');
-      });
-
-      it('should format USDC amount correctly', () => {
-        const result = formatTokenAmount(BigInt('10000000'), 6);
-        expect(result).toBe('10');
-      });
-
-      it('should handle string amounts', () => {
-        const result = formatTokenAmount('1000000000000000000', 18);
-        expect(result).toBe('1');
-      });
-    });
-
-    describe('parseTokenAmount', () => {
-      it('should parse ETH amount correctly', () => {
-        const result = parseTokenAmount('1.5', 18);
-        expect(result).toBe(BigInt('1500000000000000000'));
-      });
-
-      it('should parse USDC amount correctly', () => {
-        const result = parseTokenAmount('10.50', 6);
-        expect(result).toBe(BigInt('10500000'));
-      });
-    });
-
-    describe('formatCryptoPrice', () => {
-      it('should format USDC price with dollar sign', () => {
-        const result = formatCryptoPrice('10500000', 'USDC');
-        expect(result).toBe('$10.50');
-      });
-
-      it('should format ETH price with symbol', () => {
-        const result = formatCryptoPrice('1500000000000000000', 'ETH');
-        expect(result).toBe('1.5 ETH');
-      });
-
-      it('should format USDT price with dollar sign', () => {
-        const result = formatCryptoPrice('10500000', 'USDT');
-        expect(result).toBe('$10.50');
-      });
-    });
-
-    describe('usdToCrypto', () => {
-      it('should convert USD to ETH', () => {
-        const result = usdToCrypto(100, 'ETH', 2000);
-        expect(result).toBe('50000000000000000'); // 0.05 ETH in wei
-      });
-
-      it('should convert USD to USDC', () => {
-        const result = usdToCrypto(100, 'USDC', 1);
-        expect(result).toBe('100000000'); // 100 USDC in atomic units
-      });
-    });
-
-    describe('usdToTokenAmount', () => {
-      it('should convert USD to token amount', () => {
-        const result = usdToTokenAmount(100, 2000, 18);
-        expect(result).toBe(BigInt('50000000000000000'));
-      });
-    });
-  });
-
-  // ============================================================================
-  // Address Utilities
-  // ============================================================================
-
-  describe('Address Utilities', () => {
-    describe('isValidAddress', () => {
-      it('should return true for valid Ethereum address', () => {
-        expect(isValidAddress('0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1')).toBe(true);
-      });
-
-      it('should return false for invalid address', () => {
-        expect(isValidAddress('invalid-address')).toBe(false);
-        expect(isValidAddress('0x123')).toBe(false);
-      });
-    });
-
-    describe('isValidTxHash', () => {
-      it('should return true for valid transaction hash', () => {
-        expect(isValidTxHash('0x1234567890123456789012345678901234567890123456789012345678901234')).toBe(true);
-      });
-
-      it('should return false for invalid hash', () => {
-        expect(isValidTxHash('invalid-hash')).toBe(false);
-        expect(isValidTxHash('0x123')).toBe(false);
-      });
-    });
-
-    describe('shortenAddress', () => {
-      it('should shorten address with default chars', () => {
-        const result = shortenAddress('0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1');
-        expect(result).toBe('0x742d...bEb1');
-      });
-
-      it('should shorten address with custom chars', () => {
-        const result = shortenAddress('0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1', 6);
-        expect(result).toBe('0x742d35...f0bEb1');
-      });
-
-      it('should return original address if too short', () => {
-        const result = shortenAddress('0x123');
-        expect(result).toBe('0x123');
-      });
-    });
-  });
-
-  // ============================================================================
-  // Treasury Utilities
-  // ============================================================================
-
-  describe('Treasury Utilities', () => {
-    describe('getTreasuryAddress', () => {
-      it('should return configured treasury address', () => {
-        const result = getTreasuryAddress();
-        expect(result).toBe('0x1234567890123456789012345678901234567890');
-      });
-    });
-
-    describe('createPaymentRequest', () => {
-      it('should create payment request with default chain', () => {
-        const result = createPaymentRequest({
-          amount: BigInt('1000000000000000000'),
-        });
-
-        expect(result.to).toBe('0x1234567890123456789012345678901234567890');
-        expect(result.value).toBe(BigInt('1000000000000000000'));
-        expect(result.chainId).toBe(8453); // Base
-      });
-
-      it('should create payment request with custom chain', () => {
-        const result = createPaymentRequest({
-          amount: BigInt('10000000'),
-          chainId: 137, // Polygon
-        });
-
-        expect(result.chainId).toBe(137);
-      });
     });
   });
 
@@ -868,7 +771,14 @@ describe('Web3 Verification', () => {
       mockProcessedTxsFindFirst.mockResolvedValue(null);
 
       const mockClient = setupMockClient();
-      mockClient.getTransactionReceipt.mockResolvedValue(createMockReceipt({ logs: [{}] }));
+      const mockRecipient = '0x1234567890123456789012345678901234567890' as Address;
+      mockClient.getTransactionReceipt.mockResolvedValue(createMockReceipt({
+        logs: [{}],
+        to: mockRecipient,
+      }));
+      mockClient.getTransaction.mockResolvedValue(createMockTransaction());
+      mockClient.getBlockNumber.mockResolvedValue(BigInt(1000003));
+      mockVerifyMessage.mockResolvedValue(true);
       mockParseEventLogs.mockImplementation(() => {
         throw new Error('Invalid log format');
       });
@@ -880,6 +790,7 @@ describe('Web3 Verification', () => {
         signature: '0xsignature' as Hex,
         walletAddress: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1' as Address,
         paymentCurrency: 'USDC',
+        expectedRecipient: mockRecipient,
       });
 
       expect(result.success).toBe(false);

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from "@repo/database";
 import { restaurants } from "@repo/database";
 import { eq } from '@repo/database';
-import { validateRequest } from '@/lib/auth';
+import { validateRequest } from '@tablestack/lib/auth';
 
 export const runtime = 'edge';
 

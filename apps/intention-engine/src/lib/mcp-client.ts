@@ -258,9 +258,10 @@ export class DynamicMcpClientManager {
 
   /**
    * Connect to a single service
-   * 
+   *
    * ENHANCEMENT: Added strict Zod validation for discovered tool schemas
    * to prevent malformed tools from crashing the orchestrator
+   * TYPE SAFETY: Replaced 'any' with 'unknown' and proper type narrowing
    */
   private async connectToService(
     service: ServiceRegistryEntry
@@ -288,28 +289,33 @@ export class DynamicMcpClientManager {
 
       // Register tools with strict schema validation
       for (const tool of tools.tools) {
-        // TYPE SAFETY: Validate tool input schema structure
+        // TYPE SAFETY: Validate tool input schema structure using 'unknown'
         let validatedInputSchema: Record<string, unknown> | undefined = undefined;
-        
+
         if (tool.inputSchema) {
           try {
             // Validate that inputSchema is a proper object with expected structure
-            const schemaObj = tool.inputSchema as Record<string, unknown>;
-            
+            const schemaObj = tool.inputSchema as unknown;
+
             // Ensure it has the basic JSON Schema structure
             if (typeof schemaObj === 'object' && schemaObj !== null) {
-              // Validate 'type' field if present
-              if ('type' in schemaObj && schemaObj.type !== 'object') {
-                console.warn(
-                  `[DynamicMcpClient] Tool ${tool.name} has non-object inputSchema type: ${schemaObj.type}`
-                );
-              }
+              const schemaRecord = schemaObj as Record<string, unknown>;
               
+              // Validate 'type' field if present
+              if ('type' in schemaRecord) {
+                const schemaType = schemaRecord.type;
+                if (typeof schemaType === 'string' && schemaType !== 'object') {
+                  console.warn(
+                    `[DynamicMcpClient] Tool ${tool.name} has non-object inputSchema type: ${schemaType}`
+                  );
+                }
+              }
+
               // Validate 'properties' field if present
-              if ('properties' in schemaObj) {
-                const properties = schemaObj.properties;
+              if ('properties' in schemaRecord) {
+                const properties = schemaRecord.properties;
                 if (typeof properties === 'object' && properties !== null) {
-                  validatedInputSchema = schemaObj;
+                  validatedInputSchema = schemaRecord;
                 } else {
                   console.warn(
                     `[DynamicMcpClient] Tool ${tool.name} has invalid properties field, skipping schema`
@@ -317,7 +323,7 @@ export class DynamicMcpClientManager {
                 }
               } else {
                 // Schema without properties is valid (empty params)
-                validatedInputSchema = schemaObj;
+                validatedInputSchema = schemaRecord;
               }
             }
           } catch (schemaError) {

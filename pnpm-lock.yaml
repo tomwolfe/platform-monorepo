@@ -468,9 +468,6 @@ importers:
       drizzle-zod:
         specifier: ^0.5.1
         version: 0.5.1(drizzle-orm@0.38.4)(zod@3.25.76)
-      next:
-        specifier: 15.2.9
-        version: 15.2.9(@opentelemetry/api@1.9.0)(react-dom@19.0.3)(react@19.0.3)
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -478,6 +475,9 @@ importers:
         specifier: ^3.25.1
         version: 3.25.1(zod@3.25.76)
     devDependencies:
+      '@repo/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
       '@tailwindcss/postcss':
         specifier: ^4.1.18
         version: 4.1.18
@@ -517,6 +517,9 @@ importers:
       ai:
         specifier: ^6.0.69
         version: 6.0.86(zod@3.25.76)
+      crypto-browserify:
+        specifier: ^3.12.1
+        version: 3.12.1
       drizzle-orm:
         specifier: 0.38.4
         version: 0.38.4(@neondatabase/serverless@1.0.2)(@opentelemetry/api@1.9.0)(@types/react@19.2.14)(react@19.0.3)
@@ -11005,7 +11008,7 @@ packages:
   /md5.js@1.3.5:
     resolution: {integrity: sha512-xitP+WxNPcTTOgnTJcrhM0xvdPepipPSf3I8EIpGKeFLjt3PlJLIDG3u8EX53ZIubkb+5U2+3rELYpEhHhzdkg==}
     dependencies:
-      hash-base: 3.0.5
+      hash-base: 3.1.2
       inherits: 2.0.4
       safe-buffer: 5.2.1
     dev: false

@@ -401,21 +401,5 @@ export const API_SECURITY_CONFIG: SecurityHeadersConfig = {
   permissionsPolicy: undefined,
 };
 
-// ============================================================================
-// EXPORTS
-// ============================================================================
-
+// Type re-exports only (values are already exported inline)
 export type { SecurityHeadersConfig };
-
-export {
-  DEFAULT_CSP_DIRECTIVES,
-  DEFAULT_PERMISSIONS_POLICY,
-  DEFAULT_SECURITY_CONFIG,
-  STRICT_SECURITY_CONFIG,
-  RELAXED_SECURITY_CONFIG,
-  API_SECURITY_CONFIG,
-  buildCspHeader,
-  buildHstsHeader,
-  buildPermissionsPolicy,
-  generateSecurityHeaders,
-};

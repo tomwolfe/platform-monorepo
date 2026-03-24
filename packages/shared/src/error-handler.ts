@@ -180,7 +180,7 @@ export function withApiErrorHandler<T extends (...args: any[]) => Promise<any>>(
       }
 
       // Return formatted error response
-      return formatApiError(appError, appError.code as ErrorCode, {
+      return formatApiError(appError, appError.code as ErrorCode, undefined, {
         includeStack: includeStackTrace,
         traceId,
       }) as ReturnType<T>;

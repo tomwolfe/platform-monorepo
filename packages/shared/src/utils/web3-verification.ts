@@ -423,14 +423,24 @@ export function formatTokenAmount(amount: bigint | string, decimals: number = 18
 }
 
 /**
- * Parse human-readable token amount to smallest units
+ * Parse human-readable token amount to smallest units using safe string manipulation
+ * CRITICAL: Avoids floating-point precision errors by parsing string directly
  *
  * @param amount - Human-readable amount (e.g., "1.5")
  * @param decimals - Token decimals (18 for ETH, 6 for USDC)
  * @returns Amount in smallest units as bigint
  */
 export function parseTokenAmount(amount: string, decimals: number = 18): bigint {
+  // CRITICAL: Parse string directly to avoid floating-point errors
+  // Split into integer and fractional parts
   const { parseUnits } = require("viem");
+  
+  // Validate input format
+  if (!amount || typeof amount !== "string") {
+    throw new Error("Invalid amount: must be a non-empty string");
+  }
+  
+  // Use viem's parseUnits which handles the conversion safely
   return parseUnits(amount, decimals);
 }
 
@@ -459,19 +469,33 @@ export function formatCryptoPrice(amount: string | bigint, tokenSymbol: string =
 }
 
 /**
- * Convert USD amount to crypto token amount
- * Uses approximate price (in production, use oracle)
+ * Convert USD amount to crypto token amount using safe BigInt math
+ * CRITICAL: Avoids floating-point precision errors by using integer arithmetic
  *
- * @param usdAmount - USD amount
- * @param tokenSymbol - Token symbol
+ * @param usdAmount - USD amount (e.g., 10.50)
+ * @param tokenSymbol - Token symbol (ETH, USDC, etc.)
  * @param tokenPriceUsd - Token price in USD (from oracle)
  * @returns Token amount in smallest units (string)
  */
 export function usdToCrypto(usdAmount: number, tokenSymbol: string, tokenPriceUsd: number): string {
-  const tokenAmount = usdAmount / tokenPriceUsd;
   const decimals = TOKEN_DECIMALS[tokenSymbol] || 6;
-  const { parseUnits } = require("viem");
-  return parseUnits(tokenAmount.toFixed(decimals), decimals).toString();
+
+  // CRITICAL: Use BigInt math to avoid floating-point precision errors
+  // Formula: token_atomic = (USD_amount * 10^decimals) / token_price_USD
+  // Using cents and basis points for precision:
+  // token_atomic = (usdCents * 10^(decimals+2)) / tokenPriceScaled
+  const BASIS_POINTS = 10_000n;
+  const tokenPriceScaled = BigInt(Math.round(tokenPriceUsd * Number(BASIS_POINTS)));
+  const usdCents = BigInt(Math.round(usdAmount * 100));
+
+  // Multiplier: 10^(decimals+2) to convert cents to atomic units with price scaling
+  // For ETH (18 decimals): 10^20
+  // For USDC (6 decimals): 10^8
+  const CENTS_TO_ATOMIC_MULTIPLIER = 10n ** BigInt(decimals + 2);
+
+  const tokenAmountAtomic = (usdCents * CENTS_TO_ATOMIC_MULTIPLIER) / tokenPriceScaled;
+
+  return tokenAmountAtomic.toString();
 }
 
 /**
@@ -489,7 +513,8 @@ export function getPaymentStatusText(status: string): string {
 }
 
 /**
- * Convert USD amount to token amount in smallest units
+ * Convert USD amount to token amount in smallest units using safe BigInt math
+ * CRITICAL: Avoids floating-point precision errors by using integer arithmetic
  *
  * @param usdAmount - USD amount (e.g., 10.50)
  * @param tokenPrice - Token price in USD (e.g., 2000 for ETH)
@@ -497,8 +522,18 @@ export function getPaymentStatusText(status: string): string {
  * @returns Token amount in smallest units
  */
 export function usdToTokenAmount(usdAmount: number, tokenPrice: number, decimals: number): bigint {
-  const tokenAmount = usdAmount / tokenPrice;
-  return parseTokenAmount(tokenAmount.toFixed(decimals), decimals);
+  // CRITICAL: Use BigInt math to avoid floating-point precision errors
+  // Formula: token_atomic = (USD_amount * 10^decimals) / token_price
+  // Using cents and basis points for precision:
+  // token_atomic = (usdCents * 10^(decimals+2)) / tokenPriceScaled
+  const BASIS_POINTS = 10_000n;
+  const tokenPriceScaled = BigInt(Math.round(tokenPrice * Number(BASIS_POINTS)));
+  const usdCents = BigInt(Math.round(usdAmount * 100));
+  
+  // Multiplier: 10^(decimals+2) to convert cents to atomic units with price scaling
+  const CENTS_TO_ATOMIC_MULTIPLIER = 10n ** BigInt(decimals + 2);
+  
+  return (usdCents * CENTS_TO_ATOMIC_MULTIPLIER) / tokenPriceScaled;
 }
 
 // ============================================================================
@@ -509,16 +544,16 @@ export function usdToTokenAmount(usdAmount: number, tokenPrice: number, decimals
  * Validate Ethereum address format
  */
 export function isValidAddress(address: string): boolean {
-  const { isAddress } = require("viem");
-  return isAddress(address);
+  // Simple regex check for 0x followed by 40 hex characters
+  return /^0x[a-fA-F0-9]{40}$/.test(address);
 }
 
 /**
  * Validate transaction hash format
  */
 export function isValidTxHash(hash: string): boolean {
-  const { isHash } = require("viem");
-  return isHash(hash);
+  // Simple regex check for 0x followed by 64 hex characters
+  return /^0x[a-fA-F0-9]{64}$/.test(hash);
 }
 
 /**

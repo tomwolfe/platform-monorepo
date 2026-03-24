@@ -385,7 +385,7 @@ export async function rateLimitMiddleware(
   try {
     const limiter = new RateLimiterService(config);
     const result = await limiter.checkRateLimit(userId, endpointType);
-    
+
     if (!result.allowed) {
       return {
         allowed: false,
@@ -393,15 +393,42 @@ export async function rateLimitMiddleware(
         error: `Rate limit exceeded. Try again in ${Math.ceil(result.resetInMs / 1000)} seconds.`,
       };
     }
-    
+
     return {
       allowed: true,
       result,
     };
   } catch (error) {
     console.error("[RateLimiter] Middleware error:", error);
+
+    // SECURITY FIX: Fail-closed for critical endpoints to prevent quota drain under DoS
+    // Only 'cache' endpoint type is allowed to fail-open (availability over security)
+    const isCriticalEndpoint = endpointType !== "cache";
     
-    // Fail open (allow) on error to avoid blocking legitimate users
+    if (isCriticalEndpoint) {
+      // FAIL-CLOSED: Block requests when rate limiter is unavailable
+      // This prevents attackers from bypassing rate limits by triggering Redis failures
+      return {
+        allowed: false,
+        result: {
+          allowed: false,
+          remaining: 0,
+          resetInMs: 0,
+          headers: {
+            "X-RateLimit-Limit": "0",
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": "0",
+            "Retry-After": "60", // Suggest retry after 60 seconds
+          },
+          userId,
+          endpointType,
+        },
+        error: "Rate limiter unavailable - service temporarily blocked (503)",
+      };
+    }
+    
+    // FAIL-OPEN: Only for cache warming endpoints (availability over security)
+    console.warn("[RateLimiter] Cache endpoint failing open due to rate limiter error");
     return {
       allowed: true,
       result: {

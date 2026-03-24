@@ -4,11 +4,11 @@ import { getDb } from "@repo/database";
 import { restaurants, restaurantReservations, guestProfiles, restaurantTables } from "@repo/database";
 import { and, eq, gte, lte, or, sql } from '@repo/database';
 import { addMinutes, parseISO } from 'date-fns';
-import { NotifyService } from '@/lib/notifications';
-import { validateRequest } from '@/lib/auth';
+import { NotifyService } from '@tablestack/lib/notifications';
+import { validateRequest } from '@tablestack/lib/auth';
 import { IdempotencyService, IDEMPOTENCY_KEY_HEADER } from '@repo/shared';
 import { withNervousSystemTracing, injectTracingHeaders } from '@repo/shared/tracing';
-import { redis } from '@/lib/redis';
+import { redis } from '@tablestack/lib/redis';
 import { formatApiError, formatApiSuccess, type EngineErrorCode, ReserveRequestSchema, validateRequest as validateZodRequest } from '@repo/shared';
 import { ConflictError } from '@repo/shared/errors';
 

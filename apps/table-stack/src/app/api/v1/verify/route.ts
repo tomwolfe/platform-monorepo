@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from "@repo/database";
 import { restaurantReservations } from "@repo/database";
 import { eq } from '@repo/database';
-import { NotifyService } from '@/lib/notifications';
+import { NotifyService } from '@tablestack/lib/notifications';
 
 export const runtime = 'edge';
 

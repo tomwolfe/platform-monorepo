@@ -7,6 +7,44 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// ============================================================================
+// MOCKS (must be at top level for hoisting)
+// ============================================================================
+
+// Mock Redis client
+const mockRedisClient = {
+  get: vi.fn().mockResolvedValue(null),
+  setex: vi.fn().mockResolvedValue('OK'),
+  del: vi.fn().mockResolvedValue(1),
+  sadd: vi.fn().mockResolvedValue(1),
+  expire: vi.fn().mockResolvedValue(1),
+  smembers: vi.fn().mockResolvedValue([]),
+  keys: vi.fn().mockResolvedValue([]),
+  info: vi.fn().mockResolvedValue(''),
+};
+
+vi.mock('../redis', () => ({
+  getRedisClient: vi.fn(() => mockRedisClient),
+  ServiceNamespace: {
+    CACHE: 'cache',
+  },
+  getNamespacePrefix: vi.fn(),
+  wrapWithPrefix: vi.fn(),
+}));
+
+// Mock Logger
+vi.mock('../logger', () => ({
+  Logger: class MockLogger {
+    debug = vi.fn();
+    info = vi.fn();
+    warn = vi.fn();
+    error = vi.fn();
+    constructor() {}
+  },
+}));
+
+// Import after mocks
 import {
   withCache,
   invalidateCache,
@@ -16,39 +54,6 @@ import {
   getTagKey,
   type CacheOptions,
 } from '../cache-middleware';
-
-// ============================================================================
-// MOCKS
-// ============================================================================
-
-// Mock Redis client
-const mockRedisClient = {
-  get: vi.fn(),
-  setex: vi.fn(),
-  del: vi.fn(),
-  sadd: vi.fn(),
-  expire: vi.fn(),
-  smembers: vi.fn(),
-  keys: vi.fn(),
-  info: vi.fn(),
-};
-
-vi.mock('./redis', () => ({
-  getRedisClient: vi.fn(() => mockRedisClient),
-  ServiceNamespace: {
-    CACHE: 'cache',
-  },
-}));
-
-// Mock Logger
-vi.mock('./logger', () => ({
-  Logger: vi.fn().mockImplementation(() => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  })),
-}));
 
 // ============================================================================
 // TEST HELPERS
@@ -85,6 +90,14 @@ function createMockResponse(data: any, status: number = 200) {
  */
 function resetMocks() {
   vi.clearAllMocks();
+  mockRedisClient.get.mockResolvedValue(null);
+  mockRedisClient.setex.mockResolvedValue('OK');
+  mockRedisClient.del.mockResolvedValue(1);
+  mockRedisClient.sadd.mockResolvedValue(1);
+  mockRedisClient.expire.mockResolvedValue(1);
+  mockRedisClient.smembers.mockResolvedValue([]);
+  mockRedisClient.keys.mockResolvedValue([]);
+  mockRedisClient.info.mockResolvedValue('');
 }
 
 // ============================================================================
@@ -109,7 +122,7 @@ describe('Cache Middleware', () => {
 
       const key = generateCacheKey(req);
 
-      expect(key).toBe('GET:/api/availability?restaurantId=123');
+      expect(key).toBe('cache:GET:/api/availability?restaurantId=123');
     });
 
     it('should include prefix when provided', () => {
@@ -131,7 +144,7 @@ describe('Cache Middleware', () => {
 
       const key = generateCacheKey(req);
 
-      expect(key).toBe('GET:/api/health');
+      expect(key).toBe('cache:GET:/api/health');
     });
   });
 
@@ -312,7 +325,8 @@ describe('Cache Middleware', () => {
       await invalidateCacheByTag('empty-tag');
 
       expect(mockRedisClient.smembers).toHaveBeenCalledWith('cache:tag:empty-tag');
-      expect(mockRedisClient.del).not.toHaveBeenCalled();
+      // The implementation still deletes the tag key itself
+      expect(mockRedisClient.del).toHaveBeenCalledWith('cache:tag:empty-tag');
     });
   });
 

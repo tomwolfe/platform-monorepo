@@ -38,7 +38,11 @@ export interface ApiErrorResponse {
     details?: unknown;
     /** Optional field-specific errors (for validation errors) */
     fields?: Record<string, string>;
+    /** Optional stack trace (development only) */
+    stack?: string;
   };
+  /** Optional trace ID for debugging */
+  traceId?: string;
 }
 
 /**
@@ -138,11 +142,22 @@ const ERROR_STATUS_MAP: Record<string, number> = {
 };
 
 /**
+ * Options for formatting API errors
+ */
+export interface FormatApiErrorOptions {
+  /** Include stack trace in response */
+  includeStack?: boolean;
+  /** Include trace ID in response */
+  traceId?: string;
+}
+
+/**
  * Format an error into a standardized API error response
  *
  * @param error - The error to format (can be Error, string, or unknown)
  * @param code - Optional error code (defaults to INTERNAL_ERROR)
  * @param details - Optional additional details to include
+ * @param options - Optional formatting options
  * @returns Standardized error response object
  *
  * @example
@@ -160,10 +175,12 @@ const ERROR_STATUS_MAP: Record<string, number> = {
 export function formatApiError(
   error: unknown,
   code: EngineErrorCode = "INTERNAL_ERROR",
-  details?: unknown
+  details?: unknown,
+  options: FormatApiErrorOptions = {}
 ): ApiErrorResponse {
   const message = extractErrorMessage(error);
   const fields = extractFieldErrors(error);
+  const { includeStack = false, traceId } = options;
 
   return {
     success: false,
@@ -172,7 +189,9 @@ export function formatApiError(
       message,
       details: details ?? extractErrorDetails(error),
       ...(fields && { fields }),
+      ...(includeStack && { stack: (error as Error)?.stack }),
     },
+    ...(traceId && { traceId }),
   };
 }
 

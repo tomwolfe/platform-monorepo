@@ -354,26 +354,7 @@ export function webhookResponse(
   };
 }
 
-// Type exports are already exported inline via interface/type declarations
-export {
-  successResponse,
-  createdResponse,
-  noContentResponse,
-  errorResponse,
-  validationErrorResponse,
-  unauthorizedErrorResponse,
-  forbiddenErrorResponse,
-  notFoundErrorResponse,
-  conflictErrorResponse,
-  rateLimitErrorResponse,
-  internalErrorResponse,
-  paginatedResponse,
-  healthResponse,
-  readinessResponse,
-  webhookResponse,
-};
-
-// Type re-exports
+// Type re-exports (functions are already exported inline)
 export type {
   ApiResponseOptions,
   SuccessResponseOptions,

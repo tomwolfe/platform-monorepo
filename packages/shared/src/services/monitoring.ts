@@ -26,9 +26,9 @@
  * @see Phase 2.3: Monitoring & Alerting
  */
 
-import { redis } from './redis';
-import { Logger } from './logger';
-import { QStashService } from './services/qstash';
+import { redis } from '../redis';
+import { Logger } from '../logger';
+import { QStashService } from './qstash';
 
 // ============================================================================
 // TYPES

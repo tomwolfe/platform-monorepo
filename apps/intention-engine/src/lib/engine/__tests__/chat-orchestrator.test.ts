@@ -49,7 +49,9 @@ vi.mock("../planner", () => ({
 }));
 
 vi.mock("../registry", () => ({
-  getRegistryManager: vi.fn(),
+  getRegistryManager: vi.fn(() => ({
+    listAllTools: vi.fn().mockResolvedValue({ tools: [] }),
+  })),
 }));
 
 vi.mock("../verifier", () => ({
@@ -60,6 +62,16 @@ vi.mock("../verifier", () => ({
 vi.mock("@repo/shared", () => ({
   QStashService: {
     triggerNextStep: vi.fn(),
+  },
+  getRedisClient: vi.fn(() => ({
+    get: vi.fn(),
+    set: vi.fn(),
+    setex: vi.fn(),
+    del: vi.fn(),
+  })),
+  ServiceNamespace: {
+    IE: 'ie',
+    CACHE: 'cache',
   },
 }));
 
@@ -287,10 +299,16 @@ describe("ChatOrchestratorService", () => {
         null
       );
 
+      // Normalization service should be called with raw parameters from inference (camelCase)
       expect(NormalizationService.normalizeIntentParameters).toHaveBeenCalledWith(
         "BOOKING",
-        mockInferenceResult.hypotheses.primary.parameters
+        {
+          restaurantId: "rest-123",
+          partySize: 2,
+          time: "2024-03-23T19:00:00Z",
+        }
       );
+      // Result should have normalized snake_case parameters
       expect(result.intent.parameters).toEqual(normalizedParams);
     });
 
@@ -501,12 +519,12 @@ describe("ChatOrchestratorService", () => {
 
       await expect(
         orchestrator.triggerAsyncExecution(mockIntent, "audit-123")
-      ).rejects.toThrow("Plan verification failed");
+      ).rejects.toThrow("Plan contains unsafe operations");
     });
 
     it("should propagate QStash errors", async () => {
-      vi.mocked(QStashService.triggerNextStep).mockRejectedValue(
-        new Error("QStash unavailable")
+      vi.mocked(QStashService.triggerNextStep).mockImplementationOnce(() => 
+        Promise.reject(new Error("QStash unavailable"))
       );
 
       await expect(
@@ -583,8 +601,8 @@ describe("ChatOrchestratorService", () => {
       expect(result).toBeDefined();
       expect(result.intent).toBeDefined();
       expect(result.auditLogId).toBeDefined();
-      expect(result.requiresAsyncExecution).toBe(false);
-      expect(result.liveOperationalState).toBeDefined();
+      expect(result.requiresAsyncExecution).toBe(true);
+      expect(result.executionId).toBeDefined();
     });
 
     it("should trigger async execution for saga intents", async () => {

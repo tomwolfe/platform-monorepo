@@ -301,18 +301,7 @@ export function acceptsJson(req: Request): boolean {
   return accept?.includes('application/json') || accept?.includes('*/*') || false;
 }
 
-// Value exports
-export {
-  createValidationMiddleware,
-  createRateLimitMiddleware,
-  composeMiddleware,
-  extractBearerToken,
-  extractApiKey,
-  getClientIP,
-  acceptsJson,
-};
-
-// Type re-exports
+// Type re-exports only (functions are already exported inline)
 export type {
   ValidationMiddlewareOptions,
   RateLimitOptions,

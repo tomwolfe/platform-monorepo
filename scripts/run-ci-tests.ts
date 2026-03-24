@@ -25,7 +25,7 @@ import { existsSync, copyFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT_DIR = join(import.meta.dirname, '..');
-const ENV_CI_PATH = join(ROOT_DIR, '.env.ci');
+const ENV_EXAMPLE_PATH = join(ROOT_DIR, '.env.example');
 const ENV_LOCAL_PATH = join(ROOT_DIR, '.env.local');
 
 interface TestResult {
@@ -85,14 +85,14 @@ class CITestRunner {
 
   setupEnvironment(): void {
     logStep('Setting up test environment');
-    
-    if (!existsSync(ENV_CI_PATH)) {
-      throw new Error(`CI environment file not found: ${ENV_CI_PATH}`);
+
+    if (!existsSync(ENV_EXAMPLE_PATH)) {
+      throw new Error(`Environment example file not found: ${ENV_EXAMPLE_PATH}`);
     }
 
-    // Copy .env.ci to .env.local
-    copyFileSync(ENV_CI_PATH, ENV_LOCAL_PATH);
-    console.log('✓ Copied .env.ci to .env.local');
+    // Copy .env.example to .env.local for CI tests
+    copyFileSync(ENV_EXAMPLE_PATH, ENV_LOCAL_PATH);
+    console.log('✓ Copied .env.example to .env.local');
 
     // Verify container runtime is available
     try {

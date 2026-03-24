@@ -23,18 +23,18 @@ try {
   process.exit(1);
 }
 
-// Step 2: Copy .env.local.example to .env.local
+// Step 2: Copy .env.example to .env.local
 console.log('\n📝 Setting up environment file...');
 const envLocalPath = join(ROOT_DIR, '.env.local');
-const envLocalExamplePath = join(ROOT_DIR, '.env.local.example');
+const envLocalExamplePath = join(ROOT_DIR, '.env.example');
 
 if (!existsSync(envLocalPath)) {
   if (existsSync(envLocalExamplePath)) {
     copyFileSync(envLocalExamplePath, envLocalPath);
-    console.log('✅ Created .env.local from .env.local.example');
+    console.log('✅ Created .env.local from .env.example');
     console.log('⚠️  Please review .env.local and update API keys as needed');
   } else {
-    console.log('⚠️  .env.local.example not found, skipping');
+    console.log('⚠️  .env.example not found, skipping');
   }
 } else {
   console.log('✅ .env.local already exists');

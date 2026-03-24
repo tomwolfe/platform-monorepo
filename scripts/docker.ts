@@ -48,7 +48,7 @@ const commands: Record<string, () => void> = {
       console.log('   OTEL Collector: localhost:4317');
     }
     console.log('\n💡 Next steps:');
-    console.log('   1. Copy .env.local.example to .env.local');
+    console.log('   1. Copy .env.example to .env.local');
     console.log('   2. Run: pnpm db:generate && pnpm db:migrate');
     console.log('   3. Run: pnpm dev');
   },

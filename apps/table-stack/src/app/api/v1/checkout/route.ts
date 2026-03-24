@@ -6,6 +6,7 @@ import { createPublicClient, http, parseUnits } from 'viem';
 import { base } from 'viem/chains';
 import { isValidTxHash } from '@repo/shared/utils/web3-verification';
 import { getCryptoPrices } from '@repo/shared/utils/crypto-price';
+import { CheckoutRequestSchema, validateRequest as validateZodRequest, formatApiError } from '@repo/shared';
 
 export const runtime = 'edge';
 
@@ -30,17 +31,29 @@ export const runtime = 'edge';
  */
 export async function POST(req: NextRequest) {
   try {
+    const body = await req.json();
+    
+    // Validate request body with Zod schema
+    const validation = validateZodRequest(CheckoutRequestSchema, body);
+    if (!validation.success) {
+      return NextResponse.json(validation.error, { status: 400 });
+    }
+    
     // CRITICAL: Do NOT trust expectedAmount from client - it's removed from the destructuring
-    const { txHash, reservationId, paymentCurrency = 'USDC' } = await req.json();
-
-    if (!txHash || !reservationId) {
+    const { txHash, paymentCurrency = 'USDC', orderId, reservationId } = validation.data;
+    
+    // Use reservationId for table-stack (orderId is for open-delivery)
+    const targetReservationId = reservationId || orderId;
+    
+    if (!targetReservationId) {
       return NextResponse.json(
-        { message: 'Missing txHash or reservationId' },
+        formatApiError(new Error('reservationId is required'), 'VALIDATION_ERROR'),
         { status: 400 }
       );
     }
 
     // Validate transaction hash format
+    // Note: txHash is already validated by CheckoutRequestSchema, but extra validation doesn't hurt
     if (!isValidTxHash(txHash)) {
       return NextResponse.json(
         { message: 'Invalid transaction hash format' },
@@ -50,7 +63,7 @@ export async function POST(req: NextRequest) {
 
     // Fetch reservation with restaurant details
     const reservation = await getDb().query.restaurantReservations.findFirst({
-      where: eq(restaurantReservations.id, reservationId),
+      where: eq(restaurantReservations.id, targetReservationId),
       with: {
         restaurant: true,
       },
@@ -129,11 +142,11 @@ export async function POST(req: NextRequest) {
           const { hexToString } = await import('viem');
           const decodedData = hexToString(tx.input);
 
-          if (decodedData !== reservationId) {
+          if (decodedData !== targetReservationId) {
             return NextResponse.json(
               {
                 message: 'Transaction data mismatch. Reservation ID not found in transaction data.',
-                expected: reservationId,
+                expected: targetReservationId,
                 received: decodedData,
               },
               { status: 400 }
@@ -161,7 +174,7 @@ export async function POST(req: NextRequest) {
         status: 'confirmed',
         paymentTxHash: txHash,
       })
-      .where(eq(restaurantReservations.id, reservationId));
+      .where(eq(restaurantReservations.id, targetReservationId));
 
     // Notify restaurant owner
     if (reservation.restaurant?.ownerEmail) {

@@ -9,7 +9,7 @@ import { validateRequest } from '@/lib/auth';
 import { IdempotencyService, IDEMPOTENCY_KEY_HEADER } from '@repo/shared';
 import { withNervousSystemTracing, injectTracingHeaders } from '@repo/shared/tracing';
 import { redis } from '@/lib/redis';
-import { formatApiError, formatApiSuccess, type EngineErrorCode } from '@repo/shared';
+import { formatApiError, formatApiSuccess, type EngineErrorCode, ReserveRequestSchema, validateRequest as validateZodRequest } from '@repo/shared';
 import { ConflictError } from '@repo/shared/errors';
 
 export const runtime = 'edge';
@@ -36,6 +36,13 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
+    
+    // Validate request body with Zod schema
+    const validation = validateZodRequest(ReserveRequestSchema, body);
+    if (!validation.success) {
+      return NextResponse.json(validation.error, { status: 400 });
+    }
+    
     const {
       restaurantId,
       restaurantName: discoveryName,
@@ -46,8 +53,10 @@ export async function POST(req: NextRequest) {
       guestEmail: bodyGuestEmail,
       partySize: bodyPartySize,
       startTime: bodyStartTime,
-      metadata
-    } = body;
+      metadata,
+      specialRequests,
+      occasion
+    } = validation.data;
 
     guestEmail = bodyGuestEmail;
     startTime = bodyStartTime;

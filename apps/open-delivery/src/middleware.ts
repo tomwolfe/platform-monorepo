@@ -1,5 +1,7 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { securityHeadersMiddleware, API_SECURITY_CONFIG } from '@repo/shared';
 
 const isPublicRoute = createRouteMatcher([
   '/api/health',
@@ -13,15 +15,28 @@ const isProtectedRoute = createRouteMatcher([
   '/onboarding(.*)',
 ]);
 
+const isApiRoute = createRouteMatcher(['/api/(.*)']);
+
 export default clerkMiddleware(async (auth, req) => {
+  // Apply security headers to all responses
+  const response = NextResponse.next();
+
+  // Apply API-specific security headers for API routes
+  if (isApiRoute(req)) {
+    securityHeadersMiddleware(response, API_SECURITY_CONFIG);
+  } else {
+    // Apply standard security headers for page routes
+    securityHeadersMiddleware(response);
+  }
+
   // Skip middleware for public routes
   if (isPublicRoute(req)) {
-    return NextResponse.next();
+    return response;
   }
 
   // Skip middleware for _not-found route during build
   if (req.nextUrl.pathname.startsWith('/_not-found')) {
-    return NextResponse.next();
+    return response;
   }
 
   // Standard protection for other routes
@@ -32,6 +47,8 @@ export default clerkMiddleware(async (auth, req) => {
       await auth.protect();
     }
   }
+
+  return response;
 });
 
 export const config = {

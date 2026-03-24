@@ -86,6 +86,16 @@ export const restaurantReservations = pgTable('restaurant_reservations', {
   combinedTableIds: jsonb('combined_table_ids').$type<string[]>(),
   metadata: jsonb('metadata'),
   createdAt: timestamp('created_at').defaultNow(),
+}, (table) => {
+  return {
+    // Indexes for efficient querying
+    restaurantIdIdx: index('reservations_restaurant_id_idx').on(table.restaurantId),
+    guestEmailIdx: index('reservations_guest_email_idx').on(table.guestEmail),
+    startTimeIdx: index('reservations_start_time_idx').on(table.startTime),
+    statusIdx: index('reservations_status_idx').on(table.status),
+    // Composite index for common query pattern: find reservations by restaurant + status + time
+    restaurantStatusTimeIdx: index('reservations_restaurant_status_time_idx').on(table.restaurantId, table.status, table.startTime),
+  };
 });
 
 export const restaurantWaitlist = pgTable('restaurant_waitlist', {
@@ -97,6 +107,15 @@ export const restaurantWaitlist = pgTable('restaurant_waitlist', {
   status: waitlistStatusEnum('status').default('waiting').notNull(),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
+}, (table) => {
+  return {
+    // Indexes for efficient querying
+    restaurantIdIdx: index('waitlist_restaurant_id_idx').on(table.restaurantId),
+    statusIdx: index('waitlist_status_idx').on(table.status),
+    createdAtIdx: index('waitlist_created_at_idx').on(table.createdAt),
+    // Composite index for common query: get waiting list by restaurant ordered by time
+    restaurantStatusCreatedAtIdx: index('waitlist_restaurant_status_created_at_idx').on(table.restaurantId, table.status, table.createdAt),
+  };
 });
 
 export const restaurantProducts = pgTable('restaurant_products', {
@@ -108,6 +127,14 @@ export const restaurantProducts = pgTable('restaurant_products', {
   category: text('category').notNull(),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
+}, (table) => {
+  return {
+    // Indexes for efficient querying
+    restaurantIdIdx: index('products_restaurant_id_idx').on(table.restaurantId),
+    categoryIdx: index('products_category_idx').on(table.category),
+    // Composite index for querying products by restaurant and category
+    restaurantCategoryIdx: index('products_restaurant_category_idx').on(table.restaurantId, table.category),
+  };
 });
 
 export const inventoryLevels = pgTable('inventory_levels', {
@@ -115,6 +142,13 @@ export const inventoryLevels = pgTable('inventory_levels', {
   productId: uuid('product_id').references(() => restaurantProducts.id, { onDelete: 'cascade' }).notNull(),
   availableQuantity: integer('available_quantity').notNull().default(0),
   updatedAt: timestamp('updated_at').defaultNow(),
+}, (table) => {
+  return {
+    // Index for efficient querying by product
+    productIdIdx: index('inventory_product_id_idx').on(table.productId),
+    // Unique constraint to prevent duplicate inventory records
+    uniqueProduct: uniqueIndex('inventory_product_unique_idx').on(table.productId),
+  };
 });
 
 export const guestProfiles = pgTable('guest_profiles', {

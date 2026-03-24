@@ -6,9 +6,143 @@ import { and, eq, gte, or, sql } from '@repo/database';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
 import { validateRequest } from '@/lib/auth';
-import { formatApiError, formatApiSuccess, withApiErrorHandler, type EngineErrorCode } from '@repo/shared';
+import { formatApiError, formatApiSuccess, withApiErrorHandler, type EngineErrorCode, withCache } from '@repo/shared';
+import { redis } from '@/lib/redis';
 
 export const runtime = 'edge';
+
+/**
+ * GET /api/v1/availability
+ * 
+ * Check table availability for a given date/time and party size.
+ * Results are cached for 30 seconds to reduce database load.
+ * 
+ * Query Parameters:
+ * - restaurantId: UUID (required)
+ * - date: ISO 8601 datetime (required)
+ * - partySize: number (required)
+ * 
+ * Response:
+ * - availableTables: Array of available tables
+ * - suggestedSlots: Alternative time slots if unavailable
+ * 
+ * Caching:
+ * - TTL: 30 seconds
+ * - Cache Key: availability:{restaurantId}:{date}:{partySize}
+ * - Tags: ['availability', 'restaurant:{id}']
+ */
+export const GET = withCache(
+  async (req: NextRequest) => {
+    const { searchParams } = new URL(req.url);
+    const restaurantId = searchParams.get('restaurantId');
+    const date = searchParams.get('date');
+    const partySize = parseInt(searchParams.get('partySize') || '0');
+
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    if (!restaurantId || restaurantId === 'undefined' || !uuidRegex.test(restaurantId) || !date || isNaN(partySize)) {
+      return NextResponse.json(formatApiError(new Error('Missing or invalid parameters'), 'VALIDATION_ERROR'), { status: 400 });
+    }
+
+    // Determine target restaurant ID
+    let targetRestaurantId: string;
+
+    const apiKey = req.headers.get('x-api-key');
+    if (apiKey) {
+      const { error, status, context } = await validateRequest(req);
+      if (error) return NextResponse.json(formatApiError(new Error(error), 'UNAUTHORIZED'), { status });
+
+      if (restaurantId !== context!.restaurantId) {
+        return NextResponse.json(formatApiError(new Error('Unauthorized access to this restaurant data'), 'FORBIDDEN'), { status: 403 });
+      }
+      targetRestaurantId = context!.restaurantId;
+    } else {
+      // If no API key, we allow public availability checks for a specific restaurant
+      targetRestaurantId = restaurantId;
+    }
+
+    try {
+      const restaurant = await getDb().query.restaurants.findFirst({
+        where: eq(restaurants.id, targetRestaurantId),
+      });
+
+      if (!restaurant) {
+        return NextResponse.json(formatApiError(new Error('Restaurant not found'), 'NOT_FOUND'), { status: 404 });
+      }
+
+      const requestedDate = parseISO(date);
+      const timezone = restaurant.timezone || 'UTC';
+      const restaurantTime = toZonedTime(requestedDate, timezone);
+
+      const dayOfWeek = format(restaurantTime, 'eeee', { timeZone: timezone }).toLowerCase();
+      const openDays = restaurant.daysOpen?.split(',').map((d: string) => d.trim().toLowerCase()) || [];
+
+      if (!openDays.includes(dayOfWeek)) {
+        return NextResponse.json(formatApiSuccess({ message: 'Restaurant is closed on this day', availableTables: [] }));
+      }
+
+      const timeStr = format(restaurantTime, 'HH:mm', { timeZone: timezone });
+      if (timeStr < (restaurant.openingTime || '00:00') || timeStr > (restaurant.closingTime || '23:59')) {
+        return NextResponse.json(formatApiSuccess({ message: 'Restaurant is closed at this time', availableTables: [] }));
+      }
+
+      const duration = restaurant.defaultDurationMinutes || 90;
+      const availableTables = await getAvailableTables(targetRestaurantId, requestedDate, partySize, duration);
+
+      const suggestedSlots: { time: string, availableTables: typeof availableTables }[] = [];
+
+      if (availableTables.length === 0) {
+        const offsets = [-30, 30, -60, 60];
+        for (const offset of offsets) {
+          const suggestedTime = addMinutes(requestedDate, offset);
+          const suggestedZonedTime = toZonedTime(suggestedTime, timezone);
+          const suggestedTimeStr = format(suggestedZonedTime, 'HH:mm', { timeZone: timezone });
+
+          if (suggestedTimeStr < (restaurant.openingTime || '00:00') || suggestedTimeStr > (restaurant.closingTime || '23:59')) {
+            continue;
+          }
+
+          const tables = await getAvailableTables(targetRestaurantId, suggestedTime, partySize, duration);
+          if (tables.length > 0) {
+            suggestedSlots.push({
+              time: suggestedTime.toISOString(),
+              availableTables: tables,
+            });
+          }
+        }
+      }
+
+      return NextResponse.json(formatApiSuccess({
+        restaurantId: targetRestaurantId,
+        requestedTime: requestedDate.toISOString(),
+        partySize,
+        availableTables,
+        suggestedSlots: suggestedSlots.length > 0 ? suggestedSlots : undefined,
+      }));
+    } catch (error) {
+      console.error('Availability Error:', error);
+      const errorCode: EngineErrorCode = 'DATABASE_ERROR';
+      return NextResponse.json(formatApiError(error, errorCode), { status: 500 });
+    }
+  },
+  {
+    ttl: 30, // 30 second cache for availability
+    tags: ['availability'],
+    keyPrefix: 'availability',
+    generateKey: (req) => {
+      const { searchParams } = new URL(req.url);
+      const restaurantId = searchParams.get('restaurantId');
+      const date = searchParams.get('date');
+      const partySize = searchParams.get('partySize');
+      return `availability:${restaurantId}:${date}:${partySize}`;
+    },
+    skip: (req) => {
+      // Skip cache for authenticated requests (they might need real-time data)
+      const apiKey = req.headers.get('x-api-key');
+      return !!apiKey;
+    },
+  }
+) as any;
 
 async function getAvailableTables(restaurantId: string, startTime: Date, partySize: number, duration: number) {
   const endTime = addMinutes(startTime, duration);

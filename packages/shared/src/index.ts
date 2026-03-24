@@ -18,6 +18,7 @@ export * from './validation-middleware';
 // Phase 1.4: Security Hardening
 export * from './security-middleware';
 export * from './security-audit';
+export * from './security-headers';
 
 // Phase 2.1: Caching Strategy
 export * from './cache-middleware';
@@ -108,6 +109,7 @@ export * from './services/circuit-breaker';
 export * from './services/anomaly-detector';
 export * from './services/security-correlator';
 export * from './services/dlq-monitoring';
+export * from './services/monitoring'; // NEW: Monitoring & Alerting
 // Note: llm-failure-triage exports are qualified to avoid FailureReason conflict
 export {
   getLLMFailureTriageService,

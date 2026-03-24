@@ -228,13 +228,17 @@ export const VerifyResponseSchema = z.object({
 
 /**
  * Web3 checkout request schema
+ *
+ * Supports both orderId (for open-delivery) and reservationId (for table-stack)
  */
 export const CheckoutRequestSchema = z.object({
   // Transaction details
   txHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'Invalid transaction hash format'),
-  orderId: z.string().min(1, 'Order ID is required'),
-  amount: z.string().regex(/^\d+(\.\d+)?$/, 'Invalid amount format'),
-  currency: z.enum(['ETH', 'USDC', 'USDT', 'DAI']),
+  // Support both orderId and reservationId - at least one must be provided
+  orderId: z.string().min(1, 'Order ID is required').optional(),
+  reservationId: z.string().uuid('Invalid reservation ID format').optional(),
+  amount: z.string().regex(/^\d+(\.\d+)?$/, 'Invalid amount format').optional(),
+  currency: z.enum(['ETH', 'USDC', 'USDT', 'DAI']).optional(),
 
   // Chain information
   chainId: z.number().int().positive().optional().default(8453), // Base
@@ -246,7 +250,10 @@ export const CheckoutRequestSchema = z.object({
   // Payment metadata
   paymentCurrency: z.enum(['ETH', 'USDC', 'USDT', 'DAI']).optional(),
   minConfirmations: z.number().int().min(1).max(100).optional().default(3),
-});
+}).refine(
+  (data) => data.orderId || data.reservationId,
+  { message: 'Either orderId or reservationId must be provided' }
+);
 
 /**
  * Checkout response schema

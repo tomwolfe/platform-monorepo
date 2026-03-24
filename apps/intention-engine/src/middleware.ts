@@ -3,9 +3,20 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { securityHeadersMiddleware, API_SECURITY_CONFIG } from '@repo/shared';
 
+const isPublicRoute = createRouteMatcher([
+  '/api/health',
+  '/api/ready',
+  '/api/mcp(.*)',
+  '/api/ably/(.*)',
+  '/api/bridge/(.*)',
+]);
+
 const isProtectedRoute = createRouteMatcher([
   '/dashboard(.*)',
   '/onboarding(.*)',
+  '/analytics(.*)',
+  '/audit(.*)',
+  '/debug(.*)',
 ]);
 
 const isApiRoute = createRouteMatcher(['/api/(.*)']);
@@ -22,7 +33,17 @@ export default clerkMiddleware(async (auth, req) => {
     securityHeadersMiddleware(response);
   }
 
-  // Apply authentication for protected routes
+  // Skip middleware for public routes
+  if (isPublicRoute(req)) {
+    return response;
+  }
+
+  // Skip middleware for _not-found route during build
+  if (req.nextUrl.pathname.startsWith('/_not-found')) {
+    return response;
+  }
+
+  // Standard protection for other routes
   if (isProtectedRoute(req)) {
     await auth.protect();
   }

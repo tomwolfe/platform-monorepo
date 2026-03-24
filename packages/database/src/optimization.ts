@@ -20,8 +20,9 @@
  * @see Phase 2.1: Database Optimization
  */
 
-import { getDb, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
+import { getDb } from './index';
 
 // ============================================================================
 // DATABASE INDEXES

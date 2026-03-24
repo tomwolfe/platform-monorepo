@@ -1,7 +1,9 @@
 import { NextRequest } from 'next/server';
 import { getDb, restaurants, eq } from "@repo/database";
-import { redis } from './redis';
+import { getRedisClient, ServiceNamespace } from '@repo/shared';
 import { verifyServiceToken, verifyScopedJWT, verifyAsymmetricJWT, SecurityProvider, type ScopedJWTPayload, type AsymmetricJWTPayload } from '@repo/auth';
+
+const redis = getRedisClient(ServiceNamespace.TS);
 
 export interface AuthContext {
   restaurantId?: string;

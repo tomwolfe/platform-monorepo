@@ -9,7 +9,8 @@ import {
   CallToolResult
 } from "@modelcontextprotocol/sdk/types.js";
 import * as zod from "zod";
-import { AllToolsMap, ToolInput, validateToolParams, mapJsonSchemaToZod } from "@repo/mcp-protocol";
+import { AllToolsMap, ToolInput, validateToolParams } from "@repo/mcp-protocol";
+import { mapJsonSchemaToZod } from "../lib/engine/schema-utils";
 
 /**
  * McpAdapter provides bi-directional compatibility between

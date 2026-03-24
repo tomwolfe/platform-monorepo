@@ -813,6 +813,24 @@ export class SecurityProvider {
   static verifyServiceToken = verifyServiceToken;
 }
 
+/**
+ * verifyInternalToken - Verify an internal token without checking issuer/audience
+ * Used for bridge tokens and general internal authentication
+ */
+export async function verifyInternalToken(token: string): Promise<Record<string, unknown> | null> {
+  const secret = getSecret();
+
+  try {
+    const { payload } = await jwtVerify(token, secret, {
+      algorithms: ['HS256'],
+    });
+    return payload as Record<string, unknown>;
+  } catch (error) {
+    console.warn(`[Auth] Internal token verification failed:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
 // Aliases for backward compatibility
 export const signBridgeToken = signInternalToken;
 export const verifyBridgeToken = verifyInternalToken;

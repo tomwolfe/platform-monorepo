@@ -3,6 +3,34 @@ import type { Intent, IntentType } from "./schema";
 import { validateIntentParams, REQUIRED_FIELDS_MAP } from "./resolveAmbiguity";
 
 /**
+ * NormalizationService provides parameter validation and normalization
+ * for intent inference results.
+ */
+export const NormalizationService = {
+  /**
+   * Normalize and validate intent parameters against ontology schemas
+   */
+  normalizeIntentParameters(
+    intentType: IntentType,
+    parameters: Record<string, any>
+  ): { success: boolean; data?: Record<string, any>; errors?: string[] } {
+    const { isValid, missingFields } = validateIntentParams(intentType, parameters);
+
+    if (!isValid) {
+      return {
+        success: false,
+        errors: [`Missing required fields for ${intentType}: ${missingFields.join(", ")}`]
+      };
+    }
+
+    return {
+      success: true,
+      data: parameters
+    };
+  }
+};
+
+/**
  * Normalizes a candidate intent from an LLM.
  * 1. Validates against Zod schema.
  * 2. Cross-references with Ontology requirements.

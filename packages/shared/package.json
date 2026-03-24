@@ -19,9 +19,11 @@
     "./idempotency": "./src/idempotency.ts",
     "./clients": "./src/clients.ts",
     "./redis/memory": "./src/redis/memory.ts",
+    "./redis": "./src/redis.ts",
     "./types/database": "./src/types/database.ts",
     "./realtime/ably-auth": "./src/realtime/ably-auth.ts",
-    "./health": "./src/middleware/health-check.ts"
+    "./health": "./src/middleware/health-check.ts",
+    "./errors": "./src/errors.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
@@ -47,16 +49,21 @@
     "@clerk/nextjs": "^6.10.6",
     "@repo/database": "workspace:*",
     "@repo/typescript-config": "workspace:*",
+    "@sentry/node": "^8.0.0",
     "@types/node": "^20.17.16",
     "@types/uuid": "^10.0.0",
     "typescript": "^5.0.0"
   },
   "peerDependencies": {
     "@clerk/nextjs": "^6.10.6",
-    "@repo/database": "workspace:*"
+    "@repo/database": "workspace:*",
+    "@sentry/node": "^8.0.0"
   },
   "peerDependenciesMeta": {
     "@clerk/nextjs": {
+      "optional": true
+    },
+    "@sentry/node": {
       "optional": true
     }
   }

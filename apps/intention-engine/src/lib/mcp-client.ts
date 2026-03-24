@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { SecurityProvider, getRedisClient, ServiceNamespace, AppConfig } from "@repo/shared";
+import { SecurityProvider } from "@repo/auth";
+import { getRedisClient, ServiceNamespace, AppConfig } from "@repo/shared";
 import { SERVICES } from "@repo/shared";
 import {
   TOOLS,

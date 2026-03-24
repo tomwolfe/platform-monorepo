@@ -26,9 +26,11 @@
  * @see Phase 2.3: Monitoring & Alerting
  */
 
-import { redis } from '../redis';
+import { getRedisClient, ServiceNamespace } from '../redis';
 import { Logger } from '../logger';
 import { QStashService } from './qstash';
+
+const redis = getRedisClient(ServiceNamespace.SHARED);
 
 // ============================================================================
 // TYPES
@@ -272,7 +274,7 @@ export class MonitoringServiceClass {
    * Register a metric definition
    */
   async registerMetrics(metrics: MetricDefinition[]): Promise<void> {
-    const client = await redis();
+    const client = redis;
     for (const metric of metrics) {
       const key = `${this.metricsPrefix}def:${metric.name}`;
       await client.hset(key, {
@@ -289,7 +291,7 @@ export class MonitoringServiceClass {
    * Increment a counter metric
    */
   async incrementMetric(name: string, value: number = 1, labels?: Record<string, string>): Promise<void> {
-    const client = await redis();
+    const client = redis;
     const key = this.getMetricKey(name, labels);
     await client.incrby(key, value);
 
@@ -306,7 +308,7 @@ export class MonitoringServiceClass {
    * Set a gauge metric
    */
   async setGauge(name: string, value: number, labels?: Record<string, string>): Promise<void> {
-    const client = await redis();
+    const client = redis;
     const key = this.getMetricKey(name, labels);
     await client.set(key, value.toString());
 
@@ -317,7 +319,7 @@ export class MonitoringServiceClass {
    * Track latency (histogram)
    */
   async trackLatency(name: string, latencyMs: number, labels?: Record<string, string>): Promise<void> {
-    const client = await redis();
+    const client = redis;
     const key = `${this.metricsPrefix}histogram:${name}`;
 
     // Add to sorted set for percentile calculations
@@ -336,7 +338,7 @@ export class MonitoringServiceClass {
    * Get metric value
    */
   async getMetric(name: string, labels?: Record<string, string>): Promise<number> {
-    const client = await redis();
+    const client = redis;
     const key = this.getMetricKey(name, labels);
     const value = await client.get(key);
     return value ? parseFloat(value) : 0;
@@ -352,7 +354,7 @@ export class MonitoringServiceClass {
     min: number;
     max: number;
   }> {
-    const client = await redis();
+    const client = redis;
     const now = Date.now();
     const windowStart = now - windowSeconds * 1000;
 
@@ -395,7 +397,7 @@ export class MonitoringServiceClass {
    * Calculate percentile from histogram
    */
   async getPercentile(name: string, percentile: number): Promise<number> {
-    const client = await redis();
+    const client = redis;
     const key = `${this.metricsPrefix}histogram:${name}`;
 
     // Get all values
@@ -424,7 +426,7 @@ export class MonitoringServiceClass {
    * Register alert configurations
    */
   async registerAlerts(alerts: AlertConfig[]): Promise<void> {
-    const client = await redis();
+    const client = redis;
     for (const alert of alerts) {
       const key = `${this.alertsPrefix}config:${alert.name}`;
       await client.hset(key, {
@@ -444,7 +446,7 @@ export class MonitoringServiceClass {
    * Check all registered alerts
    */
   async checkAlerts(): Promise<Alert[]> {
-    const client = await redis();
+    const client = redis;
     const triggeredAlerts: Alert[] = [];
 
     // Get all alert configs
@@ -549,7 +551,7 @@ export class MonitoringServiceClass {
    * Register a health check
    */
   async registerHealthCheck(name: string, check: () => Promise<{ status: 'pass' | 'warn' | 'fail'; message?: string; latency?: number }>): Promise<void> {
-    const client = await redis();
+    const client = redis;
     const key = `${this.metricsPrefix}health:${name}`;
 
     try {
@@ -579,7 +581,7 @@ export class MonitoringServiceClass {
    * Get overall health status
    */
   async getHealthStatus(): Promise<HealthStatus> {
-    const client = await redis();
+    const client = redis;
     const healthKeys = await client.keys(`${this.metricsPrefix}health:*`);
 
     const checks: HealthCheck[] = [];

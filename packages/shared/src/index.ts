@@ -25,6 +25,8 @@ export * from './cache-middleware';
 
 // Phase 1: Golden Path (System Spine)
 export * from './golden-path';
+// OpenAPI specification
+export { openApiSpecification } from './openapi-spec';
 // Note: tracing exports ExecutionTraceEntry (type), ExecutionTraceEntrySchema (schema)
 export {
   CORRELATION_ID_HEADER,
@@ -106,7 +108,16 @@ export * from './outbox-relay';
 // These modules use Node.js worker_threads and are NOT compatible with Edge runtime
 export * from './services/migration-generator';
 export * from './services/mcp-security-scanner';
-export * from './services/circuit-breaker';
+// Note: circuit-breaker exports TimeoutError which conflicts with errors.ts
+// Export explicitly excluding TimeoutError
+export {
+  CircuitBreaker,
+  CircuitState,
+  createCircuitBreaker,
+  type CircuitBreakerConfig,
+  type CircuitBreakerStats,
+  type CircuitEvent,
+} from './services/circuit-breaker';
 
 // Phase 3: Advanced Autonomy
 export * from './services/anomaly-detector';
@@ -182,7 +193,24 @@ export type {
 // Import directly: import { ... } from '@repo/shared/utils/treasury'
 export * from './utils/erc20-abi';
 export * from './utils/crypto'; // NEW: Timing-safe comparison and secure random generation
-export * from './utils/api-error';
+// Note: api-error exports some conflicting names (getErrorStatusCode, withApiErrorHandler)
+// Export only non-conflicting items from utils/api-error
+export {
+  formatApiError,
+  formatApiSuccess,
+  createApiError,
+  isErrorResponse,
+  isSuccessResponse,
+  withServerActionHandler,
+  type ServerActionResponse,
+  type ApiErrorResponse,
+  type ApiSuccessResponse,
+  type EngineErrorCodes,
+  type EngineErrorCode,
+  type FormatApiErrorOptions,
+} from './utils/api-error';
+// JSON parsing utilities
+export { parseJsonWithFallback, safeParseJson, sanitizeJsonOutput } from './utils/json-parser';
 // Middleware exports (server-side only)
 export * from './middleware/web3-replay-guard';
 // export * from './utils/treasury'; // Treasury account management - import directly

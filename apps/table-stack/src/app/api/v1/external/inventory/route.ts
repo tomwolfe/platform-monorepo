@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
   const restaurantId = searchParams.get('restaurantId');
 
   try {
+    const db = getDb();
     const query = db
       .select({
         id: restaurantProducts.id,

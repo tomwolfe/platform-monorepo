@@ -73,8 +73,6 @@ export interface ErrorHandlerOptions {
   includeStackTrace?: boolean;
   /** Custom error logger */
   logger?: Logger;
-  /** Enable Sentry error reporting */
-  enableSentry?: boolean;
   /** Additional context to include in error logs */
   context?: Record<string, unknown>;
 }
@@ -85,7 +83,6 @@ export interface ErrorHandlerOptions {
 const DEFAULT_OPTIONS: ErrorHandlerOptions = {
   serviceName: 'api',
   includeStackTrace: process.env.NODE_ENV !== 'production',
-  enableSentry: process.env.SENTRY_DSN ? true : false,
 };
 
 // ============================================================================
@@ -126,7 +123,6 @@ export function withApiErrorHandler<T extends (...args: any[]) => Promise<any>>(
   const {
     serviceName = DEFAULT_OPTIONS.serviceName,
     includeStackTrace = DEFAULT_OPTIONS.includeStackTrace,
-    enableSentry = DEFAULT_OPTIONS.enableSentry,
     context = {},
   } = options;
 
@@ -160,24 +156,8 @@ export function withApiErrorHandler<T extends (...args: any[]) => Promise<any>>(
         ...context,
       });
 
-      // Report to Sentry if enabled
-      if (enableSentry && typeof Sentry !== 'undefined') {
-        try {
-          Sentry.captureException(appError, {
-            tags: {
-              error_code: appError.code,
-              service: serviceName,
-            },
-            extra: {
-              details: appError.details,
-              traceId,
-            },
-          });
-        } catch (sentryError) {
-          // Don't let Sentry errors break error handling
-          console.error('Sentry reporting failed:', sentryError);
-        }
-      }
+      // Note: Sentry reporting is available via @repo/shared/server module
+      // Initialize Sentry there for Node.js server environments
 
       // Return formatted error response
       return formatApiError(appError, appError.code as ErrorCode, undefined, {
@@ -413,77 +393,18 @@ export async function settleAll<T>(
 }
 
 // ============================================================================
-// SENTRY INTEGRATION (OPTIONAL)
+// SENTRY INTEGRATION (MOVED TO SERVER-ONLY MODULE)
 // ============================================================================
 
 /**
- * Sentry namespace for optional import
- * This is dynamically imported only if Sentry is configured
+ * Sentry integration has been moved to @repo/shared/server
+ * to avoid Edge Runtime compatibility issues.
+ * 
+ * For Sentry support, import from the server module:
+ * ```typescript
+ * import { initSentry, setSentryUser, addSentryBreadcrumb } from '@repo/shared/server';
+ * ```
+ * 
+ * The error handler will automatically use Sentry if it has been initialized
+ * via the server module.
  */
-let Sentry: typeof import('@sentry/node') | undefined;
-
-/**
- * Initialize Sentry error tracking
- * Call this once at application startup
- *
- * @param dsn - Sentry DSN
- * @param options - Sentry configuration
- */
-export async function initSentry(
-  dsn: string,
-  options: {
-    environment?: string;
-    release?: string;
-    tracesSampleRate?: number;
-  } = {}
-) {
-  try {
-    Sentry = await import('@sentry/node');
-
-    Sentry.init({
-      dsn,
-      environment: options.environment || process.env.NODE_ENV,
-      release: options.release,
-      tracesSampleRate: options.tracesSampleRate || 0.1,
-      integrations: [
-        new Sentry.Integrations.Http({ tracing: true }),
-        new Sentry.Integrations.Express({ app: undefined }),
-      ],
-    });
-
-    console.log('[ErrorHandler] Sentry initialized');
-  } catch (error) {
-    console.warn('[ErrorHandler] Failed to initialize Sentry:', error);
-  }
-}
-
-/**
- * Configure Sentry user context for better error tracking
- *
- * @param user - User information
- */
-export function setSentryUser(user: {
-  id?: string;
-  email?: string;
-  username?: string;
-}) {
-  if (Sentry) {
-    Sentry.setUser(user);
-  }
-}
-
-/**
- * Add Sentry breadcrumb for debugging
- *
- * @param message - Breadcrumb message
- * @param data - Additional data
- */
-export function addSentryBreadcrumb(message: string, data?: Record<string, unknown>) {
-  if (Sentry) {
-    Sentry.addBreadcrumb({
-      message,
-      data,
-      level: 'info',
-    });
-  }
-}

@@ -56,6 +56,83 @@ export {
 } from './services/chaos/chaos-engine';
 
 // ============================================================================
+// SENTRY INTEGRATION - Node.js Only
+// ============================================================================
+
+/**
+ * Sentry instance for error tracking
+ * Only available in Node.js environments
+ */
+let Sentry: any = undefined;
+
+/**
+ * Initialize Sentry error tracking
+ * Call this once at application startup in Node.js environments
+ *
+ * @param dsn - Sentry DSN
+ * @param options - Sentry configuration
+ */
+export async function initSentry(
+  dsn: string,
+  options: {
+    environment?: string;
+    release?: string;
+    tracesSampleRate?: number;
+  } = {}
+) {
+  try {
+    const SentryModule = await import('@sentry/node');
+    Sentry = SentryModule;
+
+    Sentry.init({
+      dsn,
+      environment: options.environment || process.env.NODE_ENV,
+      release: options.release,
+      tracesSampleRate: options.tracesSampleRate || 0.1,
+      integrations: [
+        new Sentry.Integrations.Http({ tracing: true }),
+        new Sentry.Integrations.Express({ app: undefined }),
+      ],
+    });
+
+    console.log('[Sentry] Initialized');
+  } catch (error) {
+    console.warn('[Sentry] Failed to initialize:', error);
+  }
+}
+
+/**
+ * Configure Sentry user context for better error tracking
+ */
+export function setSentryUser(user: {
+  id?: string;
+  email?: string;
+  username?: string;
+}) {
+  if (Sentry) {
+    Sentry.setUser(user);
+  }
+}
+
+/**
+ * Add Sentry breadcrumb for debugging
+ */
+export function addSentryBreadcrumb(message: string, data?: Record<string, unknown>) {
+  if (Sentry) {
+    Sentry.addBreadcrumb({ message, data, level: 'info' });
+  }
+}
+
+/**
+ * Capture exception with Sentry
+ */
+export function captureSentryException(error: Error, context?: Record<string, unknown>) {
+  if (Sentry) {
+    Sentry.captureException(error, { extra: context });
+  }
+}
+
+// ============================================================================
 // RE-EXPORT ALL OTHER SERVER-SIDE MODULES
 // These are safe for Node.js but may not work in Edge/Client
 // ============================================================================

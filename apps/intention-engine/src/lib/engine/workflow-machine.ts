@@ -62,14 +62,15 @@ import {
   validateToolParams,
   type AllToolsMap,
 } from "@repo/mcp-protocol";
-import { NormalizationService, createFailoverPolicyEngine, FailoverPolicyEngine, getLLMFailureTriageService, createLLMFailureTriageService } from "@repo/shared";
+import { NormalizationService, createFailoverPolicyEngine, FailoverPolicyEngine, getLLMFailureTriageService, createLLMFailureTriageService, getRedisClient, ServiceNamespace } from "@repo/shared";
 import { verifyPlan, DEFAULT_SAFETY_POLICY, SafetyPolicy } from "./verifier";
-import { redis } from "../redis-client";
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { captureStateDiffOnSave } from "./state-diff-viewer";
 import { after } from "next/server";
 import { BatchExecutionPlanner } from "./dependency-resolver";
+
+const redis = getRedisClient(ServiceNamespace.IE);
 
 // ============================================================================
 // LLM CIRCUIT BREAKER CONFIGURATION

@@ -1,4 +1,5 @@
-import { redis } from "@/lib/redis-client";
+import { getRedisClient, ServiceNamespace } from "@repo/shared";
+const redis = getRedisClient(ServiceNamespace.IE);
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { verifySignature } from "@repo/auth";

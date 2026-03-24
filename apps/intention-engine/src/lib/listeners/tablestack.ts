@@ -1,4 +1,5 @@
-import { IntentionEngine } from "../sdk";
+// IntentionEngine SDK placeholder - to be implemented
+// import { IntentionEngine } from "../sdk";
 
 export async function handleTableStackRejection(payload: {
   guestEmail: string;
@@ -7,7 +8,7 @@ export async function handleTableStackRejection(payload: {
   restaurantName: string;
 }) {
   const { guestEmail, partySize, startTime, restaurantName } = payload;
-  
+
   /**
    * Failover Logic:
    * When TableStack is full, we transition from 'Venue' intent to 'Logistics' intent.
@@ -20,7 +21,7 @@ export async function handleTableStackRejection(payload: {
     Party Size: ${partySize}
     Time: ${startTime}
 
-    Goal: Generate a "Delivery Alternative" plan. 
+    Goal: Generate a "Delivery Alternative" plan.
     1. Use OpenDeliver to check_delivery_estimate (quote_delivery).
     2. Map 'restaurantName' to 'pickup_address'.
     3. Use the system_key '${process.env.INTERNAL_SYSTEM_KEY || "internal_failover_key"}' to get a special offer.
@@ -28,7 +29,12 @@ export async function handleTableStackRejection(payload: {
   `.trim();
 
   console.log(`[TableStack Listener] Initiating Delivery-to-Table failover for ${guestEmail}`);
-  
+
   // Trigger Inference & Planning
-  return await IntentionEngine.process(prompt);
+  // TODO: Replace with actual planning service call
+  // return await IntentionEngine.process(prompt);
+  return {
+    hypotheses: { primary: { type: 'delivery_failover', confidence: 0.9 } },
+    plan: null,
+  };
 }

@@ -15,7 +15,8 @@
  */
 
 import { NextRequest } from "next/server";
-import { redis } from "@/lib/redis-client";
+import { getRedisClient, ServiceNamespace } from "@repo/shared";
+const redis = getRedisClient(ServiceNamespace.IE);;
 import { getToolRegistry } from "@/lib/engine/tools/registry";
 import { loadExecutionState, saveExecutionState } from "@/lib/engine/memory";
 import { RealtimeService, QStashService, FailoverPolicyEngine, type PolicyEvaluationContext } from "@repo/shared";

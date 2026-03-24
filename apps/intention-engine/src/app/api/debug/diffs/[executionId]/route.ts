@@ -53,8 +53,10 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { StateDiffViewer } from "../../../../lib/engine/state-diff-viewer";
-import { redis } from "../../../../lib/redis-client";
+import { StateDiffViewer } from "@/lib/engine/state-diff-viewer";
+import { getRedisClient, ServiceNamespace } from "@repo/shared";
+
+const redis = getRedisClient(ServiceNamespace.IE);
 
 // ============================================================================
 // GET HANDLER

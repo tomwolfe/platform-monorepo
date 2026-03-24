@@ -1,12 +1,12 @@
-import { env } from "./config";
+import { AppConfig } from "@repo/shared";
 
 /**
  * MCP Transport and Parameter Configuration
  */
 export const mcpConfig = {
   transport: {
-    opendeliver: env.OPENDELIVER_MCP_URL,
-    tablestack: env.TABLESTACK_MCP_URL,
+    opendeliver: AppConfig.getOpenDeliveryMcpUrl(),
+    tablestack: AppConfig.getTableStackMcpUrl(),
   },
   parameter_aliases: {
     "restaurant_id": "venue_id",

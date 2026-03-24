@@ -461,15 +461,18 @@ export class AppConfig {
    * Get treasury private key for Web3 payouts
    *
    * SECURITY: In production, this throws a fatal error if the key is missing.
+   * This prevents the system from running with insecure defaults.
    */
   static getTreasuryPrivateKey(): string | undefined {
     const config = this.init();
     const key = config.TREASURY_PRIVATE_KEY;
 
+    // In production, fail fast if key is missing
     if (!key && process.env.NODE_ENV === 'production') {
-      console.warn(
-        'WARNING: TREASURY_PRIVATE_KEY is not configured. ' +
-        'Web3 payouts will not be executed.'
+      throw new Error(
+        'CRITICAL: TREASURY_PRIVATE_KEY is not configured. ' +
+        'This is a required security credential for Web3 payouts. ' +
+        'Set a strong, random value in your production environment variables.'
       );
     }
 

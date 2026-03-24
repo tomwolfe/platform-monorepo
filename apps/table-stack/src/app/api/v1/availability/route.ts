@@ -6,10 +6,11 @@ import { and, eq, gte, or, sql } from '@repo/database';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
 import { validateRequest } from '@tablestack/lib/auth';
-import { formatApiError, formatApiSuccess, withApiErrorHandler, type EngineErrorCode, withCache } from '@repo/shared';
-import { redis } from '@tablestack/lib/redis';
+import { formatApiError, formatApiSuccess, withApiErrorHandler, type EngineErrorCode, withCache, getRedisClient, ServiceNamespace } from '@repo/shared';
 
 export const runtime = 'nodejs';
+
+const redis = getRedisClient(ServiceNamespace.TS);
 
 /**
  * GET /api/v1/availability

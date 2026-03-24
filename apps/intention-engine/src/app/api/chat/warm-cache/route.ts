@@ -25,8 +25,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { redis } from '@/lib/redis-client';
+import { getRedisClient, ServiceNamespace } from '@repo/shared';
 import { rateLimitMiddleware } from '@/lib/middleware/rate-limiter';
+
+const redis = getRedisClient(ServiceNamespace.IE);
 
 const WarmCacheRequestSchema = z.object({
   messagePreview: z.string().min(1).max(500),

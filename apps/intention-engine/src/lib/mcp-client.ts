@@ -1,8 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { env } from "./config";
-import { SecurityProvider } from "@repo/auth";
-import { SERVICES, AppConfig } from "@repo/shared";
+import { SecurityProvider, getRedisClient, ServiceNamespace, AppConfig } from "@repo/shared";
+import { SERVICES } from "@repo/shared";
 import {
   TOOLS,
   PARAMETER_ALIASES,
@@ -84,7 +83,7 @@ export class ParameterAliaser {
   private async initializeSchemaEvolution(): Promise<void> {
     try {
       // Lazy load to avoid circular dependencies
-      const { redis } = await import("./redis-client");
+      const redis = getRedisClient(ServiceNamespace.IE);
       if (redis) {
         this.schemaEvolutionService = createSchemaEvolutionService({ redis });
         console.log("[ParameterAliaser] Schema evolution tracking enabled");
@@ -201,20 +200,20 @@ export class DynamicMcpClientManager {
     const registry: ServiceRegistryEntry[] = [];
 
     // Add TableStack
-    if (env.TABLESTACK_MCP_URL) {
+    if (AppConfig.getTableStackMcpUrl()) {
       registry.push({
         name: "tablestack",
-        mcpUrl: env.TABLESTACK_MCP_URL,
+        mcpUrl: AppConfig.getTableStackMcpUrl(),
         apiUrl: SERVICES.TABLESTACK.API_URL,
         capabilities: ["table_management", "reservations", "waitlist"],
       });
     }
 
     // Add OpenDelivery
-    if (env.OPENDELIVER_MCP_URL) {
+    if (AppConfig.getOpenDeliveryMcpUrl()) {
       registry.push({
         name: "opendelivery",
-        mcpUrl: env.OPENDELIVER_MCP_URL,
+        mcpUrl: AppConfig.getOpenDeliveryMcpUrl(),
         capabilities: ["delivery_quotes", "fulfillment"],
       });
     }

@@ -11,7 +11,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { redis } from "@/lib/redis-client";
+import { getRedisClient, ServiceNamespace } from "@repo/shared";
+const redis = getRedisClient(ServiceNamespace.IE);;
 import { createDLQMonitoringService } from "@repo/shared";
 import { getEventSchemaRegistry, NervousSystemEvent } from "@repo/mcp-protocol";
 import { Tracer } from "@/lib/engine/tracing";

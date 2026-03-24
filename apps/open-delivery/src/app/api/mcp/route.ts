@@ -5,15 +5,14 @@ import { createMcpServerRoutes, createResponse, extractTraceId } from "@repo/mcp
 import { randomUUID } from "crypto";
 import { getDb, orders, orderItems } from "@repo/database";
 import { eq } from "drizzle-orm";
-import { RealtimeService, AppConfig } from "@repo/shared";
+import { RealtimeService, AppConfig, getRedisClient, ServiceNamespace } from "@repo/shared";
 import { dispatchOrder } from "@open-delivery/lib/dispatcher";
 
 // Lazy load Redis to avoid build-time initialization
 let _redis: any = null;
 const getRedis = async () => {
   if (!_redis) {
-    const { redis } = await import("@/lib/redis-client");
-    _redis = redis;
+    _redis = getRedisClient(ServiceNamespace.OD);
   }
   return _redis;
 };

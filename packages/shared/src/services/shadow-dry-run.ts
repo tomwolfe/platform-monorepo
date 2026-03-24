@@ -149,15 +149,24 @@ function generateMockFromJsonSchema(schema: any): unknown {
 }
 
 /**
- * Get tool schema from registry for mock generation
- * Note: This is a placeholder - in production, the schema should be passed
- * from the caller who has access to the tool registry
+ * Get tool return schema from the Unified Tool Registry
+ * This dynamically looks up the tool's return_schema for mock generation
  */
 function getToolReturnSchema(toolName: string): Record<string, unknown> | undefined {
-  // In production, this would look up the tool from the registry
-  // For now, return undefined to use the fallback simulation
-  // The caller should pass the schema directly if available
-  return undefined;
+  try {
+    const { UnifiedToolRegistry } = require('../runtime-registry');
+    const registry = UnifiedToolRegistry.getInstance();
+    const tool = registry.get(toolName);
+    
+    if (tool && tool.return_schema) {
+      return tool.return_schema;
+    }
+    
+    return undefined;
+  } catch (error) {
+    // Registry not available or tool not found
+    return undefined;
+  }
 }
 
 // Define Plan and PlanStep locally to avoid circular dependencies
@@ -663,7 +672,7 @@ export class ShadowDryRunService {
     step: PlanStep,
     stateSnapshot: ExecutionState
   ): unknown {
-    // PHASE 3: Schema-driven mock generation
+    // PHASE 3: Schema-driven mock generation (PRIMARY PATH)
     // Try to get the tool's return schema from the registry
     const returnSchema = getToolReturnSchema(step.tool_name);
 
@@ -685,47 +694,70 @@ export class ShadowDryRunService {
       return { ...baseResult, output: mockData };
     }
 
-    // Fallback to type-based simulation if schema not available
+    // FALLBACK: Type-based simulation if schema not available
+    // This uses the step's inputSchema to infer appropriate mock values
+    const inputSchema = step.parameters;
     const toolType = step.tool_name.toLowerCase();
 
-    // Simulate based on tool patterns (legacy fallback)
+    // Build context-aware mock based on parameters
+    const contextMock: Record<string, unknown> = {
+      success: true,
+      timestamp: new Date().toISOString(),
+      simulated: true,
+      parameters: inputSchema || {},
+    };
+
+    // Add tool-specific fields based on common patterns
     if (toolType.includes('book') || toolType.includes('reserve')) {
       return {
-        success: true,
+        ...contextMock,
         bookingId: `simulated_${crypto.randomUUID()}`,
         status: 'confirmed',
-        timestamp: new Date().toISOString(),
-        simulated: true,
+        partySize: inputSchema?.partySize as number || 2,
+        confirmationCode: `SIM-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
       };
     }
 
     if (toolType.includes('cancel')) {
       return {
-        success: true,
+        ...contextMock,
         cancelled: true,
         refundAmount: 0,
-        timestamp: new Date().toISOString(),
-        simulated: true,
+        cancellationReason: 'Simulated cancellation',
       };
     }
 
     if (toolType.includes('payment') || toolType.includes('charge')) {
       return {
-        success: true,
+        ...contextMock,
         transactionId: `simulated_txn_${crypto.randomUUID()}`,
         status: 'processed',
         amount: (step.parameters.amount as number) || 0,
-        timestamp: new Date().toISOString(),
-        simulated: true,
+        currency: (step.parameters.currency as string) || 'USD',
+      };
+    }
+
+    if (toolType.includes('search') || toolType.includes('get') || toolType.includes('find')) {
+      return {
+        ...contextMock,
+        results: [],
+        count: 0,
+        hasMore: false,
+      };
+    }
+
+    if (toolType.includes('availability') || toolType.includes('check')) {
+      return {
+        ...contextMock,
+        available: true,
+        slots: [],
       };
     }
 
     // Default simulation
     return {
-      success: true,
+      ...contextMock,
       output: `Simulated output for ${step.tool_name}`,
-      timestamp: new Date().toISOString(),
-      simulated: true,
     };
   }
 

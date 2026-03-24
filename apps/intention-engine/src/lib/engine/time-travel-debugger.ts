@@ -40,10 +40,12 @@ import {
   ContextSnapshot,
   PlanStep,
 } from "./types";
-import { redis } from "../redis-client";
+import { getRedisClient, ServiceNamespace } from '@repo/shared';
 import { Tracer } from "./tracing";
 import { loadExecutionTrace } from "./memory";
 import { getToolRegistry, type ToolFunction } from "./tools/registry";
+
+const redis = getRedisClient(ServiceNamespace.IE);
 
 // ============================================================================
 // CONFIGURATION

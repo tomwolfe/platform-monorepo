@@ -4,10 +4,11 @@ import { getDb } from "@repo/database";
 import { restaurantReservations } from "@repo/database";
 import { eq } from '@repo/database';
 import { NotifyService } from '@tablestack/lib/notifications';
+import { withApiErrorHandler } from '@repo/shared';
 
 export const runtime = 'nodejs';
 
-export async function GET(req: NextRequest) {
+async function getHandler(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const token = searchParams.get('token');
 
@@ -17,39 +18,36 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ message: 'Missing or invalid token' }, { status: 400 });
   }
 
-  try {
-    const reservation = await getDb().query.restaurantReservations.findFirst({
-      where: eq(restaurantReservations.verificationToken, token),
-      with: {
-        restaurant: true,
-      },
-    });
+  const reservation = await getDb().query.restaurantReservations.findFirst({
+    where: eq(restaurantReservations.verificationToken, token),
+    with: {
+      restaurant: true,
+    },
+  });
 
-    if (!reservation) {
-      return NextResponse.json({ message: 'Invalid token' }, { status: 404 });
-    }
-
-    if (reservation.isVerified) {
-      return NextResponse.json({ message: 'Reservation already verified' });
-    }
-
-    // Mark as verified
-    await getDb().update(restaurantReservations)
-      .set({ isVerified: true, status: 'confirmed' })
-      .where(eq(restaurantReservations.id, reservation.id));
-
-    // Notify owner
-    if (reservation.restaurant && reservation.restaurant.ownerEmail) {
-      await NotifyService.notifyOwner(reservation.restaurant.ownerEmail, {
-        guestName: reservation.guestName,
-        partySize: reservation.partySize,
-        startTime: reservation.startTime,
-      });
-    }
-
-    return NextResponse.json({ message: 'Verification successful' });
-  } catch (error) {
-    console.error('Verification Error:', error);
-    return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
+  if (!reservation) {
+    return NextResponse.json({ message: 'Invalid token' }, { status: 404 });
   }
+
+  if (reservation.isVerified) {
+    return NextResponse.json({ message: 'Reservation already verified' });
+  }
+
+  // Mark as verified
+  await getDb().update(restaurantReservations)
+    .set({ isVerified: true, status: 'confirmed' })
+    .where(eq(restaurantReservations.id, reservation.id));
+
+  // Notify owner
+  if (reservation.restaurant && reservation.restaurant.ownerEmail) {
+    await NotifyService.notifyOwner(reservation.restaurant.ownerEmail, {
+      guestName: reservation.guestName,
+      partySize: reservation.partySize,
+      startTime: reservation.startTime,
+    });
+  }
+
+  return NextResponse.json({ message: 'Verification successful' });
 }
+
+export const GET = withApiErrorHandler(getHandler, 'EXECUTION_FAILED');

@@ -19,7 +19,9 @@
     "./idempotency": "./src/idempotency.ts",
     "./clients": "./src/clients.ts",
     "./redis/memory": "./src/redis/memory.ts",
-    "./types/database": "./src/types/database.ts"
+    "./types/database": "./src/types/database.ts",
+    "./realtime/ably-auth": "./src/realtime/ably-auth.ts",
+    "./health": "./src/middleware/health-check.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

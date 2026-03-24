@@ -1,5 +1,5 @@
-import { redis } from "./redis-client";
-import { env } from "./config";
+import { getRedisClient, ServiceNamespace } from '@repo/shared';
+const redis = getRedisClient(ServiceNamespace.IE);
 
 /**
  * Extracts and saves user preferences from successful actions.

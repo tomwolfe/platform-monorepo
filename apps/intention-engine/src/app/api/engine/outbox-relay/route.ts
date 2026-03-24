@@ -20,10 +20,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { withQStashAuth } from '@repo/shared';
-import { getOutboxService } from '@repo/shared';
-import { redis } from '@/lib/redis-client';
+import { withQStashAuth, getOutboxService, getRedisClient, ServiceNamespace } from '@repo/shared';
 import { verifyServiceToken } from '@repo/auth';
+
+const redis = getRedisClient(ServiceNamespace.IE);
 
 // ============================================================================
 // CONFIGURATION

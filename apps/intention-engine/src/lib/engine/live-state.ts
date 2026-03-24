@@ -14,7 +14,8 @@
  * @since 1.0.0
  */
 
-import { redis } from "@/lib/redis-client";
+import { getRedisClient, ServiceNamespace } from "@repo/shared";
+const redis = getRedisClient(ServiceNamespace.IE);;
 import { FailoverPolicyEngine, type PolicyEvaluationContext } from "@repo/shared";
 
 // ============================================================================

@@ -1,6 +1,6 @@
-import { redis } from "./redis-client";
+import { getRedisClient, ServiceNamespace } from '@repo/shared';
+const redis = getRedisClient(ServiceNamespace.IE);
 import type { Plan, Intent } from "./schema";
-import { env } from "./config";
 import type { AuditLog } from "./types";
 
 const AUDIT_LOG_PREFIX = "audit_log:";

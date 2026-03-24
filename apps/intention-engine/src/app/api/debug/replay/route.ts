@@ -48,7 +48,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createReplayEngine, type ReplayOptions } from "../../../lib/engine/time-travel-debugger";
+import { createReplayEngine, type ReplayOptions } from "@/lib/engine/time-travel-debugger";
 
 // ============================================================================
 // REQUEST SCHEMA

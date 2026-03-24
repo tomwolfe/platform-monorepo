@@ -63,6 +63,9 @@ export * from './middleware/health-check';
 // Tool types
 export * from './types/tool';
 
+// Phase 4: Consolidate Webhook Dispatching
+export * from './services/webhook-dispatcher';
+
 // Phase 5: Feature Flags (Gate autonomous features)
 export * from './feature-flags';
 

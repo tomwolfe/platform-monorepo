@@ -31,10 +31,11 @@
  * @package apps/intention-engine
  */
 
-import { redis } from "../redis-client";
-import { ExecutionState, PlanStep } from "./types";
-import { getCompletedSteps, getPendingSteps } from "./state-machine";
-import { AppConfig } from "@repo/shared";
+import { getRedisClient, ServiceNamespace, AppConfig } from '@repo/shared';
+import { ExecutionState, PlanStep } from './types';
+import { getCompletedSteps, getPendingSteps } from './state-machine';
+
+const redis = getRedisClient(ServiceNamespace.IE);
 
 // ============================================================================
 // CONFIGURATION

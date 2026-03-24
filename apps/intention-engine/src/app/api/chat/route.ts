@@ -2,25 +2,27 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { streamText, tool, stepCountIs, convertToModelMessages } from "ai";
 import { z } from "zod";
 import { getToolCapabilitiesPrompt } from "@/lib/tools";
-import { env } from "@/lib/config";
 import { getUserPreferences } from "@/lib/preferences";
-import { redis } from "@/lib/redis-client";
+import { getRedisClient, ServiceNamespace, AppConfig } from "@repo/shared";
 import { getMcpClients } from "@/lib/mcp-client";
 import { TOOLS } from "@repo/mcp-protocol";
 import { rateLimitMiddleware } from "@/lib/middleware/rate-limiter";
-import { AppConfig } from "@repo/shared";
 import { fetchLiveOperationalState } from "@/lib/engine/live-state";
 import { createChatOrchestrator, type ChatOrchestrationResult } from "@/lib/engine/chat-orchestrator";
 
-// Internal system key for QStash-triggered requests - uses strict getter
+// Use AppConfig directly - no local wrapper needed
 const INTERNAL_SYSTEM_KEY = AppConfig.getInternalSystemKey();
+const LLM_API_KEY = AppConfig.getLlmApiKey();
+const LLM_BASE_URL = AppConfig.getLlmBaseUrl();
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
+const redis = getRedisClient(ServiceNamespace.IE);
+
 const openai = createOpenAI({
-  apiKey: env.LLM_API_KEY,
-  baseURL: env.LLM_BASE_URL,
+  apiKey: LLM_API_KEY,
+  baseURL: LLM_BASE_URL,
 });
 
 const ChatRequestSchema = z.object({

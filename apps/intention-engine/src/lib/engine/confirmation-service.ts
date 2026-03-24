@@ -22,7 +22,8 @@
  * @since 1.0.0
  */
 
-import { redis } from "@/lib/redis-client";
+import { getRedisClient, ServiceNamespace } from "@repo/shared";
+const redis = getRedisClient(ServiceNamespace.IE);;
 import { loadExecutionState, saveExecutionState } from "@/lib/engine/memory";
 import { transitionState, ExecutionState } from "@/lib/engine/types";
 import { QStashService, AppConfig } from "@repo/shared";

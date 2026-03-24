@@ -22,7 +22,8 @@
  * ```
  */
 
-import { redis } from "@/lib/redis-client";
+import { getRedisClient, ServiceNamespace } from "@repo/shared";
+const redis = getRedisClient(ServiceNamespace.IE);;
 import { randomUUID } from "crypto";
 
 // ============================================================================

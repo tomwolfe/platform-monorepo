@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { redis } from "../redis-client";
+import { getRedisClient, ServiceNamespace } from '@repo/shared';
+const redis = getRedisClient(ServiceNamespace.IE);
 import { ToolDefinitionMetadata } from "./types";
 import { GetLiveOperationalStateSchema as LiveStateSchema } from "@repo/mcp-protocol";
 

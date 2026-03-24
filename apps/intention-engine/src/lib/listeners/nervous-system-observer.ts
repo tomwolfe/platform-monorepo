@@ -28,7 +28,8 @@ import { createSystemEvent, SystemEvent, createTypedSystemEvent, SystemEventType
 import { signServiceToken } from "@repo/auth";
 import { generateText } from "../engine/llm";
 import { Redis } from "@upstash/redis";
-import { redis } from "../redis-client";
+import { getRedisClient, ServiceNamespace } from '@repo/shared';
+const redis = getRedisClient(ServiceNamespace.IE);
 
 // ============================================================================
 // OBSERVER CONFIGURATION

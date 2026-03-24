@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { ToolDefinitionMetadata, ToolParameter } from "./types";
 import { geocode_location, search_web } from "./location_search";
-import { env } from "../config";
 import { signServiceToken } from "@repo/auth";
 import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared/tracing";
 import { TableReservationSchema } from "@repo/mcp-protocol";
@@ -48,7 +47,7 @@ export async function reserve_restaurant(params: TableReservationParams): Promis
     
     return await withNervousSystemTracing(async ({ correlationId }) => {
       // 1. Try to reserve via TableStack
-      let response = await fetch(`${env.TABLESTACK_API_URL}/reserve`, {
+      let response = await fetch(`${AppConfig.getTableStackApiUrl()}/reserve`, {
         method: 'POST',
         headers: injectTracingHeaders({
           'Content-Type': 'application/json',
@@ -88,7 +87,7 @@ export async function reserve_restaurant(params: TableReservationParams): Promis
         console.log(`Discovered email for ${restaurant_name}: ${discoveredEmail}`);
 
         // 3. Create Shadow Reservation
-        response = await fetch(`${env.TABLESTACK_API_URL}/reserve`, {
+        response = await fetch(`${AppConfig.getTableStackApiUrl()}/reserve`, {
           method: 'POST',
           headers: injectTracingHeaders({
             'Content-Type': 'application/json',

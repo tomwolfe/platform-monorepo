@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { redis } from "../redis-client";
+import { getRedisClient, ServiceNamespace } from '@repo/shared';
+const redis = getRedisClient(ServiceNamespace.IE);
 import { env } from "../config";
 import { RestaurantResultSchema } from "../schema";
 import { GeocodeSchema, SearchRestaurantSchema, DB_REFLECTED_SCHEMAS, UnifiedLocationSchema } from "@repo/mcp-protocol";

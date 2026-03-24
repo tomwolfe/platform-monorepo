@@ -20,7 +20,7 @@ import {
   type MemoryEntryType as SharedMemoryEntryType,
   type MemoryQuery as SharedMemoryQuery,
 } from '@repo/shared/redis/memory';
-import { redis } from "../redis-client";
+import { getRedisClient, ServiceNamespace } from '@repo/shared';
 import type { Redis } from "@upstash/redis";
 import {
   MemoryEntry,
@@ -33,6 +33,9 @@ import {
   EngineErrorSchema,
 } from "./types";
 import type { TaskState, TaskStatus } from "@repo/shared";
+
+// Initialize Redis client for MemoryClient
+const redis = getRedisClient(ServiceNamespace.IE);
 
 // ============================================================================
 // MEMORY CONFIGURATION

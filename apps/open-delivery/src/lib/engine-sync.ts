@@ -1,4 +1,5 @@
-import { redis } from "./redis-client";
+import { getRedisClient, ServiceNamespace } from '@repo/shared';
+const redis = getRedisClient(ServiceNamespace.OD);
 
 export interface ExecutionStep {
   tool_name: string;

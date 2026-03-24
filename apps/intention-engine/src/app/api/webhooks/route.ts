@@ -13,7 +13,8 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { redis } from "@/lib/redis-client";
+import { getRedisClient, ServiceNamespace } from "@repo/shared";
+const redis = getRedisClient(ServiceNamespace.IE);;
 import { IDEMPOTENCY_KEY_HEADER } from "@repo/shared";
 import { WebhookDispatcherService, createWebhookDispatcherService } from "@/lib/engine/webhook-dispatcher-service";
 

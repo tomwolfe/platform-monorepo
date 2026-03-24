@@ -12,7 +12,8 @@
  */
 
 import { getDb, drivers as driversTable, orders as ordersTable, eq, and, gt, gte, sql as drizzleSql, desc } from "@repo/database";
-import { redis } from "./redis-client";
+import { getRedisClient, ServiceNamespace } from '@repo/shared';
+const redis = getRedisClient(ServiceNamespace.OD);
 import { RealtimeService } from "@repo/shared";
 import { geocode } from "@repo/shared/utils/geo";
 import { randomUUID } from "crypto";

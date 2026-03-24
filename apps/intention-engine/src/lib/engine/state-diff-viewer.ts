@@ -27,8 +27,10 @@
  * @package apps/intention-engine
  */
 
-import { redis } from "../redis-client";
-import { ExecutionState, StepExecutionState } from "./types";
+import { getRedisClient, ServiceNamespace } from '@repo/shared';
+import { ExecutionState, StepExecutionState } from './types';
+
+const redis = getRedisClient(ServiceNamespace.IE);
 
 // ============================================================================
 // TYPE DEFINITIONS

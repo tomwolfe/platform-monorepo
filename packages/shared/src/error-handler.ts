@@ -96,10 +96,13 @@ const DEFAULT_OPTIONS: ErrorHandlerOptions = {
  * Centralized error handler for API routes
  *
  * Wraps async route handlers and provides:
- * - Consistent error response formatting
+ * - Consistent error formatting
  * - Structured error logging
  * - Sentry error reporting (if configured)
  * - Stack trace sanitization for production
+ *
+ * IMPORTANT: Re-throws Next.js redirect() and notFound() errors to preserve
+ * their navigation behavior. These errors contain special digest properties.
  *
  * @param handler - Async route handler function
  * @param options - Error handler configuration
@@ -133,6 +136,11 @@ export function withApiErrorHandler<T extends (...args: any[]) => Promise<any>>(
     try {
       return await handler(...args);
     } catch (error) {
+      // Re-throw Next.js redirect and notFound errors to preserve navigation
+      if (isNextRedirectError(error)) {
+        throw error;
+      }
+
       const appError = toAppError(error);
 
       // Extract trace ID from error context or args
@@ -178,6 +186,36 @@ export function withApiErrorHandler<T extends (...args: any[]) => Promise<any>>(
       }) as ReturnType<T>;
     }
   };
+}
+
+/**
+ * Check if an error is a Next.js redirect or notFound error
+ *
+ * Next.js uses special error objects with digest properties to signal
+ * redirects and notFound responses. We must re-throw these to preserve
+ * their behavior.
+ *
+ * @param error - The error to check
+ * @returns True if the error is a Next.js redirect/notFound error
+ */
+function isNextRedirectError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  
+  // Check for Next.js redirect digest
+  if ('digest' in error && typeof error.digest === 'string') {
+    const digest = error.digest;
+    if (digest.includes('NEXT_REDIRECT') || digest.includes('NEXT_NOT_FOUND')) {
+      return true;
+    }
+  }
+  
+  // Fallback: check error message for redirect patterns
+  const message = error.message;
+  if (message.includes('NEXT_REDIRECT') || message.includes('NEXT_NOT_FOUND')) {
+    return true;
+  }
+  
+  return false;
 }
 
 // ============================================================================

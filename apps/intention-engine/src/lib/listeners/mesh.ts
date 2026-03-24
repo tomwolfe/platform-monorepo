@@ -7,6 +7,14 @@ import { createAuditLog } from "@/lib/audit";
 import { getAblyClient } from "@repo/shared";
 import { getToolDefinitions } from "@/lib/tools";
 import { getEventSchemaRegistry } from "@repo/mcp-protocol";
+import {
+  SystemEventSchema,
+  ReservationEventPayloadSchema,
+  HighValueGuestEventPayloadSchema,
+  DeliveryEventPayloadSchema,
+  type SystemEventType,
+} from "@repo/mcp-protocol/schemas/events";
+import { z } from "zod";
 
 /**
  * MeshListener - Orchestrates real-time reaction to Nervous System events.
@@ -28,7 +36,7 @@ import { getEventSchemaRegistry } from "@repo/mcp-protocol";
 
 interface ProactiveEventContext {
   eventName: string;
-  data: any;
+  data: Record<string, unknown>;
   userId?: string;
   userChannel?: string;
   traceId?: string;
@@ -45,49 +53,50 @@ export class ProactiveIntentGenerator {
   /**
    * Event triggers for proactive intent generation
    */
-  private static PROACTIVE_TRIGGERS: Record<string, (data: any) => string> = {
-    ReservationRejected: (data: any) => {
+  private static PROACTIVE_TRIGGERS: Record<string, (data: Record<string, unknown>) => string> = {
+    ReservationRejected: (data: Record<string, unknown>) => {
       const { restaurantName, dateTime, partySize, alternativeSuggestions } = data;
       let prompt = `The reservation at ${restaurantName} for ${partySize} people at ${dateTime} was rejected.`;
-      
-      if (alternativeSuggestions && alternativeSuggestions.length > 0) {
+
+      if (alternativeSuggestions && Array.isArray(alternativeSuggestions) && alternativeSuggestions.length > 0) {
         prompt += ` Available alternatives: ${alternativeSuggestions.join(', ')}.`;
       }
-      
+
       prompt += ` Find similar restaurants and book a reservation.`;
       return prompt;
     },
-    
-    TableVacated: (data: any) => {
+
+    TableVacated: (data: Record<string, unknown>) => {
       const { restaurantName, tableId, capacity } = data;
       return `Table ${tableId} (capacity: ${capacity}) just became available at ${restaurantName}. Check if the user wants to book it.`;
     },
-    
-    DeliveryDelayed: (data: any) => {
+
+    DeliveryDelayed: (data: Record<string, unknown>) => {
       const { orderId, estimatedDelay, restaurantName, deliveryAddress } = data;
       return `Delivery order ${orderId} from ${restaurantName} to ${deliveryAddress} is delayed by ${estimatedDelay} minutes. Suggest alternatives or compensation.`;
     },
-    
-    ReservationCancelled: (data: any) => {
+
+    ReservationCancelled: (data: Record<string, unknown>) => {
       const { restaurantName, dateTime, partySize, reason } = data;
       let prompt = `Reservation at ${restaurantName} for ${partySize} people at ${dateTime} was cancelled.`;
       if (reason) prompt += ` Reason: ${reason}.`;
       prompt += ` Help rebook or find alternatives.`;
       return prompt;
     },
-    
-    HighValueGuestReservation: (data: any) => {
-      const { guest, reservation } = data;
-      let prompt = `VIP guest ${guest.name} (${guest.visitCount} visits) booked at ${reservation.restaurantName}.`;
-      
-      if (guest.defaultDeliveryAddress) {
-        prompt += ` Suggest arranging delivery from ${reservation.restaurantName} to ${guest.defaultDeliveryAddress} post-reservation.`;
+
+    HighValueGuestReservation: (data: Record<string, unknown>) => {
+      const guest = data.guest as Record<string, unknown> | undefined;
+      const reservation = data.reservation as Record<string, unknown> | undefined;
+      let prompt = `VIP guest ${guest?.name || 'unknown'} (${guest?.visitCount || 0} visits) booked at ${reservation?.restaurantName || 'unknown'}.`;
+
+      if (guest?.defaultDeliveryAddress) {
+        prompt += ` Suggest arranging delivery from ${reservation?.restaurantName} to ${guest.defaultDeliveryAddress} post-reservation.`;
       }
-      
+
       return prompt;
     },
-    
-    ServiceDegraded: (data: any) => {
+
+    ServiceDegraded: (data: Record<string, unknown>) => {
       const { serviceName, toolName, reason } = data;
       return `Service ${serviceName} is degraded (tool: ${toolName}, reason: ${reason}). Notify affected users and suggest alternatives.`;
     },
@@ -153,7 +162,7 @@ export class ProactiveIntentGenerator {
    */
   private static buildReasoning(
     eventName: string,
-    data: any,
+    data: Record<string, unknown>,
     intent: any,
     plan: any
   ): string {
@@ -164,7 +173,7 @@ export class ProactiveIntentGenerator {
   /**
    * Summarize event for audit/UX purposes
    */
-  private static summarizeEvent(eventName: string, data: any): string {
+  private static summarizeEvent(eventName: string, data: Record<string, unknown>): string {
     switch (eventName) {
       case 'ReservationRejected':
         return `reservation rejection at ${data.restaurantName || 'unknown restaurant'}`;
@@ -175,7 +184,7 @@ export class ProactiveIntentGenerator {
       case 'ReservationCancelled':
         return `reservation cancellation at ${data.restaurantName || 'unknown restaurant'}`;
       case 'HighValueGuestReservation':
-        return `VIP guest ${data.guest?.name || 'unknown'} reservation`;
+        return `VIP guest ${(data.guest as Record<string, unknown>)?.name || 'unknown'} reservation`;
       case 'ServiceDegraded':
         return `service degradation: ${data.serviceName || 'unknown'}`;
       default:
@@ -208,7 +217,7 @@ export class MeshListener {
     }
 
     const payloadObj = payload as Record<string, unknown>;
-    
+
     if (!payloadObj.token) {
       console.warn(`[MeshListener] Event ${eventName} rejected: Missing service token`);
       return;
@@ -230,16 +239,16 @@ export class MeshListener {
 
     // TYPE SAFETY: Validate event against schema registry before processing
     const registry = getEventSchemaRegistry();
-    
+
     // Map legacy event names to registry event types
     const eventTypeMap: Record<string, string> = {
       'reservation_rejected': 'RESERVATION_CANCELLED',
       'high_value_guest_reservation': 'RESERVATION_CREATED',
       'delivery_logged': 'DELIVERY_COMPLETED',
     };
-    
+
     const registryEventType = eventTypeMap[eventName] || eventName.toUpperCase();
-    
+
     // Try to validate against registry schemas (for nervous system events)
     if (registry.isRegistered(registryEventType)) {
       const validation = registry.validate(registryEventType, data);
@@ -258,7 +267,7 @@ export class MeshListener {
       }
     }
 
-    // Handle proactive events
+    // Handle proactive events with strict Zod validation
     const proactiveEvents = [
       'ReservationRejected',
       'TableVacated',
@@ -269,34 +278,51 @@ export class MeshListener {
     ];
 
     if (proactiveEvents.includes(eventName)) {
+      // Validate data structure using Zod
+      const dataValidation = z.object({}).passthrough().safeParse(data);
+      if (!dataValidation.success) {
+        console.error(`[MeshListener] Invalid data structure for proactive event ${eventName}`);
+        return;
+      }
+      
       return await this.handleProactiveEvent({
         eventName,
-        data,
+        data: dataValidation.data,
         userId,
         userChannel,
         traceId,
       });
     }
 
-    // Handle legacy events
+    // Handle legacy events with strict Zod validation
     switch (eventName) {
-      case 'reservation_rejected':
-        return await handleTableStackRejection(data as {
-          restaurantName?: string;
-          dateTime?: string;
-          partySize?: number;
-          alternativeSuggestions?: string[];
-        });
+      case 'reservation_rejected': {
+        const validated = ReservationEventPayloadSchema.partial().safeParse(data);
+        if (!validated.success) {
+          console.error(`[MeshListener] reservation_rejected failed validation:`, validated.error);
+          return;
+        }
+        return await handleTableStackRejection(validated.data);
+      }
 
-      case 'high_value_guest_reservation':
-        return await this.handleHighValueGuest(data as {
-          guest: { name: string; visitCount: number; defaultDeliveryAddress?: string; email?: string };
-          reservation: { restaurantName: string };
-        });
+      case 'high_value_guest_reservation': {
+        const validated = HighValueGuestEventPayloadSchema.safeParse(data);
+        if (!validated.success) {
+          console.error(`[MeshListener] high_value_guest_reservation failed validation:`, validated.error);
+          return;
+        }
+        return await this.handleHighValueGuest(validated.data);
+      }
 
-      case 'delivery_logged':
-        console.log(`[MeshListener] Delivery logged on mesh:`, (data as any).orderId);
+      case 'delivery_logged': {
+        const validated = DeliveryEventPayloadSchema.partial().safeParse(data);
+        if (!validated.success) {
+          console.error(`[MeshListener] delivery_logged failed validation:`, validated.error);
+          return;
+        }
+        console.log(`[MeshListener] Delivery logged on mesh:`, validated.data.orderId);
         break;
+      }
 
       default:
         console.log(`[MeshListener] No handler for event: ${eventName}`);
@@ -382,10 +408,7 @@ export class MeshListener {
   /**
    * Legacy handler for high-value guest events
    */
-  private static async handleHighValueGuest(data: {
-    guest: { name: string; visitCount: number; defaultDeliveryAddress?: string; email?: string };
-    reservation: { restaurantName: string };
-  }) {
+  private static async handleHighValueGuest(data: z.infer<typeof HighValueGuestEventPayloadSchema>) {
     const { guest, reservation } = data;
 
     let proactiveText = `Guest ${guest.name} (High Value, ${guest.visitCount} visits) just booked at ${reservation.restaurantName}.`;

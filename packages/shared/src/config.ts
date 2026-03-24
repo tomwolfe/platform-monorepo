@@ -62,6 +62,22 @@ const BaseConfigSchema = z.object({
   // QStash for async workflows
   QSTASH_TOKEN: z.string().optional(),
   QSTASH_CURRENT_ENDPOINT: z.string().url().optional(),
+
+  // Email Service
+  RESEND_API_KEY: z.string().optional(),
+
+  // Web3 / Blockchain
+  TREASURY_PRIVATE_KEY: z.string().optional(),
+  BASE_RPC_URL: z.string().url().optional(),
+  NEXT_PUBLIC_USDC_CONTRACT_ADDRESS: z.string().optional(),
+
+  // Platform / Fees
+  CRON_SECRET: z.string().optional(),
+  PLATFORM_FEE_BPS: z.string().optional(),
+  DRIVER_BASE_PAY_CENTS: z.string().optional(),
+
+  // Application URLs
+  NEXT_PUBLIC_APP_URL: z.string().url().optional(),
 });
 
 /**
@@ -423,6 +439,97 @@ export class AppConfig {
   static getQstashEndpoint(): string | undefined {
     const config = this.init();
     return config.QSTASH_CURRENT_ENDPOINT;
+  }
+
+  // ========================================================================
+  // EMAIL SERVICE
+  // ========================================================================
+
+  /**
+   * Get Resend API key for email notifications
+   */
+  static getResendApiKey(): string | undefined {
+    const config = this.init();
+    return config.RESEND_API_KEY;
+  }
+
+  // ========================================================================
+  // WEB3 / BLOCKCHAIN
+  // ========================================================================
+
+  /**
+   * Get treasury private key for Web3 payouts
+   *
+   * SECURITY: In production, this throws a fatal error if the key is missing.
+   */
+  static getTreasuryPrivateKey(): string | undefined {
+    const config = this.init();
+    const key = config.TREASURY_PRIVATE_KEY;
+
+    if (!key && process.env.NODE_ENV === 'production') {
+      console.warn(
+        'WARNING: TREASURY_PRIVATE_KEY is not configured. ' +
+        'Web3 payouts will not be executed.'
+      );
+    }
+
+    return key;
+  }
+
+  /**
+   * Get Base RPC URL for blockchain interactions
+   */
+  static getBaseRpcUrl(): string | undefined {
+    const config = this.init();
+    return config.BASE_RPC_URL;
+  }
+
+  /**
+   * Get USDC contract address on Base
+   */
+  static getUsdcContractAddress(): string | undefined {
+    const config = this.init();
+    return config.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS;
+  }
+
+  // ========================================================================
+  // PLATFORM / FEES
+  // ========================================================================
+
+  /**
+   * Get cron secret for scheduled job authentication
+   */
+  static getCronSecret(): string | undefined {
+    const config = this.init();
+    return config.CRON_SECRET;
+  }
+
+  /**
+   * Get platform fee in basis points
+   */
+  static getPlatformFeeBps(): number {
+    const config = this.init();
+    return config.PLATFORM_FEE_BPS ? parseInt(config.PLATFORM_FEE_BPS, 10) : 100;
+  }
+
+  /**
+   * Get driver base pay in cents
+   */
+  static getDriverBasePayCents(): number {
+    const config = this.init();
+    return config.DRIVER_BASE_PAY_CENTS ? parseInt(config.DRIVER_BASE_PAY_CENTS, 10) : 200;
+  }
+
+  // ========================================================================
+  // APPLICATION URLs
+  // ========================================================================
+
+  /**
+   * Get next public app URL
+   */
+  static getNextPublicAppUrl(): string | undefined {
+    const config = this.init();
+    return config.NEXT_PUBLIC_APP_URL;
   }
 
   // ========================================================================

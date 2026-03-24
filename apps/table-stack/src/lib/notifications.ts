@@ -1,6 +1,7 @@
 import { resend } from './resend';
 import { getAblyClient } from '@repo/shared';
 import { withNervousSystemTracing, injectTracingHeaders } from '@repo/shared/tracing';
+import { AppConfig } from '@repo/shared';
 
 export interface NotifyOptions {
   to: string;
@@ -38,7 +39,7 @@ export class NotifyService {
 
     // 3. Trigger Failover Webhook to Intention Engine (Saga Pattern)
     // This ensures the system proactively finds alternatives without user intervention
-    const intentionEngineUrl = process.env.INTENTION_ENGINE_API_URL;
+    const intentionEngineUrl = AppConfig.getIntentionEngineApiUrl();
     if (intentionEngineUrl) {
       const { signServiceToken } = await import('@repo/auth');
       const token = await signServiceToken({ purpose: 'reservation_failover' });
@@ -86,7 +87,8 @@ export class NotifyService {
   }
 
   static async sendClaimInvitation(ownerEmail: string, restaurantName: string, claimToken: string) {
-    const claimUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://table-stack.vercel.app'}/onboarding?token=${claimToken}`;
+    const appUrl = AppConfig.getAll().NEXT_PUBLIC_APP_URL || 'https://table-stack.vercel.app';
+    const claimUrl = `${appUrl}/onboarding?token=${claimToken}`;
     await this.sendNotification({
       to: ownerEmail,
       subject: `Claim your restaurant: ${restaurantName} on TableStack`,

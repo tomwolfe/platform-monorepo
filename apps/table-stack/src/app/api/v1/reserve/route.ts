@@ -123,31 +123,33 @@ export async function POST(req: NextRequest) {
     // This prevents race conditions by locking rows during the transaction
     // ============================================================================
     const result = await getDb().transaction(async (tx: any) => {
-      // Auto-assign logic with row-level locking (FOR UPDATE)
+      // Auto-assign logic with row-level locking (FOR UPDATE SKIP LOCKED)
       if (!isShadow && !assignedTableId && (!combinedTableIds || !Array.isArray(combinedTableIds) || combinedTableIds.length === 0)) {
-        // Find first vacant table matching partySize with row-level lock
-        const availableTable = await tx.query.restaurantTables.findFirst({
-          where: and(
-            eq(restaurantTables.restaurantId, targetRestaurantId),
-            eq(restaurantTables.isActive, true),
-            lte(restaurantTables.minCapacity, partySize),
-            gte(restaurantTables.maxCapacity, partySize),
-            sql`NOT EXISTS (
+        // CRITICAL FIX: Use raw SQL with FOR UPDATE SKIP LOCKED to prevent race conditions
+        // Drizzle ORM doesn't support FOR UPDATE directly, so we use raw SQL
+        const availableTable = await tx.execute(sql`
+          SELECT id, restaurant_id, "minCapacity", "maxCapacity", "isActive"
+          FROM ${restaurantTables}
+          WHERE ${restaurantTables.restaurantId} = ${targetRestaurantId}
+            AND ${restaurantTables.isActive} = true
+            AND ${restaurantTables.minCapacity} <= ${partySize}
+            AND ${restaurantTables.maxCapacity} >= ${partySize}
+            AND NOT EXISTS (
               SELECT 1 FROM ${restaurantReservations} r
               WHERE r.table_id = ${restaurantTables.id}
-              AND r.status = 'confirmed'
-              AND (${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(start.toISOString())}, ${sql.placeholder(end.toISOString())})
-            )`
-          ),
-          // Note: Drizzle ORM doesn't support FOR UPDATE directly
-          // We use a raw SQL query for row-level locking if needed
-        });
+                AND r.status = 'confirmed'
+                AND (r.start_time, r.end_time) OVERLAPS (${start.toISOString()}, ${end.toISOString()})
+            )
+          ORDER BY ${restaurantTables.id}
+          FOR UPDATE SKIP LOCKED
+          LIMIT 1
+        `);
 
-        if (!availableTable) {
+        if (!availableTable || availableTable.length === 0) {
           // Rollback will happen automatically
           throw new ConflictError('No suitable tables available for this time and party size');
         }
-        assignedTableId = availableTable.id;
+        assignedTableId = availableTable[0].id;
       }
 
       if (!isShadow) {

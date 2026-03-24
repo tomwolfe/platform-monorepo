@@ -253,8 +253,10 @@ export async function GET(req: NextRequest) {
     // EXECUTE PAYOUTS
     // Actually send the crypto payments to restaurants and drivers
     // ============================================================================
-    
+
     let executedCount = 0;
+    const startTime = Date.now();
+    const VERCEL_TIMEOUT_THRESHOLD = 8000; // Exit at 8 seconds to avoid 10s hard timeout
 
     if (restaurantPayouts.length + driverPayouts.length > 0) {
       try {
@@ -275,19 +277,24 @@ export async function GET(req: NextRequest) {
           transport: fallback(BASE_RPC_URLS.map((url) => http(url))),
         });
 
-        // Create public client for waiting for transaction receipts
-        const publicClient = createPublicClient({
-          chain: base,
-          transport: fallback(BASE_RPC_URLS.map((url) => http(url))),
-        });
-
         console.log(`[Payout Cron] Executing ${restaurantPayouts.length + driverPayouts.length} payouts from ${treasuryAddress}`);
 
         // USDC contract address on Base
         const USDC_CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913') as Address;
 
-        // Execute restaurant payouts
-        for (const payout of restaurantPayouts) {
+        /**
+         * Execute a single payout with timeout protection
+         */
+        const executePayout = async (
+          payout: { address: string; amount: string; currency: string; orderId: string },
+          payoutType: 'restaurant' | 'driver'
+        ): Promise<boolean> => {
+          // Check if we're approaching Vercel timeout
+          if (Date.now() - startTime > VERCEL_TIMEOUT_THRESHOLD) {
+            console.warn(`[Payout Cron] Approaching Vercel timeout, skipping ${payoutType} payout ${payout.orderId}`);
+            return false;
+          }
+
           try {
             // Mark as processing first (idempotency)
             await getDb().update(orders)
@@ -302,7 +309,7 @@ export async function GET(req: NextRequest) {
               args: [payout.address as Address, BigInt(payout.amount)],
             });
 
-            console.log(`[Payout Cron] Restaurant payout submitted: ${payout.orderId} -> ${payout.address} (${payout.amount} ${payout.currency}) tx: ${hash}`);
+            console.log(`[Payout Cron] ${payoutType} payout submitted: ${payout.orderId} -> ${payout.address} (${payout.amount} ${payout.currency}) tx: ${hash}`);
 
             // CRITICAL FIX: Do NOT wait for transaction receipt (Vercel 10s timeout)
             // Instead, save the tx hash and let verify-payouts cron confirm asynchronously
@@ -312,52 +319,59 @@ export async function GET(req: NextRequest) {
               })
               .where(eq(orders.id, payout.orderId));
 
-            executedCount++;
+            return true;
           } catch (error) {
-            console.error(`[Payout Cron] Failed to execute restaurant payout ${payout.orderId}:`, error);
+            console.error(`[Payout Cron] Failed to execute ${payoutType} payout ${payout.orderId}:`, error);
             // Mark as failed
             await getDb().update(orders)
               .set({ payoutStatus: 'failed' })
               .where(eq(orders.id, payout.orderId));
+            return false;
           }
+        };
+
+        // Combine all payouts into a single array for batch processing
+        const allPayouts = [
+          ...restaurantPayouts.map(p => ({ ...p, type: 'restaurant' as const })),
+          ...driverPayouts.map(p => ({ ...p, type: 'driver' as const })),
+        ];
+
+        // Process in batches of 5 to avoid overwhelming the RPC and manage timeout risk
+        const BATCH_SIZE = 5;
+        const batches = [];
+        for (let i = 0; i < allPayouts.length; i += BATCH_SIZE) {
+          batches.push(allPayouts.slice(i, i + BATCH_SIZE));
         }
 
-        // Execute driver payouts
-        for (const payout of driverPayouts) {
-          try {
-            // Mark as processing first (idempotency)
-            await getDb().update(orders)
-              .set({ payoutStatus: 'processing' })
-              .where(eq(orders.id, payout.orderId));
+        console.log(`[Payout Cron] Processing ${allPayouts.length} payouts in ${batches.length} batches of ${BATCH_SIZE}`);
 
-            // Execute USDC transfer
-            const hash = await walletClient.writeContract({
-              address: USDC_CONTRACT_ADDRESS,
-              abi: ERC20_ABI,
-              functionName: 'transfer',
-              args: [payout.address as Address, BigInt(payout.amount)],
-            });
-
-            console.log(`[Payout Cron] Driver payout submitted: ${payout.orderId} -> ${payout.address} (${payout.amount} ${payout.currency}) tx: ${hash}`);
-
-            // CRITICAL FIX: Do NOT wait for transaction receipt (Vercel 10s timeout)
-            // Instead, save the tx hash and let verify-payouts cron confirm asynchronously
-            await getDb().update(orders)
-              .set({
-                payoutTxHash: hash,
-              })
-              .where(eq(orders.id, payout.orderId));
-
-            executedCount++;
-          } catch (error) {
-            console.error(`[Payout Cron] Failed to execute driver payout ${payout.orderId}:`, error);
-            // Mark as failed
-            await getDb().update(orders)
-              .set({ payoutStatus: 'failed' })
-              .where(eq(orders.id, payout.orderId));
+        // Execute batches sequentially, but payouts within each batch in parallel
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+          const batch = batches[batchIndex];
+          
+          // Check timeout before starting batch
+          if (Date.now() - startTime > VERCEL_TIMEOUT_THRESHOLD) {
+            console.warn(`[Payout Cron] Approaching Vercel timeout before batch ${batchIndex + 1}, stopping execution`);
+            break;
           }
+
+          console.log(`[Payout Cron] Executing batch ${batchIndex + 1}/${batches.length} (${batch.length} payouts)`);
+
+          // Execute batch in parallel with Promise.allSettled
+          const results = await Promise.allSettled(
+            batch.map(payout => executePayout(payout, payout.type))
+          );
+
+          // Count successful executions
+          const batchSuccesses = results.filter(
+            r => r.status === 'fulfilled' && r.value === true
+          ).length;
+          
+          executedCount += batchSuccesses;
+
+          console.log(`[Payout Cron] Batch ${batchIndex + 1} completed: ${batchSuccesses}/${batch.length} successful`);
         }
-        
+
         console.log(`[Payout Cron] Successfully executed ${executedCount} payouts`);
       } catch (error) {
         console.error('[Payout Cron] Critical error during payout execution:', error);

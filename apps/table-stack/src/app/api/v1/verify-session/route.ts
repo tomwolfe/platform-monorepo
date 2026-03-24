@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyBridgeToken } from '@repo/auth';
 import { SecurityProvider } from '@repo/auth';
 import { isTimingSafeEqual } from '@repo/shared/utils/crypto';
+import { AppConfig } from '@repo/shared';
 
 export async function POST(req: NextRequest) {
   // 1. TIMING-SAFE: Validate internal key
   const internalKey = req.headers.get('x-internal-key');
-  const expectedKey = process.env.INTERNAL_SYSTEM_KEY;
-  
+  const expectedKey = AppConfig.getInternalSystemKey();
+
   if (!internalKey || !expectedKey || !isTimingSafeEqual(internalKey, expectedKey)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

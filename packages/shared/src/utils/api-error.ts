@@ -306,6 +306,11 @@ export function withApiErrorHandler<T>(
     try {
       return await fn(req);
     } catch (error) {
+      // Re-throw Next.js redirect and notFound errors to preserve navigation
+      if (isNextRedirectError(error)) {
+        throw error;
+      }
+
       const errorResponse = formatApiError(error, errorCode);
       const status = getErrorStatusCode(errorCode);
       return Response.json(errorResponse, { status });
@@ -393,6 +398,12 @@ export function withServerActionHandler<
       const result = await fn(...args);
       return { success: true, data: result };
     } catch (error) {
+      // Re-throw Next.js redirect and notFound errors to preserve navigation
+      // These errors have special digest properties that Next.js uses internally
+      if (isNextRedirectError(error)) {
+        throw error;
+      }
+
       const errorMessage = options?.transformError
         ? options.transformError(error)
         : error instanceof Error
@@ -411,4 +422,34 @@ export function withServerActionHandler<
       };
     }
   };
+}
+
+/**
+ * Check if an error is a Next.js redirect or notFound error
+ *
+ * Next.js uses special error objects with digest properties to signal
+ * redirects and notFound responses. We must re-throw these to preserve
+ * their behavior.
+ *
+ * @param error - The error to check
+ * @returns True if the error is a Next.js redirect/notFound error
+ */
+function isNextRedirectError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  
+  // Check for Next.js redirect digest
+  if ('digest' in error && typeof error.digest === 'string') {
+    const digest = error.digest;
+    if (digest.includes('NEXT_REDIRECT') || digest.includes('NEXT_NOT_FOUND')) {
+      return true;
+    }
+  }
+  
+  // Fallback: check error message for redirect patterns
+  const message = error.message;
+  if (message.includes('NEXT_REDIRECT') || message.includes('NEXT_NOT_FOUND')) {
+    return true;
+  }
+  
+  return false;
 }

@@ -228,6 +228,12 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
 
     console.log(`Getting functional route estimate from ${normalizedOrigin} to ${normalizedDestination} via ${travel_mode}...`);
 
+    // CI/TEST MODE: Use Haversine fallback for deterministic, offline-safe testing
+    if (process.env.CI === 'true' || process.env.NODE_ENV === 'test') {
+      console.log('[get_route_estimate] CI/Test mode detected - using Haversine fallback');
+      return getHaversineFallback(normalizedOrigin, normalizedDestination, originCoords, destCoords, travel_mode);
+    }
+
     // OSRM handles driving, walking, cycling
     const osrmMode = travel_mode === "bicycling" ? "bicycle" :
                     travel_mode === "walking" ? "foot" : "car";
@@ -313,7 +319,7 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
       const destCoords = await resolveCoords(destination);
       const normalizedOrigin = normalizeLocation(origin);
       const normalizedDestination = normalizeLocation(destination);
-      
+
       return getHaversineFallback(normalizedOrigin, normalizedDestination, originCoords, destCoords, travel_mode);
     } catch (fallbackError: any) {
       return { success: false, error: error.message };

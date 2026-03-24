@@ -1,6 +1,6 @@
 /**
  * Vitest Test Setup
- * 
+ *
  * Global test configuration and mocks for Web3 testing
  */
 
@@ -30,10 +30,13 @@ vi.mock("viem", async () => {
     isHash: vi.fn((hash) => {
       return /^0x[a-fA-F0-9]{64}$/.test(hash);
     }),
+    stringToHex: vi.fn((str) => {
+      return `0x${Buffer.from(str, 'utf-8').toString('hex')}`;
+    }),
   };
 });
 
-// Mock wagmi globally
+// Mock wagmi globally - ENHANCED for CryptoCheckout tests
 vi.mock("wagmi", async () => {
   const actual = await vi.importActual("wagmi");
   return {
@@ -77,6 +80,27 @@ vi.mock("wagmi", async () => {
     useDisconnect: vi.fn(() => ({
       disconnect: vi.fn(),
     })),
+    // CRITICAL: Mock useSignMessage for signature flow
+    useSignMessage: vi.fn(() => ({
+      signMessage: vi.fn(),
+      data: null,
+      error: null,
+      isPending: false,
+    })),
+    // Mock useWriteContract for USDC transfers
+    useWriteContract: vi.fn(() => ({
+      writeContract: vi.fn(),
+      data: null,
+      error: null,
+      isPending: false,
+    })),
+    // Mock useReadContract for balance checks
+    useReadContract: vi.fn(() => ({
+      data: null,
+      error: null,
+      isLoading: false,
+      refetch: vi.fn(),
+    })),
     createConfig: vi.fn(),
     createStorage: vi.fn(),
     fallback: vi.fn(),
@@ -111,14 +135,38 @@ vi.mock("wagmi/chains", async () => {
   };
 });
 
-// Mock Web3Provider context
+// Mock Web3Provider context - ENHANCED with USDC contract address
 vi.mock("@/components/Web3Provider", () => ({
   useWeb3: vi.fn(() => ({
     treasuryAddress: "0x1234567890123456789012345678901234567890",
     defaultChainId: 8453,
     supportedChainIds: [8453, 137, 1],
+    usdcContractAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // Base USDC
   })),
   Web3Provider: vi.fn(({ children }) => children),
+}));
+
+// Mock @repo/shared/utils/erc20-abi
+vi.mock("@repo/shared/utils/erc20-abi", () => ({
+  ERC20_ABI: [
+    {
+      inputs: [{ name: "account", type: "address" }],
+      name: "balanceOf",
+      outputs: [{ type: "uint256" }],
+      stateMutability: "view",
+      type: "function",
+    },
+    {
+      inputs: [
+        { name: "to", type: "address" },
+        { name: "amount", type: "uint256" },
+      ],
+      name: "transfer",
+      outputs: [{ type: "bool" }],
+      stateMutability: "nonpayable",
+      type: "function",
+    },
+  ],
 }));
 
 // Reset mocks before each test

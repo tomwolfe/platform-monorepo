@@ -9,7 +9,7 @@ import {
   CallToolResult
 } from "@modelcontextprotocol/sdk/types.js";
 import * as zod from "zod";
-import { AllToolsMap, ToolInput, validateToolParams } from "@repo/mcp-protocol";
+import { AllToolsMap, ToolInput, validateToolParams, mapJsonSchemaToZod } from "@repo/mcp-protocol";
 
 /**
  * McpAdapter provides bi-directional compatibility between
@@ -95,8 +95,8 @@ export class McpAdapter {
 }
 
 /**
- * McpManager handles MCP protocol handshake and transport.
- * Enhanced with strict type safety using AllToolsMap from @repo/mcp-protocol
+ * McpManager handles MCP protocol handshake and tool execution.
+ * Enhanced with strict type safety using Zod schemas
  */
 export class McpManager {
   private tools: Map<string, RegistryToolDefinition> = new Map();
@@ -118,23 +118,33 @@ export class McpManager {
 
   /**
    * Handles an MCP CallTool request.
-   * Enhanced with strict type validation using AllToolsMap
+   * Enhanced with strict type validation using Zod schemas
    */
-  async callTool<TToolName extends keyof AllToolsMap>(
-    name: TToolName,
+  async callTool(
+    name: string,
     args: Record<string, unknown>
   ): Promise<CallToolResult> {
-    const tool = this.tools.get(name as string);
+    const tool = this.tools.get(name);
     if (!tool) {
       throw new Error(`Tool not found: ${name}`);
     }
 
     try {
-      // Validate parameters using the Zod schema from AllToolsMap
-      // This ensures type safety at runtime
-      const validatedArgs = validateToolParams(name, args);
+      // TYPE SAFETY: Validate parameters using Zod schema
+      // First, try to validate against known tool schemas from AllToolsMap
+      let validatedArgs: unknown = args;
+      
+      // Check if tool name matches a known tool in AllToolsMap
+      if (this.isKnownTool(name)) {
+        validatedArgs = validateToolParams(name as keyof AllToolsMap, args);
+      } else {
+        // For dynamic/unknown tools, use JSON Schema to Zod conversion
+        const schema = tool.inputSchema || McpAdapter.parametersToInputSchema(tool.parameters || []);
+        const zodSchema = mapJsonSchemaToZod(schema);
+        validatedArgs = zodSchema.parse(args);
+      }
 
-      const result = await tool.execute(validatedArgs);
+      const result = await tool.execute(validatedArgs as Record<string, unknown>);
       return {
         content: [
           {
@@ -156,5 +166,37 @@ export class McpManager {
         isError: true,
       };
     }
+  }
+
+  /**
+   * Type guard to check if a tool name is in AllToolsMap
+   */
+  private isKnownTool(name: string): name is keyof AllToolsMap {
+    // Check against known tool names from the protocol
+    const knownTools = [
+      // TableStack
+      'getAvailability', 'bookTable', 'getLiveOperationalState',
+      // Table Management
+      'get_table_availability', 'get_table_layout', 'get_reservation',
+      'list_reservations', 'check_table_conflicts', 'create_reservation',
+      'update_reservation', 'cancel_reservation', 'add_to_waitlist',
+      'update_waitlist_status', 'validate_reservation',
+      // OpenDelivery
+      'calculateQuote', 'getDriverLocation',
+      // Delivery Fulfillment
+      'calculate_delivery_quote', 'fulfill_intent', 'get_fulfillment_status',
+      'cancel_fulfillment', 'update_fulfillment', 'validate_fulfillment',
+      // Mobility
+      'request_ride', 'get_route_estimate',
+      // Booking
+      'reserve_restaurant',
+      // Communication
+      'send_comm',
+      // Context
+      'get_weather_data',
+      // Parallel Execution
+      'resolve_dependencies', 'execute_parallel',
+    ];
+    return knownTools.includes(name);
   }
 }

@@ -29,33 +29,42 @@ import {
 // ============================================================================
 
 // Mock @repo/database - Create a SINGLE mock instance to avoid stale references
-const mockRestaurantsFindFirst = vi.fn();
-const mockDbInstance = {
-  query: {
-    restaurants: {
-      findFirst: mockRestaurantsFindFirst,
-    },
-  },
-};
+vi.mock('@repo/database', async () => {
+  const actual = await vi.importActual('@repo/database');
+  
+  // Create mock query objects
+  const mockRestaurantsQuery = {
+    findFirst: vi.fn(),
+  };
 
-vi.mock('@repo/database', () => ({
-  getDb: vi.fn(() => mockDbInstance),
-  restaurants: {
-    id: 'id',
-    apiKey: 'api_key',
-  },
-  eq: vi.fn((col, val) => ({ column: col, value: val })),
-}));
+  return {
+    ...(actual as any),
+    getDb: vi.fn(() => ({
+      query: {
+        restaurants: mockRestaurantsQuery,
+      },
+      execute: vi.fn(),
+    })),
+    restaurants: {
+      id: 'id',
+      apiKey: 'api_key',
+    },
+    eq: vi.fn((col, val) => ({ column: col, value: val })),
+  };
+});
 
 // Mock @repo/auth
-vi.mock('@repo/auth', () => {
+vi.mock('@repo/auth', async () => {
+  const actual = await vi.importActual('@repo/auth');
+  
   const mockVerifyServiceToken = vi.fn();
   const mockVerifyScopedJWT = vi.fn();
   const mockVerifyAsymmetricJWT = vi.fn();
   const mockSecurityProviderVerify = vi.fn();
   const mockSecurityProviderSign = vi.fn();
-  
+
   return {
+    ...(actual as any),
     verifyServiceToken: mockVerifyServiceToken,
     verifyScopedJWT: mockVerifyScopedJWT,
     verifyAsymmetricJWT: mockVerifyAsymmetricJWT,
@@ -63,14 +72,6 @@ vi.mock('@repo/auth', () => {
       verifySignature: mockSecurityProviderVerify,
       signPayload: mockSecurityProviderSign,
     },
-    // Export the mock functions for test access
-    __mocks: {
-      verifyServiceToken: mockVerifyServiceToken,
-      verifyScopedJWT: mockVerifyScopedJWT,
-      verifyAsymmetricJWT: mockVerifyAsymmetricJWT,
-      verifySignature: mockSecurityProviderVerify,
-      signPayload: mockSecurityProviderSign,
-    }
   };
 });
 
@@ -82,23 +83,22 @@ vi.mock('../redis', () => ({
   },
 }));
 
-// Import mocked modules
+// Import mocked modules AFTER mocks are hoisted
 import { getDb, restaurants, eq } from '@repo/database';
-import { verifyServiceToken, verifyScopedJWT, verifyAsymmetricJWT, SecurityProvider, __mocks } from '@repo/auth';
+import { verifyServiceToken, verifyScopedJWT, verifyAsymmetricJWT, SecurityProvider } from '@repo/auth';
 import { redis } from '../redis';
 
 // Get references to mocked functions after import
 const mockGetDb = getDb as any;
-const mockVerifyServiceToken = __mocks.verifyServiceToken;
-const mockVerifyScopedJWT = __mocks.verifyScopedJWT;
-const mockVerifyAsymmetricJWT = __mocks.verifyAsymmetricJWT;
+const mockVerifyServiceToken = verifyServiceToken as any;
+const mockVerifyScopedJWT = verifyScopedJWT as any;
+const mockVerifyAsymmetricJWT = verifyAsymmetricJWT as any;
 const mockRedisIncr = redis.incr as any;
-const mockRedisExpire = redis.expire as any;
-const mockSecurityProviderVerify = __mocks.verifySignature;
-const mockSecurityProviderSign = __mocks.signPayload;
+const mockSecurityProviderVerify = SecurityProvider.verifySignature as any;
+const mockSecurityProviderSign = SecurityProvider.signPayload as any;
 
 // Helper to get the current mock for restaurants.findFirst
-const getMockRestaurantsFindFirst = () => mockDbInstance.query.restaurants.findFirst;
+const getMockRestaurantsFindFirst = () => mockGetDb().query.restaurants.findFirst;
 
 // ============================================================================
 // TEST HELPERS

@@ -1,25 +1,23 @@
 /**
  * Crypto Checkout Integration Tests
- * 
+ *
  * End-to-end tests for the Web3 checkout flow
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { CryptoCheckout } from "../components/CryptoCheckout";
-import { WagmiProvider, createConfig, http } from "wagmi";
-import { base } from "wagmi/chains";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-// Mock wagmi hooks
+// Mock wagmi hooks - MUST come before imports
 vi.mock("wagmi", async () => {
   const actual = await vi.importActual("wagmi");
   return {
     ...(actual as any),
     useAccount: vi.fn(() => ({
-      address: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+      address: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1",
       isConnected: true,
-      chain: base,
+      chain: { id: 8453, name: "Base" },
     })),
     useSendTransaction: vi.fn(() => ({
       data: null,
@@ -40,8 +38,23 @@ vi.mock("wagmi", async () => {
         symbol: "ETH",
       },
     })),
-    createConfig: vi.fn(),
-    http: vi.fn(),
+    useSignMessage: vi.fn(() => ({
+      signMessage: vi.fn(),
+      data: null,
+      error: null,
+      isPending: false,
+    })),
+    useWriteContract: vi.fn(() => ({
+      writeContract: vi.fn(),
+      data: null,
+      error: null,
+      isPending: false,
+    })),
+    useReadContract: vi.fn(() => ({
+      data: null,
+      error: null,
+      isLoading: false,
+    })),
   };
 });
 
@@ -51,7 +64,30 @@ vi.mock("../components/Web3Provider", () => ({
     treasuryAddress: "0x1234567890123456789012345678901234567890",
     defaultChainId: 8453,
     supportedChainIds: [8453, 137, 1],
+    usdcContractAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   })),
+}));
+
+// Mock viem
+vi.mock("viem", async () => {
+  const actual = await vi.importActual("viem");
+  return {
+    ...(actual as any),
+    formatUnits: vi.fn((value, decimals) => {
+      return String(BigInt(value) / BigInt(Math.pow(10, decimals)));
+    }),
+    parseUnits: vi.fn((value, decimals) => {
+      return BigInt(parseFloat(value) * Math.pow(10, decimals));
+    }),
+    stringToHex: vi.fn((str) => {
+      return `0x${Buffer.from(str, 'utf-8').toString('hex')}`;
+    }),
+  };
+});
+
+// Mock ERC20 ABI
+vi.mock("@repo/shared/utils/erc20-abi", () => ({
+  ERC20_ABI: [],
 }));
 
 const createTestWrapper = () => {

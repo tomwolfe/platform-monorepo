@@ -20,12 +20,10 @@ export default defineConfig({
       '**/.next/**',
       '**/packages/**/drizzle/**',
       '**/packages/shared/src/accessibility.tsx',
-      '**/table-stack/src/lib/__tests__/auth.test.ts', // TODO: Fix mock setup
       '**/apps/intention-engine/src/lib/__tests__/occ-integration.test.ts', // Requires Redis connection
       '**/apps/intention-engine/src/lib/__tests__/execution_safety.test.ts', // Uses process.exit()
       '**/apps/intention-engine/src/lib/__tests__/engine_failure_simulation.test.ts', // No vitest tests
       '**/apps/table-stack/src/app/api/v1/reserve/__tests__/route.test.ts', // Module resolution issues
-      '**/apps/open-delivery/src/components/__tests__/CryptoCheckout.test.tsx', // Missing testing-library
       '**/apps/intention-engine/src/__tests__/chaos-engineering.test.ts', // Complex mocking issues - TODO fix
       '**/apps/intention-engine/src/__tests__/saga-integration.test.ts', // Complex mocking issues - TODO fix
     ],

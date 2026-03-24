@@ -15,8 +15,8 @@
  */
 
 import { z } from "zod";
-import { inferIntent } from "@/lib/intent";
-import { generatePlan } from "@/lib/engine/planner";
+import { inferIntent } from "./intent";
+import { generatePlan } from "./unified-planner";
 import { createAuditLog } from "@/lib/audit";
 import { handleTableStackRejection } from "@/lib/listeners/tablestack";
 import { signServiceToken } from "@repo/auth";

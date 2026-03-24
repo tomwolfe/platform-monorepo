@@ -454,7 +454,7 @@ Respond with a JSON object: {"score": number (0-1), "explanation": string}`;
         systemPrompt: "You are a high-precision semantic validation system. Verify if the provided entity data matches the user's qualitative adjectives (e.g. 'romantic', 'cheap', 'nearby').",
         schema: z.object({ score: z.number(), explanation: z.string() }),
       });
-      
+
       return {
         score: validationResult.data.score,
         valid: validationResult.data.score >= 0.7,
@@ -465,6 +465,49 @@ Respond with a JSON object: {"score": number (0-1), "explanation": string}`;
       return { score: heuristicScore, valid: heuristicScore >= 0.5, reason: "Heuristic validation applied" };
     }
   }
-  
+
   return { score: heuristicScore, valid: true };
+}
+
+// ============================================================================
+// BACKWARD COMPATIBILITY WRAPPER
+// inferIntent legacy API for existing callers
+// ============================================================================
+
+export interface IntentInferenceResult {
+  hypotheses: {
+    primary: Intent;
+    alternatives: Intent[];
+    isAmbiguous: boolean;
+  };
+  rawResponse: string;
+}
+
+/**
+ * Backward-compatible wrapper for legacy inferIntent API.
+ * Maps parseIntent result to the legacy IntentInferenceResult structure.
+ */
+export async function inferIntent(
+  text: string,
+  avoidTools: string[] = [],
+  history: Intent[] = [],
+  lastContext?: {
+    intentType?: string;
+    rawText?: string;
+    parameters?: Record<string, unknown>;
+  },
+  clerkId?: string
+): Promise<IntentInferenceResult> {
+  // Note: avoidTools, history, lastContext, and clerkId are ignored in this wrapper
+  // as the new parseIntent doesn't use them. Future enhancement: integrate these.
+  const parseResult = await parseIntent(text);
+  
+  return {
+    hypotheses: {
+      primary: parseResult.intent,
+      alternatives: [],
+      isAmbiguous: parseResult.intent.requires_clarification,
+    },
+    rawResponse: JSON.stringify(parseResult.intent),
+  };
 }

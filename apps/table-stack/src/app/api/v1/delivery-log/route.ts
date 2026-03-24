@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { validateRequest, verifySignature } from '@tablestack/lib/auth';
 import { NotifyService } from '@tablestack/lib/notifications';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   const bodyText = await req.text();

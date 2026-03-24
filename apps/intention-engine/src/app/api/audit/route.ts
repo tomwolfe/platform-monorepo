@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserAuditLogs } from "@/lib/audit";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
   const userIp = req.headers.get("x-forwarded-for") || "anonymous";

@@ -4,7 +4,7 @@ import { getDb, restaurantWaitlist } from "@repo/database";
 import { and, eq } from '@repo/database';
 import { validateRequest } from '@tablestack/lib/auth';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);

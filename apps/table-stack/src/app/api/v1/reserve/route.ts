@@ -12,7 +12,7 @@ import { redis } from '@tablestack/lib/redis';
 import { formatApiError, formatApiSuccess, type EngineErrorCode, ReserveRequestSchema, validateRequest as validateZodRequest } from '@repo/shared';
 import { ConflictError } from '@repo/shared/errors';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   const { error, status, context } = await validateRequest(req);

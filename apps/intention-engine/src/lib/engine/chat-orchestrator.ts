@@ -18,7 +18,7 @@ import { randomUUID } from "crypto";
 import { z } from "zod";
 import { promptInjectionMiddleware, type DetectionResult } from "@/lib/middleware/prompt-injection";
 import { fetchLiveOperationalState, type LiveOperationalStateResult } from "./live-state";
-import { inferIntent, type IntentInferenceResult } from "@/lib/intent";
+import { inferIntent, type IntentInferenceResult } from "./intent";
 import { NormalizationService } from "@/lib/normalization";
 import {
   createInitialState,
@@ -26,11 +26,11 @@ import {
   setPlan,
 } from "./state-machine";
 import { saveExecutionState } from "./memory";
-import { generatePlan } from "./planner";
+import { generatePlan } from "./unified-planner";
 import { getRegistryManager } from "./registry";
 import { verifyPlan, DEFAULT_SAFETY_POLICY } from "./verifier";
 import { QStashService } from "@repo/shared";
-import { type Intent } from "./schema";
+import { type Intent } from "./types";
 
 // ============================================================================
 // TYPES

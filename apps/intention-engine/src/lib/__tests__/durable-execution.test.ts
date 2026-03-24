@@ -9,6 +9,24 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { randomUUID } from "crypto";
+
+// Mock Redis to avoid requiring a live instance
+vi.mock("@/lib/redis-client", () => ({
+  redis: {
+    keys: vi.fn().mockResolvedValue([]),
+    del: vi.fn().mockResolvedValue(1),
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue("OK"),
+    setex: vi.fn().mockResolvedValue("OK"),
+  },
+}));
+
+vi.mock("@/lib/engine/memory", () => ({
+  saveExecutionState: vi.fn(),
+  loadExecutionState: vi.fn(),
+}));
+
 import {
   executeWorkflow,
   resumeFromCheckpoint,

@@ -24,7 +24,7 @@ vi.mock("../live-state", () => ({
   fetchLiveOperationalState: vi.fn(),
 }));
 
-vi.mock("@/lib/intent", () => ({
+vi.mock("@/lib/engine/intent", () => ({
   inferIntent: vi.fn(),
 }));
 
@@ -44,7 +44,7 @@ vi.mock("../memory", () => ({
   saveExecutionState: vi.fn(),
 }));
 
-vi.mock("../planner", () => ({
+vi.mock("../unified-planner", () => ({
   generatePlan: vi.fn(),
 }));
 
@@ -77,11 +77,11 @@ vi.mock("@repo/shared", () => ({
 
 import { promptInjectionMiddleware } from "@/lib/middleware/prompt-injection";
 import { fetchLiveOperationalState } from "../live-state";
-import { inferIntent } from "@/lib/intent";
+import { inferIntent } from "@/lib/engine/intent";
 import { NormalizationService } from "@/lib/normalization";
 import { createInitialState, setIntent, setPlan } from "../state-machine";
 import { saveExecutionState } from "../memory";
-import { generatePlan } from "../planner";
+import { generatePlan } from "../unified-planner";
 import { getRegistryManager } from "../registry";
 import { verifyPlan } from "../verifier";
 import { QStashService } from "@repo/shared";

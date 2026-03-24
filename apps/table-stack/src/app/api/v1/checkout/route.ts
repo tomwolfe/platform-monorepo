@@ -8,7 +8,7 @@ import { isValidTxHash } from '@repo/shared/utils/web3-verification';
 import { getCryptoPrices } from '@repo/shared/utils/crypto-price';
 import { CheckoutRequestSchema, validateRequest as validateZodRequest, formatApiError } from '@repo/shared';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 /**
  * Crypto Payment Verification Endpoint

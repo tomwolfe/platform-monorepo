@@ -3,7 +3,7 @@ import { redis } from "@/lib/redis-client";
 import { env } from "@/lib/config";
 import { AuditLog } from "@/lib/types";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
   if (!redis) {

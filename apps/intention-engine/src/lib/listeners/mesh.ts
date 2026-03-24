@@ -1,8 +1,8 @@
 import { RealtimeService } from "@repo/shared";
 import { handleTableStackRejection } from "./tablestack";
 import { verifyServiceToken } from "@repo/auth";
-import { inferIntent } from "@/lib/intent";
-import { generatePlan } from "@/lib/planner";
+import { inferIntent } from "@/lib/engine/intent";
+import { generatePlan } from "@/lib/engine/unified-planner";
 import { createAuditLog } from "@/lib/audit";
 import { getAblyClient } from "@repo/shared";
 import { getToolDefinitions } from "@/lib/tools";

@@ -48,7 +48,7 @@ const PreWarmRequestSchema = z.object({
   nextToolName: z.string().optional(),
 });
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 export const maxDuration = 5; // Short timeout - this is just warming
 
 export async function POST(req: NextRequest) {

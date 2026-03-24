@@ -8,14 +8,57 @@
  * All other tests are secondary to this flow.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { randomUUID } from "crypto";
+
+// Mock Redis to avoid requiring a live instance
+vi.mock("@/lib/redis-client", () => ({
+  redis: {
+    keys: vi.fn().mockResolvedValue([]),
+    del: vi.fn().mockResolvedValue(1),
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue("OK"),
+    setex: vi.fn().mockResolvedValue("OK"),
+    scan: vi.fn().mockResolvedValue([]),
+    hset: vi.fn().mockResolvedValue(1),
+    hget: vi.fn().mockResolvedValue(null),
+    hgetall: vi.fn().mockResolvedValue({}),
+    expire: vi.fn().mockResolvedValue(1),
+  },
+}));
+
+// Mock @repo/shared redis to avoid module not found errors
+vi.mock("@repo/shared", async () => {
+  const actual = await vi.importActual("@repo/shared");
+  return {
+    ...actual,
+    getRedisClient: vi.fn(() => ({
+      keys: vi.fn().mockResolvedValue([]),
+      del: vi.fn().mockResolvedValue(1),
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue("OK"),
+      setex: vi.fn().mockResolvedValue("OK"),
+      scan: vi.fn().mockResolvedValue([]),
+      hset: vi.fn().mockResolvedValue(1),
+      hget: vi.fn().mockResolvedValue(null),
+      hgetall: vi.fn().mockResolvedValue({}),
+      expire: vi.fn().mockResolvedValue(1),
+    })),
+    ServiceNamespace: {
+      IE: 'ie',
+      CACHE: 'cache',
+      SHARED: 'shared',
+    },
+  };
+});
+
 import { parseIntent } from "@/lib/engine/intent";
-import { generatePlan } from "@/lib/engine/planner";
-import { verifyPlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/verifier";
+import { generatePlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/unified-planner";
+import { verifyPlan } from "@/lib/engine/verifier";
 import { WorkflowMachine } from "@/lib/engine/workflow-machine";
 import { loadExecutionState } from "@/lib/engine/memory";
-import { redis } from "../redis-client";
+
+import { redis } from "@/lib/redis-client";
 
 // ============================================================================
 // MOCK TOOL EXECUTOR
@@ -91,13 +134,15 @@ describe("Golden Path - Restaurant Booking", () => {
     // =========================================================================
     // STEP 1: Parse User Intent
     // =========================================================================
-    
+
     const userInput = "Book a table for 4 people at The Italian Place tonight at 7pm";
-    
-    const intent = await parseIntent(userInput, {
+
+    const parseResult = await parseIntent(userInput, {
       lat: 40.7128,
       lng: -74.0060,
     });
+
+    const intent = parseResult.intent;
     
     expect(intent).toBeDefined();
     expect(intent.id).toBeDefined();
@@ -107,7 +152,7 @@ describe("Golden Path - Restaurant Booking", () => {
       party_size: 4,
       time: expect.any(String),
     });
-    
+
     console.log(`[GoldenPath] ✓ Intent parsed: ${intent.type}`);
     
     // =========================================================================

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { executePlan, type ToolExecutor } from "../engine/orchestrator";
+import { executePlan, type ToolExecutor } from "../engine/unified-planner";
 import type { Plan } from "../engine/types";
 import { randomUUID } from "crypto";
 

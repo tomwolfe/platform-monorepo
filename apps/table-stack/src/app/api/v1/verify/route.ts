@@ -5,7 +5,7 @@ import { restaurantReservations } from "@repo/database";
 import { eq } from '@repo/database';
 import { NotifyService } from '@tablestack/lib/notifications';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb, eq, lt, and } from "@repo/database";
 import { restaurantReservations, restaurantTables } from "@repo/database";
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization');

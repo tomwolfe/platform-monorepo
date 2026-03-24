@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { verifySignature } from "@repo/auth";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 const HotspotEventSchema = z.object({
   event: z.string(),

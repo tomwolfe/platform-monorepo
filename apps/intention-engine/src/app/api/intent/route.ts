@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inferIntent } from "@/lib/intent";
-import { generatePlan } from "@/lib/planner";
+import { inferIntent } from "@/lib/engine/intent";
+import { generatePlan } from "@/lib/engine/unified-planner";
 import { createAuditLog } from "@/lib/audit";
 import { getPlanWithAvoidance } from "@/app/actions";
 import { getMemoryClient } from "@/lib/engine/memory";

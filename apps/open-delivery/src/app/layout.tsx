@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { NervousSystemProvider, NervousSystemPulse } from "@repo/ui-theme";
-import { Web3Provider } from "@/components/Web3Provider";
+import { Web3Provider } from "@open-delivery/components/Web3Provider";
 import "./globals.css";
 
 const geistSans = Geist({

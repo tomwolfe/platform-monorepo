@@ -9,7 +9,7 @@ import { validateRequest } from '@tablestack/lib/auth';
 import { formatApiError, formatApiSuccess, withApiErrorHandler, type EngineErrorCode, withCache } from '@repo/shared';
 import { redis } from '@tablestack/lib/redis';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 /**
  * GET /api/v1/availability

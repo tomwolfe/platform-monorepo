@@ -17,7 +17,7 @@ import { redis } from "@/lib/redis-client";
 import { IDEMPOTENCY_KEY_HEADER } from "@repo/shared";
 import { WebhookDispatcherService, createWebhookDispatcherService } from "@/lib/engine/webhook-dispatcher-service";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 // ============================================================================
 // SERVICE INSTANCE

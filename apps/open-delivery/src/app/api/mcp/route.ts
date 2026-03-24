@@ -6,7 +6,7 @@ import { randomUUID } from "crypto";
 import { getDb, orders, orderItems } from "@repo/database";
 import { eq } from "drizzle-orm";
 import { RealtimeService, AppConfig } from "@repo/shared";
-import { dispatchOrder } from "@/lib/dispatcher";
+import { dispatchOrder } from "@open-delivery/lib/dispatcher";
 
 // Lazy load Redis to avoid build-time initialization
 let _redis: any = null;

@@ -5,6 +5,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    env: {
+      NODE_ENV: 'test',
+    },
     include: [
       'apps/**/src/__tests__/**/*.test.ts',
       'apps/**/src/**/__tests__/**/*.test.ts',
@@ -21,12 +24,6 @@ export default defineConfig({
       '**/apps/intention-engine/src/lib/__tests__/occ-integration.test.ts', // Requires Redis connection
       '**/apps/intention-engine/src/lib/__tests__/execution_safety.test.ts', // Uses process.exit()
       '**/apps/intention-engine/src/lib/__tests__/engine_failure_simulation.test.ts', // No vitest tests
-      '**/apps/intention-engine/src/lib/__tests__/parallel_execution.test.ts', // Module resolution issues
-      '**/apps/intention-engine/src/lib/engine/__tests__/planner_fan_out.test.ts', // Module resolution issues
-      '**/apps/intention-engine/src/lib/engine/__tests__/chat-orchestrator.test.ts', // Module resolution issues
-      '**/apps/intention-engine/src/__tests__/e2e-delivery-flow.test.ts', // Module resolution issues
-      '**/apps/intention-engine/src/__tests__/golden-path.test.ts', // Module resolution issues
-      '**/apps/intention-engine/src/lib/__tests__/durable-execution.test.ts', // Module resolution issues
       '**/apps/table-stack/src/app/api/v1/reserve/__tests__/route.test.ts', // Module resolution issues
       '**/apps/open-delivery/src/components/__tests__/CryptoCheckout.test.tsx', // Missing testing-library
       '**/apps/intention-engine/src/__tests__/chaos-engineering.test.ts', // Complex mocking issues
@@ -94,12 +91,12 @@ export default defineConfig({
       // App-specific aliases - order matters! More specific patterns first
       // TableStack app aliases
       '@tablestack': path.resolve(__dirname, './apps/table-stack/src'),
-      // OpenDelivery app aliases
-      '@/components': path.resolve(__dirname, './apps/open-delivery/src/components'),
-      '@/lib': path.resolve(__dirname, './apps/open-delivery/src/lib'),
-      '@/test': path.resolve(__dirname, './apps/open-delivery/src/test'),
-      // IntentionEngine app (default @)
+      // IntentionEngine app (must come before open-delivery aliases)
       '@': path.resolve(__dirname, './apps/intention-engine/src'),
+      // OpenDelivery app aliases (these won't override @ since @ comes first)
+      '@open-delivery/components': path.resolve(__dirname, './apps/open-delivery/src/components'),
+      '@open-delivery/lib': path.resolve(__dirname, './apps/open-delivery/src/lib'),
+      '@open-delivery/test': path.resolve(__dirname, './apps/open-delivery/src/test'),
       // Shared packages
       '@repo/shared': path.resolve(__dirname, './packages/shared/src'),
       '@repo/mcp-protocol': path.resolve(__dirname, './packages/mcp-protocol/src'),

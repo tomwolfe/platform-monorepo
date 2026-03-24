@@ -6,7 +6,7 @@ import useSWR from 'swr';
 import { Truck, MapPin, DollarSign, Star, Bell, Navigation, Package, Wallet } from 'lucide-react';
 import { acceptDelivery, linkDriverWallet, getDriverWallet } from './actions';
 import Link from 'next/link';
-import { ConnectWallet } from "@/components/ConnectWallet";
+import { ConnectWallet } from "@open-delivery/components/ConnectWallet";
 import { useAccount } from "wagmi";
 
 // Type-safe event payloads

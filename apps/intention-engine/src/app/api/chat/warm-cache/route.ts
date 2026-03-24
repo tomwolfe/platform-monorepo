@@ -37,7 +37,7 @@ const WarmCacheRequestSchema = z.object({
   clerkId: z.string().optional(),
 });
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 export const maxDuration = 5; // Short timeout - this is a best-effort cache warm
 
 export async function POST(req: NextRequest) {

@@ -7,14 +7,27 @@
  * Focus: Web3 payments, driver dispatch, real-time tracking
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { randomUUID } from "crypto";
+
+// Mock Redis to avoid requiring a live instance
+vi.mock("@/lib/redis-client", () => ({
+  redis: {
+    keys: vi.fn().mockResolvedValue([]),
+    del: vi.fn().mockResolvedValue(1),
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue("OK"),
+    setex: vi.fn().mockResolvedValue("OK"),
+  },
+}));
+
 import { parseIntent } from "@/lib/engine/intent";
-import { generatePlan } from "@/lib/engine/planner";
-import { verifyPlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/verifier";
+import { generatePlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/unified-planner";
+import { verifyPlan } from "@/lib/engine/verifier";
 import { WorkflowMachine } from "@/lib/engine/workflow-machine";
 import { loadExecutionState } from "@/lib/engine/memory";
-import { redis } from "../redis-client";
+
+import { redis } from "@/lib/redis-client";
 
 // ============================================================================
 // MOCK TOOL EXECUTOR FOR DELIVERY
@@ -107,13 +120,15 @@ describe("E2E - OpenDelivery Flow", () => {
     // =========================================================================
     // STEP 1: Parse User Intent
     // =========================================================================
-    
+
     const userInput = "Order pizza from Pizza Palace and deliver to 123 Main St";
-    
-    const intent = await parseIntent(userInput, {
+
+    const parseResult = await parseIntent(userInput, {
       lat: 40.7128,
       lng: -74.0060,
     });
+
+    const intent = parseResult.intent;
     
     expect(intent).toBeDefined();
     expect(intent.type).toBe("ACTION");
@@ -121,7 +136,7 @@ describe("E2E - OpenDelivery Flow", () => {
       restaurant_name: expect.stringContaining("Pizza"),
       delivery_address: expect.stringContaining("Main St"),
     });
-    
+
     console.log(`[DeliveryE2E] ✓ Intent parsed: ${intent.type}`);
     
     // =========================================================================

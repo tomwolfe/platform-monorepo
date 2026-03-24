@@ -269,6 +269,33 @@ export async function generateStructured<T>(
 
   // CI MOCK INTERCEPTOR - Provide deterministic mocks for CI/test environments
   if (process.env.CI === "true" || process.env.NODE_ENV === "test") {
+    // Return appropriate mock data based on model type
+    if (modelType === "classification") {
+      const mockIntentData = {
+        type: "ACTION",
+        confidence: 0.95,
+        parameters: {
+          restaurant_name: "The Italian Place",
+          party_size: 4,
+          time: "19:00",
+        },
+        explanation: "Mock intent for CI/test",
+        requires_clarification: false,
+      };
+      
+      return {
+        data: mockIntentData as T,
+        response: {
+          content: JSON.stringify(mockIntentData),
+          model_id: "ci-mock-classification",
+          latency_ms: 1,
+          token_usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+          finish_reason: "stop" as const,
+        }
+      };
+    }
+    
+    // Default mock for planning/other model types
     const mockData: any = {
       steps: [{
         step_number: 0,

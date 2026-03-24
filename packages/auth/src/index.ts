@@ -425,27 +425,11 @@ function parseExpiresIn(expiresIn: string): number {
 }
 
 /**
- * verifyInternalToken - Unified verification for internal tokens
- */
-export async function verifyInternalToken(token: string) {
-  const secret = getSecret();
-  try {
-    const { payload } = await jwtVerify(token, secret, {
-      algorithms: ['HS256'],
-    });
-    return payload;
-  } catch (error) {
-    return null;
-  }
-}
-
-/**
  * signServiceToken - For service-to-service communication
- * 
- * ZERO-TRUST UPGRADE: Now uses asymmetric JWT (RS256) instead of symmetric (HS256)
+ *
+ * ZERO-TRUST SECURITY: Uses asymmetric JWT (RS256) only
  * - Private key stays in Intention Engine
  * - Satellite apps verify with public key only
- * - Compromise of satellite doesn't expose signing capability
  */
 export async function signServiceToken(payload: Record<string, unknown> = {}, expires: string = '5m') {
   // Use asymmetric JWT for Zero-Trust security
@@ -457,28 +441,21 @@ export async function signServiceToken(payload: Record<string, unknown> = {}, ex
 
 /**
  * verifyServiceToken - Verifies a service-to-service token
- * 
- * ZERO-TRUST UPGRADE: Now verifies using public key (RS256)
- * Supports hybrid verification (RS256 preferred, HS256 fallback for migration)
+ *
+ * ZERO-TRUST SECURITY: Uses asymmetric JWT (RS256) only
+ * - Private key stays in Intention Engine
+ * - Satellite apps verify with public key only
+ * - No symmetric key fallback (HS256 removed for security)
  */
 export async function verifyServiceToken(token: string) {
-  // Try asymmetric verification first (RS256)
+  // Asymmetric verification (RS256) only - no fallback
   const asymmetricPayload = await verifyAsymmetricJWT(token, 'intention-engine', 'internal-service');
   if (asymmetricPayload) {
     return asymmetricPayload;
   }
-
-  // Fallback to symmetric verification for migration period
-  const secret = getSecret();
-  try {
-    const { payload } = await jwtVerify(token, secret, {
-      issuer: 'internal-service',
-      algorithms: ['HS256'],
-    });
-    return payload;
-  } catch (error) {
-    return null;
-  }
+  
+  // Token verification failed - return null (no fallback)
+  return null;
 }
 
 /**
@@ -601,22 +578,23 @@ export interface Intent {
 }
 
 export class SecurityProvider {
-  static validateInternalKey(key: string | null): boolean {
-    try {
-      const validKey = getInternalSystemKey();
-      if (!validKey) return false;
-      return key === validKey;
-    } catch {
-      // Key not configured in production - fail validation
-      return false;
+  /**
+   * validateServiceJWT - Validates JWT from Authorization header
+   * Zero-Trust: Only accepts properly signed RS256 JWTs
+   */
+  static async validateServiceJWT(authHeader: string | null): Promise<{ valid: boolean; payload?: Record<string, unknown> }> {
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return { valid: false };
     }
-  }
-
-  static validateHeaders(headers: Headers): boolean {
-    const internalKey = headers.get('x-internal-system-key') ||
-                        headers.get('INTERNAL_SYSTEM_KEY') ||
-                        headers.get('x-internal-key');
-    return this.validateInternalKey(internalKey);
+    
+    const token = authHeader.substring(7);
+    const payload = await verifyServiceToken(token);
+    
+    if (payload) {
+      return { valid: true, payload };
+    }
+    
+    return { valid: false };
   }
 
   /**

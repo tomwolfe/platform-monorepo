@@ -18,8 +18,8 @@ import {
 import { getRealVendors, placeRealOrder, getMenu, Vendor, MenuItem, getRestaurantWallet } from "./actions";
 import { useUser } from "@clerk/nextjs";
 import { reverseGeocode } from "@repo/shared/utils/geo";
-import { ConnectWallet } from "@/components/ConnectWallet";
-import { CryptoCheckout } from "@/components/CryptoCheckout";
+import { ConnectWallet } from "@open-delivery/components/ConnectWallet";
+import { CryptoCheckout } from "@open-delivery/components/CryptoCheckout";
 import { useAccount } from "wagmi";
 
 export const dynamic = "force-dynamic";

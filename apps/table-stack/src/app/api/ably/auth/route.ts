@@ -1,12 +1,7 @@
-import { NextResponse } from 'next/server';
-import { getAblyClient } from '@repo/shared';
+import { createPublicAblyAuthHandler } from '@repo/shared/realtime/ably-auth';
 
-export async function GET() {
-  const client = getAblyClient();
-  if (!client) {
-    return NextResponse.json({ error: 'Ably API key not configured' }, { status: 500 });
-  }
-
-  const tokenRequestData = await client.auth.createTokenRequest({ clientId: 'tablestack-dashboard' });
-  return NextResponse.json(tokenRequestData);
-}
+// Export standardized Ably auth route using factory
+// TableStack uses public access (no authentication required)
+export const GET = createPublicAblyAuthHandler({
+  "nervous-system:updates": ["subscribe"],
+});

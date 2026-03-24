@@ -19,21 +19,25 @@ import { createInitialState, setPlan } from '../lib/engine/state-machine';
 import { saveExecutionState } from '../lib/engine/memory';
 import { Plan, ExecutionState } from '../lib/engine/types';
 
-// Mock dependencies
-vi.mock('../lib/redis-client', () => ({
-  redis: {
-    get: vi.fn().mockResolvedValue(null),
-    set: vi.fn().mockResolvedValue('OK'),
-    setex: vi.fn().mockResolvedValue('OK'),
-    del: vi.fn().mockResolvedValue(1),
-    exists: vi.fn().mockResolvedValue(0),
-  },
-}));
+// Mock dependencies - ES Module compatible
+vi.mock('../lib/redis-client', async () => {
+  const actual = await vi.importActual('../lib/redis-client');
+  return {
+    ...(actual as any),
+    redis: {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue('OK'),
+      setex: vi.fn().mockResolvedValue('OK'),
+      del: vi.fn().mockResolvedValue(1),
+      exists: vi.fn().mockResolvedValue(0),
+    },
+  };
+});
 
 vi.mock('@repo/shared', async () => {
   const actual = await vi.importActual('@repo/shared');
   return {
-    ...actual,
+    ...(actual as any),
     RealtimeService: {
       publish: vi.fn(),
       publishStreamingStatusUpdate: vi.fn(),

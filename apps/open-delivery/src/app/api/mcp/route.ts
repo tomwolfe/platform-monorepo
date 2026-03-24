@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOLS } from "@repo/mcp-protocol";
-import { createMcpServerRoutes, createResponse } from "@repo/mcp-protocol/server";
+import { createMcpServerRoutes, createResponse, extractTraceId } from "@repo/mcp-protocol/server";
 import { randomUUID } from "crypto";
 import { getDb, orders, orderItems } from "@repo/database";
 import { eq } from "drizzle-orm";
@@ -23,32 +23,6 @@ const server = new McpServer({
   name: "opendeliver-server",
   version: "0.1.0",
 });
-
-/**
- * Extract trace ID from request headers or generate new one
- */
-function extractTraceId(request: NextRequest): string {
-  return request.headers.get("x-trace-id") || 
-         request.headers.get("x-request-id") || 
-         randomUUID();
-}
-
-/**
- * Create response with trace ID included
- */
-function createResponse(data: any, traceId: string, isError = false) {
-  return {
-    content: [{
-      type: "text" as const,
-      text: JSON.stringify({
-        ...data,
-        traceId,
-        timestamp: new Date().toISOString(),
-      })
-    }],
-    isError,
-  };
-}
 
 /**
  * Calculate delivery quote with detailed pricing breakdown

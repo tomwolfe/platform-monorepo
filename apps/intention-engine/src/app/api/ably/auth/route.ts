@@ -1,20 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
-import Ably from 'ably';
-import { AppConfig } from '@repo/shared';
+import { createPublicAblyAuthHandler } from '@repo/shared/realtime/ably-auth';
 
-export async function GET(req: NextRequest) {
-  const apiKey = AppConfig.getAblyApiKey();
-  if (!apiKey) {
-    return NextResponse.json({ error: 'Ably API key not configured' }, { status: 500 });
-  }
-
-  const client = new Ably.Rest(apiKey);
-  try {
-    const tokenRequestData = await client.auth.createTokenRequest({
-      clientId: 'intention-engine-client',
-    });
-    return NextResponse.json(tokenRequestData);
-  } catch (error) {
-    return NextResponse.json({ error: 'Failed to create token request' }, { status: 500 });
-  }
-}
+// Export standardized Ably auth route using factory
+// Intention Engine uses public access (no authentication required)
+export const GET = createPublicAblyAuthHandler({
+  "nervous-system:updates": ["subscribe"],
+});

@@ -20,21 +20,25 @@ import { NervousSystemObserver } from '../lib/listeners/nervous-system-observer'
 import { Plan, Intent, ExecutionState } from '../lib/engine/types';
 import { RealtimeService } from '@repo/shared';
 
-// Mock external dependencies
-vi.mock('../lib/redis-client', () => ({
-  redis: {
-    get: vi.fn(),
-    set: vi.fn(),
-    setex: vi.fn(),
-    del: vi.fn(),
-    exists: vi.fn(),
-  },
-}));
+// Mock external dependencies - ES Module compatible
+vi.mock('../lib/redis-client', async () => {
+  const actual = await vi.importActual('../lib/redis-client');
+  return {
+    ...(actual as any),
+    redis: {
+      get: vi.fn(),
+      set: vi.fn(),
+      setex: vi.fn(),
+      del: vi.fn(),
+      exists: vi.fn(),
+    },
+  };
+});
 
 vi.mock('@repo/shared', async () => {
   const actual = await vi.importActual('@repo/shared');
   return {
-    ...actual,
+    ...(actual as any),
     RealtimeService: {
       publish: vi.fn(),
       publishStreamingStatusUpdate: vi.fn(),
@@ -48,10 +52,24 @@ vi.mock('@repo/shared', async () => {
   };
 });
 
+// Import mocked modules after vi.mock
+import { QStashService, IdempotencyService } from '@repo/shared';
+
+const mockRedis = redis as any;
+const mockRealtimeService = RealtimeService as any;
+const mockQStashService = QStashService as any;
+
 describe('Saga Integration Tests', () => {
   beforeEach(async () => {
     // Clear Redis before each test
     vi.clearAllMocks();
+    mockRedis.get.mockResolvedValue(null);
+    mockRedis.set.mockResolvedValue('OK');
+    mockRedis.setex.mockResolvedValue('OK');
+    mockRedis.del.mockResolvedValue(0);
+    mockRedis.exists.mockResolvedValue(0);
+    mockRealtimeService.publish.mockResolvedValue(undefined);
+    mockQStashService.triggerNextStep.mockResolvedValue('mock-message-id');
   });
 
   afterEach(async () => {
@@ -251,7 +269,7 @@ describe('Saga Integration Tests', () => {
       };
 
       // Simulate step already executed (idempotency lock exists)
-      vi.mocked(redis.exists).mockResolvedValue(1);
+      mockRedis.exists.mockResolvedValue(1);
 
       const initialState = createInitialState(executionId);
       const plan: Plan = {
@@ -347,6 +365,8 @@ describe('Saga Integration Tests', () => {
 describe('NervousSystemObserver - Re-engagement Loop', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRedis.get.mockResolvedValue(null);
+    mockRedis.setex.mockResolvedValue('OK');
   });
 
   it('should trigger re-engagement when table becomes available after failed booking', async () => {
@@ -367,7 +387,7 @@ describe('NervousSystemObserver - Re-engagement Loop', () => {
       timestamp: new Date().toISOString(),
     };
 
-    vi.mocked(redis.get).mockResolvedValue([failedBooking]);
+    mockRedis.get.mockResolvedValue([failedBooking]);
 
     const tableVacatedEvent = {
       tableId: 'table-789',
@@ -386,7 +406,7 @@ describe('NervousSystemObserver - Re-engagement Loop', () => {
 
     expect(result.success).toBe(true);
     expect(result.usersNotified).toBeGreaterThanOrEqual(0);
-    expect(vi.mocked(redis.get)).toHaveBeenCalledWith('failed_bookings:pesto-place-123');
+    expect(mockRedis.get).toHaveBeenCalledWith('failed_bookings:pesto-place-123');
   });
 
   it('should track failed bookings for future re-engagement', async () => {
@@ -403,7 +423,7 @@ describe('NervousSystemObserver - Re-engagement Loop', () => {
 
     await NervousSystemObserver.trackFailedBooking(restaurantId, failure);
 
-    expect(vi.mocked(redis.setex)).toHaveBeenCalledWith(
+    expect(mockRedis.setex).toHaveBeenCalledWith(
       `failed_bookings:${restaurantId}`,
       3600, // 1 hour TTL
       expect.any(String)

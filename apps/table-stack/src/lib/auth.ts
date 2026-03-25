@@ -15,17 +15,16 @@ export interface AuthContext {
 /**
  * Validates authentication using Zero-Trust JWT tokens.
  *
- * Security Model:
- * - Internal service-to-service: Requires Bearer JWT token (RS256 asymmetric or HS256 fallback)
- * - External clients: Requires API key (legacy, being phased out)
+ * Zero-Trust Security Model:
+ * - Internal service-to-service: Requires Bearer JWT token (RS256 asymmetric preferred)
+ * - External clients: API key with rate limiting (legacy, being phased out)
  * - Scoped permissions: Optional JWT with tool-level permissions
  *
- * Zero-Trust Upgrade:
- * - Prefers RS256 asymmetric verification (public key only, no shared secrets)
- * - Falls back to HS256 symmetric verification for migration period
- * - Each service has unique identity (iss/aud claims)
- *
- * Removed: Raw INTERNAL_SYSTEM_KEY header check (insecure pattern)
+ * Authentication Priority:
+ * 1. RS256 Asymmetric JWT (Zero-Trust Standard - public key verification)
+ * 2. Scoped JWT (tool-level permissions)
+ * 3. HS256 Service Token (migration fallback only)
+ * 4. API Key (legacy external clients only, rate-limited)
  *
  * @param req - Next.js request
  * @returns Auth context or error response
@@ -38,11 +37,11 @@ export async function validateRequest(req: NextRequest): Promise<{
   const authHeader = req.headers.get('authorization');
   const apiKey = req.headers.get('x-api-key');
 
-  // Priority 1: Asymmetric JWT (RS256 - Zero-Trust Standard)
+  // Priority 1: Bearer Token (JWT - Zero-Trust Standard)
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.substring(7);
 
-    // Try asymmetric verification first (RS256 - public key)
+    // Try asymmetric verification first (RS256 - public key, no shared secrets)
     const asymmetricPayload = await verifyAsymmetricJWT(token, 'intention-engine', 'table-stack');
     if (asymmetricPayload) {
       console.log(
@@ -75,10 +74,10 @@ export async function validateRequest(req: NextRequest): Promise<{
       };
     }
 
-    // Fall back to standard service token (HS256 - migration fallback)
+    // Fallback: HS256 service token (migration period only)
     const payload = await verifyServiceToken(token);
     if (payload) {
-      console.log(`[Auth] Service token (HS256 fallback) verified for service=${(payload as any).service}`);
+      console.log(`[Auth] Service token (HS256 migration fallback) verified for service=${(payload as any).service}`);
       return {
         context: {
           isInternal: true,
@@ -88,7 +87,7 @@ export async function validateRequest(req: NextRequest): Promise<{
       };
     }
 
-    // Token present but invalid
+    // Token present but invalid - Zero-Trust: reject immediately
     console.warn('[Auth] Invalid or expired JWT token (all verification methods failed)');
     return {
       error: 'Invalid or expired JWT token',
@@ -96,10 +95,10 @@ export async function validateRequest(req: NextRequest): Promise<{
     };
   }
 
-  // Priority 2: API Key (Legacy - External Clients)
-  // Keep for backward compatibility with external integrations
+  // Priority 2: API Key (Legacy - External Clients Only)
+  // Note: Being phased out in favor of JWT tokens
   if (apiKey) {
-    // Global Rate Limiting (IP-based) using Upstash Redis
+    // Rate limiting (IP-based) using Upstash Redis
     const ip = req.headers.get('x-forwarded-for') || 'anonymous';
     const limit = 100; // 100 requests
     const window = 60; // per 60 seconds
@@ -134,9 +133,9 @@ export async function validateRequest(req: NextRequest): Promise<{
     };
   }
 
-  // No authentication provided
+  // No authentication provided - Zero-Trust: reject
   return {
-    error: 'Missing authentication. Provide either Bearer token or x-api-key header',
+    error: 'Missing authentication. Provide Bearer token (preferred) or x-api-key header (legacy)',
     status: 401,
   };
 }
@@ -214,38 +213,21 @@ export async function verifyWebhookPayload(payload: string, signature: string, s
 
 /**
  * Verifies a webhook payload using HMAC-SHA256, including a timestamp check.
+ *
+ * @param payload - The payload to verify
+ * @param signature - The signature to verify
+ * @param timestamp - Unix timestamp in milliseconds
+ * @param secret - The secret key for verification
+ * @returns True if signature is valid and not expired
  */
-export async function verifySignature(payload: string, signature: string, timestamp: number, secret: string): Promise<boolean> {
+export async function verifySignature(
+  payload: string,
+  signature: string,
+  timestamp: number,
+  secret: string
+): Promise<boolean> {
   // Use SecurityProvider for standardized verification
   return await SecurityProvider.verifySignature(payload, signature, timestamp);
-
-  const MAX_AGE_MS = 300000; // 5 minute expiry
-
-  if (!signature || !timestamp) return false;
-
-  // 1. Check age
-  if (Date.now() - timestamp > MAX_AGE_MS) return false;
-
-  // 2. Re-sign and compare
-  const data = `${timestamp}.${payload}`;
-  const encoder = new TextEncoder();
-  const keyData = encoder.encode(secret);
-  const dataData = encoder.encode(data);
-
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    keyData,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['verify']
-  );
-
-  try {
-    const signatureBytes = new Uint8Array(signature.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
-    return await crypto.subtle.verify('HMAC', cryptoKey, signatureBytes, dataData);
-  } catch (e) {
-    return false;
-  }
 }
 
 /**

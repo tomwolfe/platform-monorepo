@@ -34,11 +34,6 @@ export {
   type SecurityHeaderPreset,
 } from './security-headers';
 
-// Phase 2.1: Caching Strategy (legacy - deprecated, use middleware/cache-middleware)
-// NOTE: cache-middleware and middleware/cache-middleware have conflicting exports
-// We only export from middleware/cache-middleware (the newer version)
-// export * from './cache-middleware'; // DEPRECATED - commented out to avoid conflicts
-
 // Phase 1: Golden Path (System Spine)
 export * from './golden-path';
 // OpenAPI specification
@@ -88,6 +83,15 @@ export {
 
 // Phase 2.3: Health Checks
 export * from './middleware/health-check';
+
+// Phase 1.2: Cron Authentication (NEW - deduplicated cron auth)
+export {
+  withCronAuth,
+  verifyCronAuth,
+  isCronAuthenticated,
+  type CronAuthOptions,
+  type CronAuthResult,
+} from './middleware/cron-auth';
 
 // Tool types
 export * from './types/tool';
@@ -246,6 +250,11 @@ export {
 export { parseJsonWithFallback, safeParseJson, sanitizeJsonOutput } from './utils/json-parser';
 // Middleware exports (server-side only)
 export * from './middleware/web3-replay-guard';
+
+// Phase 4.1: Provider Abstractions (Mobility & Communication)
+export * from './services/mobility-provider';
+export * from './services/communication-provider';
+
 // export * from './utils/treasury'; // Treasury account management - import directly
 // export * from './utils/crypto-price'; // Server-side only - import directly
 // export * from './utils/web3-verification'; // Server-side only - import directly

@@ -11,6 +11,7 @@ import {
 import * as zod from "zod";
 import { AllToolsMap, ToolInput, validateToolParams } from "@repo/mcp-protocol";
 import { mapJsonSchemaToZod } from "../lib/engine/schema-utils";
+import { JSONSchema7 } from "json-schema";
 
 /**
  * McpAdapter provides bi-directional compatibility between
@@ -21,11 +22,11 @@ export class McpAdapter {
    * Converts a legacy ToolParameter array to an MCP-compliant JSON Schema inputSchema.
    * Supports nested objects and recursion for complex schemas.
    */
-  static parametersToInputSchema(parameters: ToolParameter[]): Record<string, unknown> {
-    const properties: Record<string, unknown> = {};
+  static parametersToInputSchema(parameters: ToolParameter[]): JSONSchema7 {
+    const properties: Record<string, JSONSchema7> = {};
     const required: string[] = [];
 
-    const mapType = (type: string) => {
+    const mapType = (type: string): JSONSchema7["type"] => {
       switch (type) {
         case "string": return "string";
         case "number": return "number";
@@ -36,17 +37,17 @@ export class McpAdapter {
       }
     };
 
-    const processParam = (param: ToolParameter): Record<string, unknown> => {
-      const schema: Record<string, unknown> = {
+    const processParam = (param: ToolParameter): JSONSchema7 => {
+      const schema: JSONSchema7 = {
         type: mapType(param.type),
         description: param.description,
       };
 
       if (param.type === "object" && param.properties) {
-        schema.properties = {} as Record<string, unknown>;
+        schema.properties = {} as Record<string, JSONSchema7>;
         schema.required = [] as string[];
         for (const [propName, propValue] of Object.entries(param.properties)) {
-          (schema.properties as Record<string, unknown>)[propName] = processParam(propValue as ToolParameter);
+          (schema.properties as Record<string, JSONSchema7>)[propName] = processParam(propValue as ToolParameter);
           if ((propValue as ToolParameter).required) {
             (schema.required as string[]).push(propName);
           }
@@ -121,10 +122,7 @@ export class McpManager {
    * Handles an MCP CallTool request.
    * Enhanced with strict type validation using Zod schemas
    */
-  async callTool(
-    name: string,
-    args: Record<string, unknown>
-  ): Promise<CallToolResult> {
+  async callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
     const tool = this.tools.get(name);
     if (!tool) {
       throw new Error(`Tool not found: ${name}`);
@@ -133,19 +131,19 @@ export class McpManager {
     try {
       // TYPE SAFETY: Validate parameters using Zod schema
       // First, try to validate against known tool schemas from AllToolsMap
-      let validatedArgs: unknown = args;
-      
+      let validatedArgs: Record<string, unknown> = args;
+
       // Check if tool name matches a known tool in AllToolsMap
       if (this.isKnownTool(name)) {
-        validatedArgs = validateToolParams(name as keyof AllToolsMap, args);
+        validatedArgs = validateToolParams(name as keyof AllToolsMap, args) as Record<string, unknown>;
       } else {
         // For dynamic/unknown tools, use JSON Schema to Zod conversion
         const schema = tool.inputSchema || McpAdapter.parametersToInputSchema(tool.parameters || []);
         const zodSchema = mapJsonSchemaToZod(schema);
-        validatedArgs = zodSchema.parse(args);
+        validatedArgs = zodSchema.parse(args) as Record<string, unknown>;
       }
 
-      const result = await tool.execute(validatedArgs as Record<string, unknown>);
+      const result = await tool.execute(validatedArgs);
       return {
         content: [
           {

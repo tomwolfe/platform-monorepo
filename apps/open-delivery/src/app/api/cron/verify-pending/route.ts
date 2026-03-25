@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb, orders, restaurants, eq, and, sql } from "@repo/database";
-import { RealtimeService, withApiErrorHandler } from "@repo/shared";
+import { RealtimeService, withApiErrorHandler, withCronAuth } from "@repo/shared";
 import { verifyTransaction } from '@repo/shared/utils/web3-verification';
 import { type Address } from 'viem';
-import { isTimingSafeEqual } from '@repo/shared/utils/crypto';
 import { processStuckTransactions } from '@repo/shared/services/transaction-speedup';
 
 /**
@@ -29,33 +28,11 @@ import { processStuckTransactions } from '@repo/shared/services/transaction-spee
  *   Authorization: Bearer <CRON_SECRET>
  */
 
-const CRON_SECRET = process.env.CRON_SECRET;
-
 // RELIABILITY FIX: Process orders in batches to avoid RPC rate limits
 const BATCH_SIZE = 5;
 const MAX_ORDERS_PER_RUN = 50;
 
 async function postHandler(req: NextRequest) {
-  // Verify cron authentication
-  const authHeader = req.headers.get('authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return NextResponse.json(
-      { error: 'Missing or invalid authorization header' },
-      { status: 401 }
-    );
-  }
-
-  const providedSecret = authHeader.substring(7);
-
-  // TIMING-SAFE COMPARISON: Prevents timing attacks on secret validation
-  if (!CRON_SECRET || !isTimingSafeEqual(providedSecret, CRON_SECRET)) {
-    console.warn('[Verify Pending Cron] Invalid cron secret provided');
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      { status: 401 }
-    );
-  }
-
   console.log('[Verify Pending Cron] Starting background verification sweep...');
 
   // WEB3 RESILIENCE: Process stuck transactions and speed them up
@@ -179,24 +156,6 @@ async function postHandler(req: NextRequest) {
 }
 
 async function getHandler(req: NextRequest) {
-  const authHeader = req.headers.get('authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return NextResponse.json(
-      { error: 'Missing or invalid authorization header' },
-      { status: 401 }
-    );
-  }
-
-  const providedSecret = authHeader.substring(7);
-
-  // TIMING-SAFE COMPARISON: Prevents timing attacks on secret validation
-  if (!CRON_SECRET || !isTimingSafeEqual(providedSecret, CRON_SECRET)) {
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      { status: 401 }
-    );
-  }
-
   return NextResponse.json({
     status: 'ok',
     message: 'Verify pending cron endpoint is healthy',
@@ -204,5 +163,6 @@ async function getHandler(req: NextRequest) {
   });
 }
 
-export const POST = withApiErrorHandler(postHandler, 'EXECUTION_FAILED');
-export const GET = withApiErrorHandler(getHandler, 'EXECUTION_FAILED');
+// Wrap handlers with cron authentication
+export const POST = withCronAuth(withApiErrorHandler(postHandler, 'EXECUTION_FAILED'));
+export const GET = withCronAuth(withApiErrorHandler(getHandler, 'EXECUTION_FAILED'));

@@ -2,83 +2,40 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb, orders, eq, and, isNotNull, inArray } from "@repo/database";
 import { createPublicClient, http, fallback, type Address } from 'viem';
 import { base } from 'viem/chains';
-import { timingSafeEqual } from 'crypto';
-
-/**
- * Timing-safe secret comparison to prevent timing attacks
- */
-function isTimingSafeEqual(provided: string, expected: string): boolean {
-  const providedBuffer = Buffer.from(provided, 'utf8');
-  const expectedBuffer = Buffer.from(expected, 'utf8');
-  
-  // Pad to same length to avoid timingSafeEqual errors
-  const maxLength = Math.max(providedBuffer.length, expectedBuffer.length);
-  const paddedProvided = Buffer.alloc(maxLength);
-  const paddedExpected = Buffer.alloc(maxLength);
-  
-  providedBuffer.copy(paddedProvided);
-  expectedBuffer.copy(paddedExpected);
-  
-  try {
-    return timingSafeEqual(paddedProvided, paddedExpected);
-  } catch {
-    return false;
-  }
-}
+import { withCronAuth } from '@repo/shared';
 
 /**
  * Verify Payouts Cron Endpoint
- * 
+ *
  * ASYNCHRONOUS PAYOUT VERIFICATION FOR OPEN-DELIVERY
- * 
+ *
  * Problem Solved:
  * - Vercel serverless has a 10-second timeout
  * - Waiting for transaction receipts sequentially (2s per block on Base) causes timeouts
  * - Solution: Split payout execution into two phases:
  *   1. /api/cron/payouts - Submits transactions, saves tx hash, marks as 'processing'
  *   2. /api/cron/verify-payouts - Confirms receipts asynchronously (runs every 5 min)
- * 
+ *
  * What it does:
  * 1. Queries all orders with payoutStatus = 'processing' and payoutTxHash set
  * 2. Uses Promise.all to check receipts in parallel (not sequential)
  * 3. Marks orders as 'completed' or 'failed' based on receipt status
- * 
+ *
  * Security:
  * - Requires CRON_SECRET header for authentication
  * - Idempotent: only processes 'processing' payouts
- * 
+ *
  * Usage:
  * GET /api/cron/verify-payouts
  * Headers:
  *   Authorization: Bearer <CRON_SECRET>
  */
 
-const CRON_SECRET = process.env.CRON_SECRET;
-
 // Maximum orders to verify per run (prevent timeout)
 const MAX_ORDERS_PER_RUN = 50;
 
-export async function GET(req: NextRequest) {
+async function getCronHandler(req: NextRequest) {
   try {
-    // Verify cron authentication
-    const authHeader = req.headers.get('authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return NextResponse.json(
-        { error: 'Missing or invalid authorization header' },
-        { status: 401 }
-      );
-    }
-
-    const providedSecret = authHeader.substring(7); // Remove 'Bearer ' prefix
-    
-    // TIMING-SAFE COMPARISON: Prevents timing attacks on secret validation
-    if (!CRON_SECRET || !isTimingSafeEqual(providedSecret, CRON_SECRET)) {
-      console.warn('[Verify Payouts Cron] Invalid cron secret provided');
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
 
     console.log('[Verify Payouts Cron] Starting async verification...');
 
@@ -231,6 +188,10 @@ export async function GET(req: NextRequest) {
  * POST endpoint to manually trigger verification
  * Useful for testing or manual intervention
  */
-export async function POST(req: NextRequest) {
-  return GET(req);
+async function postCronHandler(req: NextRequest) {
+  return getCronHandler(req);
 }
+
+// Wrap handlers with cron authentication
+export const GET = withCronAuth(getCronHandler);
+export const POST = withCronAuth(postCronHandler);

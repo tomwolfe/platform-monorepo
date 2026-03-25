@@ -3,7 +3,7 @@ import { getDb, orders, orderItems, restaurants, drivers, eq, sql, and } from "@
 import { createWalletClient, createPublicClient, http, fallback, parseAbi, parseUnits, type Address } from 'viem';
 import { base } from 'viem/chains';
 import { ERC20_ABI } from '@repo/shared/utils/erc20-abi';
-import { isTimingSafeEqual } from '@repo/shared/utils/crypto';
+import { withCronAuth } from '@repo/shared';
 import { getCachedTreasurySigner, type TransactionData } from '@repo/shared/utils/treasury';
 
 /**
@@ -45,35 +45,14 @@ import { getCachedTreasurySigner, type TransactionData } from '@repo/shared/util
  * }
  */
 
-const CRON_SECRET = process.env.CRON_SECRET;
-
 // Platform fee percentage (in basis points, 100 = 1%)
 const PLATFORM_FEE_BPS = parseInt(process.env.PLATFORM_FEE_BPS || "100", 10);
 
 // Base pay for drivers per delivery (in USDC cents)
 const DRIVER_BASE_PAY = parseInt(process.env.DRIVER_BASE_PAY_CENTS || "200", 10);
 
-export async function GET(req: NextRequest) {
+async function getCronHandler(req: NextRequest) {
   try {
-    // Verify cron authentication
-    const authHeader = req.headers.get('authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return NextResponse.json(
-        { error: 'Missing or invalid authorization header' },
-        { status: 401 }
-      );
-    }
-
-    const providedSecret = authHeader.substring(7); // Remove 'Bearer ' prefix
-    
-    // TIMING-SAFE COMPARISON: Prevents timing attacks on secret validation
-    if (!CRON_SECRET || !isTimingSafeEqual(providedSecret, CRON_SECRET)) {
-      console.warn('[Payout Cron] Invalid cron secret provided');
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
 
     console.log('[Payout Cron] Starting payout processing...');
 
@@ -423,7 +402,10 @@ export async function GET(req: NextRequest) {
  * POST endpoint to manually trigger payout processing
  * Useful for testing or manual intervention
  */
-export async function POST(req: NextRequest) {
-  // Same authentication as GET
-  return GET(req);
+async function postCronHandler(req: NextRequest) {
+  return getCronHandler(req);
 }
+
+// Wrap handlers with cron authentication
+export const GET = withCronAuth(getCronHandler);
+export const POST = withCronAuth(postCronHandler);

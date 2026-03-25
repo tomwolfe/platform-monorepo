@@ -7,10 +7,15 @@ import {
 } from "@repo/mcp-protocol";
 import type { UnifiedLocation } from "@repo/mcp-protocol";
 import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared/tracing";
+import {
+  getMobilityProvider,
+  validateMobilityRequest,
+  type MobilityRequest,
+} from "@repo/shared/services/mobility-provider";
 
-export { 
-  MobilityRequestSchema, 
-  RouteEstimateSchema, 
+export {
+  MobilityRequestSchema,
+  RouteEstimateSchema,
   UnifiedLocationSchema,
 };
 export type { UnifiedLocation };
@@ -59,61 +64,26 @@ export const cancelRideReturnSchema = {
   refund_amount: "number"
 };
 
+/**
+ * Request a ride using the configured mobility provider
+ * Uses dependency injection for testability
+ */
 export async function mobility_request(params: MobilityRequestParams): Promise<{ success: boolean; result?: any; error?: string }> {
   const validated = MobilityRequestSchema.safeParse(params);
   if (!validated.success) {
     return { success: false, error: "Invalid parameters: " + validated.error.message };
   }
 
-  const { service, pickup_location, destination_location, ride_type } = validated.data;
-
-  const resolveCoords = async (loc: UnifiedLocation | undefined) => {
-    if (!loc) return null;
-    // Handle case where loc is a JSON string (e.g., from AI SDK serialization)
-    if (typeof loc === "string") {
-      try {
-        const parsed = JSON.parse(loc);
-        if (parsed && typeof parsed === "object" && "lat" in parsed && "lon" in parsed) {
-          return { lat: parsed.lat, lon: parsed.lon };
-        }
-      } catch {
-        // Not a JSON string, treat as regular address string
-      }
-    }
-    if (typeof loc === "object") return { lat: loc.lat, lon: loc.lon };
-    const geo = await geocode_location({ location: loc });
-    if (geo.success && geo.result) return { lat: geo.result.lat, lon: geo.result.lon };
-    return null; // Fallback to null if geocoding fails
-  };
-
-  const pickupCoords = await resolveCoords(pickup_location);
-  const destCoords = await resolveCoords(destination_location);
-
-  // Normalize locations to string format for API compatibility
-  const normalizedPickup = normalizeLocation(pickup_location);
-  const normalizedDestination = normalizeLocation(destination_location);
-
-  console.log(`Functional ride request: ${service} from ${normalizedPickup} to ${normalizedDestination}...`);
-
   try {
-    // Generate a random driver name and plate
-    const drivers = ["Alex", "Jordan", "Sam", "Taylor"];
-    const driver = drivers[Math.floor(Math.random() * drivers.length)];
-    const plate = Math.random().toString(36).substring(2, 7).toUpperCase();
+    // Use provider abstraction for ride request
+    const provider = getMobilityProvider(validated.data.service);
+    const mobilityRequest: MobilityRequest = validateMobilityRequest(validated.data);
+    const result = await provider.requestRide(mobilityRequest);
 
     return {
-      success: true,
-      result: {
-        status: "requested",
-        service: service,
-        pickup: normalizedPickup,
-        destination: normalizedDestination,
-        driver_name: driver,
-        vehicle_plate: plate,
-        estimated_arrival: new Date(Date.now() + 8 * 60 * 1000).toISOString(),
-        pickup_coordinates: pickupCoords,
-        destination_coordinates: destCoords
-      }
+      success: result.status !== "failed",
+      result,
+      error: result.error,
     };
   } catch (error: any) {
     return { success: false, error: error.message };
@@ -122,33 +92,32 @@ export async function mobility_request(params: MobilityRequestParams): Promise<{
 
 /**
  * Cancel a ride request
- * 
+ *
  * Compensation for request_ride / mobility_request
  * Automatically called by saga orchestrator when a ride needs to be cancelled
  * (e.g., restaurant booking failed after ride was requested)
  */
 export async function cancel_ride(params: { ride_id?: string; service?: string; pickup_location?: string; destination_location?: string }): Promise<{ success: boolean; result?: any; error?: string }> {
-  console.log(`Cancelling ride: ${params.ride_id || params.service || 'unknown'}`);
-
-  // In a real implementation, this would call the ride service's cancellation API
-  // For now, simulate a successful cancellation
-  const rideId = params.ride_id || `ride_${Math.random().toString(36).substring(2, 9)}`;
-  
   try {
+    // Use provider abstraction for ride cancellation
+    const service = params.service as "uber" | "lyft" | "tesla" | "waymo" | undefined;
+    const provider = getMobilityProvider(service);
+    const result = await provider.cancelRide({
+      ride_id: params.ride_id,
+      service,
+      pickup_location: params.pickup_location,
+      destination_location: params.destination_location,
+    });
+
     return {
-      success: true,
-      result: {
-        status: "cancelled",
-        ride_id: rideId,
-        cancellation_time: new Date().toISOString(),
-        refund_amount: 0, // No charge if cancelled before pickup
-        message: "Ride successfully cancelled"
-      }
+      success: result.status === "cancelled",
+      result,
+      error: result.error,
     };
   } catch (error: any) {
-    return { 
-      success: false, 
-      error: `Failed to cancel ride: ${error.message}` 
+    return {
+      success: false,
+      error: `Failed to cancel ride: ${error.message}`
     };
   }
 }

@@ -1,15 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb, eq, lt, and } from "@repo/database";
 import { restaurantReservations, restaurantTables } from "@repo/database";
+import { withCronAuth } from '@repo/shared';
 
 export const runtime = 'nodejs';
 
-export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return new Response('Unauthorized', { status: 401 });
-  }
-
+async function getCronHandler(req: NextRequest) {
   try {
     const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
     const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000);
@@ -33,7 +29,7 @@ export async function GET(req: NextRequest) {
         )
       );
 
-    return NextResponse.json({ 
+    return NextResponse.json({
       message: 'Cleanup successful',
       timestamp: new Date().toISOString(),
       expiredReservationsRemoved: deletedReservations.rowCount,
@@ -44,3 +40,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
   }
 }
+
+// Wrap handler with cron authentication
+export const GET = withCronAuth(getCronHandler);

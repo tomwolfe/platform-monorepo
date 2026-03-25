@@ -1,7 +1,11 @@
 import { z } from "zod";
-import { ToolDefinitionMetadata, ToolParameter } from "./types";
+import { ToolDefinitionMetadata } from "./types";
 import { CommunicationSchema } from "@repo/mcp-protocol";
-import { getResendClient } from "@repo/shared";
+import {
+  getCommunicationProvider,
+  validateCommunicationRequest,
+  type CommunicationRequest,
+} from "@repo/shared/services/communication-provider";
 
 export type CommunicationParams = z.infer<typeof CommunicationSchema>;
 
@@ -12,66 +16,35 @@ export const communicationReturnSchema = {
   timestamp: "string"
 };
 
+/**
+ * Send communication using the configured provider
+ * Uses dependency injection for testability
+ */
 export async function send_comm(params: CommunicationParams): Promise<{ success: boolean; result?: any; error?: string }> {
   const validated = CommunicationSchema.safeParse(params);
   if (!validated.success) {
     return { success: false, error: "Invalid parameters: " + validated.error.message };
   }
 
-  const { recipient, channel, message, subject } = validated.data;
-  console.log(`Sending ${channel} to ${recipient}...`);
-
   try {
-    if (channel === "email") {
-      // Use Resend for actual email delivery
-      const resend = getResendClient();
-      const from = process.env.EMAIL_FROM || "onboarding@resend.dev";
+    // Use provider abstraction for communication
+    const commRequest: CommunicationRequest = validateCommunicationRequest(validated.data);
+    const provider = getCommunicationProvider(validated.data.channel);
 
-      const result = await resend.emails.send({
-        from,
-        to: recipient,
-        subject: subject || "Message",
-        text: message,
-      });
-
-      return {
-        success: true,
-        result: {
-          status: "sent",
-          channel: "email",
-          recipient: recipient,
-          timestamp: new Date().toISOString(),
-          messageId: result.id,
-        },
-      };
-    } else if (channel === "sms") {
-      // SMS requires Twilio configuration
-      // Do NOT return mock success - this breaks LLM's understanding of real-world state
-      if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_PHONE_NUMBER) {
-        return {
-          success: false,
-          error: "SMS channel not configured. Missing Twilio credentials (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER). Use email channel instead or configure Twilio environment variables.",
-        };
-      }
-
-      // TODO: Implement Twilio SMS integration
-      // const twilio = require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-      // await twilio.messages.create({
-      //   body: message,
-      //   from: process.env.TWILIO_PHONE_NUMBER,
-      //   to: recipient,
-      // });
-
+    if (!provider.isConfigured()) {
       return {
         success: false,
-        error: "SMS channel not yet implemented. Twilio credentials detected but integration is pending. Use email channel instead.",
-      };
-    } else {
-      return {
-        success: false,
-        error: `Unsupported channel: ${channel}`,
+        error: `${provider.getProviderName()} is not configured. Use email channel or configure the required environment variables.`,
       };
     }
+
+    const result = await provider.send(commRequest);
+
+    return {
+      success: result.status === "sent",
+      result,
+      error: result.error,
+    };
   } catch (error: any) {
     return { success: false, error: error.message };
   }

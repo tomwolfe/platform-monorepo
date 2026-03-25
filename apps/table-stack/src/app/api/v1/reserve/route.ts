@@ -308,4 +308,7 @@ async function postHandler(req: NextRequest) {
   }));
 }
 
-export const POST = withApiErrorHandler(postHandler, 'EXECUTION_FAILED');
+export const POST = withApiErrorHandler(postHandler, {
+  serviceName: 'reserve-api',
+  includeStackTrace: process.env.NODE_ENV !== 'production',
+});

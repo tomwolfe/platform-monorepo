@@ -294,12 +294,15 @@ export class MeshListener {
     // Handle legacy events with strict Zod validation (FAIL-CLOSED)
     switch (eventName) {
       case 'reservation_rejected': {
-        const validated = ReservationEventPayloadSchema.partial().safeParse(data);
+        // STRICT VALIDATION: Use full schema validation (not partial)
+        // Events that fail validation are dropped and logged to DLQ
+        const validated = ReservationEventPayloadSchema.safeParse(data);
         if (!validated.success) {
           console.error(
             `[MeshListener] Event ${eventName} FAILED validation, DROPPING:`,
             validated.error
           );
+          // TODO: Send to DLQ for manual inspection
           return;
         }
         return await handleTableStackRejection(validated.data);
@@ -318,7 +321,8 @@ export class MeshListener {
       }
 
       case 'delivery_logged': {
-        const validated = DeliveryEventPayloadSchema.partial().safeParse(data);
+        // STRICT VALIDATION: Use full schema validation (not partial)
+        const validated = DeliveryEventPayloadSchema.safeParse(data);
         if (!validated.success) {
           console.error(
             `[MeshListener] Event ${eventName} FAILED validation, DROPPING:`,

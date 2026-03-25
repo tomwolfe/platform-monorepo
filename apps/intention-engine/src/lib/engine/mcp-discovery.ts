@@ -11,6 +11,7 @@
 import { getMcpClients } from "@/lib/mcp-client";
 import { ToolDefinition } from "@/lib/engine/types";
 import { TOOLS, listTools } from "@/lib/tools/registry";
+import { ToolDefinitionSchema } from "@repo/shared/types/tool";
 
 // ============================================================================
 // DISCOVERED TOOL CACHE
@@ -83,28 +84,29 @@ export async function discoverMcpTools(
     }
 
     try {
-      // Convert to ToolDefinition using unknown type with proper type assertion
-      const rawToolDef = toolDef as unknown as {
-        name?: string;
-        description?: string;
-        inputSchema?: Record<string, unknown>;
-        outputSchema?: Record<string, unknown>;
-        origin?: string;
-      };
+      // TYPE SAFETY: Validate tool definition against Zod schema
+      const parseResult = ToolDefinitionSchema.safeParse(toolDef);
+      
+      if (!parseResult.success) {
+        const errorMsg = `Tool ${toolName} failed schema validation: ${parseResult.error.message}`;
+        console.warn(`[MCP Discovery] Skipping malformed tool ${toolName}:`, parseResult.error);
+        errors.push(errorMsg);
+        continue; // Gracefully skip malformed tools
+      }
+
+      const validatedToolDef = parseResult.data;
 
       const newToolDef: ToolDefinition = {
+        ...validatedToolDef,
         name: toolName,
-        version: "1.0.0",
-        description: rawToolDef.description || `Remote tool`,
-        inputSchema: rawToolDef.inputSchema || {},
-        return_schema: rawToolDef.outputSchema || {},
-        parameter_aliases: {},
-        timeout_ms: 30000,
-        requires_confirmation: toolName.toLowerCase().includes("book") ||
+        version: validatedToolDef.version || "1.0.0",
+        description: validatedToolDef.description || `Remote tool ${toolName}`,
+        requires_confirmation: validatedToolDef.requires_confirmation || 
+                               toolName.toLowerCase().includes("book") ||
                                toolName.toLowerCase().includes("reserve") ||
                                toolName.toLowerCase().includes("pay"),
-        category: "external",
-        origin: rawToolDef.origin || "mcp",
+        category: validatedToolDef.category || "external",
+        origin: validatedToolDef.origin || "mcp",
       };
 
       discoveredTools.push(newToolDef);

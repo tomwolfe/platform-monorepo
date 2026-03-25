@@ -15,7 +15,7 @@ import { verifyServiceToken } from "@repo/auth";
 import { resumeFromCheckpoint, ToolExecutor, WorkflowResult } from "@/lib/engine/workflow-machine";
 import { loadExecutionState } from "@/lib/engine/memory";
 import { getMcpClients, ToolCallResult } from "@/lib/mcp-client";
-import { RealtimeService } from "@repo/shared";
+import { RealtimeService, withApiErrorHandler, formatApiSuccess, formatApiError } from "@repo/shared";
 import { Tracer } from "@/lib/engine/tracing";
 import { getToolRegistry } from "@/lib/engine/tools/registry";
 import { Plan } from "@/lib/engine/types";
@@ -26,184 +26,182 @@ const RESUME_REQUEST_SCHEMA = {
   force: "boolean (optional) - Force resume even if no checkpoint exists",
 };
 
-export async function POST(req: NextRequest) {
+async function meshResumeHandler(req: NextRequest) {
   const startTime = Date.now();
-  
-  try {
+
+  // ========================================================================
+  // AUTHENTICATION - Verify service token
+  // ========================================================================
+
+  const authHeader = req.headers.get("authorization");
+  const token = authHeader?.replace("Bearer ", "");
+
+  if (!token) {
+    return NextResponse.json(
+      formatApiError(new Error("Missing authorization token"), "UNAUTHORIZED"),
+      { status: 401 }
+    );
+  }
+
+  const verified = await verifyServiceToken(token);
+  if (!verified) {
+    return NextResponse.json(
+      formatApiError(new Error("Invalid or expired service token"), "UNAUTHORIZED"),
+      { status: 403 }
+    );
+  }
+
+  // ========================================================================
+  // PARSE REQUEST
+  // ========================================================================
+
+  const body = await req.json();
+  const { executionId, traceId, force = false } = body;
+
+  if (!executionId) {
+    return NextResponse.json(
+      formatApiError(new Error("Missing required field: executionId"), "VALIDATION_ERROR", {
+        details: { schema: RESUME_REQUEST_SCHEMA },
+      }),
+      { status: 400 }
+    );
+  }
+
+  console.log(
+    `[MeshResume] Received resume request for ${executionId}` +
+    (traceId ? ` [trace: ${traceId}]` : "")
+  );
+
+  // ========================================================================
+  // START TRACE
+  // ========================================================================
+
+  return await Tracer.startActiveSpan("mesh:resume_execution", async (span) => {
+    span.setAttributes({
+      execution_id: executionId,
+      trace_id: traceId || "unknown",
+      source: "mesh_resume",
+    });
+
     // ========================================================================
-    // AUTHENTICATION - Verify service token
+    // LOAD EXECUTION STATE
     // ========================================================================
-    
-    const authHeader = req.headers.get("authorization");
-    const token = authHeader?.replace("Bearer ", "");
-    
-    if (!token) {
+
+    const state = await loadExecutionState(executionId);
+    if (!state) {
       return NextResponse.json(
-        { error: "Missing authorization token" },
-        { status: 401 }
+        formatApiError(new Error(`No execution state found for ${executionId}`), "NOT_FOUND"),
+        { status: 404 }
       );
     }
-    
-    const verified = await verifyServiceToken(token);
-    if (!verified) {
+
+    if (!state.plan) {
       return NextResponse.json(
-        { error: "Invalid or expired service token" },
-        { status: 403 }
-      );
-    }
-    
-    // ========================================================================
-    // PARSE REQUEST
-    // ========================================================================
-    
-    const body = await req.json();
-    const { executionId, traceId, force = false } = body;
-    
-    if (!executionId) {
-      return NextResponse.json(
-        { error: "Missing required field: executionId", schema: RESUME_REQUEST_SCHEMA },
+        formatApiError(new Error("Execution has no plan associated with it"), "VALIDATION_ERROR"),
         { status: 400 }
       );
     }
-    
-    console.log(
-      `[MeshResume] Received resume request for ${executionId}` +
-      (traceId ? ` [trace: ${traceId}]` : "")
-    );
-    
+
+    // Check if already in terminal state
+    if (["COMPLETED", "FAILED", "CANCELLED"].includes(state.status)) {
+      return NextResponse.json(
+        formatApiSuccess({
+          message: "Execution already in terminal state",
+          status: state.status,
+          completed_steps: state.step_states.filter(s => s.status === "completed").length,
+          total_steps: state.plan!.steps.length,
+        }),
+        { status: 200 }
+      );
+    }
+
     // ========================================================================
-    // START TRACE
+    // BUILD TOOL EXECUTOR
     // ========================================================================
-    
-    return await Tracer.startActiveSpan("mesh:resume_execution", async (span) => {
-      span.setAttributes({
-        execution_id: executionId,
-        trace_id: traceId || "unknown",
-        source: "mesh_resume",
-      });
-      
-      // ========================================================================
-      // LOAD EXECUTION STATE
-      // ========================================================================
-      
-      const state = await loadExecutionState(executionId);
-      if (!state) {
-        return NextResponse.json(
-          { error: `No execution state found for ${executionId}` },
-          { status: 404 }
-        );
-      }
-      
-      if (!state.plan) {
-        return NextResponse.json(
-          { error: "Execution has no plan associated with it" },
-          { status: 400 }
-        );
-      }
-      
-      // Check if already in terminal state
-      if (["COMPLETED", "FAILED", "CANCELLED"].includes(state.status)) {
-        return NextResponse.json(
-          { 
-            message: "Execution already in terminal state",
-            status: state.status,
-            completed_steps: state.step_states.filter(s => s.status === "completed").length,
-            total_steps: state.plan!.steps.length,
-          },
-          { status: 200 }
-        );
-      }
-      
-      // ========================================================================
-      // BUILD TOOL EXECUTOR
-      // ========================================================================
-      
-      const toolExecutor = await buildToolExecutor(traceId);
-      
-      // ========================================================================
-      // RESUME EXECUTION
-      // ========================================================================
-      
-      const result = await resumeFromCheckpoint(executionId, toolExecutor, {
-        traceCallback: (entry) => {
-          span.addEvent(entry.event, {
-            step_id: entry.step_id,
-            latency_ms: entry.latency_ms,
-            phase: entry.phase,
-          });
-        },
-        traceId,
-      });
-      
-      // ========================================================================
-      // PUBLISH COMPLETION EVENT
-      // ========================================================================
 
-      await RealtimeService.publishStreamingStatusUpdate({
-        executionId,
-        stepIndex: result.completedSteps,
-        totalSteps: result.totalSteps,
-        stepName: "execution_segment",
-        status: result.success ? "completed" : result.failedSteps > 0 ? "failed" : "in_progress",
-        message: result.isPartial
-          ? `Segment completed, ${result.completedSteps}/${result.totalSteps} steps done`
-          : result.success
-            ? "All steps completed successfully"
-            : `Execution failed: ${result.error?.message}`,
-        timestamp: new Date().toISOString(),
-        traceId,
-      });
+    const toolExecutor = await buildToolExecutor(traceId, executionId);
 
-      // ========================================================================
-      // RESPONSE
-      // ========================================================================
+    // ========================================================================
+    // RESUME EXECUTION
+    // ========================================================================
 
-      const response: any = {
-        executionId,
-        success: result.success,
-        completed_steps: result.completedSteps,
-        failed_steps: result.failedSteps,
-        total_steps: result.totalSteps,
-        execution_time_ms: result.executionTimeMs,
-        isPartial: result.isPartial || false,
-        status: result.state.status,
-      };
-
-      if (result.isPartial) {
-        response.message = "Execution segmented - continuation event published";
-        response.nextStepIndex = result.nextStepIndex;
-        response.segmentNumber = result.segmentNumber;
-      } else if (result.success) {
-        response.message = "Execution completed successfully";
-        response.summary = result.summary;
-      } else {
-        response.error = result.error;
-      }
-
-      return NextResponse.json(response, { status: 200 });
+    const result = await resumeFromCheckpoint(executionId, toolExecutor, {
+      traceCallback: (entry) => {
+        span.addEvent(entry.event, {
+          step_id: entry.step_id,
+          latency_ms: entry.latency_ms,
+          phase: entry.phase,
+        });
+      },
+      traceId,
     });
 
-  } catch (error) {
-    console.error("[MeshResume] Error resuming execution:", error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    // ========================================================================
+    // PUBLISH COMPLETION EVENT
+    // ========================================================================
+
+    await RealtimeService.publishStreamingStatusUpdate({
+      executionId,
+      stepIndex: result.completedSteps,
+      totalSteps: result.totalSteps,
+      stepName: "execution_segment",
+      status: result.success ? "completed" : result.failedSteps > 0 ? "failed" : "in_progress",
+      message: result.isPartial
+        ? `Segment completed, ${result.completedSteps}/${result.totalSteps} steps done`
+        : result.success
+          ? "All steps completed successfully"
+          : `Execution failed: ${result.error?.message}`,
+      timestamp: new Date().toISOString(),
+      traceId,
+    });
+
+    // ========================================================================
+    // RESPONSE
+    // ========================================================================
+
+    const response: any = {
+      executionId,
+      success: result.success,
+      completed_steps: result.completedSteps,
+      failed_steps: result.failedSteps,
+      total_steps: result.totalSteps,
+      execution_time_ms: result.executionTimeMs,
+      isPartial: result.isPartial || false,
+      status: result.state.status,
+    };
+
+    if (result.isPartial) {
+      response.message = "Execution segmented - continuation event published";
+      response.nextStepIndex = result.nextStepIndex;
+      response.segmentNumber = result.segmentNumber;
+    } else if (result.success) {
+      response.message = "Execution completed successfully";
+      response.summary = result.summary;
+    } else {
+      response.error = result.error;
+    }
 
     return NextResponse.json(
-      {
-        error: "Failed to resume execution",
-        message: errorMessage,
-        stack: process.env.NODE_ENV === "development" ? (error as Error).stack : undefined,
-      },
-      { status: 500 }
+      formatApiSuccess(response, {
+        durationMs: Date.now() - startTime,
+        traceId,
+      }),
+      { status: 200 }
     );
-  }
+  });
 }
+
+export const POST = withApiErrorHandler(meshResumeHandler, {
+  serviceName: "mesh-resume",
+  includeStackTrace: process.env.NODE_ENV !== "production",
+});
 
 // ============================================================================
 // BUILD TOOL EXECUTOR
 // Creates a tool executor that uses MCP clients and local tools
 // ============================================================================
 
-async function buildToolExecutor(traceId?: string): Promise<ToolExecutor> {
+async function buildToolExecutor(traceId?: string, executionId?: string): Promise<ToolExecutor> {
   const { manager } = await getMcpClients();
   const toolRegistry = getToolRegistry();
 
@@ -244,14 +242,12 @@ async function buildToolExecutor(traceId?: string): Promise<ToolExecutor> {
         console.log(`[MeshResume] Executing local tool ${toolName}`);
 
         // Execute local tool using the engine's standard execution context
-        // We need to construct a proper execution context for the tool
-        const executionId = state.execution_id || executionId;
         const stepId = `resume:${toolName}:${Date.now()}`;
-        
+
         try {
-          const output = await localTool.execute(parameters, { 
-            executionId, 
-            stepId, 
+          const output = await localTool.execute(parameters, {
+            executionId: executionId || 'unknown',
+            stepId,
             timeoutMs,
             startTime: Date.now(),
             traceId,

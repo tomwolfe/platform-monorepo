@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { CryptoCheckout } from "../components/CryptoCheckout";
+import { CryptoCheckout } from "../CryptoCheckout";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // Mock wagmi hooks - MUST come before imports

@@ -11,17 +11,33 @@ export * from './error-handler';
 export * from './logger';
 
 // Phase 1.3: API Validation & Standardization
+// NOTE: api-schemas and validation-middleware both export createValidationMiddleware
+// We export from validation-middleware only to avoid conflicts
 export * from './api-schemas';
 export * from './api-response';
-export * from './validation-middleware';
+// Explicitly export validation-middleware to override api-schemas conflict
+export {
+  createValidationMiddleware,
+  type ValidationMiddleware,
+  type ValidationMiddlewareResult,
+} from './validation-middleware';
 
 // Phase 1.4: Security Hardening
+// NOTE: security-middleware and security-headers both export generateSecurityHeaders
+// We export from security-headers only to avoid conflicts
 export * from './security-middleware';
 export * from './security-audit';
-export * from './security-headers';
+// Explicitly export security-headers to override security-middleware conflict
+export {
+  generateSecurityHeaders,
+  type SecurityHeadersConfig,
+  type SecurityHeaderPreset,
+} from './security-headers';
 
-// Phase 2.1: Caching Strategy
-export * from './cache-middleware';
+// Phase 2.1: Caching Strategy (legacy - deprecated, use middleware/cache-middleware)
+// NOTE: cache-middleware and middleware/cache-middleware have conflicting exports
+// We only export from middleware/cache-middleware (the newer version)
+// export * from './cache-middleware'; // DEPRECATED - commented out to avoid conflicts
 
 // Phase 1: Golden Path (System Spine)
 export * from './golden-path';
@@ -56,8 +72,19 @@ export {
 export * from './runtime-registry'; // Unified registry (tools, MCP, services)
 export * from './infrastructure/cache'; // Standardized Redis cache layer
 
-// Phase 2.2: Request Caching
-export * from './middleware/cache-middleware';
+// Phase 2.2: Request Caching (NEW - use this instead of deprecated cache-middleware)
+// NOTE: Explicitly export to avoid conflicts with deprecated ./cache-middleware
+export {
+  withCache,
+  generateCacheKey,
+  invalidateCache,
+  invalidateCacheByTag,
+  invalidateCacheByPattern,
+  getCacheMetrics,
+  type CacheConfig,
+  type CacheOptions,
+  type CacheMiddlewareResult,
+} from './middleware/cache-middleware';
 
 // Phase 2.3: Health Checks
 export * from './middleware/health-check';
@@ -109,15 +136,21 @@ export * from './outbox-relay';
 export * from './services/migration-generator';
 export * from './services/mcp-security-scanner';
 // Note: circuit-breaker exports TimeoutError which conflicts with errors.ts
-// Export explicitly excluding TimeoutError
+// Export explicitly excluding TimeoutError - only export non-conflicting items
 export {
   CircuitBreaker,
-  CircuitState,
+  CircuitBreakerOpenError,
+  CircuitBreakerRegistry,
+  CostCircuitBreaker,
   createCircuitBreaker,
+  createCircuitBreakerRegistry,
+  createCostCircuitBreaker,
   type CircuitBreakerConfig,
   type CircuitBreakerStats,
   type CircuitEvent,
 } from './services/circuit-breaker';
+// Export CircuitState separately to avoid star export conflicts
+export type { CircuitState } from './services/circuit-breaker';
 
 // Phase 3: Advanced Autonomy
 export * from './services/anomaly-detector';

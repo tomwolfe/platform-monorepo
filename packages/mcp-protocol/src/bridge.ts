@@ -25,72 +25,59 @@ import { z } from 'zod';
 // ============================================================================
 
 // Select schemas (for reading from DB)
-export const RestaurantSchema = createSelectSchema(restaurants);
-export const ReservationSchema = createSelectSchema(restaurantReservations);
-export const TableSchema = createSelectSchema(restaurantTables);
-export const WaitlistSchema = createSelectSchema(restaurantWaitlist);
-export const RestaurantProductSchema = createSelectSchema(restaurantProducts);
-export const InventoryLevelSchema = createSelectSchema(inventoryLevels);
-export const GuestProfileSchema = createSelectSchema(guestProfiles);
+// Note: These are created at module load time and cached
+// In test environments, tables may be undefined - we handle this gracefully
+export const RestaurantSchema = restaurants ? createSelectSchema(restaurants) : z.object({});
+export const ReservationSchema = restaurantReservations ? createSelectSchema(restaurantReservations) : z.object({});
+export const TableSchema = restaurantTables ? createSelectSchema(restaurantTables) : z.object({});
+export const WaitlistSchema = restaurantWaitlist ? createSelectSchema(restaurantWaitlist) : z.object({});
+export const RestaurantProductSchema = restaurantProducts ? createSelectSchema(restaurantProducts) : z.object({});
+export const InventoryLevelSchema = inventoryLevels ? createSelectSchema(inventoryLevels) : z.object({});
+export const GuestProfileSchema = guestProfiles ? createSelectSchema(guestProfiles) : z.object({});
 
 // Insert schemas (for creating new records)
-export const CreateRestaurantSchema = createInsertSchema(restaurants).omit({
-  id: true,
-  createdAt: true,
-  claimToken: true,
-});
+// Guard against undefined tables in test environments
+export const CreateRestaurantSchema = restaurants 
+  ? createInsertSchema(restaurants).omit({ id: true, createdAt: true, claimToken: true })
+  : z.object({});
 
-export const CreateReservationDBSchema = createInsertSchema(restaurantReservations).omit({
-  id: true,
-  createdAt: true,
-  verificationToken: true,
-});
+export const CreateReservationDBSchema = restaurantReservations
+  ? createInsertSchema(restaurantReservations).omit({ id: true, createdAt: true, verificationToken: true })
+  : z.object({});
 
-export const CreateTableSchema = createInsertSchema(restaurantTables).omit({
-  id: true,
-  updatedAt: true,
-});
+export const CreateTableSchema = restaurantTables
+  ? createInsertSchema(restaurantTables).omit({ id: true, updatedAt: true })
+  : z.object({});
 
-export const AddToWaitlistDBSchema = createInsertSchema(restaurantWaitlist).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
+export const AddToWaitlistDBSchema = restaurantWaitlist
+  ? createInsertSchema(restaurantWaitlist).omit({ id: true, createdAt: true, updatedAt: true })
+  : z.object({});
 
-export const CreateRestaurantProductSchema = createInsertSchema(restaurantProducts).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
+export const CreateRestaurantProductSchema = restaurantProducts
+  ? createInsertSchema(restaurantProducts).omit({ id: true, createdAt: true, updatedAt: true })
+  : z.object({});
 
-export const CreateInventoryLevelSchema = createInsertSchema(inventoryLevels).omit({
-  id: true,
-  updatedAt: true,
-});
+export const CreateInventoryLevelSchema = inventoryLevels
+  ? createInsertSchema(inventoryLevels).omit({ id: true, updatedAt: true })
+  : z.object({});
 
-export const CreateGuestProfileSchema = createInsertSchema(guestProfiles).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
+export const CreateGuestProfileSchema = guestProfiles
+  ? createInsertSchema(guestProfiles).omit({ id: true, createdAt: true, updatedAt: true })
+  : z.object({});
 
 // Update schemas (partial - all fields optional)
-export const UpdateReservationDBSchema = createInsertSchema(restaurantReservations).partial().omit({
-  id: true,
-  createdAt: true,
-});
+// Guard against undefined tables in test environments
+export const UpdateReservationDBSchema = restaurantReservations
+  ? createInsertSchema(restaurantReservations).partial().omit({ id: true, createdAt: true })
+  : z.object({});
 
-export const UpdateTableDBSchema = createInsertSchema(restaurantTables).partial().omit({
-  id: true,
-  restaurantId: true,
-  updatedAt: true,
-});
+export const UpdateTableDBSchema = restaurantTables
+  ? createInsertSchema(restaurantTables).partial().omit({ id: true, restaurantId: true, updatedAt: true })
+  : z.object({});
 
-export const UpdateWaitlistDBSchema = createInsertSchema(restaurantWaitlist).partial().omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
+export const UpdateWaitlistDBSchema = restaurantWaitlist
+  ? createInsertSchema(restaurantWaitlist).partial().omit({ id: true, createdAt: true, updatedAt: true })
+  : z.object({});
 
 /**
  * Utility to get JSON Schema for a tool

@@ -20,10 +20,6 @@ export default defineConfig({
       '**/.next/**',
       '**/packages/**/drizzle/**',
       '**/packages/shared/src/accessibility.tsx',
-      '**/apps/intention-engine/src/lib/__tests__/occ-integration.test.ts', // Requires Redis connection
-      '**/apps/intention-engine/src/lib/__tests__/execution_safety.test.ts', // Uses process.exit()
-      '**/apps/intention-engine/src/lib/__tests__/engine_failure_simulation.test.ts', // No vitest tests
-      '**/apps/table-stack/src/app/api/v1/reserve/__tests__/route.test.ts', // Module resolution issues
     ],
     timeout: 30000,
     reporters: ['verbose'],

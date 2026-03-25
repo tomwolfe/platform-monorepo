@@ -86,7 +86,7 @@ vi.mock('../redis', () => ({
 // Import mocked modules AFTER mocks are hoisted
 import { getDb, restaurants, eq } from '@repo/database';
 import { verifyServiceToken, verifyScopedJWT, verifyAsymmetricJWT, SecurityProvider } from '@repo/auth';
-import { redis } from '../redis';
+import { redis } from '@tablestack/lib/redis';
 
 // Get references to mocked functions after import
 const mockGetDb = getDb as any;

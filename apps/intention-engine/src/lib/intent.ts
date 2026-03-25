@@ -1,14 +1,27 @@
 /**
- * Stub implementations for interaction context tracking.
- * These are placeholder functions for future intent/context persistence features.
+ * Interaction context tracking for conversational continuity.
+ * These functions wire to the actual implementations in context-persistence.ts
+ * enabling "contextual continuity" - e.g., "actually, make it 2 people"
+ * refers to the pizza place found in the previous turn.
  */
 
+import {
+  loadUserInteractionContext,
+  saveUserInteractionContext,
+  type InteractionContext,
+} from "./context-persistence";
+
 export async function getLastInteractionContextByClerkId(clerkId: string) {
-  return null; // Stub - feature not implemented
+  return await loadUserInteractionContext(clerkId);
 }
 
 export async function getLastInteractionContext(userIp: string) {
-  return null; // Stub - feature not implemented
+  // Note: IP-based lookup not implemented - use clerkId instead
+  console.warn(
+    `[Intent] getLastInteractionContext called with IP, but only clerkId is supported. ` +
+    `IP: ${userIp}`
+  );
+  return null;
 }
 
 export async function saveInteractionContextByClerkId(
@@ -16,7 +29,15 @@ export async function saveInteractionContextByClerkId(
   intent: any,
   auditLogId: string
 ) {
-  // Stub - no-op
+  const context: InteractionContext = {
+    intentType: intent.type,
+    rawText: intent.rawText,
+    parameters: intent.parameters,
+    timestamp: new Date().toISOString(),
+    executionId: auditLogId,
+  };
+
+  await saveUserInteractionContext(clerkId, context);
 }
 
 export async function saveInteractionContext(
@@ -24,5 +45,10 @@ export async function saveInteractionContext(
   intent: any,
   auditLogId: string
 ) {
-  // Stub - no-op
+  // Note: IP-based persistence not implemented - use clerkId instead
+  console.warn(
+    `[Intent] saveInteractionContext called with IP, but only clerkId is supported. ` +
+    `IP: ${userIp}, AuditLogId: ${auditLogId}`
+  );
+  // Non-critical operation - don't throw
 }

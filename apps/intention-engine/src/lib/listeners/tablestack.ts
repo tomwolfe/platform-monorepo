@@ -1,5 +1,12 @@
-// IntentionEngine SDK placeholder - to be implemented
-// import { IntentionEngine } from "../sdk";
+/**
+ * TableStack Failover Listener
+ *
+ * When TableStack is full, we transition from 'Venue' intent to 'Logistics' intent.
+ * We use the system_key to unlock the special_offer_id in OpenDeliver.
+ */
+
+import { inferIntent } from "@/lib/engine/intent";
+import { generatePlan } from "@/lib/engine/unified-planner";
 
 export async function handleTableStackRejection(payload: {
   guestEmail: string;
@@ -9,11 +16,6 @@ export async function handleTableStackRejection(payload: {
 }) {
   const { guestEmail, partySize, startTime, restaurantName } = payload;
 
-  /**
-   * Failover Logic:
-   * When TableStack is full, we transition from 'Venue' intent to 'Logistics' intent.
-   * We use the system_key to unlock the special_offer_id in OpenDeliver.
-   */
   const prompt = `
     NOTIFICATION: TableStack reservation REJECTED.
     Guest: ${guestEmail}
@@ -31,10 +33,13 @@ export async function handleTableStackRejection(payload: {
   console.log(`[TableStack Listener] Initiating Delivery-to-Table failover for ${guestEmail}`);
 
   // Trigger Inference & Planning
-  // TODO: Replace with actual planning service call
-  // return await IntentionEngine.process(prompt);
+  const { hypotheses } = await inferIntent(prompt, []);
+  const intent = hypotheses.primary;
+  const plan = await generatePlan(prompt);
+
   return {
-    hypotheses: { primary: { type: 'delivery_failover', confidence: 0.9 } },
-    plan: null,
+    hypotheses,
+    plan,
+    intent,
   };
 }

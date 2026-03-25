@@ -12,7 +12,6 @@ export {
   exportKeyPairForDistribution,
   generateKeyFingerprint,
   generateSatelliteSetupInstructions,
-  verifyHybridJWT,
   type KeyPair,
   type AsymmetricJWTPayload,
   type AsymmetricJWTOptions,

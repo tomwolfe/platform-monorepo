@@ -198,10 +198,10 @@ vi.mock('@repo/mcp-protocol', () => ({
 
 // Import mocked modules
 import { getDb, restaurants, restaurantReservations, guestProfiles, restaurantTables, and, eq, sql } from '@repo/database';
-import { validateRequest } from '@/lib/auth';
+import { validateRequest } from '@tablestack/lib/auth';
 import { IdempotencyService } from '@repo/shared';
 import { RealtimeService } from '@repo/shared';
-import { NotifyService } from '@/lib/notifications';
+import { NotifyService } from '@tablestack/lib/notifications';
 import { createTypedSystemEvent } from '@repo/mcp-protocol';
 
 const mockGetDb = getDb as any;

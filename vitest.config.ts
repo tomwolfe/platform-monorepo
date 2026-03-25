@@ -27,6 +27,12 @@ export default defineConfig({
       './apps/open-delivery/src/test/setup.ts',
       './apps/table-stack/src/test/vitest-setup.ts',
     ],
+    // Use jsdom for React component tests
+    environmentMatchGlobs: [
+      ['**/*.test.tsx', 'jsdom'],
+      ['**/open-delivery/**', 'jsdom'],
+      ['**', 'node'],
+    ],
     server: {
       deps: {
         inline: [

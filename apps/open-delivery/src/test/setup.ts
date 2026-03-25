@@ -135,17 +135,6 @@ vi.mock("wagmi/chains", async () => {
   };
 });
 
-// Mock Web3Provider context - ENHANCED with USDC contract address
-vi.mock("@/components/Web3Provider", () => ({
-  useWeb3: vi.fn(() => ({
-    treasuryAddress: "0x1234567890123456789012345678901234567890",
-    defaultChainId: 8453,
-    supportedChainIds: [8453, 137, 1],
-    usdcContractAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // Base USDC
-  })),
-  Web3Provider: vi.fn(({ children }) => children),
-}));
-
 // Mock @repo/shared/utils/erc20-abi
 vi.mock("@repo/shared/utils/erc20-abi", () => ({
   ERC20_ABI: [

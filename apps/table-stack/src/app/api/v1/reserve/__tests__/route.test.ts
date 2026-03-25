@@ -137,14 +137,21 @@ vi.mock('@repo/database', () => ({
 }));
 
 // Mock @repo/shared
-vi.mock('@repo/shared', () => ({
-  formatApiError: vi.fn((error, code) => ({ error: error.message, code })),
-  formatApiSuccess: vi.fn((data, meta) => ({ success: true, ...data, ...meta })),
-  IdempotencyService: vi.fn().mockImplementation(() => ({
-    isDuplicate: vi.fn(),
-  })),
-  IDEMPOTENCY_KEY_HEADER: 'x-idempotency-key',
-}));
+vi.mock('@repo/shared', async () => {
+  const actual = await vi.importActual('@repo/shared');
+  return {
+    ...(actual as any),
+    formatApiError: vi.fn((error, code) => ({ error: error.message, code })),
+    formatApiSuccess: vi.fn((data, meta) => ({ success: true, ...data, ...meta })),
+    IdempotencyService: vi.fn().mockImplementation(() => ({
+      isDuplicate: vi.fn().mockResolvedValue(false),
+    })),
+    IDEMPOTENCY_KEY_HEADER: 'x-idempotency-key',
+    RealtimeService: {
+      publishNervousSystemEvent: vi.fn(),
+    },
+  };
+});
 
 // Mock @repo/shared/tracing
 vi.mock('@repo/shared/tracing', () => ({
@@ -174,17 +181,6 @@ vi.mock('@/lib/redis', () => ({
     expire: vi.fn(),
   },
 }));
-
-// Mock @repo/shared RealtimeService
-vi.mock('@repo/shared', async () => {
-  const actual = await vi.importActual('@repo/shared');
-  return {
-    ...(actual as any),
-    RealtimeService: {
-      publishNervousSystemEvent: vi.fn(),
-    },
-  };
-});
 
 // Mock @repo/mcp-protocol
 vi.mock('@repo/mcp-protocol', () => ({
@@ -603,10 +599,10 @@ describe('Reservation API Route', () => {
         returning: vi.fn().mockResolvedValue([createMockReservation()]),
       };
 
-      const mockProfileInsert = {
+      const mockProfileInsert: any = {
         returning: vi.fn().mockResolvedValue([createMockProfile({ visitCount: 1 })]),
-        onConflictDoUpdate: vi.fn().mockReturnValue(mockProfileInsert),
       };
+      mockProfileInsert.onConflictDoUpdate = vi.fn().mockReturnValue(mockProfileInsert);
 
       mockDb.insert.mockImplementation((table: any) => {
         if (table === guestProfiles) {
@@ -648,10 +644,10 @@ describe('Reservation API Route', () => {
         returning: vi.fn().mockResolvedValue([createMockReservation()]),
       };
 
-      const mockProfileInsert = {
+      const mockProfileInsert: any = {
         returning: vi.fn().mockResolvedValue([createMockProfile({ visitCount: 6 })]),
-        onConflictDoUpdate: vi.fn().mockReturnValue(mockProfileInsert),
       };
+      mockProfileInsert.onConflictDoUpdate = vi.fn().mockReturnValue(mockProfileInsert);
 
       mockDb.insert.mockImplementation((table: any) => {
         if (table === guestProfiles) {

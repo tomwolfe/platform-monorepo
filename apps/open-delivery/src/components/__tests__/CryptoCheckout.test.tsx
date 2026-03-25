@@ -2,12 +2,16 @@
  * Crypto Checkout Integration Tests
  *
  * End-to-end tests for the Web3 checkout flow
+ *
+ * @vitest-environment jsdom
  */
 
+import React from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { CryptoCheckout } from "../CryptoCheckout";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Web3Provider } from "../Web3Provider";
 
 // Mock wagmi hooks - MUST come before imports
 vi.mock("wagmi", async () => {
@@ -58,16 +62,6 @@ vi.mock("wagmi", async () => {
   };
 });
 
-// Mock Web3Provider context
-vi.mock("../components/Web3Provider", () => ({
-  useWeb3: vi.fn(() => ({
-    treasuryAddress: "0x1234567890123456789012345678901234567890",
-    defaultChainId: 8453,
-    supportedChainIds: [8453, 137, 1],
-    usdcContractAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-  })),
-}));
-
 // Mock viem
 vi.mock("viem", async () => {
   const actual = await vi.importActual("viem");
@@ -98,30 +92,34 @@ const createTestWrapper = () => {
   });
 
   return ({ children }: { children: React.ReactNode }) => (
-    <QueryClientProvider client={queryClient}>
-      {children}
-    </QueryClientProvider>
+    <Web3Provider>
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    </Web3Provider>
   );
 };
 
+// Shared test data
+const mockCart = [
+  { id: "1", name: "Burger", price: 10.0, quantity: 2 },
+  { id: "2", name: "Fries", price: 5.0, quantity: 1 },
+];
+
+const mockProps = {
+  cart: mockCart,
+  tip: 5.0,
+  deliveryAddress: "123 Main St",
+  selectedVendor: { id: "vendor-1", name: "Test Restaurant" },
+  onCheckoutComplete: vi.fn(),
+  onError: vi.fn(),
+  onCancel: vi.fn(),
+};
+
 describe("CryptoCheckout Integration", () => {
-  const mockCart = [
-    { id: "1", name: "Burger", price: 10.0, quantity: 2 },
-    { id: "2", name: "Fries", price: 5.0, quantity: 1 },
-  ];
-
-  const mockProps = {
-    cart: mockCart,
-    tip: 5.0,
-    deliveryAddress: "123 Main St",
-    selectedVendor: { id: "vendor-1", name: "Test Restaurant" },
-    onCheckoutComplete: vi.fn(),
-    onError: vi.fn(),
-    onCancel: vi.fn(),
-  };
-
   beforeEach(() => {
-    vi.clearAllMocks();
+    // Don't clear all mocks - we need to preserve Web3Provider
+    vi.restoreAllMocks();
   });
 
   it("should display order summary with correct totals", () => {

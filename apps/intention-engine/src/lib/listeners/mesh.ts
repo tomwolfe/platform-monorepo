@@ -1,4 +1,4 @@
-import { RealtimeService } from "@repo/shared";
+import { RealtimeService, getRedisClient, ServiceNamespace } from "@repo/shared";
 import { handleTableStackRejection } from "./tablestack";
 import { verifyServiceToken } from "@repo/auth";
 import { inferIntent } from "@/lib/engine/intent";
@@ -15,6 +15,75 @@ import {
   type SystemEventType,
 } from "@repo/mcp-protocol/schemas/events";
 import { z } from "zod";
+
+const redis = getRedisClient(ServiceNamespace.IE);
+
+/**
+ * Send failed event to Dead Letter Queue for manual inspection
+ * Stores the raw payload, validation error, and metadata for debugging
+ */
+async function sendEventToDLQ(
+  eventName: string,
+  rawPayload: unknown,
+  validationError: z.ZodError,
+  context?: {
+    userId?: string;
+    traceId?: string;
+  }
+) {
+  const dlqKey = `dlq:unparseable_events:${Date.now()}:${eventName}`;
+  const dlqEntry = {
+    eventName,
+    rawPayload: JSON.stringify(rawPayload),
+    validationError: JSON.stringify({
+      message: validationError.message,
+      name: validationError.name,
+      errors: validationError.errors.map((e) => ({
+        path: e.path.join('.'),
+        message: e.message,
+        code: e.code,
+      })),
+    }),
+    userId: context?.userId || 'unknown',
+    traceId: context?.traceId || 'unknown',
+    timestamp: new Date().toISOString(),
+    source: 'mesh_listener',
+  };
+
+  try {
+    // Store in Redis hash for easy retrieval and inspection
+    await redis.hset(dlqKey, dlqEntry);
+    
+    // Also add to sorted set for time-based querying
+    await redis.zadd('dlq:unparseable_events:index', {
+      score: Date.now(),
+      member: dlqKey,
+    });
+
+    // Publish alert to nervous system for monitoring
+    await RealtimeService.publish(
+      'nervous-system:updates',
+      'dlq.event_dropped',
+      {
+        type: 'validation_failure',
+        eventName,
+        dlqKey,
+        userId: context?.userId,
+        traceId: context?.traceId,
+        timestamp: dlqEntry.timestamp,
+      }
+    );
+
+    console.error(
+      `[MeshListener] Event ${eventName} sent to DLQ: ${dlqKey}`
+    );
+  } catch (error) {
+    console.error(
+      `[MeshListener] Failed to store event in DLQ:`,
+      error instanceof Error ? error.message : error
+    );
+  }
+}
 
 /**
  * MeshListener - Orchestrates real-time reaction to Nervous System events.
@@ -295,14 +364,15 @@ export class MeshListener {
     switch (eventName) {
       case 'reservation_rejected': {
         // STRICT VALIDATION: Use full schema validation (not partial)
-        // Events that fail validation are dropped and logged to DLQ
+        // Events that fail validation are dropped and sent to DLQ
         const validated = ReservationEventPayloadSchema.safeParse(data);
         if (!validated.success) {
           console.error(
             `[MeshListener] Event ${eventName} FAILED validation, DROPPING:`,
             validated.error
           );
-          // TODO: Send to DLQ for manual inspection
+          // Send to DLQ for manual inspection
+          await sendEventToDLQ(eventName, data, validated.error, { userId, traceId });
           return;
         }
         return await handleTableStackRejection(validated.data);
@@ -315,6 +385,8 @@ export class MeshListener {
             `[MeshListener] Event ${eventName} FAILED validation, DROPPING:`,
             validated.error
           );
+          // Send to DLQ for manual inspection
+          await sendEventToDLQ(eventName, data, validated.error, { userId, traceId });
           return;
         }
         return await this.handleHighValueGuest(validated.data);
@@ -328,6 +400,8 @@ export class MeshListener {
             `[MeshListener] Event ${eventName} FAILED validation, DROPPING:`,
             validated.error
           );
+          // Send to DLQ for manual inspection
+          await sendEventToDLQ(eventName, data, validated.error, { userId, traceId });
           return;
         }
         console.log(`[MeshListener] Delivery logged on mesh:`, validated.data.orderId);

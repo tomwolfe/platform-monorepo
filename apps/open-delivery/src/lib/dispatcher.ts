@@ -181,10 +181,11 @@ export async function findAvailableDrivers(
     return [];
   }
 
-  // Calculate match scores
   // Geocode the pickup address to get lat/lng
-  let pickupLat = 40.7128; // Default to NYC
-  let pickupLng = -74.0060;
+  // CRITICAL: If geocoding fails, we CANNOT proceed with driver matching
+  // Using incorrect coordinates would dispatch wrong drivers to wrong locations
+  let pickupLat: number | null = null;
+  let pickupLng: number | null = null;
 
   try {
     const geocodeResult = await geocode(orderIntent.pickupAddress);
@@ -195,21 +196,27 @@ export async function findAvailableDrivers(
         message: `[Dispatcher] Geocoded pickup address "${orderIntent.pickupAddress}" to (${pickupLat}, ${pickupLng})`,
       });
     } else {
-      logger.warn({
-        message: `[Dispatcher] Geocoding failed for "${orderIntent.pickupAddress}": ${geocodeResult.error}. Using default NYC coordinates.`,
+      // Geocoding failed - return empty array, do NOT use fallback coordinates
+      logger.error({
+        message: `[Dispatcher] Geocoding failed for "${orderIntent.pickupAddress}": ${geocodeResult.error}. Cannot match drivers without valid coordinates.`,
+        details: { orderId: orderIntent.orderId, fulfillmentId: orderIntent.fulfillmentId },
       });
+      return [];
     }
   } catch (error) {
-    logger.warn({
+    // Geocoding error - return empty array, do NOT use fallback coordinates
+    logger.error({
       message: `[Dispatcher] Geocoding error for "${orderIntent.pickupAddress}"`,
       error: error instanceof Error ? error.message : String(error),
-      details: { fallback: 'NYC coordinates' },
+      details: { orderId: orderIntent.orderId, fulfillmentId: orderIntent.fulfillmentId },
     });
+    return [];
   }
 
+  // Calculate match scores with validated coordinates
   const scoredDrivers = drivers.map((driver: typeof drivers[number]) => ({
     ...driver,
-    matchScore: calculateDriverScore(driver, requiredVehicle, pickupLat, pickupLng),
+    matchScore: calculateDriverScore(driver, requiredVehicle, pickupLat!, pickupLng!),
   }));
 
   // Sort by score descending

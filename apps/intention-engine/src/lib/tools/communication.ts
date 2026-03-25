@@ -26,7 +26,7 @@ export async function send_comm(params: CommunicationParams): Promise<{ success:
       // Use Resend for actual email delivery
       const resend = getResendClient();
       const from = process.env.EMAIL_FROM || "onboarding@resend.dev";
-      
+
       const result = await resend.emails.send({
         from,
         to: recipient,
@@ -45,17 +45,26 @@ export async function send_comm(params: CommunicationParams): Promise<{ success:
         },
       };
     } else if (channel === "sms") {
-      // SMS not yet implemented - log for now
-      console.log(`[SMS] Would send to ${recipient}: ${message}`);
+      // SMS requires Twilio configuration
+      // Do NOT return mock success - this breaks LLM's understanding of real-world state
+      if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_PHONE_NUMBER) {
+        return {
+          success: false,
+          error: "SMS channel not configured. Missing Twilio credentials (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER). Use email channel instead or configure Twilio environment variables.",
+        };
+      }
+
+      // TODO: Implement Twilio SMS integration
+      // const twilio = require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+      // await twilio.messages.create({
+      //   body: message,
+      //   from: process.env.TWILIO_PHONE_NUMBER,
+      //   to: recipient,
+      // });
+
       return {
-        success: true,
-        result: {
-          status: "mock_sent",
-          channel: "sms",
-          recipient: recipient,
-          timestamp: new Date().toISOString(),
-          note: "SMS integration not yet configured",
-        },
+        success: false,
+        error: "SMS channel not yet implemented. Twilio credentials detected but integration is pending. Use email channel instead.",
       };
     } else {
       return {

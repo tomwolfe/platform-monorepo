@@ -20,7 +20,7 @@ import {
   type MemoryEntryType as SharedMemoryEntryType,
   type MemoryQuery as SharedMemoryQuery,
 } from '@repo/shared/redis/memory';
-import { getRedisClient, ServiceNamespace } from '@repo/shared';
+import { getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
 import type { Redis } from "@upstash/redis";
 import {
   MemoryEntry,
@@ -33,6 +33,8 @@ import {
   EngineErrorSchema,
 } from "./types";
 import type { TaskState, TaskStatus } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "intention-engine" });
 
 // Initialize Redis client for MemoryClient
 const redis = getRedisClient(ServiceNamespace.IE);
@@ -80,7 +82,9 @@ export class MemoryClient extends SharedMemoryClient {
     // Check if Redis is actually available
     this.isAvailable = !!redis;
     if (!this.isAvailable) {
-      console.warn('[MemoryClient] Redis client not available. Degrading to stateless mode.');
+      logger.warn({
+        message: '[MemoryClient] Redis client not available. Degrading to stateless mode.',
+      });
     }
   }
 
@@ -106,7 +110,9 @@ export class MemoryClient extends SharedMemoryClient {
 
     // RESILIENCE FIX: Gracefully handle Redis unavailability
     if (!this.isAvailable) {
-      console.warn('[MemoryClient] Redis unavailable, skipping store operation in stateless mode.');
+      logger.warn({
+        message: '[MemoryClient] Redis unavailable, skipping store operation in stateless mode.',
+      });
       return completeEntry;
     }
 
@@ -134,7 +140,9 @@ export class MemoryClient extends SharedMemoryClient {
    */
   async retrieve(key: string): Promise<MemoryEntry | null> {
     if (!this.isAvailable) {
-      console.warn('[MemoryClient] Redis unavailable, returning null in stateless mode.');
+      logger.warn({
+        message: '[MemoryClient] Redis unavailable, returning null in stateless mode.',
+      });
       return null;
     }
 
@@ -174,7 +182,10 @@ export class MemoryClient extends SharedMemoryClient {
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         .slice(0, limit);
     } catch (error) {
-      console.error("Failed to get recent successful intents:", error);
+      logger.error({
+        message: 'Failed to get recent successful intents',
+        error: error instanceof Error ? error.message : String(error),
+      });
       return [];
     }
   }
@@ -286,7 +297,10 @@ export function getMemoryClientSafe(): MemoryClient | null {
   try {
     return getMemoryClient();
   } catch (error) {
-    console.warn('[MemoryClient] Redis unavailable, returning null:', error instanceof Error ? error.message : error);
+    logger.warn({
+      message: '[MemoryClient] Redis unavailable, returning null',
+      error: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }

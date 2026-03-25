@@ -10,8 +10,9 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { openApiSpecification } from '@repo/shared';
+import { withApiErrorHandler } from '@repo/shared';
 
-export async function GET(req: NextRequest) {
+async function openApiHandler(req: NextRequest) {
   const url = new URL(req.url);
   const format = url.searchParams.get('format') || 'json';
 
@@ -30,3 +31,5 @@ export async function GET(req: NextRequest) {
     },
   });
 }
+
+export const GET = withApiErrorHandler(openApiHandler, 'EXECUTION_FAILED');

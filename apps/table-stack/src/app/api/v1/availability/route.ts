@@ -76,7 +76,7 @@ export const GET = withCache(
       const restaurantTime = toZonedTime(requestedDate, timezone);
 
       const dayOfWeek = format(restaurantTime, 'eeee', { timeZone: timezone }).toLowerCase();
-      const openDays = restaurant.daysOpen?.split(',').map((d: string) => d.trim().toLowerCase()) || [];
+      const openDays = restaurant.daysOpen?.split(',').map((d: unknown) => String(d).trim().toLowerCase()) || [];
 
       if (!openDays.includes(dayOfWeek)) {
         return NextResponse.json(formatApiSuccess({ message: 'Restaurant is closed on this day', availableTables: [] }));
@@ -203,18 +203,26 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
       )
     );
 
-  const availableIndividualTables = allTables.filter((t: any) => 
+  const availableIndividualTables = allTables.filter((t: typeof restaurantTables.$inferSelect) =>
     !occupiedTableIds.includes(t.id) && t.maxCapacity >= partySize
   );
 
   if (availableIndividualTables.length > 0) {
-    return availableIndividualTables.map((t: any) => ({ ...t, isCombined: false }));
+    return availableIndividualTables.map((t: typeof restaurantTables.$inferSelect) => ({ ...t, isCombined: false }));
   }
 
   // If no individual table fits, try joining two tables
   // For simplicity, we only try joining TWO adjacent tables
-  const vacantTables = allTables.filter((t: any) => !occupiedTableIds.includes(t.id));
-  const suggestedCombos: any[] = [];
+  const vacantTables = allTables.filter((t: typeof restaurantTables.$inferSelect) => !occupiedTableIds.includes(t.id));
+  const suggestedCombos: Array<{
+    id: string;
+    tableNumber: string;
+    combinedTableIds: string[];
+    maxCapacity: number;
+    isCombined: boolean;
+    table1: typeof restaurantTables.$inferSelect;
+    table2: typeof restaurantTables.$inferSelect;
+  }> = [];
 
   for (let i = 0; i < vacantTables.length; i++) {
     for (let j = i + 1; j < vacantTables.length; j++) {

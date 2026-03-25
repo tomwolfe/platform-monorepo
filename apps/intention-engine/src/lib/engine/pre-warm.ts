@@ -31,11 +31,12 @@
  * @package apps/intention-engine
  */
 
-import { getRedisClient, ServiceNamespace, AppConfig } from '@repo/shared';
+import { getRedisClient, ServiceNamespace, AppConfig, Logger } from '@repo/shared';
 import { ExecutionState, PlanStep } from './types';
 import { getCompletedSteps, getPendingSteps } from './state-machine';
 
 const redis = getRedisClient(ServiceNamespace.IE);
+const logger = new Logger({ serviceName: 'intention-engine' });
 
 // ============================================================================
 // CONFIGURATION
@@ -193,14 +194,16 @@ export class PreWarmService {
       // Fire-and-forget pre-warm request WITH HINT
       // We don't await this - it's best-effort
       this.sendPreWarmRequest(hint, nextToolName).catch(error => {
-        console.warn("[PreWarm] Pre-warm request failed (non-blocking):", error);
+        logger.warn({
+          message: '[PreWarm] Pre-warm request failed (non-blocking)',
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
 
       if (PRE_WARM_CONFIG.debug) {
-        console.log(
-          `[PreWarm] Triggered for ${this.executionId} ` +
-          `(completion: ${(this.state.completionPercentage * 100).toFixed(1)}%, hint: ${hint || 'GENERIC'})`
-        );
+        logger.info({
+          message: `[PreWarm] Triggered for ${this.executionId} (completion: ${(this.state.completionPercentage * 100).toFixed(1)}%, hint: ${hint || 'GENERIC'})`,
+        });
       }
 
       return {
@@ -209,7 +212,10 @@ export class PreWarmService {
         warmStartTimeMs: Date.now() - startTime,
       };
     } catch (error) {
-      console.error("[PreWarm] Failed to trigger pre-warm:", error);
+      logger.error({
+        message: '[PreWarm] Failed to trigger pre-warm',
+        error: error instanceof Error ? error.message : String(error),
+      });
       return {
         success: false,
         warmed: false,
@@ -246,12 +252,18 @@ export class PreWarmService {
         }).then(response => {
           // Silently ignore response - pre-warm is best-effort
           if (PRE_WARM_CONFIG.debug && !response.ok) {
-            console.warn("[PreWarm] Pre-warm request failed:", response.status);
+            logger.warn({
+              message: '[PreWarm] Pre-warm request failed',
+              error: `Status: ${response.status}`,
+            });
           }
         }).catch(error => {
           // Silently ignore errors - pre-warm is best-effort
           if (PRE_WARM_CONFIG.debug) {
-            console.warn("[PreWarm] Request error (ignored):", error);
+            logger.warn({
+              message: '[PreWarm] Request error (ignored)',
+              error: error instanceof Error ? error.message : String(error),
+            });
           }
         })
       );
@@ -267,7 +279,10 @@ export class PreWarmService {
     } catch (error) {
       // Ignore errors - pre-warm is best-effort
       if (PRE_WARM_CONFIG.debug) {
-        console.warn("[PreWarm] sendPreWarmRequest error (ignored):", error);
+        logger.warn({
+          message: '[PreWarm] sendPreWarmRequest error (ignored)',
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }
@@ -284,7 +299,10 @@ export class PreWarmService {
         JSON.stringify(this.state)
       );
     } catch (error) {
-      console.warn("[PreWarm] Failed to store state:", error);
+      logger.warn({
+        message: '[PreWarm] Failed to store state',
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -299,7 +317,10 @@ export class PreWarmService {
         return JSON.parse(data) as PreWarmState;
       }
     } catch (error) {
-      console.warn("[PreWarm] Failed to load state:", error);
+      logger.warn({
+        message: '[PreWarm] Failed to load state',
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
     return null;
   }
@@ -375,9 +396,9 @@ export async function handlePreWarmRequest(
 
   try {
     // Log pre-warm event with hint
-    console.log(
-      `[PreWarm] Lambda warming for ${executionId} (next step: ${nextStepIndex}, hint: ${hint}, tool: ${nextToolName || 'unknown'})`
-    );
+    logger.info({
+      message: `[PreWarm] Lambda warming for ${executionId} (next step: ${nextStepIndex}, hint: ${hint}, tool: ${nextToolName || 'unknown'})`,
+    });
 
     // Warm database connection (lazy initialization)
     // This ensures the connection pool is initialized
@@ -388,7 +409,10 @@ export async function handlePreWarmRequest(
     } catch (error) {
       // Ignore DB errors - this is just warming
       if (PRE_WARM_CONFIG.debug) {
-        console.warn("[PreWarm] DB warm failed:", error);
+        logger.warn({
+          message: '[PreWarm] DB warm failed',
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -398,7 +422,10 @@ export async function handlePreWarmRequest(
     } catch (error) {
       // Ignore Redis errors
       if (PRE_WARM_CONFIG.debug) {
-        console.warn("[PreWarm] Redis warm failed:", error);
+        logger.warn({
+          message: '[PreWarm] Redis warm failed',
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -409,7 +436,10 @@ export async function handlePreWarmRequest(
     } catch (error) {
       // Ignore state load errors
       if (PRE_WARM_CONFIG.debug) {
-        console.warn("[PreWarm] State load failed:", error);
+        logger.warn({
+          message: '[PreWarm] State load failed',
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -417,11 +447,16 @@ export async function handlePreWarmRequest(
     await preFetchDataForHint(hint, executionId, nextStepIndex);
 
     const warmDuration = Date.now() - startTime;
-    console.log(`[PreWarm] Lambda warmed in ${warmDuration}ms for ${executionId} (hint: ${hint})`);
+    logger.info({
+      message: `[PreWarm] Lambda warmed in ${warmDuration}ms for ${executionId} (hint: ${hint})`,
+    });
 
     return { success: true, warmed: true };
   } catch (error) {
-    console.error("[PreWarm] Warming failed:", error);
+    logger.error({
+      message: '[PreWarm] Warming failed',
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { success: false, warmed: false };
   }
 }
@@ -444,7 +479,7 @@ async function preFetchDataForHint(
         await getDb().execute("SELECT 1 FROM restaurant_tables LIMIT 1");
         await getDb().execute("SELECT 1 FROM reservations LIMIT 1");
         if (PRE_WARM_CONFIG.debug) {
-          console.log("[PreWarm] Pre-fetched reservation data");
+          logger.info({ message: '[PreWarm] Pre-fetched reservation data' });
         }
         break;
 
@@ -453,7 +488,7 @@ async function preFetchDataForHint(
         await getDb().execute("SELECT 1 FROM users LIMIT 1");
         await getDb().execute("SELECT 1 FROM user_preferences LIMIT 1");
         if (PRE_WARM_CONFIG.debug) {
-          console.log("[PreWarm] Pre-fetched user data");
+          logger.info({ message: '[PreWarm] Pre-fetched user data' });
         }
         break;
 
@@ -462,7 +497,7 @@ async function preFetchDataForHint(
         await getDb().execute("SELECT 1 FROM payment_methods LIMIT 1");
         await getDb().execute("SELECT 1 FROM crypto_payments LIMIT 1");
         if (PRE_WARM_CONFIG.debug) {
-          console.log("[PreWarm] Pre-fetched payment data");
+          logger.info({ message: '[PreWarm] Pre-fetched payment data' });
         }
         break;
 
@@ -471,7 +506,7 @@ async function preFetchDataForHint(
         await getDb().execute("SELECT 1 FROM restaurants LIMIT 1");
         await getDb().execute("SELECT 1 FROM cuisines LIMIT 1");
         if (PRE_WARM_CONFIG.debug) {
-          console.log("[PreWarm] Pre-fetched search data");
+          logger.info({ message: '[PreWarm] Pre-fetched search data' });
         }
         break;
 
@@ -480,7 +515,7 @@ async function preFetchDataForHint(
         await getDb().execute("SELECT 1 FROM cancellation_policies LIMIT 1");
         await getDb().execute("SELECT 1 FROM refunds LIMIT 1");
         if (PRE_WARM_CONFIG.debug) {
-          console.log("[PreWarm] Pre-fetched cancellation data");
+          logger.info({ message: '[PreWarm] Pre-fetched cancellation data' });
         }
         break;
 
@@ -493,7 +528,10 @@ async function preFetchDataForHint(
   } catch (error) {
     // Ignore pre-fetch errors - this is best-effort optimization
     if (PRE_WARM_CONFIG.debug) {
-      console.warn("[PreWarm] Pre-fetch failed for hint:", hint, error);
+      logger.warn({
+        message: '[PreWarm] Pre-fetch failed for hint',
+        error: { hint, details: error instanceof Error ? error.message : String(error) },
+      });
     }
   }
 }

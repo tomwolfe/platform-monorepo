@@ -27,6 +27,7 @@ import {
   EngineErrorSchema,
   EngineErrorCode,
 } from "./types";
+import { Logger } from "@repo/shared";
 import {
   ExecutionStateMachine,
   createInitialState,
@@ -69,6 +70,8 @@ import { openai } from "@ai-sdk/openai";
 import { captureStateDiffOnSave } from "./state-diff-viewer";
 import { after } from "next/server";
 import { BatchExecutionPlanner } from "./dependency-resolver";
+
+const logger = new Logger({ serviceName: "intention-engine" });
 
 const redis = getRedisClient(ServiceNamespace.IE);
 
@@ -602,10 +605,9 @@ export class WorkflowMachine {
         void Promise.all(warmPromises);
       }
 
-      console.log(
-        `[WorkflowMachine] Infrastructure-aware pre-warm for step ${nextStepIndex} ` +
-        `(elapsed: ${elapsedInSegment}ms, estimated next: ${estimatedNextStepTime}ms, hint: ${preWarmHint})`
-      );
+      logger.info({
+        message: `[WorkflowMachine] Infrastructure-aware pre-warm for step ${nextStepIndex} (elapsed: ${elapsedInSegment}ms, estimated next: ${estimatedNextStepTime}ms, hint: ${preWarmHint})`,
+      });
     }
   }
 
@@ -721,11 +723,9 @@ export class WorkflowMachine {
     const predictedTotalTime = elapsedInSegment + estimatedTimeForNext + ADAPTIVE_BATCHING_CONFIG.yieldBufferMs;
 
     if (predictedTotalTime > ADAPTIVE_BATCHING_CONFIG.vercelHardTimeoutMs) {
-      console.log(
-        `[WorkflowMachine] Predictive timeout: yielding at ${elapsedInSegment}ms ` +
-        `(next step: ${nextStep.tool_name}, estimated: ${estimatedTimeForNext}ms, ` +
-        `predicted total: ${predictedTotalTime}ms > ${ADAPTIVE_BATCHING_CONFIG.vercelHardTimeoutMs}ms)`
-      );
+      logger.info({
+        message: `[WorkflowMachine] Predictive timeout: yielding at ${elapsedInSegment}ms (next step: ${nextStep.tool_name}, estimated: ${estimatedTimeForNext}ms, predicted total: ${predictedTotalTime}ms > ${ADAPTIVE_BATCHING_CONFIG.vercelHardTimeoutMs}ms)`,
+      });
       return true;
     }
 
@@ -783,9 +783,9 @@ export class WorkflowMachine {
               await this.preWarmNextLambda(nextStepIndex, elapsedInSegment);
             }
 
-            console.log(
-              `[WorkflowMachine] Adaptive batching: yielding after ${elapsedInSegment}ms (elapsed >= ${ADAPTIVE_BATCHING_CONFIG.minElapsedBeforeYieldCheck}ms)`
-            );
+            logger.info({
+              message: `[WorkflowMachine] Adaptive batching: yielding after ${elapsedInSegment}ms (elapsed >= ${ADAPTIVE_BATCHING_CONFIG.minElapsedBeforeYieldCheck}ms)`,
+            });
             return await this.yieldExecution("TIMEOUT_APPROACHING");
           }
 
@@ -837,9 +837,9 @@ export class WorkflowMachine {
 
           // Log parallelization info
           if (batch.stepIds.length > 1) {
-            console.log(
-              `[WorkflowMachine] Executing batch of ${batch.stepIds.length} steps in parallel: ${batch.stepIds.join(", ")}`
-            );
+            logger.info({
+              message: `[WorkflowMachine] Executing batch of ${batch.stepIds.length} steps in parallel: ${batch.stepIds.join(", ")}`,
+            });
           }
 
           // Execute batch steps in parallel
@@ -876,18 +876,18 @@ export class WorkflowMachine {
                 });
               }
 
-              console.log(
-                `[WorkflowMachine] Step ${stepId} (${stepsToExecute[i].tool_name}) completed: ${stepResult.stepState.status}`
-              );
+              logger.info({
+                message: `[WorkflowMachine] Step ${stepId} (${stepsToExecute[i].tool_name}) completed: ${stepResult.stepState.status}`,
+              });
 
               // ENHANCEMENT: Capture state diff after step completion
               // This enables visual saga gantt chart for post-mortem debugging
               await captureStateDiffOnSave(this.state, false);
             } else {
-              console.error(
-                `[WorkflowMachine] Step ${stepId} failed with exception:`,
-                result.reason
-              );
+              logger.error({
+                message: `[WorkflowMachine] Step ${stepId} failed with exception`,
+                error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+              });
             }
           }
 
@@ -1089,10 +1089,10 @@ export class WorkflowMachine {
           // Replace resolvedParameters with validated (type-safe) version
           Object.assign(resolvedParameters, validatedParams);
         } catch (validationError) {
-          console.error(
-            `[WorkflowMachine] Parameter validation failed for step ${step.id} (${step.tool_name}):`,
-            validationError instanceof Error ? validationError.message : validationError
-          );
+          logger.error({
+            message: `[WorkflowMachine] Parameter validation failed for step ${step.id} (${step.tool_name})`,
+            error: validationError instanceof Error ? validationError.message : String(validationError),
+          });
 
           return {
             stepState: {
@@ -1129,7 +1129,9 @@ export class WorkflowMachine {
               resolvedParameters,
               userId
             );
-            console.log(`[Idempotency] Step ${step.tool_name} (${step.id}) already executed, skipping. Key: ${keyHash}`);
+            logger.info({
+              message: `[Idempotency] Step ${step.tool_name} (${step.id}) already executed, skipping. Key: ${keyHash}`,
+            });
             span.setAttributes({ idempotency_skip: true });
 
             await RealtimeService.publishStreamingStatusUpdate({
@@ -1159,9 +1161,9 @@ export class WorkflowMachine {
         // HITL: Check if step requires confirmation before execution
         // ENHANCEMENT: Interrupted Sagas with Confirmation Tokens
         if (step.requires_confirmation) {
-          console.log(
-            `[WorkflowMachine] Step ${step.id} (${step.tool_name}) requires confirmation`
-          );
+          logger.info({
+            message: `[WorkflowMachine] Step ${step.id} (${step.tool_name}) requires confirmation`,
+          });
 
           // Assess risk level based on tool type and parameters
           const riskAssessment = this.assessStepRisk(step, resolvedParameters);
@@ -1230,9 +1232,9 @@ export class WorkflowMachine {
         // ABORT CONTROLLER WITH 8500MS TIMEOUT
         const abortController = new AbortController();
         const timeoutId = setTimeout(() => {
-          console.warn(
-            `[WorkflowMachine] Step ${step.tool_name} approaching Vercel timeout, aborting...`
-          );
+          logger.warn({
+            message: `[WorkflowMachine] Step ${step.tool_name} approaching Vercel timeout, aborting...`,
+          });
           abortController.abort();
         }, SEGMENT_TIMEOUT_MS);
 
@@ -1277,9 +1279,9 @@ export class WorkflowMachine {
                 toolName: compDef.toolName,
                 parameters: mappedParams,
               };
-              console.log(
-                `[WorkflowMachine] Registered compensation for ${step.tool_name}: ${compDef.toolName}`
-              );
+              logger.info({
+                message: `[WorkflowMachine] Registered compensation for ${step.tool_name}: ${compDef.toolName}`,
+              });
             }
           }
 
@@ -1343,11 +1345,10 @@ export class WorkflowMachine {
 
           // Handle circuit breaker trip - escalate to human
           if (failoverResult.circuitBroken) {
-            console.warn(
-              `[WorkflowMachine] LLM correction circuit breaker tripped for ${step.tool_name}. ` +
-              `Escalating to human intervention.`
-            );
-            
+            logger.warn({
+              message: `[WorkflowMachine] LLM correction circuit breaker tripped for ${step.tool_name}. Escalating to human intervention.`,
+            });
+
             await RealtimeService.publishStreamingStatusUpdate({
               executionId: this.executionId,
               stepIndex,
@@ -1377,9 +1378,9 @@ export class WorkflowMachine {
           }
 
           if (failoverResult.shouldRetry) {
-            console.log(
-              `[WorkflowMachine] Failover policy triggered for ${step.tool_name}: ${failoverResult.policyName}`
-            );
+            logger.info({
+              message: `[WorkflowMachine] Failover policy triggered for ${step.tool_name}: ${failoverResult.policyName}`,
+            });
 
             // Try the failover action (e.g., alternative time, alternative restaurant)
             if (failoverResult.retryParameters) {
@@ -1590,13 +1591,18 @@ export class WorkflowMachine {
       const now = Date.now();
       if (circuitState.isOpen && (now - circuitState.openedAt) > LLM_CIRCUIT_BREAKER_CONFIG.openTimeoutMs) {
         // Circuit timeout expired - allow half-open state (one test call)
-        console.log(`[CircuitBreaker] Circuit timeout expired for ${stepId}, allowing test call`);
+        logger.info({
+          message: `[CircuitBreaker] Circuit timeout expired for ${stepId}, allowing test call`,
+        });
         return false;
       }
 
       return circuitState.isOpen;
     } catch (error) {
-      console.error(`[CircuitBreaker] Failed to check circuit state:`, error);
+      logger.error({
+        message: `[CircuitBreaker] Failed to check circuit state`,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false; // Fail open - allow LLM calls if Redis fails
     }
   }
@@ -1642,18 +1648,20 @@ export class WorkflowMachine {
             reason: `Exceeded ${LLM_CIRCUIT_BREAKER_CONFIG.maxAttempts} attempts in ${LLM_CIRCUIT_BREAKER_CONFIG.windowMs / 1000}s`,
           })
         );
-        
-        console.warn(
-          `[CircuitBreaker] TRIPPED for ${stepId} after ${attemptCount} attempts. ` +
-          `Will reopen in ${LLM_CIRCUIT_BREAKER_CONFIG.openTimeoutMs / 1000}s`
-        );
-        
+
+        logger.warn({
+          message: `[CircuitBreaker] TRIPPED for ${stepId} after ${attemptCount} attempts. Will reopen in ${LLM_CIRCUIT_BREAKER_CONFIG.openTimeoutMs / 1000}s`,
+        });
+
         return { shouldProceed: false, attemptCount };
       }
 
       return { shouldProceed: true, attemptCount };
     } catch (error) {
-      console.error(`[CircuitBreaker] Failed to record correction attempt:`, error);
+      logger.error({
+        message: `[CircuitBreaker] Failed to record correction attempt`,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return { shouldProceed: true, attemptCount: 0 }; // Fail open
     }
   }
@@ -1664,13 +1672,18 @@ export class WorkflowMachine {
   private async resetCircuitBreaker(executionId: string, stepId: string): Promise<void> {
     const circuitKey = `llm:circuit:${executionId}:${stepId}`;
     const windowKey = `llm:window:${executionId}:${stepId}`;
-    
+
     try {
       await redis.del(circuitKey);
       await redis.del(windowKey);
-      console.log(`[CircuitBreaker] RESET for ${stepId} after successful recovery`);
+      logger.info({
+        message: `[CircuitBreaker] RESET for ${stepId} after successful recovery`,
+      });
     } catch (error) {
-      console.error(`[CircuitBreaker] Failed to reset circuit breaker:`, error);
+      logger.error({
+        message: `[CircuitBreaker] Failed to reset circuit breaker`,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -1695,10 +1708,9 @@ export class WorkflowMachine {
     // CIRCUIT BREAKER CHECK - Prevent LLM budget bleed
     const circuitOpen = await this.isCircuitBreakerOpen(this.executionId, step.id);
     if (circuitOpen) {
-      console.warn(
-        `[WorkflowMachine] Circuit breaker OPEN for ${step.tool_name} (${step.id}). ` +
-        `Skipping LLM-based failover correction. Escalating to human intervention.`
-      );
+      logger.warn({
+        message: `[WorkflowMachine] Circuit breaker OPEN for ${step.tool_name} (${step.id}). Skipping LLM-based failover correction. Escalating to human intervention.`,
+      });
       return {
         shouldRetry: false,
         circuitBroken: true,
@@ -1724,10 +1736,9 @@ export class WorkflowMachine {
 
     const triageResult = await this.llmTriageService.triageFailure(triageContext);
 
-    console.log(
-      `[WorkflowMachine] LLM Triage: ${triageResult.category} (confidence: ${triageResult.confidence.toFixed(2)}, ` +
-      `recoverable: ${triageResult.isRecoverable}) - ${triageResult.explanation}`
-    );
+    logger.info({
+      message: `[WorkflowMachine] LLM Triage: ${triageResult.category} (confidence: ${triageResult.confidence.toFixed(2)}, recoverable: ${triageResult.isRecoverable}) - ${triageResult.explanation}`,
+    });
 
     if (!triageResult.isRecoverable) {
       return {
@@ -1760,10 +1771,9 @@ export class WorkflowMachine {
     // RECORD CORRECTION ATTEMPT - May trip circuit breaker
     const correctionResult = await this.recordCorrectionAttempt(this.executionId, step.id);
     if (!correctionResult.shouldProceed) {
-      console.warn(
-        `[WorkflowMachine] Correction attempt blocked by circuit breaker for ${step.tool_name}. ` +
-        `Attempt #${correctionResult.attemptCount}`
-      );
+      logger.warn({
+        message: `[WorkflowMachine] Correction attempt blocked by circuit breaker for ${step.tool_name}. Attempt #${correctionResult.attemptCount}`,
+      });
       return {
         shouldRetry: false,
         circuitBroken: true,
@@ -1811,9 +1821,9 @@ export class WorkflowMachine {
       return { shouldRetry: false };
     }
 
-    console.log(
-      `[WorkflowMachine] Failover policy matched: "${result.policy?.name}" with action ${result.recommended_action.type}`
-    );
+    logger.info({
+      message: `[WorkflowMachine] Failover policy matched: "${result.policy?.name}" with action ${result.recommended_action.type}`,
+    });
 
     // Generate retry parameters based on recommended action
     const retryParameters = await this.generateRetryParameters(
@@ -2313,10 +2323,9 @@ export class WorkflowMachine {
       undefined
     );
 
-    console.log(
-      `[WorkflowMachine] Created confirmation token ${token} for step ${step.id} ` +
-      `(${step.tool_name}), risk level: ${riskAssessment.level}`
-    );
+    logger.info({
+      message: `[WorkflowMachine] Created confirmation token ${token} for step ${step.id} (${step.tool_name}), risk level: ${riskAssessment.level}`,
+    });
 
     return {
       token,
@@ -2333,9 +2342,9 @@ export class WorkflowMachine {
    * - Implements retry logic for compensation actions
    */
   private async executeCompensation(): Promise<WorkflowResult> {
-    console.log(
-      `[WorkflowMachine] Executing compensation for workflow ${this.workflowId}`
-    );
+    logger.info({
+      message: `[WorkflowMachine] Executing compensation for workflow ${this.workflowId}`,
+    });
 
     // Note: Can't transition to "COMPENSATING" as it's not in the ExecutionStatus enum
     // We'll just execute the compensation directly
@@ -2365,9 +2374,9 @@ export class WorkflowMachine {
 
       for (let attempt = 1; attempt <= MAX_COMPENSATION_ATTEMPTS; attempt++) {
         try {
-          console.log(
-            `[WorkflowMachine] Compensation attempt ${attempt}/${MAX_COMPENSATION_ATTEMPTS} for step ${comp.stepId}: ${comp.compensationTool}`
-          );
+          logger.info({
+            message: `[WorkflowMachine] Compensation attempt ${attempt}/${MAX_COMPENSATION_ATTEMPTS} for step ${comp.stepId}: ${comp.compensationTool}`,
+          });
 
           // Apply exponential backoff for retries
           if (attempt > 1) {
@@ -2384,22 +2393,22 @@ export class WorkflowMachine {
           if (result.success) {
             compensationSuccess = true;
             compensated++;
-            console.log(
-              `[WorkflowMachine] Compensation successful for step ${comp.stepId}: ${comp.compensationTool}`
-            );
+            logger.info({
+              message: `[WorkflowMachine] Compensation successful for step ${comp.stepId}: ${comp.compensationTool}`,
+            });
             break; // Exit retry loop
           } else {
             lastError = result.error || "Unknown error";
-            console.warn(
-              `[WorkflowMachine] Compensation attempt ${attempt} failed for step ${comp.stepId}: ${result.error}`
-            );
+            logger.warn({
+              message: `[WorkflowMachine] Compensation attempt ${attempt} failed for step ${comp.stepId}: ${result.error}`,
+            });
           }
         } catch (error) {
           lastError = error instanceof Error ? error.message : String(error);
-          console.error(
-            `[WorkflowMachine] Compensation attempt ${attempt} error for step ${comp.stepId}:`,
-            lastError
-          );
+          logger.error({
+            message: `[WorkflowMachine] Compensation attempt ${attempt} error for step ${comp.stepId}`,
+            error: lastError,
+          });
         }
       }
 
@@ -2411,17 +2420,17 @@ export class WorkflowMachine {
           error: lastError || "Unknown error",
           attempts: MAX_COMPENSATION_ATTEMPTS,
         });
-        console.error(
-          `[WorkflowMachine] Compensation exhausted after ${MAX_COMPENSATION_ATTEMPTS} attempts for step ${comp.stepId}`
-        );
+        logger.error({
+          message: `[WorkflowMachine] Compensation exhausted after ${MAX_COMPENSATION_ATTEMPTS} attempts for step ${comp.stepId}`,
+        });
       }
     }
 
     // HUMAN-IN-THE-LOOP: Emit alert if compensation fails
     if (failed > 0) {
-      console.error(
-        `[WorkflowMachine] ${failed} compensations failed. Emitting SAGA_MANUAL_INTERVENTION_REQUIRED event.`
-      );
+      logger.error({
+        message: `[WorkflowMachine] ${failed} compensations failed. Emitting SAGA_MANUAL_INTERVENTION_REQUIRED event.`,
+      });
 
       try {
         await RealtimeService.publishNervousSystemEvent(
@@ -2451,14 +2460,14 @@ export class WorkflowMachine {
           timestamp: new Date().toISOString(),
         });
 
-        console.log(
-          `[WorkflowMachine] Published SAGA_MANUAL_INTERVENTION_REQUIRED event for ${this.executionId}`
-        );
+        logger.info({
+          message: `[WorkflowMachine] Published SAGA_MANUAL_INTERVENTION_REQUIRED event for ${this.executionId}`,
+        });
       } catch (publishError) {
-        console.error(
-          `[WorkflowMachine] Failed to publish intervention event:`,
-          publishError
-        );
+        logger.error({
+          message: `[WorkflowMachine] Failed to publish intervention event`,
+          error: publishError instanceof Error ? publishError.message : String(publishError),
+        });
       }
     }
 
@@ -2527,12 +2536,14 @@ export class WorkflowMachine {
         tool_versions: checkpoint.toolVersions,
       });
 
-      console.log(
-        `[WorkflowMachine] Checkpoint saved for ${this.executionId} ` +
-        `[segment ${checkpoint.segmentNumber}, next step: ${checkpoint.nextStepIndex}]`
-      );
+      logger.info({
+        message: `[WorkflowMachine] Checkpoint saved for ${this.executionId} [segment ${checkpoint.segmentNumber}, next step: ${checkpoint.nextStepIndex}]`,
+      });
     } catch (error) {
-      console.error("[WorkflowMachine] Failed to save checkpoint:", error);
+      logger.error({
+        message: `[WorkflowMachine] Failed to save checkpoint`,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
@@ -2580,12 +2591,14 @@ export class WorkflowMachine {
         this.traceId
       );
 
-      console.log(
-        `[WorkflowMachine] Scheduled resume for ${this.executionId} ` +
-        `[segment ${checkpoint.segmentNumber}] (sequential)`
-      );
+      logger.info({
+        message: `[WorkflowMachine] Scheduled resume for ${this.executionId} [segment ${checkpoint.segmentNumber}] (sequential)`,
+      });
     } catch (error) {
-      console.error("[WorkflowMachine] Failed to schedule resume:", error);
+      logger.error({
+        message: `[WorkflowMachine] Failed to schedule resume`,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
@@ -2637,10 +2650,9 @@ export class WorkflowMachine {
       });
 
       if (messageIds.length > 0) {
-        console.log(
-          `[WorkflowMachine] SPECULATIVE EXECUTION: Triggered ${messageIds.length} ` +
-          `parallel branches for ${this.executionId} (steps: ${nextBatch.stepIds.join(', ')})`
-        );
+        logger.info({
+          message: `[WorkflowMachine] SPECULATIVE EXECUTION: Triggered ${messageIds.length} parallel branches for ${this.executionId} (steps: ${nextBatch.stepIds.join(', ')})`,
+        });
 
         // Publish parallel execution event to Ably
         await RealtimeService.publishNervousSystemEvent(
@@ -2664,7 +2676,10 @@ export class WorkflowMachine {
 
       return false;
     } catch (error) {
-      console.error("[WorkflowMachine] Failed to execute parallel branches:", error);
+      logger.error({
+        message: `[WorkflowMachine] Failed to execute parallel branches`,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false; // Fallback to sequential
     }
   }
@@ -2748,10 +2763,9 @@ export class WorkflowMachine {
         throw new Error("Invalid execution state in checkpoint");
       }
 
-      console.log(
-        `[WorkflowMachine] Resuming execution ${executionId} from checkpoint ` +
-        `[segment ${taskState.segment_number}, step ${taskState.current_step_index}]`
-      );
+      logger.info({
+        message: `[WorkflowMachine] Resuming execution ${executionId} from checkpoint [segment ${taskState.segment_number}, step ${taskState.current_step_index}]`,
+      });
 
       const machine = new WorkflowMachine(executionId, toolExecutor, {
         initialState: executionState,
@@ -2774,10 +2788,9 @@ export class WorkflowMachine {
       if (Object.keys(checkpointToolVersions).length > 0) {
         const schemaChanges = await machine.checkSchemaEvolution(checkpointToolVersions);
         if (schemaChanges.length > 0) {
-          console.warn(
-            `[WorkflowMachine] Detected schema evolution for ${schemaChanges.length} tools:`,
-            schemaChanges.map(s => s.toolName).join(", ")
-          );
+          logger.warn({
+            message: `[WorkflowMachine] Detected schema evolution for ${schemaChanges.length} tools: ${schemaChanges.map(s => s.toolName).join(", ")}`,
+          });
 
           // Transition to REFLECTING state to allow LLM to adjust plan
           machine.state = transitionState(machine.state, "REFLECTING");
@@ -2811,9 +2824,9 @@ export class WorkflowMachine {
       );
 
       if (driftResult.hasOrchestratorDrift) {
-        console.warn(
-          `[WorkflowMachine] Logic drift detected: ${driftResult.oldOrchestratorSha} -> ${driftResult.newOrchestratorSha}`
-        );
+        logger.warn({
+          message: `[WorkflowMachine] Logic drift detected: ${driftResult.oldOrchestratorSha} -> ${driftResult.newOrchestratorSha}`,
+        });
 
         // Trigger shadow dry-run
         const shadowDryRun = createShadowDryRunService();
@@ -2842,10 +2855,9 @@ export class WorkflowMachine {
           },
         });
 
-        console.log(
-          `[WorkflowMachine] Shadow dry-run result: ${dryRunResult.recommendation} ` +
-          `(${dryRunResult.divergencePercentage.toFixed(1)}% divergence)`
-        );
+        logger.info({
+          message: `[WorkflowMachine] Shadow dry-run result: ${dryRunResult.recommendation} (${dryRunResult.divergencePercentage.toFixed(1)}% divergence)`,
+        });
 
         // Handle based on recommendation
         if (dryRunResult.recommendation === 'BLOCK_RESUME') {
@@ -2883,10 +2895,9 @@ export class WorkflowMachine {
             undefined
           );
 
-          console.error(
-            `[WorkflowMachine] BLOCKED resume due to logic drift. ` +
-            `Divergence: ${dryRunResult.divergencePercentage.toFixed(1)}%`
-          );
+          logger.error({
+            message: `[WorkflowMachine] BLOCKED resume due to logic drift. Divergence: ${dryRunResult.divergencePercentage.toFixed(1)}%`,
+          });
 
           return machine.createResult(false, performance.now(), dryRunResult.details);
         }
@@ -2904,16 +2915,18 @@ export class WorkflowMachine {
             },
           };
 
-          console.warn(
-            `[WorkflowMachine] Allowing resume with monitoring. ` +
-            `Divergence: ${dryRunResult.divergencePercentage.toFixed(1)}%`
-          );
+          logger.warn({
+            message: `[WorkflowMachine] Allowing resume with monitoring. Divergence: ${dryRunResult.divergencePercentage.toFixed(1)}%`,
+          });
         }
       }
 
       return await machine.execute();
     } catch (error) {
-      console.error("[WorkflowMachine] Resume failed:", error);
+      logger.error({
+        message: `[WorkflowMachine] Resume failed`,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
@@ -3061,12 +3074,11 @@ export async function resumeFromCheckpoint(
   if (!executionState.plan) {
     throw new Error(`No plan found in execution state for ${executionId}`);
   }
-  
-  console.log(
-    `[WorkflowMachine] Resuming ${executionId} from checkpoint ` +
-    `[segment ${taskState.segment_number || 1}, step ${taskState.current_step_index || 0}]`
-  );
-  
+
+  logger.info({
+    message: `[WorkflowMachine] Resuming ${executionId} from checkpoint [segment ${taskState.segment_number || 1}, step ${taskState.current_step_index || 0}]`,
+  });
+
   // Create machine with loaded state
   const machine = new WorkflowMachine(executionId, toolExecutor, {
     initialState: executionState,

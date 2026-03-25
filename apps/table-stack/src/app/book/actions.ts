@@ -3,8 +3,10 @@
 import { getDb, restaurants, restaurantReservations, restaurantWaitlist, eq } from "@repo/database";
 import { revalidatePath } from "next/cache";
 import { NotifyService } from "@tablestack/lib/notifications";
+import { withServerActionHandler } from "@repo/shared";
 
-export async function createReservation(data: {
+export const createReservation = withServerActionHandler(
+  async (data: {
   restaurantId: string;
   tableId: string;
   guestName: string;
@@ -14,7 +16,7 @@ export async function createReservation(data: {
   endTime: string;
   depositAmount?: number;
   paymentTxHash?: string;
-}) {
+}) => {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
   if (!uuidRegex.test(data.restaurantId) || !uuidRegex.test(data.tableId)) {
@@ -63,9 +65,10 @@ export async function createReservation(data: {
 
   revalidatePath(`/dashboard/${data.restaurantId}`);
   return reservation;
-}
+}, { errorCode: 'CREATE_RESERVATION_FAILED' });
 
-export async function cancelReservation(reservationId: string) {
+export const cancelReservation = withServerActionHandler(
+  async (reservationId: string) => {
   const [reservation] = await getDb().update(restaurantReservations)
     .set({ status: 'cancelled' })
     .where(eq(restaurantReservations.id, reservationId))
@@ -81,14 +84,15 @@ export async function cancelReservation(reservationId: string) {
     revalidatePath(`/book/manage/${reservationId}`);
   }
   return reservation;
-}
+}, { errorCode: 'CANCEL_RESERVATION_FAILED' });
 
-export async function addToWaitlist(data: {
+export const addToWaitlist = withServerActionHandler(
+  async (data: {
   restaurantId: string;
   guestName: string;
   guestEmail: string;
   partySize: number;
-}) {
+}) => {
   const restaurant = await getDb().query.restaurants.findFirst({
     where: eq(restaurants.id, data.restaurantId),
   });
@@ -114,4 +118,4 @@ export async function addToWaitlist(data: {
 
   revalidatePath(`/dashboard/${data.restaurantId}`);
   return entry;
-}
+}, { errorCode: 'ADD_TO_WAITLIST_FAILED' });

@@ -14,9 +14,11 @@
  * @since 1.0.0
  */
 
-import { getRedisClient, ServiceNamespace } from "@repo/shared";
+import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.IE);;
 import { FailoverPolicyEngine, type PolicyEvaluationContext } from "@repo/shared";
+
+const logger = new Logger({ serviceName: 'intention-engine' });
 
 // ============================================================================
 // TYPES
@@ -146,9 +148,9 @@ export async function fetchLiveOperationalState(
       return { rawText: "No specific restaurants mentioned in conversation" };
     }
 
-    console.log(
-      `[LiveOperationalState] Fetching state for restaurants: ${Array.from(restaurantMentions).join(", ")}`
-    );
+    logger.info({
+      message: `[LiveOperationalState] Fetching state for restaurants: ${Array.from(restaurantMentions).join(", ")}`,
+    });
 
     // Fetch state from Redis cache (populated by TableStack events)
     const restaurantStates: RestaurantState[] = [];
@@ -231,10 +233,10 @@ export async function fetchLiveOperationalState(
             }
           }
         } catch (dbError) {
-          console.warn(
-            `[LiveOperationalState] Failed to fetch restaurant ${restaurantRef}:`,
-            dbError
-          );
+          logger.warn({
+            message: `[LiveOperationalState] Failed to fetch restaurant ${restaurantRef}`,
+            error: dbError instanceof Error ? dbError.message : String(dbError),
+          });
         }
       }
 
@@ -375,10 +377,10 @@ export async function fetchLiveOperationalState(
           }
         }
       } catch (policyError) {
-        console.warn(
-          "[FailoverPolicy] Failed to evaluate policies:",
-          policyError
-        );
+        logger.warn({
+          message: '[FailoverPolicy] Failed to evaluate policies',
+          error: policyError instanceof Error ? policyError.message : String(policyError),
+        });
         // Continue without failover suggestions
       }
     }
@@ -454,10 +456,10 @@ export async function fetchLiveOperationalState(
         });
       }
     } catch (error) {
-      console.warn(
-        "[DeliveryLoadState] Failed to fetch delivery load state:",
-        error
-      );
+      logger.warn({
+        message: '[DeliveryLoadState] Failed to fetch delivery load state',
+        error: error instanceof Error ? error.message : String(error),
+      });
       // Continue without delivery load state
     }
 
@@ -471,10 +473,10 @@ export async function fetchLiveOperationalState(
         failoverSuggestions.length > 0 ? failoverSuggestions : undefined,
     };
   } catch (error) {
-    console.error(
-      "[LiveOperationalState] Failed to fetch operational state:",
-      error
-    );
+    logger.error({
+      message: '[LiveOperationalState] Failed to fetch operational state',
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { rawText: "Unable to fetch live restaurant states" };
   }
 }

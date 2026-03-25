@@ -41,6 +41,9 @@ import {
   PlannerContext as PlannerHelpersContext,
 } from "./planner-helpers";
 import { PARAMETER_ALIASES } from "@repo/mcp-protocol";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: 'intention-engine' });
 
 export * from "./types";
 export { DEFAULT_PLAN_CONSTRAINTS } from "./planner-helpers";
@@ -215,10 +218,10 @@ async function generateRawPlan(
       status: s.status
     }));
   } catch (error) {
-    console.warn(
-      '[UnifiedPlanner] Memory client unavailable, skipping context injection:',
-      error instanceof Error ? error.message : error
-    );
+    logger.warn({
+      message: '[UnifiedPlanner] Memory client unavailable, skipping context injection',
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   const basePrompt = JSON.stringify({
@@ -284,11 +287,16 @@ export async function generatePlan(
             const tableStatus = (liveState as any).table_status || (liveState as any).status;
             if (tableStatus === 'occupied' || tableStatus === 'dirty' || tableStatus === 'full') {
               liveStateConstraint = "Constraint: Target table is currently unavailable (occupied/dirty/full). Proactively suggest a delivery alternative via OpenDelivery instead of a booking. Do not attempt table reservation.";
-              console.log(`[Live State Gate] Restaurant ${restaurantId} has table status '${tableStatus}'. Adding delivery constraint.`);
+              logger.info({
+                message: `[Live State Gate] Restaurant ${restaurantId} has table status '${tableStatus}'. Adding delivery constraint.`,
+              });
             }
           }
         } catch (err) {
-          console.warn("[Live State Gate] Failed to check operational state:", err);
+          logger.warn({
+            message: '[Live State Gate] Failed to check operational state',
+            error: err instanceof Error ? err.message : String(err),
+          });
           // Continue without the constraint - don't block planning
         }
       }
@@ -494,7 +502,10 @@ export async function executePlan(
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error("[UnifiedPlanner] executePlan failed:", errorMessage);
+    logger.error({
+      message: '[UnifiedPlanner] executePlan failed',
+      error: errorMessage,
+    });
     return {
       success: false,
       error: errorMessage,
@@ -631,7 +642,9 @@ export async function generatePlanWithRepair(
       throw error; // Re-throw if it's not a validation error
     }
 
-    console.warn(`Plan validation failed. Attempting repair... Error: ${error.message}`);
+    logger.warn({
+      message: `Plan validation failed. Attempting repair... Error: ${error.message}`,
+    });
 
     // Attempt 2: Repair generation with error feedback
     const repairFeedback = `The previous plan generation failed validation with the following error:

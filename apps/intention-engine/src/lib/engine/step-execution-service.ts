@@ -15,7 +15,7 @@
  */
 
 import { NextRequest } from "next/server";
-import { getRedisClient, ServiceNamespace } from "@repo/shared";
+import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.IE);;
 import { getToolRegistry } from "@/lib/engine/tools/registry";
 import { loadExecutionState, saveExecutionState } from "@/lib/engine/memory";
@@ -28,6 +28,8 @@ import { WorkflowMachine } from "@/lib/engine/workflow-machine";
 import type { ToolExecutor as WorkflowToolExecutor } from "@/lib/engine/workflow-machine";
 import { LockingService } from "@/lib/engine/locking";
 import { verifyServiceToken } from "@repo/auth";
+
+const logger = new Logger({ serviceName: 'intention-engine' });
 
 // ============================================================================
 // TYPES
@@ -76,11 +78,10 @@ export class StepExecutionService {
       const traceId = request.headers.get("x-trace-id") || executionId;
       const correlationId = request.headers.get("x-correlation-id") || traceId;
 
-      console.log(
-        `[StepExecutionService] Starting step ${startStepIndex + 1} for execution ${executionId}` +
-        ` [trace: ${traceId}]` +
-        (correlationId !== traceId ? ` [correlation: ${correlationId}]` : '')
-      );
+      logger.info({
+        message: `[StepExecutionService] Starting step ${startStepIndex + 1} for execution ${executionId}`,
+        details: { traceId, correlationId },
+      });
 
       // Verify JWT token if present
       await this.verifyAuthToken(request, executionId, traceId);
@@ -153,7 +154,10 @@ export class StepExecutionService {
         await lock.release();
       }
     } catch (error) {
-      console.error("[StepExecutionService] Unhandled error:", error);
+      logger.error({
+        message: '[StepExecutionService] Unhandled error',
+        error: error instanceof Error ? error.message : String(error),
+      });
 
       return {
         success: false,
@@ -187,7 +191,10 @@ export class StepExecutionService {
       const payload = await verifyServiceToken(token);
 
       if (!payload) {
-        console.warn(`[StepExecutionService] Invalid JWT token for ${executionId} [trace: ${traceId}]`);
+        logger.warn({
+          message: `[StepExecutionService] Invalid JWT token for ${executionId}`,
+          details: { traceId },
+        });
         throw new Error("Invalid or expired JWT token");
       }
 
@@ -195,15 +202,16 @@ export class StepExecutionService {
       const tokenExecutionId = (payload as any).executionId;
 
       if (tokenExecutionId && tokenExecutionId !== executionId) {
-        console.warn(
-          `[StepExecutionService] JWT executionId mismatch: token=${tokenExecutionId}, request=${executionId}`
-        );
+        logger.warn({
+          message: `[StepExecutionService] JWT executionId mismatch: token=${tokenExecutionId}, request=${executionId}`,
+        });
         throw new Error("JWT token execution ID does not match request");
       }
 
-      console.log(
-        `[StepExecutionService] JWT verified for service=${service} [trace: ${traceId}]`
-      );
+      logger.info({
+        message: `[StepExecutionService] JWT verified for service=${service}`,
+        details: { traceId },
+      });
     }
     // Note: If no auth token, allow the request (backward compat for initial trigger)
   }
@@ -234,7 +242,9 @@ export class StepExecutionService {
   }
 
   private handleLockConflict(executionId: string): StepExecutionResult {
-    console.warn(`[StepExecutionService] Lock already held for ${executionId}, aborting`);
+    logger.warn({
+      message: `[StepExecutionService] Lock already held for ${executionId}, aborting`,
+    });
     return {
       success: false,
       executionId,
@@ -253,7 +263,9 @@ export class StepExecutionService {
     executionId: string,
     stepIndex: number
   ): Promise<StepExecutionResult> {
-    console.warn(`[StepExecutionService] Step ${stepIndex} already executed for ${executionId}, skipping (idempotent)`);
+    logger.warn({
+      message: `[StepExecutionService] Step ${stepIndex} already executed for ${executionId}, skipping (idempotent)`,
+    });
 
     const state = await loadExecutionState(executionId);
     if (state) {
@@ -362,9 +374,9 @@ export class StepExecutionService {
       initialState: state,
     });
 
-    console.log(
-      `[StepExecutionService] Using WorkflowMachine to execute step ${startStepIndex + 1}/${plan.steps.length}`
-    );
+    logger.info({
+      message: `[StepExecutionService] Using WorkflowMachine to execute step ${startStepIndex + 1}/${plan.steps.length}`,
+    });
 
     const result = await machine.executeSingleStep(startStepIndex);
 
@@ -460,9 +472,9 @@ export class StepExecutionService {
     const failoverResult = failoverEngine.evaluate(failoverContext);
 
     if (failoverResult.matched && failoverResult.recommended_action) {
-      console.log(
-        `[StepExecutionService] Matched policy "${failoverResult.policy?.name}" for failed step ${result.stepId}`
-      );
+      logger.info({
+        message: `[StepExecutionService] Matched policy "${failoverResult.policy?.name}" for failed step ${result.stepId}`,
+      });
 
       await this.storeFailoverState(executionId, failoverResult, failoverEngine, failoverContext);
       await this.publishFailoverEvent(executionId, failoverResult);
@@ -478,7 +490,9 @@ export class StepExecutionService {
 
       // If repair was successful, skip replanning (saga will resume with fixed params)
       if (repairSuccessful) {
-        console.log(`[StepExecutionService] RepairAgent successfully repaired ${executionId}, skipping replanning`);
+        logger.info({
+          message: `[StepExecutionService] RepairAgent successfully repaired ${executionId}, skipping replanning`,
+        });
         return;
       }
 
@@ -541,10 +555,9 @@ export class StepExecutionService {
       const repairResult = await repairAgent.analyzeAndRepair(zombieSaga);
 
       if (repairResult.success && repairResult.action === "AUTO_REPAIRED") {
-        console.log(
-          `[StepExecutionService] RepairAgent auto-repaired ${executionId}: ` +
-          `${repairResult.repairAnalysis?.suggestedFix.type}`
-        );
+        logger.info({
+          message: `[StepExecutionService] RepairAgent auto-repaired ${executionId}: ${repairResult.repairAnalysis?.suggestedFix.type}`,
+        });
 
         // Extract adapted parameters if provided
         const adaptedParams = repairResult.repairAnalysis?.suggestedFix.parameters;
@@ -563,7 +576,10 @@ export class StepExecutionService {
 
       return false;
     } catch (error) {
-      console.error(`[StepExecutionService] RepairAgent invocation failed:`, error);
+      logger.error({
+        message: '[StepExecutionService] RepairAgent invocation failed',
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -636,12 +652,15 @@ export class StepExecutionService {
         correlationId: traceContext.correlationId,
       });
 
-      console.log(
-        `[StepExecutionService] Re-triggering step ${stepId} with adapted parameters ` +
-        `[message: ${messageId || "fallback"}] [trace: ${traceContext.traceId}]`
-      );
+      logger.info({
+        message: `[StepExecutionService] Re-triggering step ${stepId} with adapted parameters`,
+        details: { messageId: messageId || "fallback", traceId: traceContext.traceId },
+      });
     } catch (error) {
-      console.error(`[StepExecutionService] Failed to update parameters for retry:`, error);
+      logger.error({
+        message: '[StepExecutionService] Failed to update parameters for retry',
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
@@ -709,7 +728,10 @@ export class StepExecutionService {
         {}
       );
     } catch (err) {
-      console.warn("[StepExecutionService] Failed to publish failover event to Ably:", err);
+      logger.warn({
+        message: '[StepExecutionService] Failed to publish failover event to Ably',
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -745,13 +767,16 @@ export class StepExecutionService {
           })
         );
 
-        console.log(
-          `[StepExecutionService] Marked execution ${executionId} for automatic replanning: ${failoverResult.recommended_action?.type}`
-        );
+        logger.info({
+          message: `[StepExecutionService] Marked execution ${executionId} for automatic replanning: ${failoverResult.recommended_action?.type}`,
+        });
 
         await this.publishReplanEvent(executionId, failoverResult);
       } catch (replanError) {
-        console.warn("[StepExecutionService] Failed to mark for replanning:", replanError);
+        logger.warn({
+          message: '[StepExecutionService] Failed to mark for replanning',
+          error: replanError instanceof Error ? replanError.message : String(replanError),
+        });
       }
     }
   }
@@ -771,7 +796,10 @@ export class StepExecutionService {
         {}
       );
     } catch (err) {
-      console.warn("[StepExecutionService] Failed to publish replan event to Ably:", err);
+      logger.warn({
+        message: '[StepExecutionService] Failed to publish replan event to Ably',
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -795,10 +823,10 @@ export class StepExecutionService {
     });
 
     if (messageId) {
-      console.log(
-        `[StepExecutionService] QStash message sent for next step [message: ${messageId}]` +
-        ` [trace: ${traceContext.traceId}]`
-      );
+      logger.info({
+        message: `[StepExecutionService] QStash message sent for next step`,
+        details: { messageId, traceId: traceContext.traceId },
+      });
     }
   }
 
@@ -819,9 +847,9 @@ export class StepExecutionService {
 
       if (!replanData || !replanData.shouldReplan) return;
 
-      console.log(
-        `[StepExecutionService] Execution ${executionId} marked for replanning, triggering new plan...`
-      );
+      logger.info({
+        message: `[StepExecutionService] Execution ${executionId} marked for replanning, triggering new plan...`,
+      });
 
       const { generatePlan } = await import("@/lib/engine/planner");
       const { inferIntent } = await import("@/lib/engine/intent");
@@ -873,12 +901,15 @@ export class StepExecutionService {
         correlationId: traceContext.correlationId,
       });
 
-      console.log(
-        `[StepExecutionService] Replanning complete for ${executionId}, new plan has ${newPlan.steps.length} steps` +
-        ` [trace: ${traceContext.traceId}]`
-      );
+      logger.info({
+        message: `[StepExecutionService] Replanning complete for ${executionId}`,
+        details: { stepCount: newPlan.steps.length, traceId: traceContext.traceId },
+      });
     } catch (replanError) {
-      console.warn("[StepExecutionService] Failed to execute replanning:", replanError);
+      logger.warn({
+        message: '[StepExecutionService] Failed to execute replanning',
+        error: replanError instanceof Error ? replanError.message : String(replanError),
+      });
     }
   }
 }

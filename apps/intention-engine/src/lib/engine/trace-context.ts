@@ -11,9 +11,11 @@
  */
 
 import { randomUUID } from "crypto";
-import { RealtimeService } from "@repo/shared";
+import { RealtimeService, Logger } from "@repo/shared";
 import { Tracer } from "./tracing";
 import { Span } from "@opentelemetry/api";
+
+const logger = new Logger({ serviceName: "intention-engine" });
 
 // ============================================================================
 // TRACE CONTEXT
@@ -295,10 +297,9 @@ export async function publishTracedEvent(
     }
   );
 
-  console.log(
-    `[TracePropagation] Published ${eventName} to ${channelName} ` +
-    `[trace: ${traceContext.traceId}]`
-  );
+  logger.info({
+    message: `[TracePropagation] Published ${eventName} to ${channelName} [trace: ${traceContext.traceId}]`,
+  });
 }
 
 /**

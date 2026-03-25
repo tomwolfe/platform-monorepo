@@ -13,6 +13,9 @@ import {
   EngineErrorSchema,
 } from "./types";
 import { saveExecutionTrace, loadExecutionTrace } from "./memory";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "intention-engine" });
 
 /**
  * Tracer provides a high-level API for OpenTelemetry tracing.
@@ -100,12 +103,14 @@ export class ExecutionTracer {
 
   addEntry(entry: Omit<TraceEntry, "timestamp"> & { timestamp?: string }): TraceEntry {
     if (this.trace.entries.length >= this.config.maxEntries) {
-      console.warn(`Trace entry limit (${this.config.maxEntries}) reached, dropping entry`);
+      logger.warn({
+        message: `Trace entry limit (${this.config.maxEntries}) reached, dropping entry`,
+      });
       return this.trace.entries[this.trace.entries.length - 1];
     }
 
     const timestamp = entry.timestamp || new Date().toISOString();
-    
+
     const fullEntry: TraceEntry = TraceEntrySchema.parse({
       ...entry,
       timestamp,
@@ -123,7 +128,12 @@ export class ExecutionTracer {
     }
 
     if (this.config.persistToMemory) {
-      this.persist().catch(console.error);
+      this.persist().catch((error) => {
+        logger.error({
+          message: `Failed to persist trace`,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     }
 
     return fullEntry;
@@ -276,7 +286,12 @@ export class ExecutionTracer {
     });
 
     if (this.config.persistToMemory) {
-      this.persist().catch(console.error);
+      this.persist().catch((error) => {
+        logger.error({
+          message: `Failed to persist trace`,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     }
 
     return {
@@ -295,7 +310,10 @@ export class ExecutionTracer {
     try {
       await saveExecutionTrace(this.trace);
     } catch (error) {
-      console.error("Failed to persist trace:", error);
+      logger.error({
+        message: `Failed to persist trace`,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 }

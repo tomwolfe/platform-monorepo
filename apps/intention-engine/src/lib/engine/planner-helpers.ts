@@ -20,6 +20,9 @@ import {
   EngineErrorSchema,
 } from "./types";
 import { PARAMETER_ALIASES } from "@repo/mcp-protocol";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "intention-engine" });
 
 /**
  * Generate a random UUID (Edge runtime compatible)
@@ -141,13 +144,17 @@ function applyParameterAliases(
     if (resolved[alias] !== undefined && resolved[primary] === undefined) {
       resolved[primary] = resolved[alias];
       delete resolved[alias];
-      console.log(`[Planner] Applied alias: ${alias} -> ${primary} for ${toolName || "unknown"}`);
+      logger.info({
+        message: `[Planner] Applied alias: ${alias} -> ${primary} for ${toolName || "unknown"}`,
+      });
       aliasApplied = true;
     }
   }
 
   if (aliasApplied) {
-    console.log(`[Planner] Alias resolution complete for ${toolName || "unknown"}`);
+    logger.info({
+      message: `[Planner] Alias resolution complete for ${toolName || "unknown"}`,
+    });
   }
 
   return resolved;

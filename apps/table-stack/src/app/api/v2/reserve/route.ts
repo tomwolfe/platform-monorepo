@@ -168,35 +168,3 @@ export const POST = withApiErrorHandler(async (req: NextRequest) => {
   serviceName: 'reserve-api-v2',
   includeStackTrace: process.env.NODE_ENV !== 'production',
 });
-
-// ============================================================================
-// ALTERNATIVE: Using Validation Middleware
-// ============================================================================
-
-/**
- * Alternative implementation using validation middleware
- *
- * This shows how to use createValidationMiddleware for cleaner code
- */
-/*
-import { createValidationMiddleware } from '@repo/shared';
-
-const validateReserveRequest = createValidationMiddleware(ReserveRequestSchema, {
-  serviceName: 'reserve-api',
-  stripUnknown: true,
-});
-
-export const POST = async (req: NextRequest) => {
-  // Validate request
-  const validation = await validateReserveRequest(req);
-
-  if (!validation.valid) {
-    return NextResponse.json(validation.error, { status: validation.status });
-  }
-
-  // validation.data is now typed as ReserveRequest
-  const { guestName, guestEmail, partySize, startTime } = validation.data;
-
-  // ... rest of handler logic
-};
-*/

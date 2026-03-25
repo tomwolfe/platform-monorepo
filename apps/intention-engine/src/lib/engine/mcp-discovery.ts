@@ -12,6 +12,9 @@ import { getMcpClients } from "@/lib/mcp-client";
 import { ToolDefinition } from "@/lib/engine/types";
 import { TOOLS, listTools } from "@/lib/tools/registry";
 import { ToolDefinitionSchema } from "@repo/shared/types/tool";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "intention-engine" });
 
 // ============================================================================
 // DISCOVERED TOOL CACHE
@@ -59,7 +62,9 @@ export async function discoverMcpTools(
 
   // Check cache
   if (useCache && !isCacheExpired()) {
-    console.log("[MCP Discovery] Using cached tools");
+    logger.info({
+      message: "[MCP Discovery] Using cached tools",
+    });
     const cachedTools = Array.from(DISCOVERY_CACHE.tools.values());
     return {
       localTools: listTools(),
@@ -89,7 +94,10 @@ export async function discoverMcpTools(
       
       if (!parseResult.success) {
         const errorMsg = `Tool ${toolName} failed schema validation: ${parseResult.error.message}`;
-        console.warn(`[MCP Discovery] Skipping malformed tool ${toolName}:`, parseResult.error);
+        logger.warn({
+          message: `[MCP Discovery] Skipping malformed tool ${toolName}`,
+          error: parseResult.error.message,
+        });
         errors.push(errorMsg);
         continue; // Gracefully skip malformed tools
       }
@@ -110,12 +118,14 @@ export async function discoverMcpTools(
       };
 
       discoveredTools.push(newToolDef);
-      console.log(
-        `[MCP Discovery] Discovered ${toolName} from ${newToolDef.origin}`
-      );
+      logger.info({
+        message: `[MCP Discovery] Discovered ${toolName} from ${newToolDef.origin}`,
+      });
     } catch (error: unknown) {
       const errorMsg = `Failed to process tool ${toolName}: ${error instanceof Error ? error.message : String(error)}`;
-      console.error(`[MCP Discovery] ${errorMsg}`);
+      logger.error({
+        message: `[MCP Discovery] ${errorMsg}`,
+      });
       errors.push(errorMsg);
     }
   }
@@ -126,10 +136,9 @@ export async function discoverMcpTools(
 
   const allTools = [...listTools(), ...discoveredTools];
 
-  console.log(
-    `[MCP Discovery] Complete: ${discoveredTools.length} tools discovered ` +
-    `(${allTools.length} total) in ${Date.now() - startTime}ms`
-  );
+  logger.info({
+    message: `[MCP Discovery] Complete: ${discoveredTools.length} tools discovered (${allTools.length} total) in ${Date.now() - startTime}ms`,
+  });
 
   return {
     localTools: listTools(),
@@ -281,7 +290,9 @@ function isCacheExpired(): boolean {
 export function clearDiscoveryCache(): void {
   DISCOVERY_CACHE.tools.clear();
   DISCOVERY_CACHE.discoveredAt = 0;
-  console.log("[MCP Discovery] Cache cleared");
+  logger.info({
+    message: "[MCP Discovery] Cache cleared",
+  });
 }
 
 export function getDiscoveryCacheStatus(): {

@@ -20,10 +20,12 @@ import { generatePlan } from "./unified-planner";
 import { createAuditLog } from "@/lib/audit";
 import { handleTableStackRejection } from "@/lib/listeners/tablestack";
 import { signServiceToken } from "@repo/auth";
-import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, RealtimeService } from "@repo/shared";
+import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, RealtimeService, Logger } from "@repo/shared";
 import { getAblyClient } from "@repo/shared";
 import { NervousSystemObserver, type TableVacatedEvent } from "@/lib/listeners/nervous-system-observer";
 import type { Redis } from "@upstash/redis";
+
+const logger = new Logger({ serviceName: 'intention-engine' });
 
 // ============================================================================
 // TYPES
@@ -97,7 +99,10 @@ export class WebhookDispatcherService {
       const validatedBody = this.validateEventBody(body);
 
       if (!validatedBody.valid) {
-        console.warn("[WebhookDispatcher] Schema mismatch:", validatedBody.error);
+        logger.warn({
+          message: '[WebhookDispatcher] Schema mismatch',
+          error: validatedBody.error,
+        });
         return {
           success: false,
           message: "Event received but schema mismatch",
@@ -119,14 +124,20 @@ export class WebhookDispatcherService {
           return this.handleTableVacated(validatedBody.data);
 
         default:
-          console.log("[WebhookDispatcher] Unknown event type:", event);
+          logger.info({
+            message: '[WebhookDispatcher] Unknown event type',
+            details: { event },
+          });
           return {
             success: true,
             message: "Event ignored",
           };
       }
     } catch (error) {
-      console.error("[WebhookDispatcher] Error processing webhook:", error);
+      logger.error({
+        message: '[WebhookDispatcher] Error processing webhook',
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
@@ -193,7 +204,9 @@ export class WebhookDispatcherService {
         }
       );
 
-      console.log(`[Failover Orchestrator] Alternative pushed to Ably for ${failoverPayload.guestEmail}`);
+      logger.info({
+        message: `[Failover Orchestrator] Alternative pushed to Ably for ${failoverPayload.guestEmail}`,
+      });
     }
 
     return {
@@ -229,7 +242,10 @@ export class WebhookDispatcherService {
       proactiveText += ` Prepare a welcome message or special offer for their arrival.`;
     }
 
-    console.log("[WebhookDispatcher] Proactive Trigger:", proactiveText);
+    logger.info({
+      message: '[WebhookDispatcher] Proactive Trigger',
+      details: { proactiveText },
+    });
 
     // Infer intent and generate plan
     const { hypotheses } = await inferIntent(proactiveText, []);
@@ -254,14 +270,18 @@ export class WebhookDispatcherService {
     const { tableId, restaurantId, restaurantName, restaurantSlug, capacity, timestamp, traceId } = data;
 
     if (!tableId || !restaurantId) {
-      console.warn("[TableVacated] Missing required fields (tableId or restaurantId)");
+      logger.warn({
+        message: '[TableVacated] Missing required fields (tableId or restaurantId)',
+      });
       return {
         success: true,
         message: "Event received but missing required fields",
       };
     }
 
-    console.log(`[TableVacated] Table ${tableId} at ${restaurantName || restaurantId} is now available`);
+    logger.info({
+      message: `[TableVacated] Table ${tableId} at ${restaurantName || restaurantId} is now available`,
+    });
 
     // Create TableVacated event payload
     const tableVacatedEvent: TableVacatedEvent = {
@@ -288,11 +308,15 @@ export class WebhookDispatcherService {
     });
 
     if (result.success) {
-      console.log(
-        `[TableVacated] Proactive re-engagement complete: ${result.usersNotified} users notified${
-          result.llmGeneratedContent ? ` [intent: ${result.llmGeneratedContent.proactiveIntent}]` : ""
-        }`
-      );
+      logger.info({
+        message: `[TableVacated] Proactive re-engagement complete: ${result.usersNotified} users notified`,
+        details: {
+          usersNotified: result.usersNotified,
+          llmGenerated: !!result.llmGeneratedContent,
+          proactiveIntent: result.llmGeneratedContent?.proactiveIntent,
+          suggestedAction: result.llmGeneratedContent?.suggestedAction,
+        },
+      });
 
       return {
         success: true,
@@ -305,7 +329,10 @@ export class WebhookDispatcherService {
         },
       };
     } else {
-      console.warn("[TableVacated] Re-engagement failed:", result.error);
+      logger.warn({
+        message: '[TableVacated] Re-engagement failed',
+        error: result.error,
+      });
       return {
         success: true,
         message: "Table vacated event received but re-engagement failed",
@@ -378,7 +405,10 @@ export class WebhookDispatcherService {
     try {
       await RealtimeService.publish(channelName, eventName, data, {});
     } catch (err) {
-      console.error("[WebhookDispatcher] Ably publish failed:", err);
+      logger.error({
+        message: '[WebhookDispatcher] Ably publish failed',
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 }

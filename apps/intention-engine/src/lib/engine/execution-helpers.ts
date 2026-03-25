@@ -4,8 +4,10 @@
  */
 
 import { PlanStep, StepExecutionState } from "./types";
-import { NormalizationService, parseJsonWithFallback } from "@repo/shared";
+import { NormalizationService, parseJsonWithFallback, Logger } from "@repo/shared";
 import { generateText } from "./llm";
+
+const logger = new Logger({ serviceName: 'intention-engine' });
 
 /**
  * Validation result before execution
@@ -112,8 +114,10 @@ export async function attemptErrorRecovery(
   errorMessage: string,
   errorCode?: number
 ): Promise<ErrorRecoveryResult> {
-  console.log(`[Error Recovery] Attempting recovery for step ${step.tool_name} (HTTP ${errorCode})`);
-  
+  logger.info({
+    message: `[Error Recovery] Attempting recovery for step ${step.tool_name} (HTTP ${errorCode})`,
+  });
+
   // First, try normalization service to validate parameters
   const validationResult = NormalizationService.validateToolParameters(
     step.tool_name,
@@ -122,8 +126,10 @@ export async function attemptErrorRecovery(
   
   if (!validationResult.success) {
     // Parameters are invalid - attempt LLM-based correction
-    console.log(`[Error Recovery] Parameters invalid, attempting LLM correction`);
-    
+    logger.info({
+      message: '[Error Recovery] Parameters invalid, attempting LLM correction',
+    });
+
     const correctionPrompt = `Fix the following parameters for tool "${step.tool_name}" that failed with error: ${errorMessage}
 
 Current Parameters: ${JSON.stringify(parameters, null, 2)}
@@ -150,23 +156,32 @@ Respond with ONLY a valid JSON object containing the corrected parameters.`;
       );
 
       if (revalidation.success) {
-        console.log(`[Error Recovery] Successfully corrected parameters`);
+        logger.info({
+          message: '[Error Recovery] Successfully corrected parameters',
+        });
         return {
           recovered: true,
           correctedParameters: correctedParams,
           reason: "Parameters corrected via LLM",
         };
       } else {
-        console.log(`[Error Recovery] LLM correction failed validation`);
+        logger.info({
+          message: '[Error Recovery] LLM correction failed validation',
+        });
       }
     } catch (llmError) {
-      console.error(`[Error Recovery] LLM correction failed:`, llmError);
+      logger.error({
+        message: '[Error Recovery] LLM correction failed',
+        error: llmError instanceof Error ? llmError.message : String(llmError),
+      });
     }
   }
-  
+
   // For 5xx errors, we might want to generate a refined plan
   if (errorCode && errorCode >= 500) {
-    console.log(`[Error Recovery] Server error detected, generating refined plan`);
+    logger.info({
+      message: '[Error Recovery] Server error detected, generating refined plan',
+    });
     
     const refinementPrompt = `The following operation failed with a server error (HTTP ${errorCode}):
 
@@ -210,10 +225,13 @@ Respond with ONLY a JSON object in this format:
         };
       }
     } catch (refinementError) {
-      console.error(`[Error Recovery] Plan refinement failed:`, refinementError);
+      logger.error({
+        message: '[Error Recovery] Plan refinement failed',
+        error: refinementError instanceof Error ? refinementError.message : String(refinementError),
+      });
     }
   }
-  
+
   return {
     recovered: false,
     reason: "Unable to recover from error automatically",
@@ -237,18 +255,14 @@ export function logExecutionResults(
     
     if (result.status === "fulfilled") {
       const stepResult = result.value;
-      console.log(`[${phase}] Step ${stepId} completed:`, {
-        timestamp,
-        stepId,
-        status: stepResult.status,
-        latencyMs: stepResult.latency_ms,
-        attempts: stepResult.attempts,
+      logger.info({
+        message: `[${phase}] Step ${stepId} completed`,
+        details: { timestamp, stepId, status: stepResult.status, latencyMs: stepResult.latency_ms, attempts: stepResult.attempts },
       });
     } else {
-      console.error(`[${phase}] Step ${stepId} failed with exception:`, {
-        timestamp,
-        stepId,
-        error: result.reason,
+      logger.error({
+        message: `[${phase}] Step ${stepId} failed with exception`,
+        details: { timestamp, stepId, error: result.reason },
       });
     }
   }

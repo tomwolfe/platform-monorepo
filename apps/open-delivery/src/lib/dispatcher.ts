@@ -12,11 +12,13 @@
  */
 
 import { getDb, drivers as driversTable, orders as ordersTable, eq, and, gt, gte, sql as drizzleSql, desc } from "@repo/database";
-import { getRedisClient, ServiceNamespace } from '@repo/shared';
+import { getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
 const redis = getRedisClient(ServiceNamespace.OD);
 import { RealtimeService } from "@repo/shared";
 import { geocode } from "@repo/shared/utils/geo";
 import { randomUUID } from "crypto";
+
+const logger = new Logger({ serviceName: 'open-delivery' });
 
 export interface Driver {
   id: string;
@@ -173,9 +175,9 @@ export async function findAvailableDrivers(
     .limit(20);
 
   if (drivers.length === 0) {
-    console.log(
-      `[Dispatcher] No active drivers available for order ${orderIntent.orderId}`
-    );
+    logger.info({
+      message: `[Dispatcher] No active drivers available for order ${orderIntent.orderId}`,
+    });
     return [];
   }
 
@@ -189,20 +191,20 @@ export async function findAvailableDrivers(
     if (geocodeResult.success && geocodeResult.result) {
       pickupLat = geocodeResult.result.lat;
       pickupLng = geocodeResult.result.lng;
-      console.log(
-        `[Dispatcher] Geocoded pickup address "${orderIntent.pickupAddress}" to (${pickupLat}, ${pickupLng})`
-      );
+      logger.info({
+        message: `[Dispatcher] Geocoded pickup address "${orderIntent.pickupAddress}" to (${pickupLat}, ${pickupLng})`,
+      });
     } else {
-      console.warn(
-        `[Dispatcher] Geocoding failed for "${orderIntent.pickupAddress}": ${geocodeResult.error}. Using default NYC coordinates.`
-      );
+      logger.warn({
+        message: `[Dispatcher] Geocoding failed for "${orderIntent.pickupAddress}": ${geocodeResult.error}. Using default NYC coordinates.`,
+      });
     }
   } catch (error) {
-    console.warn(
-      `[Dispatcher] Geocoding error for "${orderIntent.pickupAddress}":`,
-      error instanceof Error ? error.message : String(error),
-      ". Using default NYC coordinates."
-    );
+    logger.warn({
+      message: `[Dispatcher] Geocoding error for "${orderIntent.pickupAddress}"`,
+      error: error instanceof Error ? error.message : String(error),
+      details: { fallback: 'NYC coordinates' },
+    });
   }
 
   const scoredDrivers = drivers.map((driver: typeof drivers[number]) => ({
@@ -213,10 +215,10 @@ export async function findAvailableDrivers(
   // Sort by score descending
   scoredDrivers.sort((a: { matchScore: number }, b: { matchScore: number }) => b.matchScore - a.matchScore);
 
-  console.log(
-    `[Dispatcher] Found ${scoredDrivers.length} drivers for order ${orderIntent.orderId}, ` +
-    `best match: ${scoredDrivers[0].fullName} (score: ${scoredDrivers[0].matchScore.toFixed(1)})`
-  );
+  logger.info({
+    message: `[Dispatcher] Found ${scoredDrivers.length} drivers for order ${orderIntent.orderId}`,
+    details: { bestMatch: `${scoredDrivers[0].fullName} (score: ${scoredDrivers[0].matchScore.toFixed(1)})` },
+  });
 
   return scoredDrivers;
 }
@@ -252,16 +254,21 @@ export async function assignOrderToDriver(
     const assigned = result.length > 0;
 
     if (assigned) {
-      console.log(`[Dispatcher] Order ${orderId} assigned to driver ${driverId}`);
+      logger.info({
+        message: `[Dispatcher] Order ${orderId} assigned to driver ${driverId}`,
+      });
     } else {
-      console.log(
-        `[Dispatcher] Failed to assign order ${orderId} to driver ${driverId} - order no longer available`
-      );
+      logger.info({
+        message: `[Dispatcher] Failed to assign order ${orderId} to driver ${driverId} - order no longer available`,
+      });
     }
 
     return assigned;
   } catch (error) {
-    console.error(`[Dispatcher] Error assigning order:`, error);
+    logger.error({
+      message: '[Dispatcher] Error assigning order',
+      error: error instanceof Error ? error.message : String(error),
+    });
     return false;
   }
 }
@@ -275,9 +282,9 @@ export async function dispatchOrder(
 ): Promise<MatchResult> {
   const traceId = orderIntent.traceId || randomUUID();
 
-  console.log(
-    `[Dispatcher:${traceId}] Starting dispatch for order ${orderIntent.orderId}`
-  );
+  logger.info({
+    message: `[Dispatcher:${traceId}] Starting dispatch for order ${orderIntent.orderId}`,
+  });
 
   try {
     // Step 1: Find available drivers
@@ -340,10 +347,10 @@ export async function dispatchOrder(
     // Step 3: Create match result and broadcast
     return createMatchResult(orderIntent, topDriver, traceId);
   } catch (error) {
-    console.error(
-      `[Dispatcher:${traceId}] Error dispatching order:`,
-      error instanceof Error ? error.message : error
-    );
+    logger.error({
+      message: `[Dispatcher:${traceId}] Error dispatching order`,
+      error: error instanceof Error ? error.message : String(error),
+    });
 
     return {
       success: false,
@@ -355,10 +362,6 @@ export async function dispatchOrder(
     };
   }
 }
-
-/**
- * Create match result with estimated times and broadcast to nervous system
- */
 async function createMatchResult(
   orderIntent: OrderIntent,
   driver: Driver,
@@ -409,21 +412,21 @@ async function createMatchResult(
       traceId,
     });
 
-    console.log(
-      `[Dispatcher:${traceId}] Broadcast order.matched for ${orderIntent.orderId}`
-    );
+    logger.info({
+      message: `[Dispatcher:${traceId}] Broadcast order.matched for ${orderIntent.orderId}`,
+    });
   } catch (error) {
-    console.warn(
-      `[Dispatcher:${traceId}] Failed to broadcast to Ably:`,
-      error
-    );
+    logger.warn({
+      message: `[Dispatcher:${traceId}] Failed to broadcast to Ably`,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   // Step 6: Send notification to matched driver (future: push notification)
   // For now, just log - in production, send SMS/push notification
-  console.log(
-    `[Dispatcher:${traceId}] Driver ${driver.fullName} (${driver.email}) matched to order ${orderIntent.orderId}`
-  );
+  logger.info({
+    message: `[Dispatcher:${traceId}] Driver ${driver.fullName} (${driver.email}) matched to order ${orderIntent.orderId}`,
+  });
 
   return matchResult;
 }
@@ -449,9 +452,9 @@ export async function retryPendingDispatches(): Promise<number> {
       // Max 3 retries
       if (attemptCount > 3) {
         await redis.del(key);
-        console.log(
-          `[Dispatcher] Max retries reached for order ${orderIntent.orderId}, removing from queue`
-        );
+        logger.info({
+          message: `[Dispatcher] Max retries reached for order ${orderIntent.orderId}, removing from queue`,
+        });
         continue;
       }
 
@@ -464,15 +467,18 @@ export async function retryPendingDispatches(): Promise<number> {
       if (result.success) {
         await redis.del(key);
         successfulRetries++;
-        console.log(
-          `[Dispatcher] Retry successful for order ${orderIntent.orderId} (attempt ${attemptCount})`
-        );
+        logger.info({
+          message: `[Dispatcher] Retry successful for order ${orderIntent.orderId} (attempt ${attemptCount})`,
+        });
       } else {
         // Update retry count in Redis
         await redis.setex(key, 300, JSON.stringify(orderIntent));
       }
     } catch (error) {
-      console.error(`[Dispatcher] Error retrying dispatch for ${key}:`, error);
+      logger.error({
+        message: `[Dispatcher] Error retrying dispatch for ${key}`,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

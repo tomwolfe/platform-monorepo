@@ -34,6 +34,9 @@
 import { ExecutionState, Plan, PlanStep } from "./types";
 import { getCompletedSteps, getFailedSteps } from "./state-machine";
 import { generateText, SUMMARIZATION_PROMPT } from "./llm";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: 'intention-engine' });
 
 // ============================================================================
 // CONFIGURATION
@@ -441,7 +444,10 @@ export class ResultSummarizer {
             confidence: 1.0,
           };
         } catch (error) {
-          console.warn("[ResultSummarizer] Template extractor failed:", error);
+          logger.warn({
+            message: '[ResultSummarizer] Template extractor failed',
+            error: error instanceof Error ? error.message : String(error),
+          });
           // Continue to next template
         }
       }
@@ -486,7 +492,9 @@ export class ResultSummarizer {
    * Fallback LLM summarization
    */
   private async summarizeWithLLM(result: ExecutionResult): Promise<SummarizeResult> {
-    console.log("[ResultSummarizer] Falling back to LLM summarization");
+    logger.info({
+      message: '[ResultSummarizer] Falling back to LLM summarization',
+    });
 
     // Build the summarization prompt using the template from llm.ts
     const intent = result.state.intent?.content || JSON.stringify(result.state.intent);
@@ -525,7 +533,10 @@ export class ResultSummarizer {
         source: "llm",
       };
     } catch (error) {
-      console.warn("[ResultSummarizer] LLM summarization failed, using fallback:", error);
+      logger.warn({
+        message: '[ResultSummarizer] LLM summarization failed, using fallback',
+        error: error instanceof Error ? error.message : String(error),
+      });
       // Fall back to generic summary if LLM fails
       return this.createFallbackSummary(result);
     }

@@ -423,6 +423,15 @@ export function getTreasurySigner(): ITreasurySigner {
 
   // Priority 2: Fall back to raw private key (development only)
   if (privateKey) {
+    // PRODUCTION SAFETY: Hard crash if raw private key is used in production
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'SECURITY CRITICAL: Raw private key usage detected in production. ' +
+        'This is strictly forbidden. Please use TREASURY_KEYSTORE_JSON and TREASURY_PASSPHRASE instead. ' +
+        'See @repo/shared/utils/treasury for setup instructions.'
+      );
+    }
+
     console.warn(
       '⚠️  SECURITY WARNING: Using raw private key from environment variable. ' +
       'This is NOT recommended for production. ' +

@@ -27,10 +27,11 @@
  * @package apps/intention-engine
  */
 
-import { getRedisClient, ServiceNamespace } from '@repo/shared';
+import { getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
 import { ExecutionState, StepExecutionState } from './types';
 
 const redis = getRedisClient(ServiceNamespace.IE);
+const logger = new Logger({ serviceName: 'intention-engine' });
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -144,7 +145,9 @@ export class StateDiffViewer {
    */
   static async saveDiff(diff: StateDiff): Promise<void> {
     if (!redis) {
-      console.warn('[StateDiffViewer] Redis not available, skipping diff storage');
+      logger.warn({
+        message: '[StateDiffViewer] Redis not available, skipping diff storage',
+      });
       return;
     }
 
@@ -169,13 +172,14 @@ export class StateDiffViewer {
         ]);
       }
 
-      console.log(
-        `[StateDiffViewer] Saved diff for ${diff.executionId}: ` +
-        `${diff.previousStatus} -> ${diff.currentStatus} ` +
-        `(${diff.stepChanges.filter(s => s.changed).length} step changes)`
-      );
+      logger.info({
+        message: `[StateDiffViewer] Saved diff for ${diff.executionId}: ${diff.previousStatus} -> ${diff.currentStatus} (${diff.stepChanges.filter(s => s.changed).length} step changes)`,
+      });
     } catch (error) {
-      console.error('[StateDiffViewer] Failed to save diff:', error);
+      logger.error({
+        message: '[StateDiffViewer] Failed to save diff',
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -205,7 +209,10 @@ export class StateDiffViewer {
 
       return diffs.filter((d): d is StateDiff => d !== null);
     } catch (error) {
-      console.error('[StateDiffViewer] Failed to get diffs:', error);
+      logger.error({
+        message: '[StateDiffViewer] Failed to get diffs',
+        error: error instanceof Error ? error.message : String(error),
+      });
       return [];
     }
   }
@@ -296,9 +303,14 @@ export class StateDiffViewer {
         ]);
       }
 
-      console.log(`[StateDiffViewer] Cleared diffs for ${executionId}`);
+      logger.info({
+        message: `[StateDiffViewer] Cleared diffs for ${executionId}`,
+      });
     } catch (error) {
-      console.error('[StateDiffViewer] Failed to clear diffs:', error);
+      logger.error({
+        message: '[StateDiffViewer] Failed to clear diffs',
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

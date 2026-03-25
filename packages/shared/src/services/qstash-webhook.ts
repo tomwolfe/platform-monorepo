@@ -139,6 +139,17 @@ export async function verifyQStashWebhookMiddleware(
   const headers = request.headers;
   const { signature, keyId } = getQStashWebhookHeaders(headers);
 
+  // PRODUCTION SAFETY: Hard crash if signing key is missing in production
+  if (
+    process.env.NODE_ENV === "production" &&
+    !process.env.QSTASH_CURRENT_SIGNING_KEY
+  ) {
+    throw new Error(
+      'SECURITY CRITICAL: QSTASH_CURRENT_SIGNING_KEY is required in production. ' +
+      'Webhook verification cannot be skipped. Set the signing key environment variable.'
+    );
+  }
+
   // Skip verification in development if no signing key configured
   if (
     process.env.NODE_ENV === "development" &&
@@ -206,6 +217,14 @@ export function withQStashAuth<T extends Record<string, unknown>>(
     const isQStashWebhook = upstashSignature !== null;
     const isProduction = process.env.NODE_ENV === "production";
     const hasSigningKey = !!process.env.QSTASH_CURRENT_SIGNING_KEY;
+
+    // PRODUCTION SAFETY: Hard crash if signing key is missing in production when webhook is received
+    if (isQStashWebhook && isProduction && !hasSigningKey) {
+      throw new Error(
+        'SECURITY CRITICAL: QStash webhook received but QSTASH_CURRENT_SIGNING_KEY is not configured. ' +
+        'Webhook verification is required in production. Set the signing key environment variable.'
+      );
+    }
 
     // Handle QStash webhook
     if (isQStashWebhook) {

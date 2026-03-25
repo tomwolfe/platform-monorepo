@@ -24,6 +24,9 @@ import {
 } from "../types";
 import { mapJsonSchemaToZod } from "../schema-utils";
 import { getUserProfileProvider } from "../../context/user-profile";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: 'intention-engine' });
 
 // ============================================================================
 // TOOL FUNCTION TYPE
@@ -583,7 +586,9 @@ export function registerBuiltInTools(): void {
   registry.register(BuiltInTools[1], async (params) => {
     const message = params.message as string;
     const level = (params.level as string) || "info";
-    console.log(`[${level.toUpperCase()}] ${message}`);
+    logger.info({
+      message: `[${level.toUpperCase()}] ${message}`,
+    });
     return {
       success: true,
       output: { logged: true },

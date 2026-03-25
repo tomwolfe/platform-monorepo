@@ -8,6 +8,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import crypto from "crypto";
 import { geocode } from "@repo/shared/utils/geo";
+import { withServerActionHandler } from "@repo/shared";
 
 const onboardingSchema = z.object({
   name: z.string().min(2),
@@ -29,7 +30,8 @@ const onboardingSchema = z.object({
   })),
 });
 
-export async function createRestaurant(data: z.infer<typeof onboardingSchema>) {
+export const createRestaurant = withServerActionHandler(
+  async (data: z.infer<typeof onboardingSchema>) => {
   const user = await currentUser();
   if (!user) throw new Error("Unauthorized");
 
@@ -94,4 +96,4 @@ export async function createRestaurant(data: z.infer<typeof onboardingSchema>) {
 
   revalidatePath("/dashboard");
   redirect(`/dashboard/${restaurant.id}`);
-}
+}, { errorCode: 'CREATE_RESTAURANT_FAILED' });

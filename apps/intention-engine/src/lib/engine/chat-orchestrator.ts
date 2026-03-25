@@ -28,6 +28,9 @@ import {
 import { saveExecutionState } from "./memory";
 import { generatePlan } from "./unified-planner";
 import { getRegistryManager } from "./registry";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "intention-engine" });
 import { verifyPlan, DEFAULT_SAFETY_POLICY } from "./verifier";
 import { QStashService } from "@repo/shared";
 import { type Intent } from "./types";
@@ -171,9 +174,12 @@ export class ChatOrchestratorService {
     );
 
     if (!normalizationResult.success) {
-      console.warn("[NormalizationService] Intent parameter validation failed:", {
-        intentType: intent.type,
-        errors: normalizationResult.errors,
+      logger.warn({
+        message: "[NormalizationService] Intent parameter validation failed",
+        error: JSON.stringify({
+          intentType: intent.type,
+          errors: normalizationResult.errors,
+        }),
       });
       // Reduce confidence if parameters fail validation
       intent.confidence = Math.min(intent.confidence * 0.5, 0.3);
@@ -256,13 +262,16 @@ export class ChatOrchestratorService {
         correlationId: executionId,
       });
 
-      console.log(
-        `[ChatOrchestrator] Triggered async execution ${executionId} for intent ${intent.type} [trace: ${executionId}]`
-      );
+      logger.info({
+        message: `[ChatOrchestrator] Triggered async execution ${executionId} for intent ${intent.type} [trace: ${executionId}]`,
+      });
 
       return executionId;
     } catch (error) {
-      console.error("[ChatOrchestrator] Failed to trigger async execution:", error);
+      logger.error({
+        message: "[ChatOrchestrator] Failed to trigger async execution",
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }

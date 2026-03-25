@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { McpManager } from '@/infrastructure/McpManager';
 import { listTools } from '@/lib/tools';
+import { withApiErrorHandler, formatApiSuccess } from '@repo/shared';
 
 // Instantiate McpManager with all registered tools
 const mcpManager = new McpManager(listTools());
@@ -31,10 +32,9 @@ const McpRequestBodySchema = z.object({
 // API HANDLER
 // ============================================================================
 
-export async function POST(req: NextRequest) {
-  try {
+async function mcpHandler(req: NextRequest) {
     const body = await req.json();
-    
+
     // Validate request body structure
     const validatedBody = McpRequestBodySchema.safeParse(body);
     if (!validatedBody.success) {
@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
       }
 
       const { name, arguments: args } = validatedParams.data;
-      
+
       try {
         const result = await mcpManager.callTool(name, args);
         return NextResponse.json({
@@ -109,16 +109,6 @@ export async function POST(req: NextRequest) {
         message: 'Method not found',
       },
     }, { status: 404 });
-
-  } catch (error) {
-    console.error('MCP Error:', error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({
-      jsonrpc: '2.0',
-      error: {
-        code: -32603,
-        message: errorMessage || 'Internal error',
-      },
-    }, { status: 500 });
-  }
 }
+
+export const POST = withApiErrorHandler(mcpHandler, 'EXECUTION_FAILED');

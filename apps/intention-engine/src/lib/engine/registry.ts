@@ -4,8 +4,11 @@ import { ToolDefinition } from "./types";
 import { Tracer } from "./tracing";
 import { getMemoryClient } from "./memory";
 import { mcpConfig } from "../mcp-config";
+import { Logger } from "@repo/shared";
 
 import { listTools as listDomainTools } from "../tools/registry";
+
+const logger = new Logger({ serviceName: "intention-engine" });
 
 /**
  * RegistryManager coordinates local and remote tool discovery.
@@ -93,21 +96,26 @@ export class RegistryManager {
                     success: true,
                     output: result,
                   };
-                } catch (error: any) {
+                } catch (error: unknown) {
                   // 2. Increment Failure Counter
                   await memory.incrementCounter(serverKey, 60); // 60s window
-                  
+
                   return {
                     success: false,
-                    error: error.message || `Failed to call remote tool ${tool.name}`,
+                    error: error instanceof Error ? error.message : String(error),
                   };
                 }
               });
             });
           }
-          console.log(`Discovered ${remoteTools.length} tools from MCP server: ${name}`);
+          logger.info({
+            message: `Discovered ${remoteTools.length} tools from MCP server: ${name}`,
+          });
         } catch (error) {
-          console.error(`Failed to discover tools from MCP server ${name}:`, error);
+          logger.error({
+            message: `Failed to discover tools from MCP server ${name}`,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
       }
     });

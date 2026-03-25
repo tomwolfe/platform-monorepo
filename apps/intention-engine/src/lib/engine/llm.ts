@@ -21,6 +21,9 @@ import {
   EngineErrorSchema,
   EngineErrorCodeSchema,
 } from "./types";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "intention-engine" });
 
 // ============================================================================
 // MODEL ROUTING CONFIGURATION
@@ -384,13 +387,15 @@ export async function generateStructured<T>(
       // Check if it's a schema validation error and we have retries left
       if (attempts <= maxRetries) {
         // Determine if it's a schema validation failure
-        const isSchemaError = 
+        const isSchemaError =
           lastError.message?.includes("schema") ||
           lastError.message?.includes("validation") ||
           lastError.name === "ZodError";
 
         if (isSchemaError) {
-          console.warn(`Schema validation failed, retrying (attempt ${attempts}/${maxRetries + 1})...`);
+          logger.warn({
+            message: `Schema validation failed, retrying (attempt ${attempts}/${maxRetries + 1})`,
+          });
           continue; // Retry
         }
       }

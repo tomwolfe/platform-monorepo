@@ -22,12 +22,14 @@
  * @since 1.0.0
  */
 
-import { getRedisClient, ServiceNamespace } from "@repo/shared";
+import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.IE);;
 import { loadExecutionState, saveExecutionState } from "@/lib/engine/memory";
 import { transitionState, ExecutionState } from "@/lib/engine/types";
 import { QStashService, AppConfig } from "@repo/shared";
 import { signServiceToken } from "@repo/auth";
+
+const logger = new Logger({ serviceName: 'intention-engine' });
 
 // ============================================================================
 // CONFIGURATION
@@ -135,10 +137,9 @@ export class ConfirmationService {
       token
     );
 
-    console.log(
-      `[ConfirmationService] Created confirmation token ${token} for execution ${executionId}, ` +
-      `step ${stepIndex} (${toolName}), expires in ${CONFIRMATION_TTL_SECONDS / 60} minutes`
-    );
+    logger.info({
+      message: `[ConfirmationService] Created confirmation token ${token} for execution ${executionId}, step ${stepIndex} (${toolName}), expires in ${CONFIRMATION_TTL_SECONDS / 60} minutes`,
+    });
 
     return token;
   }
@@ -240,9 +241,9 @@ export class ConfirmationService {
     // Save updated state
     await saveExecutionState(newState);
 
-    console.log(
-      `[ConfirmationService] Resumed saga ${executionId} from ${state.status} to EXECUTING`
-    );
+    logger.info({
+      message: `[ConfirmationService] Resumed saga ${executionId} from ${state.status} to EXECUTING`,
+    });
 
     return newState;
   }
@@ -295,17 +296,16 @@ export class ConfirmationService {
         headers,
       });
 
-      console.log(
-        `[ConfirmationService] Triggered next step for execution ${executionId}` +
-        (messageId ? ` [message: ${messageId}]` : "")
-      );
+      logger.info({
+        message: `[ConfirmationService] Triggered next step for execution ${executionId}${messageId ? ` [message: ${messageId}]` : ""}`,
+      });
 
       return !!messageId;
     } catch (error) {
-      console.error(
-        `[ConfirmationService] Failed to trigger next step for ${executionId}:`,
-        error
-      );
+      logger.error({
+        message: `[ConfirmationService] Failed to trigger next step for ${executionId}`,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }

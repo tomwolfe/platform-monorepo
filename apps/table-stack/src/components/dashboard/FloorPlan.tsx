@@ -17,6 +17,9 @@ import { IconAfterMount } from '@/components/ui/IconWrapper';
 import { Table, Trash2, CheckCircle, AlertCircle, LucideIcon, Plus, Settings2, X, Save } from 'lucide-react';
 import Ably from 'ably';
 import { useRouter } from 'next/navigation';
+import { Logger } from '@repo/shared';
+
+const logger = new Logger({ serviceName: 'table-stack' });
 
 interface RestaurantTable {
   id: string;
@@ -162,7 +165,7 @@ export default function FloorPlan({
 }: {
   initialTables: RestaurantTable[],
   restaurantReservations?: Reservation[],
-  onSave: (tables: any[]) => Promise<void>,
+  onSave: (tables: RestaurantTable[]) => Promise<void>,
   onStatusChange: (tableId: string, status: 'vacant' | 'occupied' | 'dirty') => Promise<void>,
   onAdd: () => Promise<void>,
   onDelete: (id: string) => Promise<void>,
@@ -186,13 +189,13 @@ export default function FloorPlan({
     const ably = new Ably.Realtime({ authUrl: '/api/ably/auth' });
     const channel = ably.channels.get(`restaurant:${restaurantId}`);
 
-    const newReservationListener = (message: any) => {
-      console.log('New reservation received:', message.data);
+    const newReservationListener = (message: { data: unknown }) => {
+      logger.info({ message: 'New reservation received', data: message.data });
       router.refresh();
     };
 
-    const reservationCancelledListener = (message: any) => {
-      console.log('Reservation cancelled received:', message.data);
+    const reservationCancelledListener = (message: { data: unknown }) => {
+      logger.info({ message: 'Reservation cancelled received', data: message.data });
       router.refresh();
     };
 

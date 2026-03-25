@@ -22,9 +22,11 @@
  * ```
  */
 
-import { getRedisClient, ServiceNamespace } from "@repo/shared";
+import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.IE);;
 import { randomUUID } from "crypto";
+
+const logger = new Logger({ serviceName: 'intention-engine' });
 
 // ============================================================================
 // O(1) LOCK REGISTRY
@@ -118,9 +120,9 @@ export class Lock {
 
     const currentOwner = await redis.get(this.lockKey);
     if ((currentOwner as string) !== this.ownerId) {
-      console.warn(
-        `[Lock] Cannot release ${this.lockKey}: owner mismatch (expected ${this.ownerId}, got ${currentOwner})`
-      );
+      logger.warn({
+        message: `[Lock] Cannot release ${this.lockKey}: owner mismatch (expected ${this.ownerId}, got ${currentOwner})`,
+      });
       return false;
     }
 
@@ -135,10 +137,10 @@ export class Lock {
       // Update metadata
       const metadataKey = `${this.lockKey}:meta`;
       await redis.setex(metadataKey, this.lockMetadata.ttlSeconds, JSON.stringify(this.lockMetadata));
-      
-      console.log(
-        `[Lock] Decremented re-entrancy depth ${this.lockKey} (${currentDepth} -> ${newDepth})`
-      );
+
+      logger.info({
+        message: `[Lock] Decremented re-entrancy depth ${this.lockKey} (${currentDepth} -> ${newDepth})`,
+      });
       return true;
     }
 
@@ -151,7 +153,9 @@ export class Lock {
 
     this.released = true;
 
-    console.log(`[Lock] Released ${this.lockKey} (owner: ${this.ownerId})`);
+    logger.info({
+      message: `[Lock] Released ${this.lockKey} (owner: ${this.ownerId})`,
+    });
     return true;
   }
 
@@ -162,16 +166,18 @@ export class Lock {
   async extend(ttlSeconds: number): Promise<boolean> {
     const currentOwner = await redis.get(this.lockKey);
     if ((currentOwner as string) !== this.ownerId) {
-      console.warn(
-        `[Lock] Cannot extend ${this.lockKey}: owner mismatch`
-      );
+      logger.warn({
+        message: `[Lock] Cannot extend ${this.lockKey}: owner mismatch`,
+      });
       return false;
     }
 
     await redis.expire(this.lockKey, ttlSeconds);
     this.lockMetadata.ttlSeconds = ttlSeconds;
 
-    console.log(`[Lock] Extended ${this.lockKey} to ${ttlSeconds}s`);
+    logger.info({
+      message: `[Lock] Extended ${this.lockKey} to ${ttlSeconds}s`,
+    });
     return true;
   }
 
@@ -294,9 +300,9 @@ export namespace LockingService {
         const metadataKey = `${lockKey}:meta`;
         await redis.setex(metadataKey, ttlSeconds, JSON.stringify(metadata));
 
-        console.log(
-          `[Lock] Re-entrant acquisition ${lockKey} (depth: ${newDepth}, owner: ${ownerId.slice(0, 8)}...)`
-        );
+        logger.info({
+          message: `[Lock] Re-entrant acquisition ${lockKey} (depth: ${newDepth}, owner: ${ownerId.slice(0, 8)}...)`,
+        });
 
         return {
           acquired: true,
@@ -333,9 +339,9 @@ export namespace LockingService {
 
             // If lock is older than TTL + buffer, it's stale - force delete
             if (ageSeconds > ttlSeconds + 10) {
-              console.warn(
-                `[Lock] Recovering stale lock ${lockKey} (age: ${ageSeconds.toFixed(0)}s, TTL: ${ttlSeconds}s)`
-              );
+              logger.warn({
+                message: `[Lock] Recovering stale lock ${lockKey} (age: ${ageSeconds.toFixed(0)}s, TTL: ${ttlSeconds}s)`,
+              });
               await redis.del(lockKey);
               await redis.del(metadataKey);
             }
@@ -357,9 +363,9 @@ export namespace LockingService {
         // PERFORMANCE FIX: Register lock in O(1) registry instead of relying on KEYS scan
         await registerLockInRegistry(lockKey, ttlSeconds);
 
-        console.log(
-          `[Lock] Acquired ${lockKey} (owner: ${ownerId.slice(0, 8)}..., TTL: ${ttlSeconds}s)`
-        );
+        logger.info({
+          message: `[Lock] Acquired ${lockKey} (owner: ${ownerId.slice(0, 8)}..., TTL: ${ttlSeconds}s)`,
+        });
 
         return {
           acquired: true,
@@ -380,7 +386,10 @@ export namespace LockingService {
         error: `Lock held by ${(currentOwner as string)?.slice(0, 8)}...`,
       };
     } catch (error) {
-      console.error(`[Lock] Failed to acquire ${lockKey}:`, error);
+      logger.error({
+        message: `[Lock] Failed to acquire ${lockKey}`,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return {
         acquired: false,
         lockKey,
@@ -441,9 +450,9 @@ export namespace LockingService {
 
     const currentOwner = await redis.get(lockKey);
     if ((currentOwner as string) !== expectedOwner) {
-      console.warn(
-        `[Lock] Cannot release ${lockKey}: owner mismatch (expected ${expectedOwner.slice(0, 8)}..., got ${(currentOwner as string)?.slice(0, 8)}...)`
-      );
+      logger.warn({
+        message: `[Lock] Cannot release ${lockKey}: owner mismatch (expected ${expectedOwner.slice(0, 8)}..., got ${(currentOwner as string)?.slice(0, 8)}...)`,
+      });
       return false;
     }
 
@@ -452,7 +461,9 @@ export namespace LockingService {
     // PERFORMANCE FIX: Remove from O(1) registry
     await removeLockFromRegistry(lockKey);
 
-    console.log(`[Lock] Released ${lockKey} (owner: ${expectedOwner.slice(0, 8)}...)`);
+    logger.info({
+      message: `[Lock] Released ${lockKey} (owner: ${expectedOwner.slice(0, 8)}...)`,
+    });
     return true;
   }
 
@@ -529,15 +540,15 @@ export namespace LockingService {
     }
 
     if (deadlocks.length > 0) {
-      console.warn(
-        `[Lock] Detected ${deadlocks.length} potentially deadlocked lock(s):`,
-        deadlocks.map(d => ({
+      logger.warn({
+        message: `[Lock] Detected ${deadlocks.length} potentially deadlocked lock(s):`,
+        error: JSON.stringify(deadlocks.map(d => ({
           key: d.key,
           age: d.info.ageSeconds?.toFixed(0),
           ttl: d.info.ttlSeconds,
           owner: d.info.owner?.slice(0, 8),
-        }))
-      );
+        }))),
+      });
     }
 
     return deadlocks;
@@ -563,7 +574,9 @@ export namespace LockingService {
     }
 
     if (recovered > 0) {
-      console.log(`[Lock] Recovered ${recovered} deadlocked lock(s)`);
+      logger.info({
+        message: `[Lock] Recovered ${recovered} deadlocked lock(s)`,
+      });
     }
 
     return recovered;

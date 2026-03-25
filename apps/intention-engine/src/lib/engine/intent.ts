@@ -23,6 +23,9 @@ import {
   EngineErrorSchema,
 } from "./types";
 import { generateStructured, GenerateStructuredResult } from "./llm";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "intention-engine" });
 
 // ============================================================================
 // INTENT HASHING
@@ -223,8 +226,11 @@ export async function parseIntent(
       });
     } catch (error) {
       const isTimeout = error instanceof Error && (error.message.includes("timeout") || error.message.includes("deadline"));
-      console.warn(`[Intent Engine] Structured generation failed (${isTimeout ? 'TIMEOUT' : 'ERROR'}), falling back to SERVICE_DEGRADED`, error);
-      
+      logger.warn({
+        message: `[Intent Engine] Structured generation failed (${isTimeout ? 'TIMEOUT' : 'ERROR'}), falling back to SERVICE_DEGRADED`,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
       // Build a fallback service degraded intent
       const fallbackParsedIntent: ParsedIntent = {
         type: "SERVICE_DEGRADED",
@@ -461,7 +467,10 @@ Respond with a JSON object: {"score": number (0-1), "explanation": string}`;
         reason: validationResult.data.explanation
       };
     } catch (e) {
-      console.warn("Semantic validation failed, falling back to heuristic", e);
+      logger.warn({
+        message: `Semantic validation failed, falling back to heuristic`,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return { score: heuristicScore, valid: heuristicScore >= 0.5, reason: "Heuristic validation applied" };
     }
   }

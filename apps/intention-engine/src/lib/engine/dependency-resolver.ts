@@ -291,16 +291,25 @@ export class DependencyResolver {
    */
   private static extractOutputKeys(step: PlanStep): Set<string> {
     const outputs = new Set<string>();
-    
-    // Analyze parameters to detect output writes
-    for (const [key, value] of Object.entries(step.parameters)) {
-      // Skip input references
-      if (typeof value === "string" && value.startsWith("$")) {
-        continue;
+
+    const scanRecursively = (obj: any) => {
+      if (!obj) return;
+      if (typeof obj === "string" && obj.startsWith("$")) {
+        // It's an input reference, skip
+        return;
       }
-      outputs.add(`${step.tool_name}:${key}`);
-    }
-    
+      if (typeof obj === "object") {
+        for (const [key, value] of Object.entries(obj)) {
+          if (typeof value === "string" && !value.startsWith("$")) {
+            outputs.add(`${step.tool_name}:${key}`);
+          } else if (typeof value === "object") {
+            scanRecursively(value);
+          }
+        }
+      }
+    };
+
+    scanRecursively(step.parameters);
     return outputs;
   }
 }

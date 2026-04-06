@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loadExecutionTrace } from "@/lib/engine/memory";
+import { loadExecutionTrace, getMemoryClientSafe } from "@/lib/engine/memory";
 import { ExecutionTrace } from "@/lib/engine/types";
 
 export interface TraceQueryParams {
@@ -18,9 +18,9 @@ export interface TraceListResponse {
 
 /**
  * GET /api/debug/traces
- * 
+ *
  * Query and list execution traces with optional filtering
- * 
+ *
  * Query Parameters:
  * - executionId: Filter by specific execution ID
  * - limit: Maximum number of traces to return (default: 50, max: 100)
@@ -31,7 +31,7 @@ export interface TraceListResponse {
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
-    
+
     const params: TraceQueryParams = {
       executionId: searchParams.get("executionId") || undefined,
       limit: Math.min(parseInt(searchParams.get("limit") || "50"), 100),
@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     // If specific execution ID is provided, return single trace
     if (params.executionId) {
       const trace = await loadExecutionTrace(params.executionId);
-      
+
       if (!trace) {
         return NextResponse.json(
           { error: "Trace not found", executionId: params.executionId },
@@ -54,19 +54,57 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(trace);
     }
 
-    // List traces with filtering
-    // Note: This is a simplified implementation. For production, you'd want
-    // to implement proper indexing and pagination in the memory service.
-    const traces: ExecutionTrace[] = [];
-    
-    // In a production implementation, you would query from a database
-    // For now, this is a placeholder that returns an empty list
-    // The actual implementation would depend on your storage backend
+    // List traces with filtering from Redis
+    const memoryClient = getMemoryClientSafe();
+
+    if (!memoryClient) {
+      return NextResponse.json({
+        traces: [],
+        total: 0,
+        hasMore: false,
+        query: params,
+        warning: "Memory client unavailable",
+      });
+    }
+
+    // Query all execution traces from Redis
+    const entries = await memoryClient.query({
+      namespace: "*",
+      type: "execution_trace",
+      limit: params.limit,
+    });
+
+    let traces = entries.map((entry) => entry.data as ExecutionTrace);
+
+    // Apply time-based filtering
+    if (params.startTime) {
+      const start = new Date(params.startTime).getTime();
+      traces = traces.filter((t) => new Date(t.started_at).getTime() >= start);
+    }
+    if (params.endTime) {
+      const end = new Date(params.endTime).getTime();
+      traces = traces.filter((t) => new Date(t.started_at).getTime() <= end);
+    }
+
+    // Apply phase filtering (check if any entries match the phase)
+    if (params.phase) {
+      traces = traces.filter((t) =>
+        t.entries.some((e) => e.phase === params.phase)
+      );
+    }
+
+    // Sort by started_at descending (most recent first)
+    traces.sort(
+      (a, b) =>
+        new Date(b.started_at).getTime() - new Date(a.started_at).getTime()
+    );
+
+    const hasMore = traces.length >= (params.limit || 50);
 
     return NextResponse.json({
-      traces,
+      traces: traces.slice(0, params.limit),
       total: traces.length,
-      hasMore: false,
+      hasMore,
       query: params,
     });
   } catch (error) {

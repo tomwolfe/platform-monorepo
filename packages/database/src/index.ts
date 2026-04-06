@@ -27,6 +27,7 @@ export {
   outbox,
   processed_crypto_transactions,
   crypto_transaction_speedups,
+  cryptoPrices,
   // Enums
   waitlistStatusEnum,
   userRoleEnum,

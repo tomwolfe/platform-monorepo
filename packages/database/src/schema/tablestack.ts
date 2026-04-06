@@ -4,6 +4,18 @@ import { relations, sql } from 'drizzle-orm';
 export const waitlistStatusEnum = pgEnum('waitlist_status', ['waiting', 'notified', 'seated']);
 export const userRoleEnum = pgEnum('user_role', ['shopper', 'merchant']);
 
+// ============================================================================
+// CRYPTO PRICES HISTORICAL FALLBACK
+// Used by getCryptoPrices oracle when all external APIs fail
+// ============================================================================
+
+export const cryptoPrices = pgTable("crypto_prices", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  token: text("token").notNull(), // 'ETH' | 'MATIC'
+  priceUsd: doublePrecision("price_usd").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const users = pgTable('user', {
   id: uuid('id').primaryKey().defaultRandom(),
   clerkId: text('clerk_id').unique().notNull(),

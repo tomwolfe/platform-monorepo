@@ -379,7 +379,7 @@ describe('Authentication Module', () => {
 
       const result = await validateRequest(req);
 
-      expect(result.error).toBe('Missing authentication. Provide either Bearer token or x-api-key header');
+      expect(result.error).toBe('Missing authentication. Provide Bearer token (preferred) or x-api-key header (legacy)');
       expect(result.status).toBe(401);
       expect(result.context).toBeUndefined();
     });
@@ -587,7 +587,7 @@ describe('Authentication Module', () => {
 
       const result = await validateRequest(req);
 
-      expect(result.error).toBe('Missing authentication. Provide either Bearer token or x-api-key header');
+      expect(result.error).toBe('Missing authentication. Provide Bearer token (preferred) or x-api-key header (legacy)');
       expect(result.status).toBe(401);
     });
 

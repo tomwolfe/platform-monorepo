@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
   const payload = await verifyInternalToken(token);
   if (!payload) return new NextResponse("Unauthorized Bridge", { status: 401 });
 
-  const response = NextResponse.redirect(new URL('/driver', req.url));
+  const response = NextResponse.redirect(new URL('/dashboard', req.url));
   
   // Set a domain-local cookie containing the token
   response.cookies.set('edge_session_bridge', token, {

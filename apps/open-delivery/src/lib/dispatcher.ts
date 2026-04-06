@@ -203,10 +203,12 @@ export async function findAvailableDrivers(
   const latDiff = searchRadiusKm / 111;
   const lngDiff = searchRadiusKm / (111 * Math.cos((pickupLat! * Math.PI) / 180));
 
-  const minLat = pickupLat! - latDiff;
-  const maxLat = pickupLat! + latDiff;
-  const minLng = pickupLng! - lngDiff;
-  const maxLng = pickupLng! + lngDiff;
+  // Clamp bounding box values to valid global coordinate ranges to prevent SQL silent failures
+  const minLat = Math.max(-90, pickupLat! - latDiff);
+  const maxLat = Math.min(90, pickupLat! + latDiff);
+  // Note: true dateline wrapping requires OR logic in SQL; clamping is the quick fix for continental deliveries
+  const minLng = Math.max(-180, pickupLng! - lngDiff);
+  const maxLng = Math.min(180, pickupLng! + lngDiff);
 
   // Query active drivers from Postgres using Drizzle ORM with bounding box filter
   const drivers = await database

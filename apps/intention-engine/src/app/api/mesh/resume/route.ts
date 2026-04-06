@@ -34,7 +34,7 @@ async function meshResumeHandler(req: NextRequest) {
   // ========================================================================
 
   const authHeader = req.headers.get("authorization");
-  const token = authHeader?.replace("Bearer ", "");
+  const token = authHeader?.toLowerCase().startsWith("bearer ") ? authHeader.substring(7).trim() : authHeader;
 
   if (!token) {
     return NextResponse.json(

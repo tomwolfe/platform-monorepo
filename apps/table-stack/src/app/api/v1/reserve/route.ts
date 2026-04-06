@@ -10,6 +10,7 @@ import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, getRedisClient, ServiceName
 import { withNervousSystemTracing, injectTracingHeaders } from '@repo/shared/tracing';
 import { formatApiError, formatApiSuccess, type EngineErrorCode, ReserveRequestSchema, validateRequest as validateZodRequest } from '@repo/shared';
 import { ConflictError } from '@repo/shared/errors';
+import crypto from 'crypto';
 
 export const runtime = 'nodejs';
 
@@ -78,10 +79,10 @@ async function postHandler(req: NextRequest) {
       const slug = discoveryName.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
       const [newShadow] = await getDb().insert(restaurants).values({
         name: discoveryName,
-        slug: `${slug}-${Math.random().toString(36).substring(2, 6)}`,
+        slug: `${slug}-${crypto.randomBytes(3).toString('hex')}`,
         ownerEmail: discoveryEmail,
         ownerId: 'shadow', // Placeholder for unclaimed
-        apiKey: `ts_shadow_${Math.random().toString(36).substring(2, 10)}`,
+        apiKey: `ts_shadow_${crypto.randomBytes(8).toString('hex')}`,
         isShadow: true,
         isClaimed: false,
       }).returning();

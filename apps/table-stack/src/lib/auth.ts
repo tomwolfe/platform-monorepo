@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { getDb, restaurants, eq } from "@repo/database";
 import { getRedisClient, ServiceNamespace } from '@repo/shared';
 import { verifyServiceToken, verifyScopedJWT, verifyAsymmetricJWT, SecurityProvider, type ScopedJWTPayload, type AsymmetricJWTPayload } from '@repo/auth';
+import { generateSecureRandom } from '@repo/shared/utils/crypto';
 
 const redis = getRedisClient(ServiceNamespace.TS);
 
@@ -38,8 +39,8 @@ export async function validateRequest(req: NextRequest): Promise<{
   const apiKey = req.headers.get('x-api-key');
 
   // Priority 1: Bearer Token (JWT - Zero-Trust Standard)
-  if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.substring(7);
+  if (authHeader?.toLowerCase().startsWith('bearer ')) {
+    const token = authHeader.substring(7).trim();
 
     // Try asymmetric verification first (RS256 - public key, no shared secrets)
     const asymmetricPayload = await verifyAsymmetricJWT(token, 'intention-engine', 'table-stack');
@@ -156,10 +157,10 @@ async function rateLimit(identifier: string, limit: number, window: number) {
 }
 
 /**
- * Generates a new random API key.
+ * Generates a new cryptographically secure API key.
  */
 export function generateApiKey() {
-  return `ts_${Math.random().toString(36).substring(2)}${Math.random().toString(36).substring(2)}`;
+  return `ts_${generateSecureRandom(24)}`;
 }
 
 /**

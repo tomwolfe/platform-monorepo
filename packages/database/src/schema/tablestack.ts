@@ -67,6 +67,10 @@ export const restaurantTables = pgTable('restaurant_tables', {
   yPos: integer('y_pos').default(0),
   tableType: text('table_type').default('square'), // 'square', 'round', 'booth'
   updatedAt: timestamp('updated_at').defaultNow(),
+}, (table) => {
+  return {
+    restaurantIdIdx: index('tables_restaurant_id_idx').on(table.restaurantId),
+  };
 });
 
 export const restaurantReservations = pgTable('restaurant_reservations', {

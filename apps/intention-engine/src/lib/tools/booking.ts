@@ -80,9 +80,9 @@ export async function reserve_restaurant(params: TableReservationParams): Promis
         
         // Use DuckDuckGo via search_web for email extraction
         const searchResult = await search_web(`${restaurant_name} restaurant email contact`);
-        const discoveredEmail = searchResult.success && searchResult.result.email 
-          ? searchResult.result.email 
-          : `info@${restaurant_name.toLowerCase().replace(/ /g, '')}.com`; // Fallback heuristic
+        const discoveredEmail = searchResult.success && searchResult.result.email
+          ? searchResult.result.email
+          : `info@${restaurant_name.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`; // Fallback heuristic
         
         console.log(`Discovered email for ${restaurant_name}: ${discoveredEmail}`);
 

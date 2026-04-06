@@ -7,6 +7,7 @@
 
 import { inferIntent } from "@/lib/engine/intent";
 import { generatePlan } from "@/lib/engine/unified-planner";
+import { AppConfig } from "@repo/shared";
 
 export async function handleTableStackRejection(payload: {
   guestEmail: string;
@@ -26,7 +27,7 @@ export async function handleTableStackRejection(payload: {
     Goal: Generate a "Delivery Alternative" plan.
     1. Use OpenDeliver to check_delivery_estimate (quote_delivery).
     2. Map 'restaurantName' to 'pickup_address'.
-    3. Use the system_key '${process.env.INTERNAL_SYSTEM_KEY || "internal_failover_key"}' to get a special offer.
+    3. Use the system_key '${AppConfig.getInternalSystemKey()}' to get a special offer.
     4. Provide the guest with a delivery alternative since they couldn't get a table.
   `.trim();
 

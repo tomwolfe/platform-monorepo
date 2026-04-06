@@ -11,6 +11,7 @@ import Ably from 'ably';
 import { NotifyService } from '@tablestack/lib/notifications';
 import { generateApiKey } from '@tablestack/lib/auth';
 import { withServerActionHandler, type ServerActionResponse } from '@repo/shared';
+import { after } from 'next/server';
 
 const SettingsSchema = z.object({
   openingTime: z.string().nullable(),
@@ -211,15 +212,22 @@ export const updateTableStatus = withServerActionHandler(
         const { signPayload } = await import('@tablestack/lib/auth');
         const { signature, timestamp } = await signPayload(payload, webhookSecret);
 
-        fetch(openDeliverWebhookUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-signature': signature,
-            'x-timestamp': timestamp.toString()
-          },
-          body: payload
-        }).catch(err => console.error('Hotspot webhook failed:', err));
+        // Use after() to ensure the fetch completes even after the response is returned
+        after(async () => {
+          try {
+            await fetch(openDeliverWebhookUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-signature': signature,
+                'x-timestamp': timestamp.toString()
+              },
+              body: payload
+            });
+          } catch (err) {
+            console.error('Hotspot webhook failed:', err);
+          }
+        });
       }
     }
 

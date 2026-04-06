@@ -224,8 +224,14 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
     table2: typeof restaurantTables.$inferSelect;
   }> = [];
 
+  // Circuit breaker: limit combinations to prevent O(N^2) event-loop blocking
+  const MAX_COMBOS = 5; // Return top 5 combinations max
+  let comboCount = 0;
+
   for (let i = 0; i < vacantTables.length; i++) {
+    if (comboCount >= MAX_COMBOS) break;
     for (let j = i + 1; j < vacantTables.length; j++) {
+      if (comboCount >= MAX_COMBOS) break;
       const t1 = vacantTables[i];
       const t2 = vacantTables[j];
 
@@ -249,6 +255,7 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
             table1: t1,
             table2: t2,
           });
+          comboCount++;
         }
       }
     }

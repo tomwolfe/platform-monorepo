@@ -26,7 +26,17 @@ const openai = createOpenAI({
 });
 
 const ChatRequestSchema = z.object({
-  messages: z.array(z.any()),
+  messages: z.array(z.object({
+    role: z.enum(["user", "assistant", "system", "data"]),
+    content: z.union([
+      z.string(),
+      z.array(z.object({
+        type: z.string(),
+        text: z.string().optional(),
+        image: z.string().optional(),
+      })),
+    ]),
+  })),
   userLocation: z.object({
     lat: z.number().min(-90).max(90),
     lng: z.number().min(-180).max(180),

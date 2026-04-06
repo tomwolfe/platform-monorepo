@@ -13,9 +13,17 @@ import { createStorage, fallback } from "wagmi";
 // Default to Base for low fees and fast transactions
 // ============================================================================
 
-const ESCROW_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || "0x0000000000000000000000000000000000000000";
-const USDC_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS;
-const PLATFORM_FEE_WALLET = process.env.NEXT_PUBLIC_PLATFORM_FEE_WALLET || "0x0000000000000000000000000000000000000000";
+const ESCROW_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || null;
+const USDC_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS || null;
+const PLATFORM_FEE_WALLET = process.env.NEXT_PUBLIC_PLATFORM_FEE_WALLET || null;
+
+// Warn if critical env vars are missing
+if (!ESCROW_CONTRACT_ADDRESS) {
+  console.warn('[Web3] NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS is not set. Crypto payments will be disabled.');
+}
+if (!PLATFORM_FEE_WALLET) {
+  console.warn('[Web3] NEXT_PUBLIC_PLATFORM_FEE_WALLET is not set. Crypto payments will be disabled.');
+}
 
 // Supported chains for delivery payments
 const chains = [base, polygon, mainnet] as const;
@@ -88,11 +96,12 @@ function getQueryClient() {
 // ============================================================================
 
 interface Web3ContextType {
-  escrowContractAddress: string;
-  platformFeeWallet: string;
-  usdcContractAddress?: string | null;
+  escrowContractAddress: string | null;
+  platformFeeWallet: string | null;
+  usdcContractAddress: string | null;
   defaultChainId: number;
   supportedChainIds: number[];
+  isConfigured: boolean; // True if all required env vars are set
 }
 
 const Web3Context = createContext<Web3ContextType | undefined>(undefined);
@@ -118,12 +127,15 @@ export function Web3Provider({ children }: Web3ProviderProps) {
   const queryClient = getQueryClient();
   const [escrowContractAddress] = useState(ESCROW_CONTRACT_ADDRESS);
 
+  const isConfigured = !!(ESCROW_CONTRACT_ADDRESS && PLATFORM_FEE_WALLET);
+
   const web3ContextValue: Web3ContextType = {
     escrowContractAddress,
     platformFeeWallet: PLATFORM_FEE_WALLET,
     usdcContractAddress: USDC_CONTRACT_ADDRESS,
     defaultChainId: defaultChain.id,
     supportedChainIds: chains.map((c) => c.id),
+    isConfigured,
   };
 
   return (

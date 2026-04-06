@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { verifySignature } from "@repo/auth";
+import { Logger } from "@repo/shared";
 
 export const runtime = "nodejs";
+
+const logger = new Logger({ serviceName: "open-delivery-webhook" });
 
 const HotspotEventSchema = z.object({
   event: z.string(),
@@ -25,12 +28,12 @@ export async function POST(req: NextRequest) {
 
     // Fail-Fast: Security Check
     if (!signature || !timestamp || !(await verifySignature(rawBody, signature, timestamp))) {
-      console.warn("[OpenDeliver Webhook] Unauthorized request blocked");
+      logger.warn({ message: "Unauthorized request blocked" });
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const body = JSON.parse(rawBody);
-    console.log("[OpenDeliver Webhook] Received:", JSON.stringify(body, null, 2));
+    logger.info({ message: "Webhook received", body });
 
     const validatedBody = HotspotEventSchema.safeParse(body);
     if (!validatedBody.success) {
@@ -41,7 +44,11 @@ export async function POST(req: NextRequest) {
 
     if (event === 'delivery_hotspot_available') {
       // Logic to broadcast to nearby drivers would go here
-      console.log(`[OpenDeliver Hotspot] Venue "${venue.name}" Table ${table.number} is now VACANT. Marking as Hyper-Local Drop-off Point.`);
+      logger.info({
+        message: "Hotspot registered - venue table marked as vacant",
+        venue: venue.name,
+        table: table.number,
+      });
       
       return NextResponse.json({ 
         message: "Hotspot registered",
@@ -53,7 +60,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ message: "Event ignored" });
   } catch (error: any) {
-    console.error("[OpenDeliver Webhook] Error:", error);
+    logger.error({ message: "Webhook error", error: error.message || String(error) });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

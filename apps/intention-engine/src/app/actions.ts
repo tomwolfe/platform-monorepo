@@ -1,6 +1,7 @@
 "use server";
 
 import { getAuditLog, updateAuditLog, getUserAuditLogs } from "@/lib/audit";
+import { AppConfig } from "@repo/shared";
 
 /**
  * Get recent failed tools to avoid in planning
@@ -49,7 +50,7 @@ export async function getProvider(intentType: string) {
     return {
         provider: "glm",
         apiKey: process.env.LLM_API_KEY,
-        model: process.env.LLM_MODEL || "glm-4.7-flash",
-        baseUrl: process.env.LLM_BASE_URL || "https://api.z.ai/api/paas/v4"
+        model: AppConfig.getLlmModel(),
+        baseUrl: AppConfig.getLlmBaseUrl()
     };
 }

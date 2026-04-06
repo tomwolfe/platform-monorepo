@@ -49,7 +49,30 @@ export function sanitizeJsonOutput(content: string): string {
     return sanitized;
   }
 
-  // Try to find JSON object in the content
+  // Prefer regex-based balanced bracket extraction over indexOf fallback
+  // Handles nested objects/arrays without breaking on conversational curly braces
+  const jsonObjectMatch = sanitized.match(/\{(?:[^{}]|(?:\{[^{}]*\}))*\}/);
+  const jsonArrayMatch = sanitized.match(/\[(?:[^\[\]]|(?:\[[^\[\]]*\]))*\]/);
+
+  if (jsonObjectMatch) {
+    try {
+      JSON.parse(jsonObjectMatch[0]);
+      return jsonObjectMatch[0];
+    } catch (e) {
+      // Fall through if invalid
+    }
+  }
+
+  if (jsonArrayMatch) {
+    try {
+      JSON.parse(jsonArrayMatch[0]);
+      return jsonArrayMatch[0];
+    } catch (e) {
+      // Fall through if invalid
+    }
+  }
+
+  // Absolute last resort: keep the existing indexOf fallback
   const jsonStartIndex = sanitized.indexOf('{');
   const jsonEndIndex = sanitized.lastIndexOf('}');
 

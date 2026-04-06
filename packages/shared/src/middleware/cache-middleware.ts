@@ -16,6 +16,18 @@
 import { CacheClient, getSharedCache } from '../infrastructure/cache';
 
 // ============================================================================
+// STABLE STRINGIFICATION
+// Deterministic JSON stringification for consistent cache keys
+// ============================================================================
+
+function stableStringify(obj: any): string {
+  if (obj === null || typeof obj !== 'object') return JSON.stringify(obj);
+  if (Array.isArray(obj)) return `[${obj.map(stableStringify).join(',')}]`;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map(k => `"${k}":${stableStringify(obj[k])}`).join(',')}}`;
+}
+
+// ============================================================================
 // TYPES
 // ============================================================================
 
@@ -143,7 +155,7 @@ export function withCache<T extends (...args: any[]) => Promise<any>>(
     // Generate cache key from arguments
     const cacheKey = options?.key || generateCacheKey(
       fn.name || 'anonymous',
-      { args: JSON.stringify(args) }
+      { args: stableStringify(args) }
     );
     
     try {

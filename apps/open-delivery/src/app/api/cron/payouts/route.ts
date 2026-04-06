@@ -279,13 +279,10 @@ async function getCronHandler(req: NextRequest) {
           payout: { address: string; tipAmount: string; currency: string; orderId: string }
         ): Promise<boolean> => {
           // Check if we're approaching Vercel timeout
-          if (Date.now() - startTime > VERCEL_TIMEOUT_THRESHOLD) {
-            logger.warn({
-              message: 'Approaching Vercel timeout, skipping tip release',
-              orderId: payout.orderId,
-            });
-            return false;
-          }
+          const timeElapsed = Date.now() - startTime;
+          const timeRemaining = VERCEL_TIMEOUT_THRESHOLD - timeElapsed;
+
+          if (timeRemaining <= 0) return false;
 
           try {
             // Mark as releasing first (idempotency)
@@ -293,13 +290,20 @@ async function getCronHandler(req: NextRequest) {
               .set({ escrowStatus: 'releasing' })
               .where(eq(orders.id, payout.orderId));
 
-            // Call escrow.releaseTip(orderId, driver)
-            const hash = await walletClient.writeContract({
-              address: ESCROW_CONTRACT_ADDRESS,
-              abi: ESCROW_ABI,
-              functionName: 'releaseTip',
-              args: [payout.orderId, payout.address as Address],
-            });
+            // Call escrow.releaseTip(orderId, driver) with timeout protection
+            const timeoutPromise = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('RPC_TIMEOUT')), timeRemaining)
+            );
+
+            const hash = await Promise.race([
+              walletClient.writeContract({
+                address: ESCROW_CONTRACT_ADDRESS,
+                abi: ESCROW_ABI,
+                functionName: 'releaseTip',
+                args: [payout.orderId, payout.address as Address],
+              }),
+              timeoutPromise,
+            ]);
 
             logger.info({
               message: 'Tip release submitted',
@@ -321,11 +325,19 @@ async function getCronHandler(req: NextRequest) {
 
             return true;
           } catch (error: unknown) {
-            logger.error({
-              message: 'Failed to release tip',
-              orderId: payout.orderId,
-              error: error instanceof Error ? error.message : String(error),
-            });
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            if (errorMsg === 'RPC_TIMEOUT') {
+              logger.warn({
+                message: 'RPC call timed out, skipping tip release',
+                orderId: payout.orderId,
+              });
+            } else {
+              logger.error({
+                message: 'Failed to release tip',
+                orderId: payout.orderId,
+                error: errorMsg,
+              });
+            }
             // Mark as failed
             await getDb().update(orders)
               .set({ escrowStatus: 'failed' })

@@ -204,8 +204,9 @@ export class AnomalyDetector {
    */
   private async addRateSample(userId: string, timestamp: number): Promise<void> {
     const samplesKey = this.getSamplesKey(userId);
-    // Use sorted set with timestamp as score
-    await this.redis.zadd(samplesKey, { score: timestamp, member: timestamp.toString() });
+    // Use sorted set with timestamp as score, unique member to prevent collision
+    const uniqueMember = `${timestamp}:${crypto.randomUUID()}`;
+    await this.redis.zadd(samplesKey, { score: timestamp, member: uniqueMember });
     // Cleanup old samples (keep only recent window)
     const cutoff = timestamp - this.config.rateWindowMs * this.config.movingAverageWindow;
     await this.redis.zremrangebyscore(samplesKey, 0, cutoff);
@@ -220,7 +221,7 @@ export class AnomalyDetector {
     const cutoff = now - this.config.rateWindowMs * this.config.movingAverageWindow;
     // Get recent samples from sorted set
     const results = await this.redis.zrangebyscore(samplesKey, cutoff, now, { limit });
-    return results.map((s) => parseInt(s as string, 10));
+    return results.map((s) => parseInt((s as string).split(':')[0], 10));
   }
 
   /**

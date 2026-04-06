@@ -12,8 +12,8 @@
 /**
  * Timing-safe secret comparison to prevent timing attacks.
  *
- * Uses crypto.timingSafeEqual in Node.js or a constant-time comparison
- * fallback in Edge runtime.
+ * Uses SHA-256 hashing to normalize input lengths before comparison,
+ * preventing length-based timing attacks that affect padding-based approaches.
  *
  * @param provided - The secret provided by the client
  * @param expected - The expected secret stored on the server
@@ -29,33 +29,26 @@ export function isTimingSafeEqual(provided: string, expected: string): boolean {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const cryptoModule = require('crypto');
-    const { timingSafeEqual: nodeTimingSafeEqual } = cryptoModule;
-
-    const providedBuffer = Buffer.from(provided, 'utf8');
-    const expectedBuffer = Buffer.from(expected, 'utf8');
-
-    // Pad to same length to avoid timingSafeEqual errors
-    const maxLength = Math.max(providedBuffer.length, expectedBuffer.length);
-    const paddedProvided = Buffer.alloc(maxLength);
-    const paddedExpected = Buffer.alloc(maxLength);
-
-    providedBuffer.copy(paddedProvided);
-    expectedBuffer.copy(paddedExpected);
-
-    return nodeTimingSafeEqual(paddedProvided, paddedExpected);
+    // Hash both inputs to fixed-length digests before comparison
+    // This prevents length leakage and ensures constant-time comparison
+    const providedHash = cryptoModule.createHash('sha256').update(provided).digest();
+    const expectedHash = cryptoModule.createHash('sha256').update(expected).digest();
+    return cryptoModule.timingSafeEqual(providedHash, expectedHash);
   } catch {
-    // Fallback for Edge runtime - use Web Crypto API
-    // Note: This is not perfectly timing-safe but provides reasonable security
+    // Fallback for Edge runtime - use Web Crypto API (digestSync)
+    // SHA-256 for length-normalized comparison
     const encoder = new TextEncoder();
-    const providedBytes = encoder.encode(provided);
-    const expectedBytes = encoder.encode(expected);
+    const providedData = encoder.encode(provided);
+    const expectedData = encoder.encode(expected);
 
-    // Length check first (not timing-safe but necessary)
-    if (providedBytes.length !== expectedBytes.length) {
-      return false;
-    }
+    // Hash both inputs using SubtleCrypto digestSync (synchronous)
+    const providedHash = (crypto as any).subtle.digestSync('SHA-256', providedData);
+    const expectedHash = (crypto as any).subtle.digestSync('SHA-256', expectedData);
 
-    // XOR-based comparison (more timing-safe than direct comparison)
+    // Compare fixed-length hashes in constant time
+    const providedBytes = new Uint8Array(providedHash);
+    const expectedBytes = new Uint8Array(expectedHash);
+
     let diff = 0;
     for (let i = 0; i < providedBytes.length; i++) {
       diff |= providedBytes[i] ^ expectedBytes[i];

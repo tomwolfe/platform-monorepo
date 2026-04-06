@@ -127,14 +127,20 @@ export async function getCryptoPrices(options?: {
   // CRITICAL: Default to failClosed=true to prevent financial risk from hardcoded prices
   const failClosed = options?.failClosed ?? true;
 
-  // Try to get from cache first
-  const cached = await redis.get("@apps:crypto-prices");
-  if (cached) {
-    const parsed = JSON.parse(cached as string);
-    // Return cached data if less than 5 minutes old
-    if (Date.now() - parsed.timestamp < CACHE_TTL * 1000) {
-      return { ...parsed, source: 'cache' as const };
+  // Try to get from cache first (wrapped in try-catch to prevent SPOF)
+  let cached: any = null;
+  try {
+    const cachedRaw = await redis.get("@apps:crypto-prices");
+    if (cachedRaw) {
+      cached = JSON.parse(cachedRaw as string);
+      // Return cached data if less than 5 minutes old
+      if (Date.now() - cached.timestamp < CACHE_TTL * 1000) {
+        return { ...cached, source: 'cache' as const };
+      }
     }
+  } catch (error) {
+    // Redis failure - log warning and proceed to API fallbacks
+    console.warn("[CryptoPrice] Redis cache read failed, proceeding to API fallbacks:", error);
   }
 
   // Try CoinGecko (primary)
@@ -297,7 +303,16 @@ export async function getCryptoPrices(options?: {
         // LAST RESORT: Use stale cache data if available
         // This is safer than throwing because it allows the UI to gracefully disable crypto
         // while still providing a reasonable price estimate from the last known good data
-        const staleCached = await redis.get("@apps:crypto-prices");
+        let staleCached: any = null;
+        try {
+          const staleCachedRaw = await redis.get("@apps:crypto-prices");
+          if (staleCachedRaw) {
+            staleCached = JSON.parse(staleCachedRaw as string);
+          }
+        } catch (error) {
+          console.warn("[CryptoPrice] Redis stale cache read also failed:", error);
+        }
+
         if (staleCached) {
           console.error(
             "⚠️ CRITICAL: All crypto price sources (CoinGecko, Coinbase, Binance, historical) failed. " +

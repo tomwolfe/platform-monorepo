@@ -29,6 +29,24 @@ import { randomUUID } from "crypto";
 const logger = new Logger({ serviceName: 'intention-engine' });
 
 // ============================================================================
+// LUA SCRIPTS FOR ATOMIC OPERATIONS
+// ============================================================================
+
+/**
+ * Atomic Lua script for releasing locks safely.
+ * Prevents race conditions where a lock expires between GET and DEL,
+ * and another process acquires it - the first process would then delete
+ * the new owner's lock.
+ */
+const LUA_RELEASE_SCRIPT = `
+  if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+  else
+    return 0
+  end
+`;
+
+// ============================================================================
 // O(1) LOCK REGISTRY
 // Replaces O(N) KEYS scanning with Redis Set for constant-time lock tracking
 // ============================================================================
@@ -107,9 +125,9 @@ export class Lock {
   }
 
   /**
-   * Release the lock
-   * Only the owner can release the lock
-   * 
+   * Release the lock using atomic Lua script.
+   * Only the owner can release the lock.
+   *
    * Re-entrancy support: Decrements depth counter instead of releasing
    * if lock was acquired multiple times by same execution context
    */
@@ -118,22 +136,14 @@ export class Lock {
       return false;
     }
 
-    const currentOwner = await redis.get(this.lockKey);
-    if ((currentOwner as string) !== this.ownerId) {
-      logger.warn({
-        message: `[Lock] Cannot release ${this.lockKey}: owner mismatch (expected ${this.ownerId}, got ${currentOwner})`,
-      });
-      return false;
-    }
-
     // Check re-entrancy depth
     const currentDepth = this.lockMetadata.reentrancyDepth || 1;
-    
+
     if (currentDepth > 1) {
       // Decrement depth instead of releasing
       const newDepth = currentDepth - 1;
       this.lockMetadata.reentrancyDepth = newDepth;
-      
+
       // Update metadata
       const metadataKey = `${this.lockKey}:meta`;
       await redis.setex(metadataKey, this.lockMetadata.ttlSeconds, JSON.stringify(this.lockMetadata));
@@ -144,8 +154,12 @@ export class Lock {
       return true;
     }
 
-    // Depth is 1, actually release the lock
-    await redis.del(this.lockKey);
+    // Depth is 1, actually release the lock using atomic Lua script
+    await redis.eval(
+      LUA_RELEASE_SCRIPT,
+      [this.lockKey],
+      [this.ownerId]
+    );
     await redis.del(`${this.lockKey}:meta`);
 
     // PERFORMANCE FIX: Remove from O(1) registry
@@ -160,19 +174,31 @@ export class Lock {
   }
 
   /**
-   * Extend the lock TTL
-   * Only the owner can extend the lock
+   * Extend the lock TTL using atomic Lua script.
+   * Only the owner can extend the lock.
    */
   async extend(ttlSeconds: number): Promise<boolean> {
-    const currentOwner = await redis.get(this.lockKey);
-    if ((currentOwner as string) !== this.ownerId) {
+    const LUA_EXTEND_SCRIPT = `
+      if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("expire", KEYS[1], tonumber(ARGV[2]))
+      else
+        return 0
+      end
+    `;
+
+    const result = await redis.eval(
+      LUA_EXTEND_SCRIPT,
+      [this.lockKey],
+      [this.ownerId, String(ttlSeconds)]
+    );
+
+    if (result !== 1) {
       logger.warn({
         message: `[Lock] Cannot extend ${this.lockKey}: owner mismatch`,
       });
       return false;
     }
 
-    await redis.expire(this.lockKey, ttlSeconds);
     this.lockMetadata.ttlSeconds = ttlSeconds;
 
     logger.info({

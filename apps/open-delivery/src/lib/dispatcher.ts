@@ -164,26 +164,6 @@ export async function findAvailableDrivers(
   // Get database connection
   const database = getDb();
 
-  // Query active drivers from Postgres using Drizzle ORM
-  const drivers = await database
-    .select()
-    .from(driversTable)
-    .where(
-      and(
-        eq(driversTable.isActive, true),
-        gte(driversTable.trustScore, 50)
-      )
-    )
-    .orderBy(desc(driversTable.trustScore))
-    .limit(20);
-
-  if (drivers.length === 0) {
-    logger.info({
-      message: `[Dispatcher] No active drivers available for order ${orderIntent.orderId}`,
-    });
-    return [];
-  }
-
   // Geocode the pickup address to get lat/lng
   // CRITICAL: If geocoding fails, we CANNOT proceed with driver matching
   // Using incorrect coordinates would dispatch wrong drivers to wrong locations
@@ -212,6 +192,45 @@ export async function findAvailableDrivers(
       message: `[Dispatcher] Geocoding error for "${orderIntent.pickupAddress}"`,
       error: error instanceof Error ? error.message : String(error),
       details: { orderId: orderIntent.orderId, fulfillmentId: orderIntent.fulfillmentId },
+    });
+    return [];
+  }
+
+  // BOUNDING BOX OPTIMIZATION: Filter drivers by proximity BEFORE fetching
+  // This ensures the 20 drivers we fetch are actually local to the restaurant
+  // 1 degree of latitude ≈ 111 km, 1 degree of longitude ≈ 111 km * cos(lat)
+  const searchRadiusKm = 50; // Search within 50km radius
+  const latDiff = searchRadiusKm / 111;
+  const lngDiff = searchRadiusKm / (111 * Math.cos((pickupLat! * Math.PI) / 180));
+
+  const minLat = pickupLat! - latDiff;
+  const maxLat = pickupLat! + latDiff;
+  const minLng = pickupLng! - lngDiff;
+  const maxLng = pickupLng! + lngDiff;
+
+  // Query active drivers from Postgres using Drizzle ORM with bounding box filter
+  const drivers = await database
+    .select()
+    .from(driversTable)
+    .where(
+      and(
+        eq(driversTable.isActive, true),
+        gte(driversTable.trustScore, 50),
+        // Bounding box filter: only fetch drivers within search radius
+        drizzleSql`${driversTable.currentLat} IS NOT NULL`,
+        drizzleSql`${driversTable.currentLng} IS NOT NULL`,
+        gte(driversTable.currentLat, minLat),
+        drizzleSql`${driversTable.currentLat}::numeric <= ${maxLat}`,
+        gte(driversTable.currentLng, minLng),
+        drizzleSql`${driversTable.currentLng}::numeric <= ${maxLng}`
+      )
+    )
+    .orderBy(desc(driversTable.trustScore))
+    .limit(20);
+
+  if (drivers.length === 0) {
+    logger.info({
+      message: `[Dispatcher] No active drivers available for order ${orderIntent.orderId}`,
     });
     return [];
   }

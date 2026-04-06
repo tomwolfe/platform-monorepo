@@ -136,6 +136,35 @@ const DEFAULT_CONFIG: Partial<RedlockConfig> = {
 };
 
 // ============================================================================
+// LUA SCRIPTS FOR ATOMIC OPERATIONS
+// ============================================================================
+
+/**
+ * Atomic Lua script for releasing locks safely.
+ * Prevents race conditions where a lock expires between GET and DEL,
+ * and another process acquires it - the first process would then delete
+ * the new owner's lock.
+ */
+const LUA_RELEASE_SCRIPT = `
+  if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+  else
+    return 0
+  end
+`;
+
+/**
+ * Atomic Lua script for extending lock TTL safely.
+ */
+const LUA_EXTEND_SCRIPT = `
+  if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("expire", KEYS[1], tonumber(ARGV[2]))
+  else
+    return 0
+  end
+`;
+
+// ============================================================================
 // REDLOCK CLIENT
 // ============================================================================
 
@@ -316,19 +345,27 @@ export class RedlockClient {
   }
 
   /**
-   * Release a lock
+   * Release a lock using atomic Lua script
+   * Prevents race condition where lock expires between GET and DEL
    */
   async release(key: string, lockId: string): Promise<ReleaseResult> {
     try {
       const releasePromises = this.config.resources.map(async (resource, index) => {
         try {
-          // Only release if we still own the lock
-          const current = await resource.redis.get<string>(key);
-          if (current === lockId) {
-            await resource.redis.del(key);
-            return { index, success: true, name: resource.name || `redis-${index}` };
-          }
-          return { index, success: false, name: resource.name || `redis-${index}`, reason: "not_owner" };
+          // Use atomic Lua script to safely release only if we still own it
+          const result = await resource.redis.eval(
+            LUA_RELEASE_SCRIPT,
+            [key],       // KEYS
+            [lockId]     // ARGV
+          );
+
+          const success = result === 1;
+          return {
+            index,
+            success,
+            name: resource.name || `redis-${index}`,
+            reason: success ? undefined : "not_owner",
+          };
         } catch (error) {
           if (this.config.debug) {
             console.error(
@@ -370,7 +407,7 @@ export class RedlockClient {
   }
 
   /**
-   * Extend a lock's validity
+   * Extend a lock's validity using atomic Lua script
    */
   async extend(
     key: string,
@@ -380,13 +417,16 @@ export class RedlockClient {
     try {
       const extendPromises = this.config.resources.map(async (resource, index) => {
         try {
-          // Only extend if we still own the lock
-          const current = await resource.redis.get<string>(key);
-          if (current === lockId) {
-            await resource.redis.expire(key, Math.ceil(additionalMs / 1000));
-            return { index, success: true, name: resource.name || `redis-${index}` };
-          }
-          return { index, success: false, name: resource.name || `redis-${index}`, reason: "not_owner" };
+          // Use atomic Lua script to safely extend only if we still own it
+          const expireSeconds = Math.ceil(additionalMs / 1000);
+          const result = await resource.redis.eval(
+            LUA_EXTEND_SCRIPT,
+            [key],              // KEYS
+            [lockId, String(expireSeconds)]  // ARGV
+          );
+
+          const success = result === 1;
+          return { index, success, name: resource.name || `redis-${index}` };
         } catch (error) {
           if (this.config.debug) {
             console.error(
@@ -441,6 +481,7 @@ export class RedlockClient {
 
   /**
    * Release partial locks (when quorum not achieved)
+   * Uses atomic Lua script to prevent race conditions
    */
   private async releasePartial(
     key: string,
@@ -452,10 +493,12 @@ export class RedlockClient {
       .map(async (result) => {
         const resource = this.config.resources[result.index];
         try {
-          const current = await resource.redis.get<string>(key);
-          if (current === lockId) {
-            await resource.redis.del(key);
-          }
+          // Use atomic Lua script to safely release only if we still own it
+          await resource.redis.eval(
+            LUA_RELEASE_SCRIPT,
+            [key],      // KEYS
+            [lockId]    // ARGV
+          );
         } catch (error) {
           if (this.config.debug) {
             console.error(

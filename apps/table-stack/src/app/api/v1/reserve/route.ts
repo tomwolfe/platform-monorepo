@@ -177,18 +177,18 @@ async function postHandler(req: NextRequest) {
               gte(restaurantReservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
             )
           ),
-          // Use overlap logic
-          sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(start.toISOString())}, ${sql.placeholder(end.toISOString())})`,
+          // Use overlap logic with parameterized placeholders
+          sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${start.toISOString()}, ${end.toISOString()})`,
           // Check if ANY of the tables we want are occupied
           or(
             // Check if it matches our single tableId
             assignedTableId ? eq(restaurantReservations.tableId, assignedTableId) : undefined,
             // OR if our tableId is part of someone else's combinedTables
-            assignedTableId ? sql`${restaurantReservations.combinedTableIds} @> ${sql.placeholder(JSON.stringify([assignedTableId]))}::jsonb` : undefined,
-            // OR if our combinedTableIds contains a tableId that is someone's single tableId
-            combinedTableIds ? sql`${restaurantReservations.tableId} = ANY(${sql.raw(`ARRAY['${tablesToCheck.join("','")}']::uuid[]`)})` : undefined,
-            // OR if our combinedTableIds overlap with someone else's combinedTableIds
-            combinedTableIds ? sql`${restaurantReservations.combinedTableIds} ?| ${sql.raw(`ARRAY['${tablesToCheck.join("','")}']`)}` : undefined
+            assignedTableId ? sql`${restaurantReservations.combinedTableIds} @> ${JSON.stringify([assignedTableId])}::jsonb` : undefined,
+            // OR if our combinedTableIds contains a tableId that is someone's single tableId - PARAMETERIZED
+            combinedTableIds ? sql`${restaurantReservations.tableId} = ANY(${tablesToCheck}::uuid[])` : undefined,
+            // OR if our combinedTableIds overlap with someone else's combinedTableIds using PostgreSQL array overlap operator
+            combinedTableIds ? sql`${restaurantReservations.combinedTableIds} && ${tablesToCheck}::uuid[]` : undefined
           )
         ),
       });

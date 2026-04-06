@@ -1,5 +1,5 @@
 import { pgTable, uuid, text, integer, timestamp, boolean, uniqueIndex, index, jsonb, pgEnum, doublePrecision, numeric } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 
 export const waitlistStatusEnum = pgEnum('waitlist_status', ['waiting', 'notified', 'seated']);
 export const userRoleEnum = pgEnum('user_role', ['shopper', 'merchant']);
@@ -351,6 +351,9 @@ export const drivers = pgTable('drivers', {
   walletAddress: text('wallet_address'), // Crypto wallet for payouts
   trustScore: integer('trust_score').default(80),
   isActive: boolean('is_active').default(true),
+  // GPS location for proximity-based driver matching
+  currentLat: numeric('current_lat', { precision: 10, scale: 7 }),
+  currentLng: numeric('current_lng', { precision: 10, scale: 7 }),
   createdAt: timestamp('created_at').defaultNow(),
   lastOnline: timestamp('last_online'),
   updatedAt: timestamp('updated_at').defaultNow(),
@@ -358,6 +361,9 @@ export const drivers = pgTable('drivers', {
   return {
     clerkIdIdx: uniqueIndex('drivers_clerk_id_idx').on(table.clerkId),
     emailIdx: uniqueIndex('drivers_email_idx').on(table.email),
+    // Composite index for geospatial queries (bounding box searches)
+    locationIdx: index('drivers_location_idx').on(table.currentLat, table.currentLng),
+    activeLocationIdx: index('drivers_active_location_idx').on(table.isActive, table.currentLat, table.currentLng),
   };
 });
 

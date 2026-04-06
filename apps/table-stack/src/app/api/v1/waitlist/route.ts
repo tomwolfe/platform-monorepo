@@ -3,10 +3,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb, restaurantWaitlist } from "@repo/database";
 import { and, eq, sql } from '@repo/database';
 import { validateRequest } from '@tablestack/lib/auth';
+import { withApiErrorHandler, formatApiSuccess } from '@repo/shared';
 
 export const runtime = 'nodejs';
 
-export async function GET(req: NextRequest) {
+async function getHandler(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const restaurantId = searchParams.get('restaurantId');
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -29,38 +30,35 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ message: 'Unauthorized access' }, { status: 403 });
   }
 
-  try {
-    const entries = await getDb().query.restaurantWaitlist.findMany({
-      where: and(
-        eq(restaurantWaitlist.restaurantId, restaurantId),
-        eq(restaurantWaitlist.status, 'waiting')
-      ),
+  const entries = await getDb().query.restaurantWaitlist.findMany({
+    where: and(
+      eq(restaurantWaitlist.restaurantId, restaurantId),
+      eq(restaurantWaitlist.status, 'waiting')
+    ),
+    limit,
+    offset,
+  });
+
+  // Get total count for pagination metadata
+  const totalCount = await getDb()
+    .select({ count: sql<number>`count(*)` })
+    .from(restaurantWaitlist)
+    .where(and(
+      eq(restaurantWaitlist.restaurantId, restaurantId),
+      eq(restaurantWaitlist.status, 'waiting')
+    ));
+
+  return NextResponse.json(formatApiSuccess({
+    restaurantId,
+    waitlistCount: entries.length,
+    totalCount: totalCount[0]?.count || 0,
+    pagination: {
       limit,
       offset,
-    });
-
-    // Get total count for pagination metadata
-    const totalCount = await getDb()
-      .select({ count: sql<number>`count(*)` })
-      .from(restaurantWaitlist)
-      .where(and(
-        eq(restaurantWaitlist.restaurantId, restaurantId),
-        eq(restaurantWaitlist.status, 'waiting')
-      ));
-
-    return NextResponse.json({
-      restaurantId,
-      waitlistCount: entries.length,
-      totalCount: totalCount[0]?.count || 0,
-      pagination: {
-        limit,
-        offset,
-        hasMore: offset + entries.length < (totalCount[0]?.count || 0),
-      },
-      entries
-    });
-  } catch (error) {
-    console.error('Waitlist API Error:', error);
-    return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
-  }
+      hasMore: offset + entries.length < (totalCount[0]?.count || 0),
+    },
+    entries
+  }));
 }
+
+export const GET = withApiErrorHandler(getHandler, 'EXECUTION_FAILED');

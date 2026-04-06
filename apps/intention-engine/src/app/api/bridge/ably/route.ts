@@ -3,7 +3,7 @@ const redis = getRedisClient(ServiceNamespace.IE);
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { verifySignature } from "@repo/auth";
-import { IdempotencyService, IDEMPOTENCY_KEY_HEADER } from "@repo/shared";
+import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, safeParseJson } from "@repo/shared";
 
 // Schema for Ably message payloads from TableStack
 const AblyStateSchema = z.object({
@@ -40,16 +40,22 @@ export async function POST(req: Request) {
       }
     }
 
-    const body = JSON.parse(rawBody);
-    
-    // 3. Validate Ably Webhook Schema
+    // 3. Safe JSON parsing
+    const parseResult = safeParseJson(rawBody);
+    if (!parseResult.success) {
+      return NextResponse.json({ error: `Invalid request body: ${parseResult.error}` }, { status: 400 });
+    }
+
+    const body = parseResult.data;
+
+    // 4. Validate Ably Webhook Schema
     const event = AblyStateSchema.parse(body);
 
-    // 4. Mirror UI state to AI memory (Redis)
-    // We use a separate prefix for state to avoid collisions if needed, 
+    // 5. Mirror UI state to AI memory (Redis)
+    // We use a separate prefix for state to avoid collisions if needed,
     // but the redis client already adds 'ie:'
     const key = `state:${event.data.restaurantId}:tables`;
-    
+
     await redis.hset(key, {
       [event.data.tableId]: JSON.stringify({
         status: event.data.status,
@@ -57,7 +63,7 @@ export async function POST(req: Request) {
       })
     });
 
-    // 4. Set TTL to ensure memory stays "fresh" (e.g., 2 hours)
+    // 6. Set TTL to ensure memory stays "fresh" (e.g., 2 hours)
     await redis.expire(key, 7200);
 
     return NextResponse.json({ synced: true });

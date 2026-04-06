@@ -113,10 +113,12 @@ const DEFAULT_CONFIG: Required<SchemaVersioningConfig> = {
 export class SchemaVersioningService {
   private config: Required<SchemaVersioningConfig>;
   private currentRegistryVersion: string;
+  private checkpointIndexKey: string; // Sorted set for checkpoint tracking
 
   constructor(config: SchemaVersioningConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.currentRegistryVersion = this.getRegistryVersion();
+    this.checkpointIndexKey = `${this.config.indexPrefix}:__checkpoint_index__`;
   }
 
   /**
@@ -287,6 +289,16 @@ export class SchemaVersioningService {
       this.config.versionTtlSeconds,
       JSON.stringify(metadata)
     );
+
+    // Register in checkpoint index for efficient cleanup
+    try {
+      await this.config.redis.zadd(this.checkpointIndexKey, {
+        member: executionId,
+        score: Date.now(),
+      });
+    } catch (err) {
+      console.warn('[SchemaVersioning] Failed to update checkpoint index:', err);
+    }
 
     console.log(
       `[SchemaVersioning] Captured checkpoint metadata for ${executionId} ` +
@@ -574,14 +586,19 @@ export class SchemaVersioningService {
    * Clean up expired checkpoint metadata
    */
   async cleanupExpiredCheckpoints(): Promise<number> {
-    const pattern = `${this.config.indexPrefix}:checkpoint:*`;
-    const keys = await this.config.redis.keys(pattern);
+    // Get all checkpoint IDs from the sorted set index
+    const checkpointIds = await this.config.redis.zrange(this.checkpointIndexKey, 0, -1);
+    if (!checkpointIds || checkpointIds.length === 0) {
+      return 0;
+    }
 
     let deletedCount = 0;
-    for (const key of keys) {
+    for (const executionId of checkpointIds as string[]) {
+      const key = this.buildCheckpointKey(executionId);
       const ttl = await this.config.redis.ttl(key);
       if (ttl <= 0) {
         await this.config.redis.del(key);
+        await this.config.redis.zrem(this.checkpointIndexKey, executionId);
         deletedCount++;
       }
     }

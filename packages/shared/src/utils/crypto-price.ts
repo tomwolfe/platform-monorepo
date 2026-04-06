@@ -19,6 +19,7 @@
 import { getRedisClient, ServiceNamespace } from "../redis";
 import { getDb } from "@repo/database";
 import { sql } from "drizzle-orm";
+import { parseUnits, formatUnits } from "viem";
 
 const COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price";
 const COINBASE_API = "https://api.coinbase.com/v2/exchange-rates";
@@ -76,7 +77,7 @@ interface PriceResponse {
 async function getHistoricalMovingAverage(token: "ETH" | "MATIC"): Promise<number | null> {
   try {
     // Query last 7 days of price data from crypto_prices table (if it exists)
-    const result = await db
+    const result = await getDb()
       .select({
         avgPrice: sql<number>`AVG(price_usd)::numeric`,
       })
@@ -330,7 +331,73 @@ export async function getTokenPrice(token: "ETH" | "MATIC"): Promise<number> {
 }
 
 /**
+ * Convert USD amount to crypto token amount using bigint arithmetic.
+ *
+ * @param usdAmount - USD amount (in cents to avoid floating point, e.g. $1.50 = 150)
+ * @param token - Token symbol
+ * @param decimals - Token decimals (ETH=18, MATIC=18)
+ * @returns Crypto amount in token's smallest unit (wei)
+ */
+export async function usdToCryptoBigInt(
+  usdAmountCents: bigint,
+  token: "ETH" | "MATIC",
+  decimals: number = 18
+): Promise<bigint> {
+  const price = await getTokenPrice(token);
+  if (price === 0) {
+    throw new Error("Invalid price data");
+  }
+
+  // price is in USD per token (e.g., ETH = 3000.0)
+  // usdAmountCents is in cents (e.g., $1.50 = 150 cents)
+  // Convert price to cents: price * 100
+  // cryptoAmount = usdAmountCents / (price * 100) in tokens
+  // Then convert to wei: cryptoAmount * 10^decimals
+
+  // Use fixed-point arithmetic with 18 decimal precision
+  const priceInCents = BigInt(Math.round(price * 100));
+  const usdAmountWei = usdAmountCents * BigInt(10 ** 10); // Scale up for precision
+  const priceScaled = priceInCents * BigInt(10 ** 10);
+
+  if (priceScaled === 0n) {
+    throw new Error("Price scaled to zero");
+  }
+
+  const cryptoAmountTokens = (usdAmountWei * BigInt(10 ** decimals)) / priceScaled;
+  return cryptoAmountTokens;
+}
+
+/**
+ * Convert crypto token amount to USD using bigint arithmetic.
+ *
+ * @param cryptoAmountWei - Crypto amount in token's smallest unit (wei)
+ * @param token - Token symbol
+ * @returns USD amount in cents
+ */
+export async function cryptoToUsdBigInt(
+  cryptoAmountWei: bigint,
+  token: "ETH" | "MATIC"
+): Promise<bigint> {
+  const price = await getTokenPrice(token);
+  if (price === 0) {
+    return 0n;
+  }
+
+  // price is in USD per token (e.g., ETH = 3000.0)
+  // cryptoAmountWei is in wei (10^-18 tokens)
+  // usdAmount = (cryptoAmountWei / 10^18) * price
+  // Return in cents: usdAmount * 100
+
+  const priceScaled = BigInt(Math.round(price * 100)); // Price in cents
+  const usdCents = (cryptoAmountWei * priceScaled) / BigInt(10 ** 18);
+  return usdCents;
+}
+
+/**
  * Convert USD amount to crypto token amount
+ *
+ * @deprecated Use usdToCryptoBigInt for crypto transactions to avoid floating point errors.
+ * This function is kept for backward compatibility with UI display purposes.
  */
 export async function usdToCrypto(
   usdAmount: number,
@@ -345,6 +412,9 @@ export async function usdToCrypto(
 
 /**
  * Convert crypto token amount to USD
+ *
+ * @deprecated Use cryptoToUsdBigInt for crypto transactions to avoid floating point errors.
+ * This function is kept for backward compatibility with UI display purposes.
  */
 export async function cryptoToUsd(
   cryptoAmount: number,
@@ -356,7 +426,9 @@ export async function cryptoToUsd(
 
 /**
  * Calculate expected crypto amount with slippage buffer
- * Adds a buffer to account for price movement during transaction confirmation
+ *
+ * @deprecated Use usdToCryptoBigIntWithSlippage for crypto transactions.
+ * This function is kept for backward compatibility with UI display purposes.
  */
 export async function usdToCryptoWithSlippage(
   usdAmount: number,
@@ -366,6 +438,28 @@ export async function usdToCryptoWithSlippage(
   const cryptoAmount = await usdToCrypto(usdAmount, token);
   // Add slippage buffer (increase amount to ensure payment is sufficient)
   return cryptoAmount * (1 + slippageBps / 10000);
+}
+
+/**
+ * Calculate expected crypto amount with slippage buffer using bigint arithmetic.
+ * Safe for crypto transaction calculations.
+ *
+ * @param usdAmountCents - USD amount in cents
+ * @param token - Token symbol
+ * @param slippageBps - Slippage tolerance in basis points (100 = 1%, 200 = 2%)
+ * @param decimals - Token decimals (default 18)
+ * @returns Crypto amount in token's smallest unit (wei) with slippage buffer
+ */
+export async function usdToCryptoBigIntWithSlippage(
+  usdAmountCents: bigint,
+  token: "ETH" | "MATIC",
+  slippageBps: number = 100,
+  decimals: number = 18
+): Promise<bigint> {
+  const cryptoAmount = await usdToCryptoBigInt(usdAmountCents, token, decimals);
+  const BASIS_POINTS = 10_000n;
+  // Add slippage buffer
+  return (cryptoAmount * (BASIS_POINTS + BigInt(slippageBps))) / BASIS_POINTS;
 }
 
 /**

@@ -273,8 +273,8 @@ export const outbox = pgTable('outbox', {
   return {
     // Index for efficient polling of pending events
     statusCreatedAtIdx: index('outbox_status_created_at_idx').on(table.status, table.createdAt),
-    // Index for looking up by execution ID
-    executionIdIdx: index('outbox_execution_id_idx').on(table.payload),
+    // Index for looking up by execution ID (using JSONB expression for efficient path queries)
+    executionIdIdx: index('outbox_execution_id_idx').on(sql`(${table.payload}->>'executionId')`),
   };
 });
 

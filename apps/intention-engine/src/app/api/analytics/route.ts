@@ -1,18 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRedisClient, ServiceNamespace, withApiErrorHandler } from "@repo/shared";
+import { getRedisClient, ServiceNamespace, withApiErrorHandler, safeParseJson } from "@repo/shared";
 import { AuditLog } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 const redis = getRedisClient(ServiceNamespace.IE);
+const AUDIT_LOGS_INDEX = "audit_logs:index";
+const AUDIT_LOG_PREFIX = "audit_log:";
+const MAX_ANALYTICS_LOGS = 100;
 
 async function getHandler(req: NextRequest) {
   if (!redis) {
     return NextResponse.json({ error: "Redis not configured" }, { status: 500 });
   }
 
-  const keys = await redis.keys("audit_log:*");
-  if (!keys || keys.length === 0) {
+  // Fetch the most recent audit log IDs from the sorted set index
+  const recentIds = await redis.zrange(AUDIT_LOGS_INDEX, -MAX_ANALYTICS_LOGS, -1);
+  if (!recentIds || recentIds.length === 0) {
     return NextResponse.json({
       top_failing_tools: [],
       average_latency_ms: 0,
@@ -20,45 +24,50 @@ async function getHandler(req: NextRequest) {
     });
   }
 
-  // Fetch all logs in batches if many, but for now we'll do all
+  // Fetch logs in batch using pipeline
   const pipeline = redis.pipeline();
-  keys.forEach(key => pipeline.get(key));
-  const rawLogs = await pipeline.exec();
-
-  const logs = rawLogs
-      .map(log => typeof log === "string" ? JSON.parse(log) : log)
-      .filter((log): log is AuditLog => !!log);
+  (recentIds as string[]).forEach(id => pipeline.get(`${AUDIT_LOG_PREFIX}${id}`));
+  const rawResults = await pipeline.exec();
 
   const toolFailures: Record<string, number> = {};
   let totalLatency = 0;
   let latencyCount = 0;
+  let totalLogs = 0;
 
-  logs.forEach(log => {
-      // Track tool failures
-      if (log.steps) {
-          log.steps.forEach(step => {
-              if (step.status === "failed") {
-                  toolFailures[step.tool_name] = (toolFailures[step.tool_name] || 0) + 1;
-              }
-          });
-      }
+  for (const result of rawResults) {
+    if (!result) continue;
 
-      // Track latency
-      if (log.inferenceLatencies?.total) {
-          totalLatency += log.inferenceLatencies.total;
-          latencyCount++;
+    const parseResult = safeParseJson<AuditLog>(typeof result === "string" ? result : JSON.stringify(result));
+    if (!parseResult.success) continue;
+
+    const log = parseResult.data;
+    totalLogs++;
+
+    // Track tool failures
+    if (log.steps) {
+      for (const step of log.steps) {
+        if (step.status === "failed") {
+          toolFailures[step.tool_name] = (toolFailures[step.tool_name] || 0) + 1;
+        }
       }
-  });
+    }
+
+    // Track latency
+    if (log.inferenceLatencies?.total) {
+      totalLatency += log.inferenceLatencies.total;
+      latencyCount++;
+    }
+  }
 
   const topFailingTools = Object.entries(toolFailures)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 3)
-      .map(([name, count]) => ({ name, count }));
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 3)
+    .map(([name, count]) => ({ name, count }));
 
   return NextResponse.json({
     top_failing_tools: topFailingTools,
     average_intent_to_outcome_latency: latencyCount > 0 ? totalLatency / latencyCount : 0,
-    total_logs: logs.length
+    total_logs: totalLogs
   });
 }
 

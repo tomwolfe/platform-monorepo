@@ -489,14 +489,15 @@ export async function processStuckTransactions(options?: {
         createdAt: processed_crypto_transactions.createdAt,
       })
       .from(processed_crypto_transactions)
+      .leftJoin(
+        sql`crypto_transaction_speedups`,
+        sql`${processed_crypto_transactions.txHash} = ${sql`crypto_transaction_speedups.original_tx_hash`} 
+            AND ${sql`crypto_transaction_speedups.created_at`}> NOW() - INTERVAL '1 hour'`
+      )
       .where(
         and(
           lt(processed_crypto_transactions.createdAt, stuckThreshold),
-          // Only process transactions that haven't been sped up yet
-          sql`${processed_crypto_transactions.txHash} NOT IN (
-            SELECT original_tx_hash FROM crypto_transaction_speedups 
-            WHERE created_at > NOW() - INTERVAL '1 hour'
-          )`
+          sql`${sql`crypto_transaction_speedups.original_tx_hash`} IS NULL`
         )
       )
       .limit(maxTransactions);

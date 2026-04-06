@@ -119,6 +119,7 @@ export class AnomalyDetector {
   private config: AnomalyDetectionConfig;
   private redis: Redis;
   private keyPrefix = 'anomaly:';
+  private profileIndexKey = 'anomaly:__profile_index__'; // Sorted set for profile lookups
 
   constructor(config: Partial<AnomalyDetectionConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -178,6 +179,24 @@ export class AnomalyDetector {
     const profileKey = this.getProfileKey(profile.userId);
     // Keep profiles for 30 days
     await this.redis.setex(profileKey, 30 * 24 * 60 * 60, profile);
+
+    // Register in the profile index sorted set for efficient iteration
+    try {
+      await this.redis.zadd(this.profileIndexKey, {
+        score: profile.lastUpdated,
+        member: profile.userId,
+      });
+    } catch (err) {
+      console.warn('[AnomalyDetector] Failed to update profile index:', err);
+    }
+  }
+
+  /**
+   * Get all registered profile user IDs from the index
+   */
+  private async getProfileIds(limit: number = 100): Promise<string[]> {
+    const ids = await this.redis.zrange(this.profileIndexKey, 0, limit - 1);
+    return (ids || []) as string[];
   }
 
   /**
@@ -558,12 +577,11 @@ export class AnomalyDetector {
    * Get all profiles (limited to first 100 for performance)
    */
   async getAllProfiles(): Promise<Map<string, UserBehaviorProfile>> {
-    const pattern = `${this.keyPrefix}profile:*`;
-    const keys = await this.redis.keys(pattern);
+    const profileIds = await this.getProfileIds(100);
     const profiles = new Map<string, UserBehaviorProfile>();
 
-    for (const key of keys.slice(0, 100)) {
-      const profile = await this.redis.get<UserBehaviorProfile>(key);
+    for (const userId of profileIds) {
+      const profile = await this.getProfile(userId);
       if (profile) {
         profiles.set(profile.userId, profile);
       }
@@ -577,17 +595,18 @@ export class AnomalyDetector {
    */
   async cleanupOldProfiles(maxAgeDays: number = 30): Promise<number> {
     const cutoff = Date.now() - (maxAgeDays * 24 * 60 * 60 * 1000);
-    const pattern = `${this.keyPrefix}profile:*`;
-    const keys = await this.redis.keys(pattern);
+    const profileIds = await this.getProfileIds(1000);
     let cleaned = 0;
 
-    for (const key of keys) {
-      const profile = await this.redis.get<UserBehaviorProfile>(key);
+    for (const userId of profileIds) {
+      const profile = await this.getProfile(userId);
       if (profile && profile.lastUpdated < cutoff && profile.anomalyCount === 0) {
-        await this.redis.del(key);
+        await this.redis.del(this.getProfileKey(userId));
         // Also delete associated samples
-        const samplesKey = this.getSamplesKey(profile.userId);
+        const samplesKey = this.getSamplesKey(userId);
         await this.redis.del(samplesKey);
+        // Remove from index
+        await this.redis.zrem(this.profileIndexKey, userId);
         cleaned++;
       }
     }
@@ -603,14 +622,13 @@ export class AnomalyDetector {
     anomalousProfiles: number;
     highRiskProfiles: number;
   }> {
-    const pattern = `${this.keyPrefix}profile:*`;
-    const keys = await this.redis.keys(pattern);
+    const profileIds = await this.getProfileIds(1000);
     let totalProfiles = 0;
     let anomalousProfiles = 0;
     let highRiskProfiles = 0;
 
-    for (const key of keys) {
-      const profile = await this.redis.get<UserBehaviorProfile>(key);
+    for (const userId of profileIds) {
+      const profile = await this.getProfile(userId);
       if (profile) {
         totalProfiles++;
         if (profile.anomalyCount > 0) anomalousProfiles++;

@@ -5,6 +5,7 @@ import type { AuditLog } from "./types";
 
 const AUDIT_LOG_PREFIX = "audit_log:";
 const USER_LOGS_PREFIX = "user_logs:";
+const AUDIT_LOGS_INDEX = "audit_logs:index"; // Sorted set for time-ordered lookups
 
 /**
  * Calculates a SHA-256 hash of the intent's core content for cryptographic linking.
@@ -52,7 +53,14 @@ export async function createAuditLog(
 
   if (redis) {
     await redis.set(`${AUDIT_LOG_PREFIX}${id}`, JSON.stringify(log), { ex: 86400 * 7 }); // Store for 7 days
-    
+
+    // Maintain sorted set index for efficient analytics queries
+    try {
+      await redis.zadd(AUDIT_LOGS_INDEX, { score: Date.now(), member: id });
+    } catch (err) {
+      console.warn("Failed to update audit log index:", err);
+    }
+
     // Track logs for this user
     try {
       await redis.lpush(`${USER_LOGS_PREFIX}${userId}`, id);

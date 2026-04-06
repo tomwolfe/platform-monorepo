@@ -6,7 +6,10 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./client": "./src/client.ts",
     "./server": "./src/server.ts",
+    "./config": "./src/config.ts",
+    "./errors": "./src/errors.ts",
     "./logger": "./src/logger.ts",
     "./test-utils": "./src/test-utils.ts",
     "./utils/geo": "./src/utils/geo.ts",
@@ -29,7 +32,6 @@
     "./types/database": "./src/types/database.ts",
     "./realtime/ably-auth": "./src/realtime/ably-auth.ts",
     "./health": "./src/middleware/health-check.ts",
-    "./errors": "./src/errors.ts",
     "./security-headers": "./src/security-headers.ts"
   },
   "scripts": {

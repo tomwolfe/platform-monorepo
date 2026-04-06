@@ -12,6 +12,7 @@ import { NotifyService } from '@tablestack/lib/notifications';
 import { generateApiKey } from '@tablestack/lib/auth';
 import { withServerActionHandler, type ServerActionResponse } from '@repo/shared';
 import { after } from 'next/server';
+import { ABLY_TABLE_EVENTS, WEBHOOK_EVENTS } from '@repo/mcp-protocol';
 
 const SettingsSchema = z.object({
   openingTime: z.string().nullable(),
@@ -169,7 +170,7 @@ export const updateTableStatus = withServerActionHandler(
     if (process.env.ABLY_API_KEY) {
       const ably = new Ably.Rest(process.env.ABLY_API_KEY);
       const channel = ably.channels.get(`restaurant:${restaurantId}`);
-      await channel.publish('table-status-update', {
+      await channel.publish(ABLY_TABLE_EVENTS.TableStatusUpdate, {
         restaurantId,
         tableId: table.id,
         status: table.status,
@@ -197,7 +198,7 @@ export const updateTableStatus = withServerActionHandler(
 
       if (restaurant) {
         const payload = JSON.stringify({
-          event: 'delivery_hotspot_available',
+          event: WEBHOOK_EVENTS.DeliveryHotspotAvailable,
           venue: {
             id: restaurant.id,
             name: restaurant.name,
@@ -253,7 +254,7 @@ export const updateTableStatus = withServerActionHandler(
         });
 
         const tableVacatedPayload = {
-          event: 'table_vacated',
+          event: WEBHOOK_EVENTS.TableVacated,
           tableId: table.id,
           restaurantId: restaurant.id,
           restaurantName: restaurant.name,
@@ -401,7 +402,7 @@ export const updateWaitlistStatus = withServerActionHandler(
     if (process.env.ABLY_API_KEY) {
       const ably = new Ably.Rest(process.env.ABLY_API_KEY);
       const channel = ably.channels.get(`restaurant:${restaurantId}`);
-      await channel.publish('restaurantWaitlist-updated', {
+      await channel.publish(ABLY_TABLE_EVENTS.WaitlistUpdated, {
         id: entry.id,
         status: entry.status,
       });

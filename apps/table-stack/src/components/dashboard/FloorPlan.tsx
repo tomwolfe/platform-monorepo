@@ -18,6 +18,7 @@ import { Table, Trash2, CheckCircle, AlertCircle, LucideIcon, Plus, Settings2, X
 import Ably from 'ably';
 import { useRouter } from 'next/navigation';
 import { Logger } from '@repo/shared/logger';
+import { ABLY_TABLE_EVENTS } from '@repo/mcp-protocol';
 
 const logger = new Logger({ serviceName: 'table-stack' });
 
@@ -199,17 +200,17 @@ export default function FloorPlan({
       router.refresh();
     };
 
-    channel.subscribe('NEW_RESERVATION', newReservationListener);
-    channel.subscribe('RESERVATION_CANCELLED', reservationCancelledListener);
+    channel.subscribe(ABLY_TABLE_EVENTS.NewReservation, newReservationListener);
+    channel.subscribe(ABLY_TABLE_EVENTS.ReservationCancelled, reservationCancelledListener);
 
     return () => {
       try {
-        channel.unsubscribe('NEW_RESERVATION', newReservationListener);
+        channel.unsubscribe(ABLY_TABLE_EVENTS.NewReservation, newReservationListener);
       } catch {
         // Ignore cleanup errors
       }
       try {
-        channel.unsubscribe('RESERVATION_CANCELLED', reservationCancelledListener);
+        channel.unsubscribe(ABLY_TABLE_EVENTS.ReservationCancelled, reservationCancelledListener);
       } catch {
         // Ignore cleanup errors
       }

@@ -18,13 +18,13 @@ export const SystemEventTypeSchema = z.enum([
   "ReservationCancelled",
   "ReservationUpdated",
   "ReservationRejected",
-  
+
   // Waitlist Events
   "WaitlistEntryAdded",
   "WaitlistEntryUpdated",
   "WaitlistEntrySeated",
   "WaitlistEntryRemoved",
-  
+
   // Delivery Events
   "DeliveryQuoteRequested",
   "DeliveryDispatched",
@@ -32,23 +32,24 @@ export const SystemEventTypeSchema = z.enum([
   "DeliveryCompleted",
   "DeliveryCancelled",
   "DeliveryFailed",
-  
+
   // Table Events
   "TableVacated",
   "TableOccupied",
   "TableCombined",
   "TableSplit",
-  
+  "TableStatusUpdate",
+
   // Guest Events
   "HighValueGuestReservation",
   "GuestProfileCreated",
   "GuestProfileUpdated",
-  
+
   // Restaurant Events
   "RestaurantClaimed",
   "RestaurantShadowCreated",
   "RestaurantOperationalStateChanged",
-  
+
   // System Events
   "IntentInferred",
   "PlanGenerated",
@@ -60,6 +61,14 @@ export const SystemEventTypeSchema = z.enum([
   "SagaCompensated",
   "CircuitBreakerOpened",
   "CircuitBreakerClosed",
+
+  // Webhook Events (service-to-service)
+  "DeliveryHotspotAvailable",
+  "TableVacatedWebhook",
+
+  // Realtime Channel Events (Ably client subscriptions)
+  "NewReservation",
+  "ReservationCancelledRealtime",
 ]);
 
 export type SystemEventType = z.infer<typeof SystemEventTypeSchema>;
@@ -301,3 +310,28 @@ export function createTypedSystemEvent<T extends keyof EventPayloadByType>(
 ): SystemEvent & { payload: EventPayloadByType[T] } {
   return createSystemEvent(type as SystemEventType, payload as Record<string, unknown>, source, options) as SystemEvent & { payload: EventPayloadByType[T] };
 }
+
+// ============================================================================
+// ABLY CHANNEL EVENT NAME CONSTANTS
+// These provide type-safe references for Ably publish/subscribe operations.
+// The actual wire-format strings are defined here to prevent typos.
+// ============================================================================
+
+/**
+ * Ably channel event names for Table Stack dashboard.
+ * Used for real-time updates in the restaurant floor plan.
+ */
+export const ABLY_TABLE_EVENTS = {
+  TableStatusUpdate: 'table-status-update',
+  WaitlistUpdated: 'restaurantWaitlist-updated',
+  NewReservation: 'NEW_RESERVATION',
+  ReservationCancelled: 'RESERVATION_CANCELLED',
+} as const;
+
+/**
+ * Webhook event names for service-to-service communication.
+ */
+export const WEBHOOK_EVENTS = {
+  DeliveryHotspotAvailable: 'delivery_hotspot_available',
+  TableVacated: 'table_vacated',
+} as const;

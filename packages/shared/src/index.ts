@@ -1,70 +1,32 @@
 // ============================================================================
-// SHARED PACKAGE EXPORTS
+// SHARED PACKAGE - MAIN EXPORTS
 // Phase 1-5 Roadmap Implementation
 // ============================================================================
+//
+// ⚠️  WARNING: This barrel file re-exports BOTH client-safe and server-only
+// modules. Importing from '@repo/shared' in a React client component or Edge
+// runtime may inadvertently bundle Node.js-only code (redis, viem, crypto).
+//
+// RECOMMENDED IMPORT PATHS:
+//   - Client components / Edge runtime: import { ... } from '@repo/shared/client'
+//   - Server API routes / Server actions: import { ... } from '@repo/shared/server'
+//   - Specific utilities: import { ... } from '@repo/shared/utils/crypto-price'
+//
+// ============================================================================
 
-// Error Handling (Phase 1: Standardized Errors)
-export * from './errors';
+// Re-export all client-safe modules
+export * from './client';
 
-// Phase 1.2: Centralized Error Handler & Structured Logging
-export * from './error-handler';
-export * from './logger';
-
-// Phase 1.3: API Validation & Standardization
-// NOTE: api-schemas and validation-middleware both export createValidationMiddleware
-// We export from validation-middleware only to avoid conflicts
-export * from './api-schemas';
-export * from './api-response';
-// Explicitly export validation-middleware to override api-schemas conflict
-export {
-  createValidationMiddleware,
-  type ValidationMiddleware,
-  type ValidationMiddlewareResult,
-} from './validation-middleware';
-
-// Phase 1.4: Security Hardening
-// NOTE: security-middleware and security-headers both export generateSecurityHeaders
-// We export from security-headers only to avoid conflicts
-export * from './security-middleware';
-export * from './security-audit';
-// Explicitly export security-headers to override security-middleware conflict
-export {
-  generateSecurityHeaders,
-  type SecurityHeadersConfig,
-  type SecurityHeaderPreset,
-} from './security-headers';
+// ============================================================================
+// SERVER-SIDE MODULES (Node.js only)
+// ⚠️  These modules use Node.js APIs and will break Edge/Client runtime.
+// For a complete server-side import, use '@repo/shared/server' instead.
+// ============================================================================
 
 // Phase 1: Golden Path (System Spine)
-export * from './golden-path';
-// OpenAPI specification
 export { openApiSpecification } from './openapi-spec';
-// Note: tracing exports ExecutionTraceEntry (type), ExecutionTraceEntrySchema (schema)
-export {
-  CORRELATION_ID_HEADER,
-  TRACE_ID_HEADER,
-  IDEMPOTENCY_KEY_HEADER,
-  EXECUTION_ID_HEADER,
-  ExecutionTraceEntrySchema,
-  type ExecutionTraceEntry,
-  type ExecutionTraceEntry as TraceEntry,
-  InMemoryTraceEmitter,
-  RedisTraceEmitter,
-  type TraceEmitter,
-  withNervousSystemTracing,
-  getCorrelationId,
-  getTraceId,
-  injectTracingHeaders,
-  createTraceEntry,
-  createStepCompletedEntry,
-  createStepFailedEntry,
-  createErrorEntry,
-  emitTrace,
-  getGlobalTraceEmitter,
-  setGlobalTraceEmitter,
-} from './tracing';
 
 // Phase 2: Architecture Simplification
-export * from './runtime-registry'; // Unified registry (tools, MCP, services)
 export * from './infrastructure/cache'; // Standardized Redis cache layer
 
 // Phase 2.2: Request Caching (NEW - use this instead of deprecated cache-middleware)
@@ -93,20 +55,9 @@ export {
   type CronAuthResult,
 } from './middleware/cron-auth';
 
-// Tool types
-export * from './types/tool';
-
-// Phase 4: Consolidate Webhook Dispatching
-export * from './services/webhook-dispatcher';
-
-// Phase 5: Feature Flags (Gate autonomous features)
-export * from './feature-flags';
-
-// Legacy exports (below) - existing functionality
+// Legacy server-side exports (below) - existing functionality
 export * from './redis';
 export * from './redis/memory';
-export * from './types/execution';
-export * from './normalization';
 export * from './clients';
 export * from './idempotency';
 export * from './outbox';
@@ -114,48 +65,13 @@ export * from './services';
 // NOTE: realtime/ably-auth moved to @repo/shared/server to avoid Edge Runtime issues
 // Import directly: import { createAblyAuthHandler } from '@repo/shared/realtime/ably-auth'
 export * from './realtime';
-export * from './config';
-export * from './state-machine';
-export * from './policies/failover-policy';
-export * from './services/semantic-memory';
-// Schema evolution - export from main file only (autonomous-schema-evolution re-exports)
-export { SchemaEvolutionService, getSchemaEvolutionService, createSchemaEvolutionService } from './services/schema-evolution';
-export type { AliasUsageRecord, MismatchEvent, SchemaEvolutionConfig } from './services/schema-evolution';
-export * from './services/schema-versioning';
-export * from './services/heartbeat';
-export * from './services/parameter-aliaser';
-export * from './services/autonomous-schema-evolution';
-export * from './services/qstash';
-export * from './services/qstash-webhook';
-export * from './services/vector-store';
-export * from './services/pgvector-store';
-export * from './services/semantic-vector-store-pg';
-export * from './services/outbox-listener';
-export * from './services/state-diff-viewer';
-export * from './services/serverless-pubsub-bridge';
-export * from './outbox-relay';
+export { AppConfig } from './config';
 
 // Phase 2: Security & Hardening
 // DEPRECATED: tool-sandbox, wasm-sandbox, and chaos-engine are now exported from '@repo/shared/server'
 // These modules use Node.js worker_threads and are NOT compatible with Edge runtime
 export * from './services/migration-generator';
 export * from './services/mcp-security-scanner';
-// Note: circuit-breaker exports TimeoutError which conflicts with errors.ts
-// Export explicitly excluding TimeoutError - only export non-conflicting items
-export {
-  CircuitBreaker,
-  CircuitBreakerOpenError,
-  CircuitBreakerRegistry,
-  CostCircuitBreaker,
-  createCircuitBreaker,
-  createCircuitBreakerRegistry,
-  createCostCircuitBreaker,
-  type CircuitBreakerConfig,
-  type CircuitBreakerStats,
-  type CircuitEvent,
-} from './services/circuit-breaker';
-// Export CircuitState separately to avoid star export conflicts
-export type { CircuitState } from './services/circuit-breaker';
 
 // Phase 3: Advanced Autonomy
 export * from './services/anomaly-detector';
@@ -174,12 +90,8 @@ export {
   type TriageContext,
   type FailureTriageService,
 } from './services/llm-failure-triage';
-export * from './services/privacy-gateway';
 export * from './services/dry-run-simulator';
 export * from './services/shadow-dry-run';
-// Note: transaction-speedup is Node.js only (uses crypto module)
-// Import directly: import { ... } from '@repo/shared/services/transaction-speedup'
-// export * from './services/transaction-speedup';
 
 // Phase 4: Perfect Grade Enhancements (100/100)
 // Causal ordering with sequence IDs
@@ -257,6 +169,34 @@ export * from './middleware/web3-replay-guard';
 // Phase 4.1: Provider Abstractions (Mobility & Communication)
 export * from './services/mobility-provider';
 export * from './services/communication-provider';
+
+// Schema evolution - export from main file only (autonomous-schema-evolution re-exports)
+export { SchemaEvolutionService, getSchemaEvolutionService, createSchemaEvolutionService } from './services/schema-evolution';
+export type { AliasUsageRecord, MismatchEvent, SchemaEvolutionConfig } from './services/schema-evolution';
+export * from './services/schema-versioning';
+export * from './services/heartbeat';
+export * from './services/parameter-aliaser';
+export * from './services/autonomous-schema-evolution';
+export * from './services/qstash';
+export * from './services/qstash-webhook';
+export * from './services/vector-store';
+export * from './services/pgvector-store';
+export * from './services/semantic-vector-store-pg';
+export * from './services/outbox-listener';
+export * from './services/state-diff-viewer';
+export * from './services/serverless-pubsub-bridge';
+export * from './outbox-relay';
+
+// Note: circuit-breaker exports TimeoutError which conflicts with errors.ts
+// Export explicitly excluding TimeoutError - only export non-conflicting items
+export {
+  CircuitBreaker,
+  CircuitBreakerRegistry,
+  CostCircuitBreaker,
+  createCircuitBreaker,
+  createCircuitBreakerRegistry,
+  createCostCircuitBreaker,
+} from './services/circuit-breaker';
 
 // export * from './utils/treasury'; // Treasury account management - import directly
 // export * from './utils/crypto-price'; // Server-side only - import directly

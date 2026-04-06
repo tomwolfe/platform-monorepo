@@ -146,11 +146,17 @@ export async function getCryptoPrices(options?: {
   // Try CoinGecko (primary)
   try {
     const url = `${COINGECKO_API}?ids=${COIN_IDS.ETH},${COIN_IDS.MATIC}&vs_currencies=usd&include_24hr_change=true`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+
     const response = await fetch(url, {
       headers: {
         Accept: "application/json",
       },
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       throw new Error(`CoinGecko API error: ${response.status}`);
@@ -182,11 +188,17 @@ export async function getCryptoPrices(options?: {
 
     // Try Coinbase (secondary fallback)
     try {
+      const coinbaseController = new AbortController();
+      const coinbaseTimeoutId = setTimeout(() => coinbaseController.abort(), 3000);
+
       const response = await fetch(`${COINBASE_API}?currency=ETH`, {
         headers: {
           Accept: "application/json",
         },
+        signal: coinbaseController.signal,
       });
+
+      clearTimeout(coinbaseTimeoutId);
 
       if (!response.ok) {
         throw new Error(`Coinbase API error: ${response.status}`);
@@ -200,11 +212,18 @@ export async function getCryptoPrices(options?: {
       // For MATIC, try to fetch separately or use a reasonable estimate from ETH ratio
       let maticPrice = 0;
       try {
+        const maticController = new AbortController();
+        const maticTimeoutId = setTimeout(() => maticController.abort(), 3000);
+
         const maticResponse = await fetch(`${COINBASE_API}?currency=MATIC`, {
           headers: {
             Accept: "application/json",
           },
+          signal: maticController.signal,
         });
+
+        clearTimeout(maticTimeoutId);
+
         if (maticResponse.ok) {
           const maticData: any = await maticResponse.json();
           maticPrice = parseFloat(maticData.data?.rates?.USD || "0");
@@ -237,7 +256,14 @@ export async function getCryptoPrices(options?: {
 
       // Try Binance Public API (tertiary fallback - no auth required)
       try {
-        const response = await fetch(`${BINANCE_API}?symbol=${BINANCE_SYMBOLS.ETH}`);
+        const binanceController = new AbortController();
+        const binanceTimeoutId = setTimeout(() => binanceController.abort(), 3000);
+
+        const response = await fetch(`${BINANCE_API}?symbol=${BINANCE_SYMBOLS.ETH}`, {
+          signal: binanceController.signal,
+        });
+
+        clearTimeout(binanceTimeoutId);
 
         if (!response.ok) {
           throw new Error(`Binance API error: ${response.status}`);
@@ -251,7 +277,15 @@ export async function getCryptoPrices(options?: {
         // Fetch MATIC separately
         let maticPrice = 0;
         try {
-          const maticResponse = await fetch(`${BINANCE_API}?symbol=${BINANCE_SYMBOLS.MATIC}`);
+          const binanceMaticController = new AbortController();
+          const binanceMaticTimeoutId = setTimeout(() => binanceMaticController.abort(), 3000);
+
+          const maticResponse = await fetch(`${BINANCE_API}?symbol=${BINANCE_SYMBOLS.MATIC}`, {
+            signal: binanceMaticController.signal,
+          });
+
+          clearTimeout(binanceMaticTimeoutId);
+
           if (maticResponse.ok) {
             const maticData: any = await maticResponse.json();
             maticPrice = parseFloat(maticData.lastPrice || "0");

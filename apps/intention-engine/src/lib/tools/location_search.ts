@@ -369,6 +369,9 @@ export async function search_web(query: string): Promise<{ success: boolean; res
       if (tavilyApiKey && process.env.TAVILY_API_KEY) {
         try {
           // Tavily Search API - production-grade search
+          const tavilyController = new AbortController();
+          const tavilyTimeoutId = setTimeout(() => tavilyController.abort(), 5000);
+
           const response = await fetch('https://api.tavily.com/search', {
             method: 'POST',
             headers: {
@@ -381,7 +384,10 @@ export async function search_web(query: string): Promise<{ success: boolean; res
               search_depth: 'basic',
               max_results: 3,
             }),
+            signal: tavilyController.signal,
           });
+
+          clearTimeout(tavilyTimeoutId);
 
           if (response.ok) {
             const data = await response.json();

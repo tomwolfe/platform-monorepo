@@ -367,3 +367,26 @@ export async function usdToCryptoWithSlippage(
   // Add slippage buffer (increase amount to ensure payment is sufficient)
   return cryptoAmount * (1 + slippageBps / 10000);
 }
+
+/**
+ * Check if an actual crypto value is within slippage tolerance of the expected value.
+ *
+ * This is used for defense-in-depth verification after on-chain validation.
+ * It allows a tolerance band to handle price volatility between signing and verification.
+ *
+ * @param actualValue - The actual value received (in smallest units, e.g. Wei)
+ * @param expectedValue - The expected value (in smallest units)
+ * @param slippageBps - Slippage tolerance in basis points (100 = 1%, 200 = 2%)
+ * @returns True if actualValue is within the acceptable slippage band
+ */
+export function isWithinSlippage(
+  actualValue: bigint,
+  expectedValue: bigint,
+  slippageBps: number
+): boolean {
+  const BASIS_POINTS = 10_000n;
+  const slippage = BigInt(slippageBps);
+  const lowerBound = (expectedValue * (BASIS_POINTS - slippage)) / BASIS_POINTS;
+  const upperBound = (expectedValue * (BASIS_POINTS + slippage)) / BASIS_POINTS;
+  return actualValue >= lowerBound && actualValue <= upperBound;
+}

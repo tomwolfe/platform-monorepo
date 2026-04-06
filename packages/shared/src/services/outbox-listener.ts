@@ -45,6 +45,7 @@ import { sql, eq, and, lt, isNull } from 'drizzle-orm';
 import { Redis } from '@upstash/redis';
 import { getRedisClient, ServiceNamespace } from '../redis';
 import { OutboxService, type OutboxPayload, type OutboxEventType, type OutboxEvent } from '../outbox';
+import { Logger } from '../logger';
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -125,6 +126,7 @@ export async function notifyOutboxEvent(
     outboxId: string;
   }
 ): Promise<void> {
+  const logger = new Logger({ serviceName: 'outbox-listener' });
   const channelName = process.env.OUTBOX_CHANNEL_NAME || 'outbox_events';
 
   // Use pg_notify to send notification
@@ -137,9 +139,9 @@ export async function notifyOutboxEvent(
     })})
   `);
 
-  console.log(
-    `[OutboxListener] Notified channel '${channelName}' for ` +
-    `execution ${notification.executionId} [outbox: ${notification.outboxId}]`
+  logger.info(
+    `Notified channel '${channelName}' for execution ${notification.executionId}`,
+    { outboxId: notification.outboxId }
   );
 }
 
@@ -149,6 +151,7 @@ export async function notifyOutboxEvent(
 // ============================================================================
 
 export class OutboxListener {
+  private logger = new Logger({ serviceName: 'outbox-listener' });
   private config: OutboxListenerConfig;
   private redis: Redis;
   private outboxService: OutboxService;
@@ -159,7 +162,6 @@ export class OutboxListener {
     eventsFailed: 0,
     fallbackPolls: 0,
   };
-  private pollInterval?: NodeJS.Timeout;
   private client?: any; // PostgreSQL client for LISTEN
 
   constructor(config: OutboxListenerConfig = {}) {
@@ -180,34 +182,26 @@ export class OutboxListener {
    */
   async startListening(): Promise<void> {
     if (this.isListening) {
-      console.warn('[OutboxListener] Already listening');
+      this.logger.warn('Already listening');
       return;
     }
 
     this.isListening = true;
-    console.log(
-      `[OutboxListener] Starting listener on channel '${this.config.channelName}' ` +
-      `(batch: ${this.config.batchSize}, poll: ${this.config.pollIntervalMs}ms)`
-    );
+    this.logger.info(`Starting listener on channel '${this.config.channelName}'`, {
+      batchSize: this.config.batchSize,
+    });
 
     try {
       // Try to set up LISTEN/NOTIFY
       await this.setupListener();
     } catch (error) {
-      console.error('[OutboxListener] Failed to setup LISTEN/NOTIFY:', error);
+      this.logger.error('Failed to setup LISTEN/NOTIFY', { error });
 
-      // Fallback to polling only
-      if (this.config.enableFallbackPolling) {
-        console.warn('[OutboxListener] Falling back to polling-only mode');
-        this.startFallbackPolling();
-      } else {
-        throw error;
-      }
-    }
-
-    // Always start fallback polling for redundancy
-    if (this.config.enableFallbackPolling) {
-      this.startFallbackPolling();
+      // In serverless environments, LISTEN/NOTIFY won't work.
+      // Log a warning and rely on cron-based processing instead.
+      this.logger.warn(
+        'LISTEN/NOTIFY unavailable. Outbox processing will be handled by /api/cron/outbox-sweep endpoint.'
+      );
     }
   }
 
@@ -217,22 +211,17 @@ export class OutboxListener {
   async stopListening(): Promise<void> {
     this.isListening = false;
 
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval);
-      this.pollInterval = undefined;
-    }
-
     if (this.client) {
       try {
         await this.client.query(`UNLISTEN ${this.config.channelName}`);
         await this.client.end();
       } catch (error) {
-        console.error('[OutboxListener] Error stopping listener:', error);
+        this.logger.error('Error stopping listener', { error });
       }
       this.client = undefined;
     }
 
-    console.log('[OutboxListener] Stopped listening');
+    this.logger.info('Stopped listening');
   }
 
   /**
@@ -260,61 +249,54 @@ export class OutboxListener {
     // Subscribe to channel
     await this.client.query(`LISTEN ${this.config.channelName}`);
 
-    console.log(`[OutboxListener] Subscribed to channel '${this.config.channelName}'`);
+    this.logger.info(`Subscribed to channel '${this.config.channelName}'`);
 
     // Listen for notifications
     // Note: neon serverless doesn't support persistent connections well
     // We'll use polling as the primary mechanism in serverless environments
-    console.warn(
-      '[OutboxListener] LISTEN/NOTIFY in serverless: Using polling as primary mechanism. ' +
-      'For real-time LISTEN, deploy a persistent worker (e.g., Fly.io, Railway).'
+    this.logger.warn(
+      'LISTEN/NOTIFY in serverless: Using polling as primary mechanism. For real-time LISTEN, deploy a persistent worker (e.g., Fly.io, Railway).'
     );
   }
 
   /**
    * Start fallback polling mechanism
-   * Polls for pending outbox events at regular intervals
+   *
+   * SERVERLESS-SAFE: Does NOT use setInterval (which freezes in serverless).
+   * Instead, this method is exposed as a public method that can be called
+   * by a cron endpoint (e.g. /api/cron/outbox-sweep) scheduled via QStash.
+   *
+   * For local development, you can call pollAndProcess() directly.
    */
-  private startFallbackPolling(): void {
-    if (this.pollInterval) {
-      return;
-    }
-
-    const poll = async () => {
-      if (!this.isListening) return;
-
-      try {
-        await this.pollAndProcess();
-        this.stats.fallbackPolls++;
-      } catch (error) {
-        console.error('[OutboxListener] Polling error:', error);
-        this.stats.lastError = error instanceof Error ? error.message : String(error);
-      }
-    };
-
-    // Initial poll
-    poll();
-
-    // Schedule regular polls
-    this.pollInterval = setInterval(poll, this.config.pollIntervalMs);
-
-    console.log(
-      `[OutboxListener] Fallback polling started (interval: ${this.config.pollIntervalMs}ms)`
+  startFallbackPolling(): void {
+    // NOTE: setInterval has been removed for serverless compatibility.
+    // Outbox processing is now handled by:
+    // 1. PostgreSQL LISTEN/NOTIFY (for persistent workers)
+    // 2. QStash-triggered cron endpoint /api/cron/outbox-sweep (for serverless)
+    //
+    // This method is kept as a no-op for backward compatibility.
+    // Use pollAndProcess() directly for manual or cron-triggered processing.
+    this.logger.info(
+      'startFallbackPolling() is deprecated for serverless. Use the /api/cron/outbox-sweep endpoint triggered by QStash instead.'
     );
   }
 
   /**
    * Poll for pending outbox events and process them
+   *
+   * This method is public and can be called by a cron endpoint
+   * to process pending outbox events on a schedule.
    */
-  private async pollAndProcess(): Promise<void> {
+  async pollAndProcess(): Promise<void> {
     const now = new Date();
+    const db = getDb();
 
     // Fetch pending events (FIFO order by createdAt)
     const pendingEvents = await db
       .select()
       .from(outbox)
       .where(sql`
-        ${outbox.status} = 'pending' 
+        ${outbox.status} = 'pending'
         AND (${outbox.expiresAt} > ${now} OR ${outbox.expiresAt} IS NULL)
       `)
       .orderBy(outbox.createdAt)
@@ -324,9 +306,7 @@ export class OutboxListener {
       return;
     }
 
-    console.log(
-      `[OutboxListener] Found ${pendingEvents.length} pending outbox events`
-    );
+    this.logger.info(`Found ${pendingEvents.length} pending outbox events`);
 
     // Process events in batch
     for (const event of pendingEvents) {
@@ -345,10 +325,11 @@ export class OutboxListener {
   private async processNotification(notification: OutboxNotification): Promise<void> {
     this.stats.notificationsReceived++;
     this.stats.lastNotificationAt = new Date();
+    const db = getDb();
 
-    console.log(
-      `[OutboxListener] Processing notification for execution ${notification.executionId} ` +
-      `[outbox: ${notification.outboxId}]`
+    this.logger.info(
+      `Processing notification for execution ${notification.executionId}`,
+      { outboxId: notification.outboxId }
     );
 
     try {
@@ -360,9 +341,7 @@ export class OutboxListener {
         .limit(1);
 
       if (events.length === 0) {
-        console.warn(
-          `[OutboxListener] Outbox event ${notification.outboxId} not found`
-        );
+        this.logger.warn(`Outbox event ${notification.outboxId} not found`);
         return;
       }
 
@@ -370,9 +349,7 @@ export class OutboxListener {
 
       // Skip if already processed
       if (event.status === 'processed') {
-        console.log(
-          `[OutboxListener] Event ${notification.outboxId} already processed`
-        );
+        this.logger.info(`Event ${notification.outboxId} already processed`);
         return;
       }
 
@@ -381,14 +358,11 @@ export class OutboxListener {
 
       this.stats.eventsProcessed++;
 
-      console.log(
-        `[OutboxListener] Successfully processed event ${notification.outboxId}`
-      );
+      this.logger.info(`Successfully processed event ${notification.outboxId}`);
     } catch (error) {
-      console.error(
-        `[OutboxListener] Failed to process notification:`,
-        error instanceof Error ? error.message : error
-      );
+      this.logger.error('Failed to process notification', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       this.stats.eventsFailed++;
       throw error;
     }
@@ -434,6 +408,7 @@ export async function triggerOutboxRelay(
 ): Promise<string | null> {
   const { QStashService } = await import('../services/qstash');
   const { AppConfig } = await import('../config');
+  const logger = new Logger({ serviceName: 'outbox-listener' });
 
   const baseUrl = AppConfig.getIntentionEngineApiUrl();
   const url = `${baseUrl}/api/engine/outbox-relay`;
@@ -463,14 +438,14 @@ export async function triggerOutboxRelay(
       headers,
     });
 
-    console.log(
-      `[OutboxListener] Triggered QStash relay for execution ${executionId} ` +
-      `[message: ${messageId}]`
+    logger.info(
+      `Triggered QStash relay for execution ${executionId}`,
+      { messageId }
     );
 
     return messageId;
   } catch (error) {
-    console.error('[OutboxListener] Failed to trigger QStash relay:', error);
+    logger.error('Failed to trigger QStash relay', { error });
     return null;
   }
 }

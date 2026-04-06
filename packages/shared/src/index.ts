@@ -231,6 +231,7 @@ export type {
 export * from './utils/erc20-abi';
 export * from './utils/escrow-abi';
 export * from './utils/crypto'; // NEW: Timing-safe comparison and secure random generation
+export * from './utils/next-errors'; // Next.js redirect/notFound error detection
 // Note: api-error exports some conflicting names (getErrorStatusCode, withApiErrorHandler)
 // Export only non-conflicting items from utils/api-error
 export {

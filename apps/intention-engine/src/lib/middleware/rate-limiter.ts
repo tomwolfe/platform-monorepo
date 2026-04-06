@@ -22,6 +22,7 @@
  */
 
 import { Redis } from "@upstash/redis";
+import { LRUCache } from "lru-cache";
 
 // ============================================================================
 // CONFIGURATION
@@ -103,6 +104,7 @@ export interface RateLimitResult {
     "X-RateLimit-Limit": string;
     "X-RateLimit-Remaining": string;
     "X-RateLimit-Reset": string;
+    "X-RateLimit-Degraded"?: string;
     "Retry-After"?: string;
   };
   /** User identifier */
@@ -117,6 +119,7 @@ export interface RateLimitResult {
 
 export class RateLimiterService {
   private static redis: Redis | null = null;
+  private static lruCache: LRUCache<string, { count: number; resetAt: number }> | null = null;
   private config: EndpointRateLimitConfig;
 
   constructor(config?: Partial<EndpointRateLimitConfig>) {
@@ -127,19 +130,78 @@ export class RateLimiterService {
     this.redis = redisClient;
   }
 
+  /**
+   * Get or create the in-memory LRU cache for degraded mode fallback.
+   * Max 1000 entries with 5-minute TTL to prevent memory leaks.
+   */
+  private static getLruCache(): LRUCache<string, { count: number; resetAt: number }> {
+    if (!this.lruCache) {
+      this.lruCache = new LRUCache({ max: 1000, ttl: 5 * 60 * 1000 });
+    }
+    return this.lruCache;
+  }
+
   async checkRateLimit(
     userId: string,
     endpointType: keyof EndpointRateLimitConfig = "api"
   ): Promise<RateLimitResult> {
     const endpointConfig = this.config[endpointType];
 
-    // Use Redis for rate limiting - no local fallback
+    // Use Redis for rate limiting, with LRU cache fallback if Redis fails
     try {
       return await this.checkRateLimitRedis(userId, endpointType);
     } catch (error) {
-      console.error("[RateLimiter] Redis error:", error);
-      throw error;
+      console.error("[RateLimiter] Redis error, falling back to LRU cache:", error);
+      // Fail-degraded: Use in-memory LRU cache to preserve availability
+      return this.checkRateLimitLRU(userId, endpointType);
     }
+  }
+
+  /**
+   * In-memory LRU cache fallback when Redis is unavailable.
+   * Provides basic rate limiting to protect against abuse while Redis is down.
+   * Adds a degradation header to signal reduced security posture.
+   */
+  checkRateLimitLRU(
+    userId: string,
+    endpointType: keyof EndpointRateLimitConfig
+  ): RateLimitResult {
+    const endpointConfig = this.config[endpointType];
+    const lru = RateLimiterService.getLruCache();
+    const redisKey = `${endpointConfig.keyPrefix}${userId}`;
+    const now = Date.now();
+
+    const existing = lru.get(redisKey);
+    let currentCount = 1;
+    let resetAt = now + endpointConfig.windowMs;
+
+    if (existing && existing.resetAt > now) {
+      // Window still active, increment count
+      currentCount = existing.count + 1;
+      resetAt = existing.resetAt;
+    }
+
+    lru.set(redisKey, { count: currentCount, resetAt });
+
+    const maxRequests = endpointConfig.maxRequests + endpointConfig.burstAllowance;
+    const remaining = Math.max(0, maxRequests - currentCount);
+    const allowed = currentCount <= maxRequests;
+
+    return {
+      allowed,
+      remaining,
+      resetInMs: resetAt - now,
+      retryAfter: allowed ? undefined : Math.ceil((resetAt - now) / 1000),
+      headers: {
+        "X-RateLimit-Limit": maxRequests.toString(),
+        "X-RateLimit-Remaining": remaining.toString(),
+        "X-RateLimit-Reset": resetAt.toString(),
+        "X-RateLimit-Degraded": "true", // Signal that rate limiting is in fallback mode
+        ...(allowed ? {} : { "Retry-After": Math.ceil((resetAt - now) / 1000).toString() }),
+      },
+      userId,
+      endpointType,
+    };
   }
 
   private async checkRateLimitRedis(
@@ -255,50 +317,72 @@ export async function rateLimitMiddleware(
   } catch (error) {
     console.error("[RateLimiter] Middleware error:", error);
 
-    // SECURITY FIX: Fail-closed for critical endpoints to prevent quota drain under DoS
-    // Only 'cache' endpoint type is allowed to fail-open (availability over security)
-    const isCriticalEndpoint = endpointType !== "cache";
-    
-    if (isCriticalEndpoint) {
-      // FAIL-CLOSED: Block requests when rate limiter is unavailable
-      // This prevents attackers from bypassing rate limits by triggering Redis failures
-      return {
-        allowed: false,
-        result: {
+    // DEGRADED MODE: Fall back to in-memory LRU cache when Redis is unavailable.
+    // This preserves security (rate limiting still works per-instance) while
+    // protecting availability (requests aren't blindly blocked).
+    try {
+      const limiter = new RateLimiterService(config);
+      const result = limiter.checkRateLimitLRU(userId, endpointType);
+
+      if (!result.allowed) {
+        return {
           allowed: false,
+          result,
+          error: `Rate limit exceeded (degraded mode). Try again in ${Math.ceil(result.resetInMs / 1000)} seconds.`,
+        };
+      }
+
+      return {
+        allowed: true,
+        result,
+      };
+    } catch (lruError) {
+      // Absolute last resort - this should never happen
+      console.error("[RateLimiter] LRU cache fallback also failed:", lruError);
+
+      // Fail-open for non-critical endpoints, fail-closed for critical ones
+      const isCriticalEndpoint = endpointType !== "cache";
+
+      if (isCriticalEndpoint) {
+        return {
+          allowed: false,
+          result: {
+            allowed: false,
+            remaining: 0,
+            resetInMs: 0,
+            headers: {
+              "X-RateLimit-Limit": "0",
+              "X-RateLimit-Remaining": "0",
+              "X-RateLimit-Reset": "0",
+              "X-RateLimit-Degraded": "true",
+              "Retry-After": "60",
+            },
+            userId,
+            endpointType,
+          },
+          error: "Rate limiter completely unavailable - service temporarily blocked (503)",
+        };
+      }
+
+      // Fail-open for cache endpoints (availability over security)
+      return {
+        allowed: true,
+        result: {
+          allowed: true,
           remaining: 0,
           resetInMs: 0,
           headers: {
             "X-RateLimit-Limit": "0",
             "X-RateLimit-Remaining": "0",
             "X-RateLimit-Reset": "0",
-            "Retry-After": "60", // Suggest retry after 60 seconds
+            "X-RateLimit-Degraded": "true",
           },
           userId,
           endpointType,
         },
-        error: "Rate limiter unavailable - service temporarily blocked (503)",
+        error: "Rate limiter completely unavailable",
       };
     }
-    
-    // FAIL-OPEN: Only for cache warming endpoints (availability over security)
-    console.warn("[RateLimiter] Cache endpoint failing open due to rate limiter error");
-    return {
-      allowed: true,
-      result: {
-        allowed: true,
-        remaining: 0,
-        resetInMs: 0,
-        headers: {
-          "X-RateLimit-Limit": "0",
-          "X-RateLimit-Remaining": "0",
-          "X-RateLimit-Reset": "0",
-        },
-        userId,
-        endpointType,
-      },
-      error: "Rate limiter unavailable",
-    };
   }
 }
 

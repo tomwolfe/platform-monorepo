@@ -168,6 +168,8 @@ export async function verifyTransaction(params: {
   appSource?: string; // 'open-delivery' | 'table-stack'
   isEscrowPayment?: boolean; // True for Open-Delivery escrow, false for TableStack direct P2P
   minConfirmations?: number;
+  /** Slippage tolerance in basis points for volatile tokens (e.g. ETH). 200 = 2% */
+  slippageBps?: number;
 }): Promise<TransactionVerificationResult> {
   const {
     txHash,
@@ -181,6 +183,7 @@ export async function verifyTransaction(params: {
     appSource = "unknown",
     isEscrowPayment = false,
     minConfirmations = MIN_CONFIRMATIONS,
+    slippageBps,
   } = params;
 
   // CRITICAL: orderId is required for signature verification
@@ -338,8 +341,31 @@ export async function verifyTransaction(params: {
       actualValue = transaction.value;
     }
 
-    // Step 6: Verify the amount matches expected value
-    if (actualValue !== expectedValue) {
+    // Step 6: Verify the amount matches expected value (with optional slippage tolerance)
+    // For volatile tokens like ETH, we allow a slippage band to handle price movement
+    // between the time the user signed and the backend verified.
+    if (slippageBps !== undefined) {
+      // Apply slippage tolerance: accept values within the specified basis points
+      const BASIS_POINTS = 10_000n;
+      const slippage = BigInt(slippageBps);
+      const lowerBound = (expectedValue * (BASIS_POINTS - slippage)) / BASIS_POINTS;
+      const upperBound = (expectedValue * (BASIS_POINTS + slippage)) / BASIS_POINTS;
+
+      if (actualValue < lowerBound || actualValue > upperBound) {
+        return {
+          success: false,
+          error: `Transaction value outside slippage tolerance. Expected: ${expectedValue}, Got: ${actualValue}, Allowed range: [${lowerBound}, ${upperBound}]`,
+        };
+      }
+
+      console.log(`[verifyTransaction] Value within slippage tolerance (${slippageBps}bps):`, {
+        expected: expectedValue.toString(),
+        actual: actualValue.toString(),
+        lowerBound: lowerBound.toString(),
+        upperBound: upperBound.toString(),
+      });
+    } else if (actualValue !== expectedValue) {
+      // Exact match required when no slippage specified (stablecoins like USDC)
       return {
         success: false,
         error: `Transaction value mismatch. Expected: ${expectedValue}, Got: ${actualValue}`,

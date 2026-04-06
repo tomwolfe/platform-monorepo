@@ -1,10 +1,12 @@
 import { z } from "zod";
-import { getRedisClient, ServiceNamespace } from '@repo/shared';
+import { getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
 const redis = getRedisClient(ServiceNamespace.IE);
 import { env } from "../config";
 import { RestaurantResultSchema } from "../schema";
 import { GeocodeSchema, SearchRestaurantSchema, DB_REFLECTED_SCHEMAS, UnifiedLocationSchema } from "@repo/mcp-protocol";
 import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared/tracing";
+
+const logger = new Logger({ serviceName: 'location-search' });
 
 /**
  * PhotonLocation - Standardized location response from Photon API
@@ -39,7 +41,7 @@ export async function geocode_location_photon(params: z.infer<typeof GeocodeSche
   // Vague location handling
   const vagueTerms = ["nearby", "near me", "around here", "here", "current location"];
   if (vagueTerms.includes(location.toLowerCase()) && userLocation) {
-    console.log("Vague location detected, using userLocation bias.");
+    logger.info({ message: 'Vague location detected, using userLocation bias' });
     return {
       success: true,
       result: {
@@ -49,8 +51,8 @@ export async function geocode_location_photon(params: z.infer<typeof GeocodeSche
     };
   }
 
-  console.log(`[Photon] Geocoding location: ${location}...`);
-  
+  logger.info({ message: 'Geocoding location via Photon', location });
+
   try {
     // Photon API with location bias
     let url = `https://photon.komoot.io/api/?q=${encodeURIComponent(location)}&limit=1`;
@@ -96,12 +98,12 @@ export async function geocode_location_photon(params: z.infer<typeof GeocodeSche
       }
 
       // Fallback to Nominatim if Photon returns no results
-      console.log(`[Photon] No results, falling back to Nominatim...`);
+      logger.info({ message: 'Photon returned no results, falling back to Nominatim' });
       return await geocode_location_nominatim(params);
     });
 
   } catch (error: unknown) {
-    console.warn(`[Photon] Geocoding failed: ${error.message}, falling back to Nominatim`);
+    logger.warn({ message: 'Photon geocoding failed, falling back to Nominatim', error: (error as Error).message });
     // Fallback to Nominatim on error
     return await geocode_location_nominatim(params);
   }
@@ -118,7 +120,7 @@ export async function geocode_location_nominatim(params: z.infer<typeof GeocodeS
   // Vague location handling
   const vagueTerms = ["nearby", "near me", "around here", "here", "current location"];
   if (vagueTerms.includes(location.toLowerCase()) && userLocation) {
-    console.log("Vague location detected, using userLocation bias.");
+    logger.info({ message: 'Vague location detected, using userLocation bias' });
     return {
       success: true,
       result: {
@@ -128,7 +130,7 @@ export async function geocode_location_nominatim(params: z.infer<typeof GeocodeS
     };
   }
 
-  console.log(`[Nominatim] Geocoding location: ${location}...`);
+  logger.info({ message: 'Geocoding location via Nominatim', location });
   try {
     let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`;
 
@@ -209,18 +211,18 @@ export async function search_restaurant(params: z.infer<typeof SearchRestaurantS
     try {
       const cached = await redis.get(cacheKey);
       if (cached) {
-        console.log(`Using cached results for ${cacheKey}`);
+        logger.info({ message: 'Using cached restaurant search results', cacheKey });
         return {
           success: true,
           result: cached
         };
       }
     } catch (err) {
-      console.warn("Redis cache read failed:", err);
+      logger.warn({ message: 'Redis cache read failed', error: String(err) });
     }
   }
 
-  console.log(`Searching for ${cuisine || 'restaurants'} near ${lat}, ${lon}...`);
+  logger.info({ message: 'Searching for restaurants', cuisine: cuisine || 'any', lat, lon });
 
   try {
     // 2. Overpass Query - STRICT cuisine filtering if provided
@@ -254,7 +256,7 @@ export async function search_restaurant(params: z.infer<typeof SearchRestaurantS
         
         // Handle AbortError (timeout) or network errors
         if (fetchError.name === 'AbortError' || fetchError.message?.includes('fetch')) {
-          console.warn('[search_restaurant] Overpass API timeout or network error, returning graceful fallback');
+          logger.warn({ message: 'Overpass API timeout or network error, returning graceful fallback' });
           return {
             success: true,
             result: [],
@@ -273,7 +275,7 @@ export async function search_restaurant(params: z.infer<typeof SearchRestaurantS
         
         // Handle rate limiting (429) or service unavailable (503)
         if (statusCode === 429) {
-          console.warn('[search_restaurant] Overpass API rate limited (429), returning graceful fallback');
+          logger.warn({ message: 'Overpass API rate limited (429), returning graceful fallback', statusCode });
           return {
             success: true,
             result: [],
@@ -282,7 +284,7 @@ export async function search_restaurant(params: z.infer<typeof SearchRestaurantS
         }
         
         if (statusCode === 503 || statusCode >= 500) {
-          console.warn('[search_restaurant] Overpass API unavailable, returning graceful fallback');
+          logger.warn({ message: 'Overpass API unavailable, returning graceful fallback', statusCode });
           return {
             success: true,
             result: [],
@@ -336,7 +338,7 @@ export async function search_restaurant(params: z.infer<typeof SearchRestaurantS
         try {
           await redis.setex(cacheKey, 3600, results);
         } catch (err) {
-          console.warn("Redis cache write failed:", err);
+          logger.warn({ message: 'Redis cache write failed', error: String(err) });
         }
       }
 
@@ -346,7 +348,7 @@ export async function search_restaurant(params: z.infer<typeof SearchRestaurantS
       };
     });
   } catch (error: unknown) {
-    console.error("Error in search_restaurant:", error);
+    logger.error({ message: 'Error in search_restaurant', error: error instanceof Error ? error.message : String(error) });
     // Graceful fallback for any unhandled errors
     return { 
       success: true, 
@@ -357,7 +359,7 @@ export async function search_restaurant(params: z.infer<typeof SearchRestaurantS
 }
 
 export async function search_web(query: string): Promise<{ success: boolean; result?: any; error?: string }> {
-  console.log(`Searching web for: ${query}...`);
+  logger.info({ message: 'Searching web', query });
   
   try {
     return await withNervousSystemTracing(async ({ correlationId }) => {
@@ -402,13 +404,25 @@ export async function search_web(query: string): Promise<{ success: boolean; res
             };
           }
         } catch (error: unknown) {
-          console.warn('[search_web] Tavily API failed, falling back to mock:', error.message);
+          logger.warn({ message: 'Tavily API failed, falling back to mock', error: (error as Error).message });
         }
       }
 
       // FALLBACK: Deterministic mock for offline/rate-limited scenarios
-      // Returns a predictable email based on the query
-      console.log('[search_web] Using deterministic mock (no API key or API unavailable)');
+      // SECURITY: In production, NEVER generate fake contact information.
+      // Return failure so the Intention Engine can gracefully replan.
+      if (process.env.NODE_ENV === 'production') {
+        logger.error({
+          message: 'Tavily API unavailable in production - returning failure (no fake contact data generation)',
+        });
+        return {
+          success: false,
+          error: 'Search service unavailable. Please try again later.',
+        };
+      }
+
+      // Development/test mode only: deterministic mock for offline/rate-limited scenarios
+      logger.info({ message: 'Using deterministic mock (dev/test mode - no API key or API unavailable)' });
       
       // Extract potential restaurant/business name from query
       const queryLower = query.toLowerCase();
@@ -436,7 +450,7 @@ export async function search_web(query: string): Promise<{ success: boolean; res
     });
   } catch (error: unknown) {
     // Graceful fallback on any error
-    console.error('[search_web] Search failed:', error.message);
+    logger.error({ message: 'Search failed', error: (error as Error).message });
     
     return {
       success: true,

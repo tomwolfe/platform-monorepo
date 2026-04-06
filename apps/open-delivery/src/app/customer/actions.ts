@@ -138,7 +138,7 @@ export async function getRestaurantWallet(restaurantId: string): Promise<{
 
 /**
  * Place a real order with crypto payment verification
- * 
+ *
  * ZERO-TRUST ARCHITECTURE:
  * - Frontend proposes transaction, backend MUST verify on-chain
  * - Transaction hash is verified before order is confirmed
@@ -156,6 +156,7 @@ export async function placeRealOrder(
     paymentCurrency?: string; // Token symbol (USDC, ETH, etc.)
     chainId?: number; // Blockchain chain ID (default: Base)
     restaurantWalletAddress?: string; // Direct payment to restaurant wallet
+    signature?: string; // Cryptographic signature of orderId (required for verification)
   }
 ) {
   const user = await currentUser();
@@ -220,19 +221,22 @@ export async function placeRealOrder(
   // ============================================================================
   // ZERO-TRUST: Verify on-chain transaction BEFORE inserting order
   // ============================================================================
-  
+
   if (paymentParams?.txHash) {
     // Validate transaction hash format
     if (!isValidTxHash(paymentParams.txHash)) {
       throw new Error("Invalid transaction hash format");
     }
-    
+
     // Validate wallet address format
     if (!isValidAddress(paymentParams.walletAddress)) {
       throw new Error("Invalid wallet address format");
     }
-    
+
     // Verify transaction on-chain using shared utility
+    // For ETH payments, apply slippage tolerance to handle price volatility
+    const SLIPPAGE_BPS = 200; // 2% slippage tolerance
+
     const verificationResult = await verifyTransaction({
       txHash: paymentParams.txHash as Hash,
       expectedValue: BigInt(totalCrypto),
@@ -240,12 +244,16 @@ export async function placeRealOrder(
       chainId: paymentParams.chainId,
       expectedRecipient: paymentParams.restaurantWalletAddress as Address | undefined,
       paymentCurrency,
+      orderId, // Required for signature verification
+      signature: paymentParams.signature as `0x${string}` | undefined,
+      appSource: "open-delivery",
+      slippageBps: paymentCurrency === "ETH" ? SLIPPAGE_BPS : undefined,
     });
-    
+
     if (!verificationResult.success) {
       throw new Error(`Payment verification failed: ${verificationResult.error}`);
     }
-    
+
     console.log(`[Order ${orderId}] Payment verified on-chain:`, {
       txHash: paymentParams.txHash,
       confirmations: verificationResult.receipt?.confirmations,

@@ -113,7 +113,8 @@ export const ReserveRequestSchema = z.object({
   // Metadata
   metadata: z.record(z.unknown()).optional(),
 
-  // Idempotency
+  // Idempotency - required for mutative operations
+  // Note: This is validated from the x-idempotency-key header, not the request body
   idempotencyKey: z.string().max(128).optional(),
 });
 

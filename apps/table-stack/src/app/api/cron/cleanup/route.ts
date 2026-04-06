@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb, eq, lt, and } from "@repo/database";
 import { restaurantReservations, restaurantTables } from "@repo/database";
-import { withCronAuth } from '@repo/shared';
+import { withCronAuth, Logger } from '@repo/shared';
 
 export const runtime = 'nodejs';
+
+const logger = new Logger({ serviceName: 'table-stack' });
 
 async function getCronHandler(req: NextRequest) {
   try {
@@ -36,7 +38,7 @@ async function getCronHandler(req: NextRequest) {
       dirtyTablesCleaned: cleanedTables.rowCount,
     });
   } catch (error) {
-    console.error('Cleanup Error:', error);
+    logger.error('Cleanup failed', { error: error instanceof Error ? error.message : String(error) });
     return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
   }
 }

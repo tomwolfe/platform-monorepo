@@ -232,8 +232,9 @@ export function validateEscrowResolverConfig(): boolean {
   const privateKey = process.env.ESCROW_RESOLVER_PRIVATE_KEY;
   if (!privateKey) {
     throw new Error(
-      'ESCROW_RESOLVER_PRIVATE_KEY is not configured. ' +
-      'This is required for Web3 escrow operations.'
+      'CRITICAL: ESCROW_RESOLVER_PRIVATE_KEY is not configured. ' +
+      'This is required for Web3 escrow operations. ' +
+      'Set a 0x-prefixed hex private key in your environment variables.'
     );
   }
 

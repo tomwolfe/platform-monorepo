@@ -10,9 +10,11 @@ import { z } from 'zod';
 import Ably from 'ably';
 import { NotifyService } from '@tablestack/lib/notifications';
 import { generateApiKey } from '@tablestack/lib/auth';
-import { withServerActionHandler, type ServerActionResponse } from '@repo/shared';
+import { withServerActionHandler, type ServerActionResponse, Logger } from '@repo/shared';
 import { after } from 'next/server';
 import { ABLY_TABLE_EVENTS, WEBHOOK_EVENTS } from '@repo/mcp-protocol';
+
+const logger = new Logger({ serviceName: 'table-stack' });
 
 const SettingsSchema = z.object({
   openingTime: z.string().nullable(),
@@ -226,7 +228,7 @@ export const updateTableStatus = withServerActionHandler(
               body: payload
             });
           } catch (err) {
-            console.error('Hotspot webhook failed:', err);
+            logger.error('Hotspot webhook failed', { error: err instanceof Error ? err.message : String(err) });
           }
         });
       }
@@ -238,7 +240,7 @@ export const updateTableStatus = withServerActionHandler(
 
     if (status === 'vacant' && intentionEngineUrl) {
       if (!internalSystemKey) {
-        console.error('[NervousSystemObserver] CRITICAL: INTERNAL_SYSTEM_KEY is not configured.');
+        logger.error('CRITICAL: INTERNAL_SYSTEM_KEY is not configured.');
       }
 
       const restaurant = await getDb().query.restaurants.findFirst({
@@ -286,22 +288,22 @@ export const updateTableStatus = withServerActionHandler(
               throw new Error(`HTTP ${response.status}: ${errorText}`);
             }
 
-            console.log(`[NervousSystemObserver] Webhook delivered successfully (attempt ${attempt})`);
+            logger.info(`Webhook delivered successfully`, { attempt });
             break;
           } catch (err) {
             const lastError = err instanceof Error ? err : new Error(String(err));
 
             if (attempt < maxRetries) {
               const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-              console.warn(
-                `[NervousSystemObserver] Webhook failed (attempt ${attempt}/${maxRetries}), retrying in ${backoffMs}ms:`,
-                lastError.message
+              logger.warn(
+                `Webhook delivery failed (attempt ${attempt}/${maxRetries})`,
+                { retryDelayMs: backoffMs, error: lastError.message }
               );
               await new Promise(resolve => setTimeout(resolve, backoffMs));
             } else {
-              console.error(
-                `[NervousSystemObserver] CRITICAL: Webhook failed after ${maxRetries} attempts.`,
-                lastError
+              logger.error(
+                `CRITICAL: Webhook delivery failed after ${maxRetries} attempts`,
+                { error: lastError instanceof Error ? lastError.message : String(lastError) }
               );
             }
           }

@@ -35,7 +35,7 @@ const BaseConfigSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 
   // Shared API Keys
-  INTERNAL_SYSTEM_KEY: z.string().optional().default("internal-system-key-change-in-production"),
+  INTERNAL_SYSTEM_KEY: z.string().optional(),
   ABLY_API_KEY: z.string().optional(),
 
   // Database
@@ -299,24 +299,24 @@ export class AppConfig {
 
   /**
    * Get internal system key for service-to-service authentication
-   * 
-   * SECURITY: In production, this throws a fatal error if the key is missing.
+   *
+   * SECURITY: This throws a fatal error if the key is missing in ALL environments.
    * This prevents the system from running with insecure defaults.
    */
   static getInternalSystemKey(): string {
     const config = this.init();
     const key = config.INTERNAL_SYSTEM_KEY;
-    
-    // In production, fail fast if key is missing
-    if (!key && process.env.NODE_ENV === 'production') {
+
+    // Fail-closed: throw if key is missing in any environment
+    if (!key) {
       throw new Error(
         'CRITICAL: INTERNAL_SYSTEM_KEY is not configured. ' +
         'This is a required security credential for service-to-service authentication. ' +
-        'Set a strong, random value in your production environment variables.'
+        'Set a strong, random value in your environment variables (see .env.example).'
       );
     }
-    
-    return key || "internal-system-key-change-in-production";
+
+    return key;
   }
 
   /**

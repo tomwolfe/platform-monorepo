@@ -1,9 +1,10 @@
 import { NextRequest } from 'next/server';
 import { getDb, restaurants, eq } from "@repo/database";
-import { getRedisClient, ServiceNamespace } from '@repo/shared';
+import { getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
 import { verifyServiceToken, verifyScopedJWT, verifyAsymmetricJWT, SecurityProvider, type ScopedJWTPayload, type AsymmetricJWTPayload } from '@repo/auth';
 import { generateSecureRandom } from '@repo/shared/utils/crypto';
 
+const logger = new Logger({ serviceName: 'table-stack' });
 const redis = getRedisClient(ServiceNamespace.TS);
 
 export interface AuthContext {
@@ -45,8 +46,8 @@ export async function validateRequest(req: NextRequest): Promise<{
     // Try asymmetric verification first (RS256 - public key, no shared secrets)
     const asymmetricPayload = await verifyAsymmetricJWT(token, 'intention-engine', 'table-stack');
     if (asymmetricPayload) {
-      console.log(
-        `[Auth] Asymmetric JWT (RS256) verified for service=${asymmetricPayload.iss}, ` +
+      logger.info(
+        `Asymmetric JWT (RS256) verified for service=${asymmetricPayload.iss}, ` +
         `sub=${asymmetricPayload.sub || 'unknown'}`
       );
       return {
@@ -61,8 +62,8 @@ export async function validateRequest(req: NextRequest): Promise<{
     // Try scoped JWT (has tool-level permissions)
     const scopedPayload = await verifyScopedJWT(token, 'internal-service', 'table-stack');
     if (scopedPayload) {
-      console.log(
-        `[Auth] Scoped JWT verified for service=${scopedPayload.iss}, ` +
+      logger.info(
+        `Scoped JWT verified for service=${scopedPayload.iss}, ` +
         `permissions=${scopedPayload.permissions?.length || 0} tools`
       );
       return {
@@ -78,7 +79,7 @@ export async function validateRequest(req: NextRequest): Promise<{
     // Fallback: HS256 service token (migration period only)
     const payload = await verifyServiceToken(token);
     if (payload) {
-      console.log(`[Auth] Service token (HS256 migration fallback) verified for service=${(payload as any).service}`);
+      logger.info(`Service token (HS256 migration fallback) verified for service=${(payload as any).service}`);
       return {
         context: {
           isInternal: true,
@@ -89,7 +90,7 @@ export async function validateRequest(req: NextRequest): Promise<{
     }
 
     // Token present but invalid - Zero-Trust: reject immediately
-    console.warn('[Auth] Invalid or expired JWT token (all verification methods failed)');
+    logger.warn('Invalid or expired JWT token (all verification methods failed)');
     return {
       error: 'Invalid or expired JWT token',
       status: 401,
@@ -114,7 +115,7 @@ export async function validateRequest(req: NextRequest): Promise<{
         };
       }
     } catch (e) {
-      console.error('Rate limit error:', e);
+      logger.error('Rate limit error', { error: e instanceof Error ? e.message : String(e) });
       // Continue if redis is down to avoid blocking traffic
     }
 
@@ -207,7 +208,7 @@ export async function verifyWebhookPayload(payload: string, signature: string, s
     const signatureBytes = new Uint8Array(signature.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
     return await crypto.subtle.verify('HMAC', cryptoKey, signatureBytes, data);
   } catch (e) {
-    console.error("Webhook verification failed:", e);
+    logger.error('Webhook verification failed', { error: e instanceof Error ? e.message : String(e) });
     return false;
   }
 }

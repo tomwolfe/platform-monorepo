@@ -33,14 +33,17 @@ import { z } from 'zod';
  * @returns Zod schema for selecting from the table
  */
 function safeCreateSelectSchema(
-  table: Record<string, unknown> | undefined,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  table: any,
   name: string
 ): z.ZodObject<z.ZodRawShape> {
-  if (!table || typeof table !== 'object') {
+  if (!table) {
     console.warn(`[Bridge] Table ${name} is not available, using empty schema`);
     return z.object({});
   }
   try {
+    // Note: drizzle-zod's Table type is incompatible with our PgTableWithColumns
+    // due to drizzle-orm version differences. Using `any` type to bypass.
     return createSelectSchema(table) as z.ZodObject<z.ZodRawShape>;
   } catch (error) {
     console.warn(`[Bridge] Failed to create select schema for ${name}:`, error);
@@ -58,22 +61,27 @@ function safeCreateSelectSchema(
  * @returns Zod schema for inserting into the table
  */
 function safeCreateInsertSchema(
-  table: Record<string, unknown> | undefined,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  table: any,
   name: string,
   omitFields?: string[]
 ): z.ZodObject<z.ZodRawShape> {
-  if (!table || typeof table !== 'object') {
+  if (!table) {
     console.warn(`[Bridge] Table ${name} is not available, using empty schema`);
     return z.object({});
   }
   try {
-    const schema = createInsertSchema(table);
+    // Note: drizzle-zod's Table type is incompatible with our PgTableWithColumns
+    // due to drizzle-orm version differences. Using `any` type to bypass.
+    const schema = createInsertSchema(table) as z.ZodObject<z.ZodRawShape>;
     if (omitFields?.length) {
-      return schema.omit(
-        omitFields.reduce((acc, field) => ({ ...acc, [field]: true }), {} as Record<string, true>)
-      ) as z.ZodObject<z.ZodRawShape>;
+      const omitShape: Record<string, true> = {};
+      for (const field of omitFields) {
+        omitShape[field] = true;
+      }
+      return schema.omit(omitShape) as z.ZodObject<z.ZodRawShape>;
     }
-    return schema as z.ZodObject<z.ZodRawShape>;
+    return schema;
   } catch (error) {
     console.warn(`[Bridge] Failed to create insert schema for ${name}:`, error);
     return z.object({});
@@ -81,28 +89,27 @@ function safeCreateInsertSchema(
 }
 
 // Select schemas (for reading from DB)
-// Note: Type assertions used to work around drizzle-orm version compatibility issues
-export const RestaurantSchema = safeCreateSelectSchema(restaurants as unknown as Record<string, unknown>, 'restaurants');
-export const ReservationSchema = safeCreateSelectSchema(restaurantReservations as unknown as Record<string, unknown>, 'restaurantReservations');
-export const TableSchema = safeCreateSelectSchema(restaurantTables as unknown as Record<string, unknown>, 'restaurantTables');
-export const WaitlistSchema = safeCreateSelectSchema(restaurantWaitlist as unknown as Record<string, unknown>, 'restaurantWaitlist');
-export const RestaurantProductSchema = safeCreateSelectSchema(restaurantProducts as unknown as Record<string, unknown>, 'restaurantProducts');
-export const InventoryLevelSchema = safeCreateSelectSchema(inventoryLevels as unknown as Record<string, unknown>, 'inventoryLevels');
-export const GuestProfileSchema = safeCreateSelectSchema(guestProfiles as unknown as Record<string, unknown>, 'guestProfiles');
+export const RestaurantSchema = safeCreateSelectSchema(restaurants, 'restaurants');
+export const ReservationSchema = safeCreateSelectSchema(restaurantReservations, 'restaurantReservations');
+export const TableSchema = safeCreateSelectSchema(restaurantTables, 'restaurantTables');
+export const WaitlistSchema = safeCreateSelectSchema(restaurantWaitlist, 'restaurantWaitlist');
+export const RestaurantProductSchema = safeCreateSelectSchema(restaurantProducts, 'restaurantProducts');
+export const InventoryLevelSchema = safeCreateSelectSchema(inventoryLevels, 'inventoryLevels');
+export const GuestProfileSchema = safeCreateSelectSchema(guestProfiles, 'guestProfiles');
 
 // Insert schemas (for creating new records)
-export const CreateRestaurantSchema = safeCreateInsertSchema(restaurants as unknown as Record<string, unknown>, 'restaurants', ['id', 'createdAt', 'claimToken']);
-export const CreateReservationDBSchema = safeCreateInsertSchema(restaurantReservations as unknown as Record<string, unknown>, 'restaurantReservations', ['id', 'createdAt', 'verificationToken']);
-export const CreateTableSchema = safeCreateInsertSchema(restaurantTables as unknown as Record<string, unknown>, 'restaurantTables', ['id', 'updatedAt']);
-export const AddToWaitlistDBSchema = safeCreateInsertSchema(restaurantWaitlist as unknown as Record<string, unknown>, 'restaurantWaitlist', ['id', 'createdAt', 'updatedAt']);
-export const CreateRestaurantProductSchema = safeCreateInsertSchema(restaurantProducts as unknown as Record<string, unknown>, 'restaurantProducts', ['id', 'createdAt', 'updatedAt']);
-export const CreateInventoryLevelSchema = safeCreateInsertSchema(inventoryLevels as unknown as Record<string, unknown>, 'inventoryLevels', ['id', 'updatedAt']);
-export const CreateGuestProfileSchema = safeCreateInsertSchema(guestProfiles as unknown as Record<string, unknown>, 'guestProfiles', ['id', 'createdAt', 'updatedAt']);
+export const CreateRestaurantSchema = safeCreateInsertSchema(restaurants, 'restaurants', ['id', 'createdAt', 'claimToken']);
+export const CreateReservationDBSchema = safeCreateInsertSchema(restaurantReservations, 'restaurantReservations', ['id', 'createdAt', 'verificationToken']);
+export const CreateTableSchema = safeCreateInsertSchema(restaurantTables, 'restaurantTables', ['id', 'updatedAt']);
+export const AddToWaitlistDBSchema = safeCreateInsertSchema(restaurantWaitlist, 'restaurantWaitlist', ['id', 'createdAt', 'updatedAt']);
+export const CreateRestaurantProductSchema = safeCreateInsertSchema(restaurantProducts, 'restaurantProducts', ['id', 'createdAt', 'updatedAt']);
+export const CreateInventoryLevelSchema = safeCreateInsertSchema(inventoryLevels, 'inventoryLevels', ['id', 'updatedAt']);
+export const CreateGuestProfileSchema = safeCreateInsertSchema(guestProfiles, 'guestProfiles', ['id', 'createdAt', 'updatedAt']);
 
 // Update schemas (partial - all fields optional)
-export const UpdateReservationDBSchema = safeCreateInsertSchema(restaurantReservations as unknown as Record<string, unknown>, 'restaurantReservations').partial().omit({ id: true, createdAt: true });
-export const UpdateTableDBSchema = safeCreateInsertSchema(restaurantTables as unknown as Record<string, unknown>, 'restaurantTables').partial().omit({ id: true, restaurantId: true, updatedAt: true });
-export const UpdateWaitlistDBSchema = safeCreateInsertSchema(restaurantWaitlist as unknown as Record<string, unknown>, 'restaurantWaitlist').partial().omit({ id: true, createdAt: true, updatedAt: true });
+export const UpdateReservationDBSchema = safeCreateInsertSchema(restaurantReservations, 'restaurantReservations').partial().omit({ id: true, createdAt: true });
+export const UpdateTableDBSchema = safeCreateInsertSchema(restaurantTables, 'restaurantTables').partial().omit({ id: true, restaurantId: true, updatedAt: true });
+export const UpdateWaitlistDBSchema = safeCreateInsertSchema(restaurantWaitlist, 'restaurantWaitlist').partial().omit({ id: true, createdAt: true, updatedAt: true });
 
 /**
  * Utility to get JSON Schema for a tool
@@ -163,31 +170,28 @@ export function createMcpToolInputSchema<
     required?: (keyof z.infer<T>)[];
   }
 ): z.ZodType<Partial<z.infer<T>>> {
-  let schema: z.ZodType<Partial<z.infer<T>>> = baseSchema as unknown as z.ZodType<Partial<z.infer<T>>>;
+  // Start with the base schema cast to the target type
+  let schema = baseSchema as unknown as z.ZodObject<z.ZodRawShape>;
 
   if (options?.omit) {
-    schema = schema.omit(
-      options.omit.reduce((acc, key) => {
-        acc[key as string] = true;
-        return acc;
-      }, {} as Record<string, true>)
-    ) as unknown as z.ZodType<Partial<z.infer<T>>>;
+    const omitShape: Record<string, true> = {};
+    for (const key of options.omit) {
+      omitShape[key as string] = true;
+    }
+    schema = schema.omit(omitShape);
   }
 
   if (options?.partial) {
-    schema = schema.partial() as unknown as z.ZodType<Partial<z.infer<T>>>;
+    schema = schema.partial();
   }
 
   if (options?.required) {
-    schema = schema
-      .partial()
-      .required(
-        options.required.reduce((acc, key) => {
-          acc[key as string] = true;
-          return acc;
-        }, {} as Record<string, true>)
-      ) as unknown as z.ZodType<Partial<z.infer<T>>>;
+    const requiredShape: Record<string, true> = {};
+    for (const key of options.required) {
+      requiredShape[key as string] = true;
+    }
+    schema = schema.partial().required(requiredShape);
   }
 
-  return schema;
+  return schema as unknown as z.ZodType<Partial<z.infer<T>>>;
 }

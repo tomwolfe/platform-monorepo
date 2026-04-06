@@ -163,17 +163,13 @@ export function loadFeatureFlags(): FeatureFlags {
 }
 
 // ============================================================================
-// FEATURE FLAG GUARDS
-// Helper functions for checking feature availability
+// FEATURE FLAG ACCESSOR
+// Dynamically evaluates environment variables on every call
+// No global caching - serverless-safe
 // ============================================================================
 
-let cachedFlags: FeatureFlags | null = null;
-
 export function getFeatureFlags(): FeatureFlags {
-  if (!cachedFlags) {
-    cachedFlags = loadFeatureFlags();
-  }
-  return cachedFlags;
+  return loadFeatureFlags();
 }
 
 export function isFeatureEnabled(flag: keyof FeatureFlags): boolean {
@@ -231,60 +227,66 @@ export function checkFeature(flag: keyof FeatureFlags, fallback: boolean = false
 // ============================================================================
 // MINIMAL MODE
 // Disables all non-essential features for local development
+// NOTE: This overrides environment variables directly for testing purposes
 // ============================================================================
 
 export function enableMinimalMode(): void {
-  cachedFlags = {
-    // Core only
-    ENABLE_GOLDEN_PATH: true,
-    ENABLE_MCP_INTEGRATION: true,
-    ENABLE_SAGA_PATTERN: true,
-    
-    // Everything else OFF
-    ENABLE_AUTONOMOUS_FEATURES: false,
-    ENABLE_SCHEMA_EVOLUTION: false,
-    ENABLE_REPAIR_AGENT: false,
-    ENABLE_ANOMALY_DETECTION: false,
-    ENABLE_AUTONOMOUS_MIGRATION: false,
-    ENABLE_LLM_FAILURE_TRIAGE: false,
-    ENABLE_SEMANTIC_MEMORY: false,
-    ENABLE_VECTOR_STORE: false,
-    ENABLE_CONTRACT_TESTING: false,
-    ENABLE_DETAILED_TRACING: false,
-    ENABLE_METRICS_COLLECTION: false,
-    ENABLE_HEALTH_CHECKS: true,
-    ENABLE_CIRCUIT_BREAKER: true,
-    ENABLE_RATE_LIMITING: true,
-    ENABLE_PRIVACY_GATEWAY: true,
-    ENABLE_CHAOS_TESTING: false,
-    ENABLE_DRY_RUN_SIMULATOR: false,
-    ENABLE_SHADOW_MODE: false,
-    ENABLE_CRYPTO_PAYMENTS: false,
-    ENABLE_WEB3_VERIFICATION: false,
-  };
-  
-  console.log("[FeatureFlags] Minimal mode enabled");
+  // Set environment variables to disable features
+  process.env.ENABLE_GOLDEN_PATH = 'true';
+  process.env.ENABLE_MCP_INTEGRATION = 'true';
+  process.env.ENABLE_SAGA_PATTERN = 'true';
+  process.env.ENABLE_AUTONOMOUS_FEATURES = 'false';
+  process.env.ENABLE_SCHEMA_EVOLUTION = 'false';
+  process.env.ENABLE_REPAIR_AGENT = 'false';
+  process.env.ENABLE_ANOMALY_DETECTION = 'false';
+  process.env.ENABLE_AUTONOMOUS_MIGRATION = 'false';
+  process.env.ENABLE_LLM_FAILURE_TRIAGE = 'false';
+  process.env.ENABLE_SEMANTIC_MEMORY = 'false';
+  process.env.ENABLE_VECTOR_STORE = 'false';
+  process.env.ENABLE_CONTRACT_TESTING = 'false';
+  process.env.ENABLE_DETAILED_TRACING = 'false';
+  process.env.ENABLE_METRICS_COLLECTION = 'false';
+  process.env.ENABLE_HEALTH_CHECKS = 'true';
+  process.env.ENABLE_CIRCUIT_BREAKER = 'true';
+  process.env.ENABLE_RATE_LIMITING = 'true';
+  process.env.ENABLE_PRIVACY_GATEWAY = 'true';
+  process.env.ENABLE_CHAOS_TESTING = 'false';
+  process.env.ENABLE_DRY_RUN_SIMULATOR = 'false';
+  process.env.ENABLE_SHADOW_MODE = 'false';
+  process.env.ENABLE_CRYPTO_PAYMENTS = 'false';
+  process.env.ENABLE_WEB3_VERIFICATION = 'false';
 }
 
 // ============================================================================
 // FULL MODE
 // Enables all features for testing
+// NOTE: This overrides environment variables directly for testing purposes
 // ============================================================================
 
 export function enableFullMode(): void {
-  cachedFlags = {
-    ...DEFAULT_FEATURE_FLAGS,
-    ENABLE_AUTONOMOUS_FEATURES: true,
-    ENABLE_SCHEMA_EVOLUTION: true,
-    ENABLE_REPAIR_AGENT: true,
-    ENABLE_ANOMALY_DETECTION: true,
-    ENABLE_LLM_FAILURE_TRIAGE: true,
-    ENABLE_SEMANTIC_MEMORY: true,
-    ENABLE_VECTOR_STORE: true,
-    ENABLE_DETAILED_TRACING: true,
-  };
-  
-  console.log("[FeatureFlags] Full mode enabled");
+  process.env.ENABLE_GOLDEN_PATH = 'true';
+  process.env.ENABLE_MCP_INTEGRATION = 'true';
+  process.env.ENABLE_SAGA_PATTERN = 'true';
+  process.env.ENABLE_AUTONOMOUS_FEATURES = 'true';
+  process.env.ENABLE_SCHEMA_EVOLUTION = 'true';
+  process.env.ENABLE_REPAIR_AGENT = 'true';
+  process.env.ENABLE_ANOMALY_DETECTION = 'true';
+  process.env.ENABLE_AUTONOMOUS_MIGRATION = 'true';
+  process.env.ENABLE_LLM_FAILURE_TRIAGE = 'true';
+  process.env.ENABLE_SEMANTIC_MEMORY = 'true';
+  process.env.ENABLE_VECTOR_STORE = 'true';
+  process.env.ENABLE_CONTRACT_TESTING = 'true';
+  process.env.ENABLE_DETAILED_TRACING = 'true';
+  process.env.ENABLE_METRICS_COLLECTION = 'true';
+  process.env.ENABLE_HEALTH_CHECKS = 'true';
+  process.env.ENABLE_CIRCUIT_BREAKER = 'true';
+  process.env.ENABLE_RATE_LIMITING = 'true';
+  process.env.ENABLE_PRIVACY_GATEWAY = 'true';
+  process.env.ENABLE_CHAOS_TESTING = 'false';
+  process.env.ENABLE_DRY_RUN_SIMULATOR = 'false';
+  process.env.ENABLE_SHADOW_MODE = 'false';
+  process.env.ENABLE_CRYPTO_PAYMENTS = 'true';
+  process.env.ENABLE_WEB3_VERIFICATION = 'true';
 }
 
 // ============================================================================

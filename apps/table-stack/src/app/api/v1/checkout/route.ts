@@ -6,9 +6,11 @@ import { createPublicClient, http, parseUnits } from 'viem';
 import { base } from 'viem/chains';
 import { isValidTxHash } from '@repo/shared/utils/web3-verification';
 import { getCryptoPrices } from '@repo/shared/utils/crypto-price';
-import { CheckoutRequestSchema, validateRequest as validateZodRequest, formatApiError, withApiErrorHandler } from '@repo/shared';
+import { CheckoutRequestSchema, validateRequest as validateZodRequest, formatApiError, withApiErrorHandler, Logger } from '@repo/shared';
 
 export const runtime = 'nodejs';
+
+const logger = new Logger({ serviceName: 'table-stack' });
 
 /**
  * Crypto Payment Verification Endpoint
@@ -164,7 +166,7 @@ async function postHandler(req: NextRequest) {
           );
         }
       } catch (decodeError) {
-        console.warn('Could not decode transaction data for ETH payment');
+        logger.warn('Could not decode transaction data for ETH payment');
       }
     }
   }
@@ -196,8 +198,9 @@ async function postHandler(req: NextRequest) {
     });
   }
 
-  console.log(
-    `[CryptoCheckout] Reservation ${reservationId} verified with tx ${txHash}`
+  logger.info(
+    `Reservation verified with tx ${txHash}`,
+    { reservationId: targetReservationId, txHash }
   );
 
   return NextResponse.json({

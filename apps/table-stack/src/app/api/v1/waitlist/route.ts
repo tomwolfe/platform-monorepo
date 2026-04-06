@@ -3,9 +3,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb, restaurantWaitlist } from "@repo/database";
 import { and, eq, sql } from '@repo/database';
 import { validateRequest } from '@tablestack/lib/auth';
-import { withApiErrorHandler, formatApiSuccess } from '@repo/shared';
+import { withApiErrorHandler, formatApiSuccess, Logger } from '@repo/shared';
 
 export const runtime = 'nodejs';
+
+const logger = new Logger({ serviceName: 'table-stack' });
 
 async function getHandler(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -21,7 +23,7 @@ async function getHandler(req: NextRequest) {
   const offset = parseInt(searchParams.get('offset') || '0');
 
   const traceId = req.headers.get('x-trace-id') || 'no-trace-id';
-  console.log(`[TRACE:${traceId}] Waitlist query for restaurant: ${restaurantId} (limit=${limit}, offset=${offset})`);
+  logger.info(`Waitlist query for restaurant: ${restaurantId}`, { restaurantId, limit, offset, traceId });
 
   const { error, status, context } = await validateRequest(req);
   if (error) return NextResponse.json({ message: error }, { status });

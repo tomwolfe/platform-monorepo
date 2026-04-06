@@ -139,26 +139,12 @@ export async function verifyQStashWebhookMiddleware(
   const headers = request.headers;
   const { signature, keyId } = getQStashWebhookHeaders(headers);
 
-  // PRODUCTION SAFETY: Hard crash if signing key is missing in production
-  if (
-    process.env.NODE_ENV === "production" &&
-    !process.env.QSTASH_CURRENT_SIGNING_KEY
-  ) {
+  // SECURITY: Hard crash if signing key is missing in any environment
+  if (!process.env.QSTASH_CURRENT_SIGNING_KEY) {
     throw new Error(
-      'SECURITY CRITICAL: QSTASH_CURRENT_SIGNING_KEY is required in production. ' +
+      'SECURITY CRITICAL: QSTASH_CURRENT_SIGNING_KEY is required. ' +
       'Webhook verification cannot be skipped. Set the signing key environment variable.'
     );
-  }
-
-  // Skip verification in development if no signing key configured
-  if (
-    process.env.NODE_ENV === "development" &&
-    !process.env.QSTASH_CURRENT_SIGNING_KEY
-  ) {
-    console.warn(
-      "[QStashWebhook] Skipping verification in development mode (no signing key)"
-    );
-    return true;
   }
 
   const rawBody = await request.text();

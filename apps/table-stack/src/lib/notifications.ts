@@ -1,7 +1,9 @@
 import { resend } from './resend';
-import { getAblyClient } from '@repo/shared';
+import { getAblyClient, Logger } from '@repo/shared';
 import { withNervousSystemTracing, injectTracingHeaders } from '@repo/shared/tracing';
 import { AppConfig } from '@repo/shared';
+
+const logger = new Logger({ serviceName: 'table-stack' });
 
 export interface NotifyOptions {
   to: string;
@@ -18,7 +20,7 @@ export class NotifyService {
     const ably = this.getAbly();
     if (ably) {
       const channel = ably.channels.get(`restaurant:${restaurantId}`);
-      await channel.publish(event, data).catch(err => console.error('Ably broadcast failed:', err));
+      await channel.publish(event, data).catch(err => logger.error('Ably broadcast failed', { error: err instanceof Error ? err.message : String(err) }));
     }
   }
 
@@ -35,7 +37,7 @@ export class NotifyService {
     await RealtimeService.publishNervousSystemEvent('ReservationRejected', {
       ...data,
       restaurantId
-    }).catch(err => console.error('Nervous System Event failed:', err));
+    }).catch(err => logger.error('Nervous System Event failed', { error: err instanceof Error ? err.message : String(err) }));
 
     // 3. Trigger Failover Webhook to Intention Engine (Saga Pattern)
     // This ensures the system proactively finds alternatives without user intervention
@@ -69,9 +71,9 @@ export class NotifyService {
           },
           body: JSON.stringify(webhookPayload),
         });
-        console.log(`[Saga Pattern] Failover webhook triggered for ${data.guestEmail}`);
+        logger.info(`Failover webhook triggered for ${data.guestEmail}`);
       } catch (err) {
-        console.error('[Saga Pattern] Failover webhook failed:', err);
+        logger.error('Failover webhook failed', { error: err instanceof Error ? err.message : String(err) });
       }
     }
   }
@@ -83,7 +85,7 @@ export class NotifyService {
       to,
       subject,
       html,
-    }).catch(err => console.error('Email notification failed:', err));
+    }).catch(err => logger.error('Email notification failed', { error: err instanceof Error ? err.message : String(err) }));
   }
 
   static async sendClaimInvitation(ownerEmail: string, restaurantName: string, claimToken: string) {

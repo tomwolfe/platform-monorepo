@@ -6,11 +6,12 @@ import { and, eq, gte, or, sql } from '@repo/database';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
 import { validateRequest } from '@tablestack/lib/auth';
-import { formatApiError, formatApiSuccess, withApiErrorHandler, type EngineErrorCode, withCache, getRedisClient, ServiceNamespace } from '@repo/shared';
+import { formatApiError, formatApiSuccess, withApiErrorHandler, type EngineErrorCode, withCache, getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
 
 export const runtime = 'nodejs';
 
 const redis = getRedisClient(ServiceNamespace.TS);
+const logger = new Logger({ serviceName: 'table-stack' });
 
 /**
  * GET /api/v1/availability
@@ -121,7 +122,7 @@ export const GET = withCache(
         suggestedSlots: suggestedSlots.length > 0 ? suggestedSlots : undefined,
       }));
     } catch (error) {
-      console.error('Availability Error:', error);
+      logger.error('Availability check failed', { error: error instanceof Error ? error.message : String(error) });
       const errorCode: EngineErrorCode = 'DATABASE_ERROR';
       return NextResponse.json(formatApiError(error, errorCode), { status: 500 });
     }

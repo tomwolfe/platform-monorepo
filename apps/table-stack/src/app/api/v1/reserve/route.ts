@@ -6,7 +6,7 @@ import { and, eq, gte, lte, or, sql } from '@repo/database';
 import { addMinutes, parseISO } from 'date-fns';
 import { NotifyService } from '@tablestack/lib/notifications';
 import { validateRequest } from '@tablestack/lib/auth';
-import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, getRedisClient, ServiceNamespace, withApiErrorHandler } from '@repo/shared';
+import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, getRedisClient, ServiceNamespace, withApiErrorHandler, Logger } from '@repo/shared';
 import { withNervousSystemTracing, injectTracingHeaders } from '@repo/shared/tracing';
 import { formatApiError, formatApiSuccess, type EngineErrorCode, ReserveRequestSchema, validateRequest as validateZodRequest } from '@repo/shared';
 import { ConflictError } from '@repo/shared/errors';
@@ -15,18 +15,25 @@ import crypto from 'crypto';
 export const runtime = 'nodejs';
 
 const redis = getRedisClient(ServiceNamespace.TS);
+const logger = new Logger({ serviceName: 'table-stack' });
 
 async function postHandler(req: NextRequest) {
   const { error, status, context } = await validateRequest(req);
   if (error) return NextResponse.json(formatApiError(new Error(error), 'UNAUTHORIZED'), { status });
 
+  // SECURITY: Idempotency key is required for mutative operations
   const idempotencyKey = req.headers.get(IDEMPOTENCY_KEY_HEADER);
-  if (idempotencyKey) {
-    const idempotencyService = new IdempotencyService(redis);
-    const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey, 'reserve_api');
-    if (isDuplicate) {
-      return NextResponse.json(formatApiSuccess({ message: 'Reservation already processed' }, { traceId: req.headers.get('x-trace-id') || undefined }), { status: 200, headers: { 'x-idempotency-duplicate': 'true' } });
-    }
+  if (!idempotencyKey) {
+    return NextResponse.json(
+      formatApiError(new Error('Idempotency key is required for mutative operations.'), 'VALIDATION_ERROR'),
+      { status: 400 }
+    );
+  }
+
+  const idempotencyService = new IdempotencyService(redis);
+  const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey, 'reserve_api');
+  if (isDuplicate) {
+    return NextResponse.json(formatApiSuccess({ message: 'Reservation already processed' }, { traceId: req.headers.get('x-trace-id') || undefined }), { status: 200, headers: { 'x-idempotency-duplicate': 'true' } });
   }
 
   let targetRestaurantId: string | undefined;
@@ -269,7 +276,7 @@ async function postHandler(req: NextRequest) {
       event.type,
       event.payload,
       event.traceId
-    ).catch(err => console.error('Nervous System Event failed:', err));
+    ).catch(err => logger.error('Nervous System Event failed', { error: err instanceof Error ? err.message : String(err) }));
   }
 
   if (isShadow) {

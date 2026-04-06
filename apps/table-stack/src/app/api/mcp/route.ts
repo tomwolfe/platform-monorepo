@@ -7,6 +7,9 @@ import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
 import { createMcpServerRoutes, createResponse } from "@repo/mcp-protocol/server";
 import { randomUUID } from "crypto";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: 'table-stack' });
 
 // Create a singleton server instance
 const server = new McpServer({
@@ -21,7 +24,7 @@ async function getAvailableTables(
   duration: number,
   traceId: string
 ) {
-  console.log(`[Trace:${traceId}] Getting available tables for restaurant ${restaurantId}`);
+  logger.info(`Getting available tables for restaurant ${restaurantId}`, { restaurantId, traceId });
   const endTime = addMinutes(startTime, duration);
 
   const occupiedTableIdsResult = await db
@@ -227,7 +230,7 @@ server.tool(
       isVerified: true,
     }).returning();
 
-    console.log(`[Trace:${traceId}] Created reservation ${newReservation.id} for ${guestName}`);
+    logger.info(`Created reservation for ${guestName}`, { reservationId: newReservation.id, guestName, traceId });
 
     return createResponse({
       status: "confirmed",

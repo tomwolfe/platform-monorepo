@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { getCryptoPrices } from "@repo/shared/utils/crypto-price";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: 'table-stack' });
 
 /**
  * Crypto Price Oracle API Endpoint
@@ -21,7 +24,7 @@ export async function GET() {
     const prices = await getCryptoPrices();
     return NextResponse.json(prices);
   } catch (error) {
-    console.error("Failed to fetch crypto prices:", error);
+    logger.error('Failed to fetch crypto prices', { error: error instanceof Error ? error.message : String(error) });
 
     // Return specific error code for client handling
     if ((error as any).code === "PRICE_ORACLE_UNAVAILABLE") {

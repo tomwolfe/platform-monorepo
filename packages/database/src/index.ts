@@ -3,6 +3,9 @@ import { drizzle } from 'drizzle-orm/neon-http';
 import * as tablestackSchema from './schema/tablestack';
 import * as pgvectorSchema from './schema/pgvector';
 
+// Enable fetch connection caching for serverless environments (reduces TLS connection overhead)
+neonConfig.fetchConnectionCache = true;
+
 export const schema = {
   ...tablestackSchema,
   ...pgvectorSchema,

@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { Calendar, Layout, ShieldCheck, Zap } from 'lucide-react';
 
 export default function Home() {
@@ -12,7 +13,7 @@ export default function Home() {
             <span className="text-xl font-bold tracking-tight">TableStack</span>
           </div>
           <div className="flex items-center gap-4">
-            <a href="/dashboard/demo" className="text-sm font-medium text-gray-600 hover:text-gray-900">Demo</a>
+            <Link href="/dashboard/demo/" className="text-sm font-medium text-gray-600 hover:text-gray-900">Demo</Link>
             <button className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">Get Started</button>
           </div>
         </div>
@@ -27,9 +28,9 @@ export default function Home() {
             A multi-tenant API-first platform for restaurant bookings. Built with Next.js, Neon, and Redis for maximum speed and zero cost.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <a href="/dashboard/demo" className="w-full sm:w-auto bg-gray-900 text-white px-8 py-4 rounded-xl font-bold text-lg hover:bg-gray-800 transition">
+            <Link href="/dashboard/demo/" className="w-full sm:w-auto bg-gray-900 text-white px-8 py-4 rounded-xl font-bold text-lg hover:bg-gray-800 transition">
               View Owner Dashboard
-            </a>
+            </Link>
             <code className="bg-gray-100 p-4 rounded-xl text-sm font-mono border">
               curl -X GET /api/v1/availability
             </code>

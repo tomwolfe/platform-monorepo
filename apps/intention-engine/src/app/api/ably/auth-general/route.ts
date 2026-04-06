@@ -1,4 +1,4 @@
-import { createPublicAblyAuthHandler } from "@repo/shared";
+import { createPublicAblyAuthHandler } from "@repo/shared/server";
 
 /**
  * General-purpose Ably Authentication API Route for Intention Engine

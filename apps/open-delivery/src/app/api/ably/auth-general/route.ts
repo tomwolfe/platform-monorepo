@@ -1,4 +1,4 @@
-import { createClerkAblyAuthHandler } from "@repo/shared";
+import { createClerkAblyAuthHandler } from "@repo/shared/server";
 
 /**
  * General-purpose Ably Authentication API Route

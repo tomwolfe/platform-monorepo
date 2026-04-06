@@ -1,7 +1,7 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { securityHeadersMiddleware, API_SECURITY_CONFIG } from '@repo/shared';
+import { securityHeadersMiddleware, API_SECURITY_CONFIG } from '@repo/shared/security-headers';
 import { SecurityProvider } from '@repo/auth';
 
 const isProtectedRoute = createRouteMatcher([

@@ -111,8 +111,9 @@ export * from './clients';
 export * from './idempotency';
 export * from './outbox';
 export * from './services';
+// NOTE: realtime/ably-auth moved to @repo/shared/server to avoid Edge Runtime issues
+// Import directly: import { createAblyAuthHandler } from '@repo/shared/realtime/ably-auth'
 export * from './realtime';
-export * from './realtime/ably-auth';
 export * from './config';
 export * from './state-machine';
 export * from './policies/failover-policy';

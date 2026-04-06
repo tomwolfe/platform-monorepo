@@ -33,14 +33,14 @@ const logger = new Logger({ serviceName: 'payout-cron' });
  *   Authorization: Bearer <CRON_SECRET>
  */
 
-const logger = new Logger({ serviceName: 'payout-cron' });
-
 async function getCronHandler(req: NextRequest) {
   const db = getDb();
   const traceId = req.headers.get('x-trace-id') || undefined;
   const requestLogger = traceId ? logger.child({ traceId }) : logger;
 
   requestLogger.info({ message: 'Starting driver tip release processing' });
+
+  try {
 
     // ============================================================================
     // STATE RECOVERY: Reset orphaned 'releasing' payouts back to 'locked'

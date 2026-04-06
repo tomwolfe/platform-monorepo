@@ -19,7 +19,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { isTimingSafeEqual } from './utils/crypto';
+import { isTimingSafeEqual } from '../utils/crypto';
 
 // ============================================================================
 // TYPES

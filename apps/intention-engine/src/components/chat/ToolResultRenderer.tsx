@@ -188,7 +188,7 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
     return (
       <div className="text-sm text-slate-600">
         <p>
-          I've completed that task. Let me know if you need more details.
+          I&apos;ve completed that task. Let me know if you need more details.
         </p>
       </div>
     );

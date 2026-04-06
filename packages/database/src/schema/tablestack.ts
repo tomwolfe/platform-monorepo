@@ -265,6 +265,8 @@ export const outbox = pgTable('outbox', {
   errorMessage: text('error_message'),
   // When this event was created
   createdAt: timestamp('created_at').defaultNow().notNull(),
+  // When this event was last updated (for detecting orphaned processing events)
+  updatedAt: timestamp('updated_at').defaultNow(),
   // When this event was last processed
   processedAt: timestamp('processed_at'),
   // When this event expires (for cleanup)

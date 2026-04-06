@@ -14,7 +14,7 @@
  */
 
 import { getDb, outbox, outboxStatusEnum } from '@repo/database';
-import { sql, type PgTransaction } from 'drizzle-orm';
+import { sql, type PgTransaction, or, and, lt, eq } from 'drizzle-orm';
 import { neon } from '@neondatabase/serverless';
 import { Redis } from '@upstash/redis';
 import { getRedisClient, ServiceNamespace } from './redis';
@@ -131,12 +131,25 @@ export class OutboxService {
   async processPendingEvents(limit: number = 10): Promise<number> {
     const db = getDb();
     const now = new Date();
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
 
-    // Fetch pending events (oldest first)
+    // Fetch pending events AND orphaned processing events (crashed workers)
+    // An orphaned event is one that has been in 'processing' status for over 5 minutes
     const pendingEvents = await db
       .select()
       .from(outbox)
-      .where(sql`${outbox.status} = 'pending' AND ${outbox.expiresAt} > ${now}`)
+      .where(
+        and(
+          sql`${outbox.expiresAt} > ${now} OR ${outbox.expiresAt} IS NULL`,
+          or(
+            eq(outbox.status, 'pending'),
+            and(
+              eq(outbox.status, 'processing'),
+              lt(outbox.createdAt, fiveMinutesAgo)
+            )
+          )
+        )
+      )
       .orderBy(outbox.createdAt)
       .limit(limit);
 
@@ -154,6 +167,7 @@ export class OutboxService {
           .set({
             status: 'processing',
             attempts: event.attempts + 1,
+            updatedAt: new Date(),
           })
           .where(sql`${outbox.id} = ${event.id}`);
 
@@ -166,6 +180,7 @@ export class OutboxService {
           .set({
             status: 'processed',
             processedAt: new Date(),
+            updatedAt: new Date(),
           })
           .where(sql`${outbox.id} = ${event.id}`);
 
@@ -184,13 +199,14 @@ export class OutboxService {
             .set({
               status: 'failed',
               errorMessage: error instanceof Error ? error.message : String(error),
+              updatedAt: new Date(),
             })
             .where(sql`${outbox.id} = ${event.id}`);
         } else {
           // Revert to pending for retry
           await db
             .update(outbox)
-            .set({ status: 'pending' })
+            .set({ status: 'pending', updatedAt: new Date() })
             .where(sql`${outbox.id} = ${event.id}`);
         }
       }

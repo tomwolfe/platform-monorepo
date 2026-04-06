@@ -362,8 +362,8 @@ export async function discoverDynamicTools() {
            console.log(`[MCP Discovery] Discovered new tool: ${tool.name} from ${capabilities.app_name}`);
            TOOLS.set(tool.name, {
              ...tool,
-             execute: async (params: unknown) => {
-               // This is a placeholder for remote execution if called directly from TOOLS
+             execute: async (p: unknown) => {
+               void p; // unused - placeholder for remote execution
                console.warn(`Tool ${tool.name} is a discovered remote tool and should be executed via the Engine's MCP client.`);
                return { success: false, error: "Remote tool execution not implemented in TOOLS registry" };
              }

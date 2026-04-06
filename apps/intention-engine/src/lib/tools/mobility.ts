@@ -168,7 +168,7 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
     return { success: false, error: "Invalid parameters: " + validated.error.message };
   }
 
-  let { origin, destination, travel_mode } = validated.data;
+  const { origin, destination, travel_mode } = validated.data;
 
   const resolveCoords = async (loc: UnifiedLocation) => {
     // Handle case where loc is a JSON string (e.g., from AI SDK serialization)
@@ -204,7 +204,8 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
     }
 
     // OSRM handles driving, walking, cycling
-    const osrmMode = travel_mode === "bicycling" ? "bicycle" :
+    // Note: We use 'driving' profile since the public OSRM server only supports it
+    const _osrmMode = travel_mode === "bicycling" ? "bicycle" :
                     travel_mode === "walking" ? "foot" : "car";
 
     // Note: Public OSRM demo server only supports 'driving' (car) reliably.
@@ -259,7 +260,7 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
       }
 
       const route = data.routes[0];
-      let distanceKm = route.distance / 1000;
+      const distanceKm = route.distance / 1000;
       let durationMins = route.duration / 60;
 
       // Adjust for non-driving modes since we use the driving profile
@@ -291,7 +292,7 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
       const normalizedDestination = normalizeLocation(destination);
 
       return getHaversineFallback(normalizedOrigin, normalizedDestination, originCoords, destCoords, travel_mode);
-    } catch (fallbackError: unknown) {
+    } catch (_unknownError) {
       return { success: false, error: errorMessage };
     }
   }

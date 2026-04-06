@@ -88,7 +88,7 @@ export function CryptoCheckout({
   const [step, setStep] = useState<"review" | "signing" | "sending" | "confirming" | "completed" | "error">("review");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [paymentCurrency, setPaymentCurrency] = useState<"USDC" | "ETH">("USDC");
-  const [ethPrice, setEthPrice] = useState<number>(2500); // Fallback, will fetch dynamically
+  const [ethPrice, setEthPrice] = useState<number | null>(null); // null until fetched; fail-closed
 
   // Fetch ETH price dynamically on mount from server-side oracle
   useEffect(() => {
@@ -101,6 +101,7 @@ export function CryptoCheckout({
         }
       } catch (error) {
         console.warn("Failed to fetch ETH price from oracle", error);
+        setEthPrice(null);
       }
     }
     fetchEthPrice();
@@ -110,28 +111,28 @@ export function CryptoCheckout({
   // Convert USD to ETH using basis points (10000 = 1.0) for precision
   // Formula: ETH_Wei = (USD_cents * 10^20) / (ETH_price_USD_scaled)
   const BASIS_POINTS = 10_000n;
-  const ethPriceScaled = BigInt(Math.round(ethPrice * Number(BASIS_POINTS)));
+  const ethPriceScaled = ethPrice !== null ? BigInt(Math.round(ethPrice * Number(BASIS_POINTS))) : null;
 
   // Convert fiat amounts to cents first (integer), then to Wei
   // Multiplier: 10^20 to convert cents to Wei with price scaling (18 decimals + 2 for cents)
   const CENTS_TO_WEI_MULTIPLIER = 10n ** 20n;
 
   // Calculate ETH amounts in Wei using BigInt division
-  const subtotalEthWei = paymentCurrency === "ETH"
+  const subtotalEthWei = paymentCurrency === "ETH" && ethPriceScaled !== null
     ? (subtotalCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
     : BigInt(0);
-  const tipEthWei = paymentCurrency === "ETH"
+  const tipEthWei = paymentCurrency === "ETH" && ethPriceScaled !== null
     ? (tipCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
     : BigInt(0);
-  const platformFeeEthWei = paymentCurrency === "ETH"
+  const platformFeeEthWei = paymentCurrency === "ETH" && ethPriceScaled !== null
     ? (platformFeeCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
     : BigInt(0);
-  const totalEthWei = paymentCurrency === "ETH"
+  const totalEthWei = paymentCurrency === "ETH" && ethPriceScaled !== null
     ? ((subtotalCents + tipCents + platformFeeCents) * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
     : BigInt(0);
 
   // Calculate display ETH amounts (for UI only, not for transactions)
-  const totalEth = paymentCurrency === "ETH"
+  const totalEth = paymentCurrency === "ETH" && ethPriceScaled !== null
     ? parseFloat(formatUnits(totalEthWei, 18))
     : 0;
 
@@ -271,6 +272,8 @@ export function CryptoCheckout({
       const totalUSDCRequired = subtotalUSDC + tipUSDC + platformFeeUSDC;
       return usdcBalance >= totalUSDCRequired;
     } else {
+      // Fail-closed: if ethPrice is null, cannot determine balance
+      if (ethPrice === null) return false;
       const balanceEth = parseFloat(formatUnits(balance.value, balance.decimals));
       return balanceEth >= totalEth;
     }
@@ -399,7 +402,9 @@ export function CryptoCheckout({
               <p className="text-xs text-gray-400">
                 {paymentCurrency === "USDC"
                   ? `≈ ${formatUnits(subtotalUSDC + tipUSDC + platformFeeUSDC, 6)} USDC`
-                  : `≈ ${totalEth.toFixed(6)} ETH (@ $${ethPrice.toLocaleString()})`}
+                  : ethPrice !== null
+                    ? `≈ ${totalEth.toFixed(6)} ETH (@ $${ethPrice.toLocaleString()})`
+                    : "≈ Price unavailable"}
               </p>
             </div>
           </div>
@@ -466,15 +471,26 @@ export function CryptoCheckout({
           </div>
         )}
 
+        {/* ETH Price Unavailable Warning */}
+        {step === "review" && paymentCurrency === "ETH" && ethPrice === null && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 mt-0.5" />
+            <div>
+              <p className="font-semibold text-sm">Price Unavailable</p>
+              <p className="text-xs mt-1">Unable to fetch live ETH price. Please try again or use USDC.</p>
+            </div>
+          </div>
+        )}
+
         {/* Action Buttons */}
         {step === "review" && (
           <button
             onClick={handlePay}
-            disabled={!hasSufficientBalance || !address}
+            disabled={!hasSufficientBalance || !address || (paymentCurrency === "ETH" && ethPrice === null)}
             className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3.5 rounded-lg font-bold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
           >
             <Coins className="h-5 w-5" />
-            Pay with {paymentCurrency}
+            {paymentCurrency === "ETH" && ethPrice === null ? "Price Unavailable" : `Pay with ${paymentCurrency}`}
             <ArrowRight className="h-5 w-5" />
           </button>
         )}

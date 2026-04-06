@@ -17,7 +17,7 @@ import { IconAfterMount } from '@/components/ui/IconWrapper';
 import { Table, Trash2, CheckCircle, AlertCircle, LucideIcon, Plus, Settings2, X, Save } from 'lucide-react';
 import Ably from 'ably';
 import { useRouter } from 'next/navigation';
-import { Logger } from '@repo/shared';
+import { Logger } from '@repo/shared/logger';
 
 const logger = new Logger({ serviceName: 'table-stack' });
 

@@ -212,13 +212,14 @@ export class RateLimiterService {
     const redisKey = `${endpointConfig.keyPrefix}${userId}`;
     const now = Date.now();
 
-    // Use Redis INCR with EX for atomic rate limiting
-    const pipeline = RateLimiterService.redis!.pipeline();
-    pipeline.incr(redisKey);
-    pipeline.expire(redisKey, Math.ceil(endpointConfig.windowMs / 1000));
-    const results = await pipeline.exec();
-
-    const currentCount = results[0] as number;
+    // Use atomic INCR with conditional EXPIRE to prevent infinite lockout.
+    // Only set TTL when count is exactly 1 (first request in a new window).
+    // This avoids resetting the TTL on every request, which would lock users
+    // out indefinitely if they continuously retry after exceeding the limit.
+    const currentCount = await RateLimiterService.redis!.incr(redisKey);
+    if (currentCount === 1) {
+      await RateLimiterService.redis!.expire(redisKey, Math.ceil(endpointConfig.windowMs / 1000));
+    }
     const maxRequests = endpointConfig.maxRequests + endpointConfig.burstAllowance;
     const remaining = Math.max(0, maxRequests - currentCount);
     const resetInMs = endpointConfig.windowMs;

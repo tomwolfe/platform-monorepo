@@ -140,3 +140,11 @@ export function captureSentryException(error: Error, context?: Record<string, un
 // Re-export everything from main index for convenience
 // Users can import server-only modules from this single entry point
 export * from './index';
+
+// ============================================================================
+// SERVER-ONLY MODULES
+// These modules use server-only imports and are NOT compatible with client components
+// ============================================================================
+
+// Ably Authentication (uses @clerk/nextjs/server which imports server-only)
+export * from './realtime/ably-auth';

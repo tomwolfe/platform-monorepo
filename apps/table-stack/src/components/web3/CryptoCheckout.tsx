@@ -48,7 +48,7 @@ export function CryptoCheckout({
 
   // State for payment currency and dynamic pricing
   const [paymentCurrency, setPaymentCurrency] = useState<"USDC" | "ETH">("USDC");
-  const [ethPrice, setEthPrice] = useState<number>(2500); // Fallback
+  const [ethPrice, setEthPrice] = useState<number | null>(null); // null until fetched; fail-closed
   const [step, setStep] = useState<"review" | "signing" | "sending" | "confirming" | "completed" | "error">("review");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -64,14 +64,15 @@ export function CryptoCheckout({
         }
       } catch (error) {
         console.warn("Failed to fetch ETH price from oracle", error);
+        setEthPrice(null);
       }
     }
     fetchEthPrice();
   }, []);
 
   // Calculate ETH amount (correctly converted from USD)
-  const depositEth = paymentCurrency === "ETH" ? depositAmount / ethPrice : 0;
-  const depositWei = paymentCurrency === "ETH" ? parseUnits(depositEth.toFixed(18), 18) : BigInt(0);
+  const depositEth = paymentCurrency === "ETH" && ethPrice !== null ? depositAmount / ethPrice : 0;
+  const depositWei = paymentCurrency === "ETH" && ethPrice !== null ? parseUnits(depositEth.toFixed(18), 18) : BigInt(0);
   
   // Convert to USDC (6 decimals)
   const depositUSDC = paymentCurrency === "USDC" ? parseUnits(depositAmount.toFixed(6), 6) : BigInt(0);
@@ -212,11 +213,13 @@ export function CryptoCheckout({
   // Check if user has sufficient balance based on selected currency
   const hasSufficientBalance = (() => {
     if (!balance) return false;
-    
+
     if (paymentCurrency === "USDC") {
       if (!usdcBalance) return false;
       return usdcBalance >= depositUSDC;
     } else {
+      // Fail-closed: if ethPrice is null, cannot determine balance
+      if (ethPrice === null) return false;
       const balanceEth = parseFloat(formatUnits(balance.value, balance.decimals));
       return balanceEth >= depositEth;
     }
@@ -313,7 +316,9 @@ export function CryptoCheckout({
               <p className="text-xs text-gray-400">
                 {paymentCurrency === "USDC"
                   ? `≈ ${formatUnits(depositUSDC, 6)} USDC`
-                  : `≈ ${depositEth.toFixed(6)} ETH (@ $${ethPrice.toLocaleString()})`}
+                  : ethPrice !== null
+                    ? `≈ ${depositEth.toFixed(6)} ETH (@ $${ethPrice.toLocaleString()})`
+                    : "≈ Price unavailable"}
               </p>
             </div>
           </div>
@@ -381,16 +386,27 @@ export function CryptoCheckout({
           </div>
         )}
 
+        {/* ETH Price Unavailable Warning */}
+        {step === "review" && paymentCurrency === "ETH" && ethPrice === null && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 mt-0.5" />
+            <div>
+              <p className="font-semibold text-sm">Price Unavailable</p>
+              <p className="text-xs mt-1">Unable to fetch live ETH price. Please try again or use USDC.</p>
+            </div>
+          </div>
+        )}
+
         {/* Action Buttons */}
         {step === "review" && (
           <>
             <button
               onClick={handlePay}
-              disabled={!hasSufficientBalance || !address}
+              disabled={!hasSufficientBalance || !address || (paymentCurrency === "ETH" && ethPrice === null)}
               className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3.5 rounded-lg font-bold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
             >
               <DollarSign className="h-5 w-5" />
-              Pay Deposit with {paymentCurrency}
+              {paymentCurrency === "ETH" && ethPrice === null ? "Price Unavailable" : `Pay Deposit with ${paymentCurrency}`}
               <ArrowRight className="h-5 w-5" />
             </button>
             <button

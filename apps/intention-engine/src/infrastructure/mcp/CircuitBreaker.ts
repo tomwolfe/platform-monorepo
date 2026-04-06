@@ -1,5 +1,6 @@
 import { RealtimeService } from "@repo/shared";
 import { createTypedSystemEvent, type CircuitBreakerEventPayload } from "@repo/mcp-protocol";
+import { LRUCache } from "lru-cache";
 
 /**
  * CircuitBreaker - Phase 4: Harden Resilience
@@ -339,7 +340,10 @@ export class CircuitBreaker {
  * CircuitBreakerRegistry - Manages circuit breakers for multiple services
  */
 export class CircuitBreakerRegistry {
-  private breakers = new Map<string, CircuitBreaker>();
+  private breakers = new LRUCache<string, CircuitBreaker>({
+    max: 500, // Maximum number of circuit breakers to keep in memory
+    ttl: 1000 * 60 * 60 * 24, // 24 hours
+  });
   private defaultConfig: Partial<CircuitBreakerConfig>;
 
   constructor(defaultConfig: Partial<CircuitBreakerConfig> = {}) {
@@ -368,7 +372,7 @@ export class CircuitBreakerRegistry {
    * Get all circuit breakers
    */
   getAll(): Map<string, CircuitBreaker> {
-    return new Map(this.breakers);
+    return new Map(this.breakers.entries());
   }
 
   /**
@@ -376,11 +380,11 @@ export class CircuitBreakerRegistry {
    */
   getStatusReport() {
     const report: Record<string, ReturnType<CircuitBreaker["getStatus"]>> = {};
-    
+
     for (const [key, breaker] of this.breakers.entries()) {
       report[key] = breaker.getStatus();
     }
-    
+
     return report;
   }
 

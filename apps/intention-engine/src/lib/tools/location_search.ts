@@ -100,7 +100,7 @@ export async function geocode_location_photon(params: z.infer<typeof GeocodeSche
       return await geocode_location_nominatim(params);
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.warn(`[Photon] Geocoding failed: ${error.message}, falling back to Nominatim`);
     // Fallback to Nominatim on error
     return await geocode_location_nominatim(params);
@@ -165,7 +165,7 @@ export async function geocode_location_nominatim(params: z.infer<typeof GeocodeS
       }
       return { success: false, error: "Location not found" };
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     return { success: false, error: error.message };
   }
 }
@@ -345,7 +345,7 @@ export async function search_restaurant(params: z.infer<typeof SearchRestaurantS
         result: results
       };
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error in search_restaurant:", error);
     // Graceful fallback for any unhandled errors
     return { 
@@ -401,7 +401,7 @@ export async function search_web(query: string): Promise<{ success: boolean; res
               },
             };
           }
-        } catch (error: any) {
+        } catch (error: unknown) {
           console.warn('[search_web] Tavily API failed, falling back to mock:', error.message);
         }
       }
@@ -434,7 +434,7 @@ export async function search_web(query: string): Promise<{ success: boolean; res
         },
       };
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Graceful fallback on any error
     console.error('[search_web] Search failed:', error.message);
     

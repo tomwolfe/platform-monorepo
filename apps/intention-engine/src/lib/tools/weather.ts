@@ -43,7 +43,7 @@ export async function get_weather_data(params: WeatherDataParams): Promise<{ suc
         wind_speed_kmh: current.windspeed
       }
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     return { success: false, error: error.message };
   }
 }

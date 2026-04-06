@@ -85,8 +85,8 @@ export async function mobility_request(params: MobilityRequestParams): Promise<{
       result,
       error: result.error,
     };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -114,10 +114,10 @@ export async function cancel_ride(params: { ride_id?: string; service?: string; 
       result,
       error: result.error,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     return {
       success: false,
-      error: `Failed to cancel ride: ${error.message}`
+      error: `Failed to cancel ride: ${error instanceof Error ? error.message : String(error)}`
     };
   }
 }
@@ -280,9 +280,10 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
         }
       };
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Final fallback: return Haversine-based estimate
-    console.warn('[get_route_estimate] OSRM failed, using Haversine fallback:', error.message);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.warn('[get_route_estimate] OSRM failed, using Haversine fallback:', errorMessage);
     try {
       const originCoords = await resolveCoords(origin);
       const destCoords = await resolveCoords(destination);
@@ -290,8 +291,8 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
       const normalizedDestination = normalizeLocation(destination);
 
       return getHaversineFallback(normalizedOrigin, normalizedDestination, originCoords, destCoords, travel_mode);
-    } catch (fallbackError: any) {
-      return { success: false, error: error.message };
+    } catch (fallbackError: unknown) {
+      return { success: false, error: errorMessage };
     }
   }
 }

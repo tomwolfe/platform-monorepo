@@ -805,7 +805,7 @@ export class MemoryClient {
         success: true,
         newVersion: parseInt(result as string, 10),
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       const errorMessage = typeof error === 'string' ? error : error?.message || String(error);
 
       if (errorMessage.includes('NOT_FOUND')) {
@@ -1024,7 +1024,7 @@ export class MemoryClient {
           }
         }
 
-      } catch (error: any) {
+      } catch (error: unknown) {
         lastError = error?.message || String(error);
         attempts++;
 

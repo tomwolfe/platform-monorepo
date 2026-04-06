@@ -251,7 +251,7 @@ export function createTracedToolExecutor(
             ...result,
             traceId: context.traceId,
           };
-        } catch (error: any) {
+        } catch (error: unknown) {
           span.recordException(error);
           throw error;
         }

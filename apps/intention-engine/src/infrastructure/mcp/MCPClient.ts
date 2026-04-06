@@ -151,18 +151,21 @@ export class MCPClient {
 
           clearTimeout(timeoutId);
           return result as ToolOutput;
-        } catch (error: any) {
+        } catch (error: unknown) {
           clearTimeout(timeoutId);
+
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorName = error instanceof Error ? error.name : 'Unknown';
 
           // Detect SSE connection drop or premature close (Vercel serverless culling)
           const isConnectionError =
-            error.message.includes('premature close') ||
-            error.message.includes('connection closed') ||
-            error.message.includes('ECONNRESET') ||
-            error.message.includes('ETIMEDOUT') ||
-            error.message.includes('NetworkError') ||
-            error.message.includes('fetch failed') ||
-            error.name === 'TypeError' && error.message.includes('fetch');
+            errorMessage.includes('premature close') ||
+            errorMessage.includes('connection closed') ||
+            errorMessage.includes('ECONNRESET') ||
+            errorMessage.includes('ETIMEDOUT') ||
+            errorMessage.includes('NetworkError') ||
+            errorMessage.includes('fetch failed') ||
+            (errorName === 'TypeError' && errorMessage.includes('fetch'));
 
           if (isConnectionError) {
             console.warn(
@@ -174,7 +177,7 @@ export class MCPClient {
               serviceName: this.circuitBreaker.getServiceName(),
               toolName: name,
               reason: 'connection_drop',
-              error: error.message,
+              error: errorMessage,
               timestamp: new Date().toISOString(),
             }).catch(err => console.error('Failed to publish ServiceDegraded event:', err));
 
@@ -308,7 +311,7 @@ export class MCPClient {
       const attemptController = new AbortController();
       try {
         return await fn(attemptController.signal);
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Special handling for reconnection-triggered retry
         if (error.message?.includes('RECONNECT_AND_RETRY')) {
           console.log(

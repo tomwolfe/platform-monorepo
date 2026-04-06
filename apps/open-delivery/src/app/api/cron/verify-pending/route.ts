@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb, orders, restaurants, eq, and, sql } from "@repo/database";
-import { RealtimeService, withApiErrorHandler, withCronAuth } from "@repo/shared";
+import { RealtimeService, withApiErrorHandler, withCronAuth, Logger } from "@repo/shared";
 import { verifyTransaction } from '@repo/shared/utils/web3-verification';
 import { type Address } from 'viem';
 import { processStuckTransactions } from '@repo/shared/services/transaction-speedup';
+
+const logger = new Logger({ serviceName: 'verify-pending-cron' });
 
 /**
  * Background Verification Sweeper Endpoint
@@ -33,15 +35,19 @@ const BATCH_SIZE = 5;
 const MAX_ORDERS_PER_RUN = 50;
 
 async function postHandler(req: NextRequest) {
-  console.log('[Verify Pending Cron] Starting background verification sweep...');
+  const traceId = req.headers.get('x-trace-id') || undefined;
+  const requestLogger = traceId ? logger.child({ traceId }) : logger;
+  
+  requestLogger.info({ message: 'Starting background verification sweep' });
 
   // WEB3 RESILIENCE: Process stuck transactions and speed them up
   const speedUpResult = await processStuckTransactions({ maxTransactions: 10 });
   if (speedUpResult.speedUpCount > 0) {
-    console.log(
-      `[Verify Pending Cron] Sped up ${speedUpResult.speedUpCount} stuck transactions ` +
-      `(${speedUpResult.failedCount} failed)`
-    );
+    requestLogger.info({
+      message: 'Sped up stuck transactions',
+      speedUpCount: speedUpResult.speedUpCount,
+      failedCount: speedUpResult.failedCount,
+    });
   }
 
   // Query orders that have payment hash but are still pending verification
@@ -85,7 +91,10 @@ async function postHandler(req: NextRequest) {
     });
   }
 
-  console.log(`[Verify Pending Cron] Found ${pendingOrders.length} pending orders to verify`);
+  logger.info({
+    message: 'Found pending orders to verify',
+    pendingCount: pendingOrders.length,
+  });
 
   let verifiedCount = 0;
   let failedCount = 0;
@@ -101,7 +110,11 @@ async function postHandler(req: NextRequest) {
       });
 
       if (!verificationResult.success) {
-        console.warn(`[Verify Pending Cron] Order ${order.id} verification failed:`, verificationResult.error);
+        logger.warn({
+          message: 'Order verification failed',
+          orderId: order.id,
+          error: verificationResult.error,
+        });
         failedCount++;
         continue;
       }
@@ -132,11 +145,18 @@ async function postHandler(req: NextRequest) {
         },
       });
 
-      console.log(`[Verify Pending Cron] Order ${order.id} verified and driver dispatched`);
+      logger.info({
+        message: 'Order verified and driver dispatched',
+        orderId: order.id,
+      });
       verifiedCount++;
 
-    } catch (error) {
-      console.error(`[Verify Pending Cron] Error verifying order ${order.id}:`, error);
+    } catch (error: unknown) {
+      logger.error({
+        message: 'Error verifying order',
+        orderId: order.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
       failedCount++;
     }
   }
@@ -150,7 +170,12 @@ async function postHandler(req: NextRequest) {
     timestamp: new Date().toISOString(),
   };
 
-  console.log('[Verify Pending Cron] Sweep completed:', result);
+  logger.info({
+    message: 'Verification sweep completed',
+    verifiedCount,
+    failedCount,
+    processedCount: pendingOrders.length,
+  });
 
   return NextResponse.json(result);
 }

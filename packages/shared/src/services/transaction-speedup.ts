@@ -22,11 +22,10 @@
  * customer's own wallet. This service handles backend-initiated transactions.
  */
 
-import { 
-  createPublicClient, 
-  createWalletClient, 
-  http, 
-  type Hash, 
+import {
+  createPublicClient,
+  http,
+  type Hash,
   type Address,
   type TransactionRequest,
   parseGwei,
@@ -34,6 +33,10 @@ import {
 } from "viem";
 import { base, polygon, mainnet } from "viem/chains";
 import { getDb, processed_crypto_transactions, eq, and, sql, lt, or } from "@repo/database";
+import { Logger } from "../logger";
+import { getEscrowResolverWalletClient } from "../utils/wallet-provider";
+
+const logger = new Logger({ serviceName: 'transaction-speedup' });
 
 // ============================================================================
 // CONFIGURATION
@@ -193,8 +196,11 @@ export class TransactionSpeedUpService {
       // Check if transaction is old enough to be considered stuck
       const age = Date.now() - existingTx.createdAt.getTime();
       return age > thresholdMs;
-    } catch (error) {
-      console.error("[TransactionSpeedUp] Error checking if transaction is stuck:", error);
+    } catch (error: unknown) {
+      logger.error({
+        message: 'Error checking if transaction is stuck',
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -286,10 +292,13 @@ export class TransactionSpeedUpService {
         newGasPrice = minGasBump;
       }
 
-      console.log(
-        `[TransactionSpeedUp] Speeding up ${originalTxHash.substring(0, 10)}... ` +
-        `Gas: ${originalGasPrice.toString()} -> ${newGasPrice.toString()} (+${gasBumpPercentage}%)`
-      );
+      logger.info({
+        message: 'Speeding up stuck transaction',
+        txHash: originalTxHash.substring(0, 10),
+        originalGasPrice: originalGasPrice.toString(),
+        newGasPrice: newGasPrice.toString(),
+        gasBumpPercentage,
+      });
 
       // Create replacement transaction
       const replacementTx: TransactionRequest = {
@@ -318,10 +327,11 @@ export class TransactionSpeedUpService {
       // Send replacement transaction
       const replacementTxHash = await walletClient.sendTransaction(replacementTx);
 
-      console.log(
-        `[TransactionSpeedUp] Replacement transaction sent: ${replacementTxHash.substring(0, 10)}... ` +
-        `for entity ${entityIdentifier}`
-      );
+      logger.info({
+        message: 'Replacement transaction sent',
+        txHash: replacementTxHash.substring(0, 10),
+        entityId: entityIdentifier,
+      });
 
       // Update tracking in database
       await this.trackSpeedUpAttempt(originalTxHash, replacementTxHash, entityIdentifier, gasBumpPercentage);
@@ -332,11 +342,12 @@ export class TransactionSpeedUpService {
         replacementTxHash,
         gasBumpPercentage,
       };
-    } catch (error) {
-      console.error(
-        `[TransactionSpeedUp] Failed to speed up transaction ${originalTxHash}:`,
-        error instanceof Error ? error.message : error
-      );
+    } catch (error: unknown) {
+      logger.error({
+        message: 'Failed to speed up transaction',
+        txHash: originalTxHash,
+        error: error instanceof Error ? error.message : String(error),
+      });
 
       return {
         success: false,
@@ -377,8 +388,11 @@ export class TransactionSpeedUpService {
           gas_bump_percentage = EXCLUDED.gas_bump_percentage,
           updated_at = NOW()
       `);
-    } catch (error) {
-      console.error("[TransactionSpeedUp] Failed to track speed-up attempt:", error);
+    } catch (error: unknown) {
+      logger.error({
+        message: 'Failed to track speed-up attempt',
+        error: error instanceof Error ? error.message : String(error),
+      });
       // Don't throw - tracking is best-effort
     }
   }
@@ -403,22 +417,13 @@ export class TransactionSpeedUpService {
    */
   private async getEscrowResolverWalletClient() {
     try {
-      const resolverPrivateKey = process.env.ESCROW_RESOLVER_PRIVATE_KEY;
-      if (!resolverPrivateKey) {
-        console.warn("[TransactionSpeedUp] ESCROW_RESOLVER_PRIVATE_KEY not configured");
-        return null;
-      }
-
-      const { privateKeyToAccount } = await import('viem/accounts');
-      const account = privateKeyToAccount(resolverPrivateKey as `0x${string}`);
-
-      return createWalletClient({
-        chain: base,
-        transport: http(SPEED_UP_CONFIG.rpcUrls.base[0]),
-        account,
+      // Use centralized wallet provider abstraction
+      return await getEscrowResolverWalletClient(base.id);
+    } catch (error: unknown) {
+      logger.error({
+        message: 'Failed to get escrow resolver wallet client',
+        error: error instanceof Error ? error.message : String(error),
       });
-    } catch (error) {
-      console.error("[TransactionSpeedUp] Failed to get escrow resolver wallet client:", error);
       return null;
     }
   }
@@ -504,9 +509,10 @@ export async function processStuckTransactions(options?: {
       };
     }
 
-    console.log(
-      `[TransactionSpeedUp] Found ${stuckTransactions.length} stuck transactions to process`
-    );
+    logger.info({
+      message: 'Found stuck transactions to process',
+      count: stuckTransactions.length,
+    });
 
     let speedUpCount = 0;
     let failedCount = 0;
@@ -523,11 +529,12 @@ export async function processStuckTransactions(options?: {
         } else {
           failedCount++;
         }
-      } catch (error) {
-        console.error(
-          `[TransactionSpeedUp] Error processing transaction ${tx.txHash}:`,
-          error instanceof Error ? error.message : error
-        );
+      } catch (error: unknown) {
+        logger.error({
+          message: 'Error processing stuck transaction',
+          txHash: tx.txHash,
+          error: error instanceof Error ? error.message : String(error),
+        });
         failedCount++;
       }
     }
@@ -537,8 +544,11 @@ export async function processStuckTransactions(options?: {
       failedCount,
       totalProcessed: stuckTransactions.length,
     };
-  } catch (error) {
-    console.error("[TransactionSpeedUp] Critical error in processStuckTransactions:", error);
+  } catch (error: unknown) {
+    logger.error({
+      message: 'Critical error in processStuckTransactions',
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       speedUpCount: 0,
       failedCount: 0,

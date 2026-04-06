@@ -59,8 +59,11 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ message: "Event ignored" });
-  } catch (error: any) {
-    logger.error({ message: "Webhook error", error: error.message || String(error) });
+  } catch (error: unknown) {
+    logger.error({
+      message: "Webhook error",
+      error: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

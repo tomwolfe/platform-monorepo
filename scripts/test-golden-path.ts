@@ -263,7 +263,7 @@ class GoldenPathExecutor {
         },
         completed_at: new Date().toISOString(),
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("[GoldenPath] Execution failed:", error.message);
       
       return {
@@ -338,7 +338,7 @@ class GoldenPathExecutor {
         llm_calls: 1,
         tool_calls: data.plan?.steps?.length || 0,
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.warn(`[GoldenPath] Intention Engine call failed: ${error.message}. Using simulated response.`);
       
       // Fallback: simulate successful planning
@@ -394,7 +394,7 @@ class GoldenPathExecutor {
         confirmation_code: `TEST${Date.now() % 10000}`,
         cost_usd: 0,
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.warn(`[GoldenPath] TableStack booking failed: ${error.message}. Simulating success.`);
       await this.simulateLatency(1000);
       
@@ -447,7 +447,7 @@ class GoldenPathExecutor {
       }
       
       throw new Error(`OpenDelivery returned ${quoteResponse.status}`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.warn(`[GoldenPath] OpenDelivery quote failed: ${error.message}. Simulating success.`);
       await this.simulateLatency(1000);
       
@@ -521,7 +521,7 @@ class GoldenPathExecutor {
       );
 
       return true;
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("[GoldenPath] Coordination failed:", error.message);
       return false;
     }
@@ -561,7 +561,7 @@ class GoldenPathExecutor {
       await this.simulateLatency(100);
       
       return true;
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("[GoldenPath] Failed to schedule dispatch:", error.message);
       return false;
     }
@@ -711,7 +711,7 @@ async function runTest(scenario: TestScenario): Promise<{ passed: boolean; error
     console.log(`   Summary: ${result.summary}`);
 
     return { passed: true };
-  } catch (error: any) {
+  } catch (error: unknown) {
     return {
       passed: false,
       error: error.message,

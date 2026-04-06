@@ -69,7 +69,7 @@ export async function get_weather(params: WeatherParams): Promise<{ success: boo
         }
       };
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     return { success: false, error: error.message };
   }
 }

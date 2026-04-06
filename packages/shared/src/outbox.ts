@@ -14,9 +14,11 @@
  */
 
 import { getDb, outbox, outboxStatusEnum } from '@repo/database';
-import { sql } from 'drizzle-orm';
+import { sql, type PgTransaction } from 'drizzle-orm';
+import { neon } from '@neondatabase/serverless';
 import { Redis } from '@upstash/redis';
 import { getRedisClient, ServiceNamespace } from './redis';
+import { Logger } from './logger';
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -60,6 +62,8 @@ export interface OutboxEvent {
 // OUTBOX SERVICE
 // ============================================================================
 
+const logger = new Logger({ serviceName: 'outbox-service' });
+
 export class OutboxService {
   private redis: Redis;
 
@@ -84,7 +88,7 @@ export class OutboxService {
    * });
    */
   async publish(
-    tx: any, // Transaction object from drizzle
+    tx: PgTransaction<any, any, any>,
     event: {
       eventType: OutboxEventType;
       payload: OutboxPayload;
@@ -108,7 +112,12 @@ export class OutboxService {
       expiresAt,
     });
 
-    console.log(`[OutboxService] Published event ${eventId} (${event.eventType}) for execution ${event.payload.executionId}`);
+    logger.info({
+      message: 'Published outbox event',
+      eventId,
+      eventType: event.eventType,
+      executionId: event.payload.executionId,
+    });
     return eventId;
   }
 
@@ -120,6 +129,7 @@ export class OutboxService {
    * @returns Number of events processed
    */
   async processPendingEvents(limit: number = 10): Promise<number> {
+    const db = getDb();
     const now = new Date();
 
     // Fetch pending events (oldest first)
@@ -160,8 +170,12 @@ export class OutboxService {
           .where(sql`${outbox.id} = ${event.id}`);
 
         processedCount++;
-      } catch (error) {
-        console.error(`[OutboxService] Failed to process event ${event.id}:`, error);
+      } catch (error: unknown) {
+        logger.error({
+          message: 'Failed to process outbox event',
+          eventId: event.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
 
         // Mark as failed if max attempts exceeded (3 attempts)
         if (event.attempts >= 3) {
@@ -212,7 +226,12 @@ export class OutboxService {
         });
         await this.redis.expire(stateKey, 86400); // 24 hour TTL
 
-        console.log(`[OutboxService] Updated Redis cache for step ${payload.stepIndex} (${payload.status})`);
+        logger.info({
+          message: 'Updated Redis cache for saga step',
+          executionId: payload.executionId,
+          stepIndex: payload.stepIndex,
+          status: payload.status,
+        });
         break;
       }
 
@@ -252,6 +271,7 @@ export class OutboxService {
    * Get outbox events by execution ID
    */
   async getEventsByExecutionId(executionId: string, limit: number = 10): Promise<OutboxEvent[]> {
+    const db = getDb();
     // Note: This requires querying JSONB payload - in production, consider adding execution_id column
     const events = await db
       .select()

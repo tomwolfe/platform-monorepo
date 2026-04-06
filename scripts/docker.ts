@@ -25,7 +25,7 @@ const dockerCompose = (cmd: string, options: { fullOutput?: boolean } = {}) => {
       stdio: options.fullOutput ? 'inherit' : 'pipe',
     });
     return result;
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (options.fullOutput) {
       process.exit(error.status || 1);
     }

@@ -45,7 +45,7 @@ export async function send_comm(params: CommunicationParams): Promise<{ success:
       result,
       error: result.error,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     return { success: false, error: error.message };
   }
 }

@@ -25,7 +25,7 @@ export class ObservationProvider {
         const result = await executionFn();
         span.setStatus({ code: SpanStatusCode.OK });
         return result;
-      } catch (error: any) {
+      } catch (error: unknown) {
         span.setStatus({
           code: SpanStatusCode.ERROR,
           message: error.message,

@@ -50,8 +50,9 @@ export function registerDynamicTool(definition: {
 
         const result = await response.json();
         return { success: true, result };
-      } catch (error: any) {
-        return { success: false, error: `Failed to execute dynamic tool ${name}: ${error.message}` };
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return { success: false, error: `Failed to execute dynamic tool ${name}: ${errorMessage}` };
       }
     })
   };

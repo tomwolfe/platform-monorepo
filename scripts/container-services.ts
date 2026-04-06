@@ -95,7 +95,7 @@ function runCommand(command: string, options?: { silent?: boolean; cwd?: string 
       cwd: options?.cwd,
     });
     return result ? result.trim() : '';
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (!options?.silent) {
       console.error(`Command failed: ${command}`);
       console.error(error.message);
@@ -202,7 +202,7 @@ function waitForHealth(serviceName: string, service: Service): Promise<void> {
         
         console.log(`✓ ${serviceName} is healthy`);
         resolve();
-      } catch (error: any) {
+      } catch (error: unknown) {
         if (attempts >= retries) {
           console.log(`${serviceName} health check details: ${error.message}`);
           reject(new Error(`${serviceName} failed health check after ${retries} attempts`));
@@ -291,7 +291,7 @@ async function startService(serviceName: string): Promise<void> {
   if (service.healthcheck) {
     try {
       await waitForHealth(serviceName, service);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(`✗ ${serviceName} failed to start: ${error.message}`);
       throw error;
     }

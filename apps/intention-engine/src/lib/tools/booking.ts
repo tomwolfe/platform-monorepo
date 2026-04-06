@@ -120,7 +120,7 @@ export async function reserve_restaurant(params: TableReservationParams): Promis
       return { success: false, error: errorData.message || "Failed to reserve restaurant" };
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     return { success: false, error: error.message };
   }
 }
@@ -185,7 +185,7 @@ export async function reserve_table(params: TableReservationParams): Promise<{ s
         message: `Table for ${party_size} confirmed at ${restaurant_name} on ${date} at ${time}${locationInfo}. Confirmation code: ${confirmationCode}.`
       }
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     return { success: false, error: error.message };
   }
 }

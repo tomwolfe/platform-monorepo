@@ -186,7 +186,7 @@ async function applyMigration() {
       console.log('   3. Check QStash console for message delivery\n');
     }
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('❌ Migration failed:', error.message);
     if (error.detail) {
       console.error('   Detail:', error.detail);

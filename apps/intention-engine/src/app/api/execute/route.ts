@@ -4,8 +4,10 @@ import { randomUUID } from "crypto";
 import { withNervousSystemTracing } from "@repo/shared/tracing";
 import { startTrace } from "@/lib/observability";
 import { saveUserInteractionContext } from "@/lib/context-persistence";
-import { QStashService } from "@repo/shared";
+import { QStashService, Logger } from "@repo/shared";
 import { AppConfig } from "@repo/shared";
+
+const logger = new Logger({ serviceName: 'execute-api' });
 
 // Engine imports
 import {
@@ -490,9 +492,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
 
     const requestDuration = Math.round(performance.now() - requestStartTime);
-    console.log(
-      `[Execute] ${result.execution_id} completed in ${requestDuration}ms with status ${result.status}`
-    );
+    logger.info({
+      message: 'Execute request completed',
+      executionId: result.execution_id,
+      durationMs: requestDuration,
+      status: result.status,
+    });
 
     let status = result.success ? 200 : 400;
     if (result.status === "REJECTED") {
@@ -502,13 +507,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json(response, {
       status,
     });
-  } catch (error) {
+  } catch (error: unknown) {
     const errorMessage =
       error instanceof Error ? error.message : String(error);
 
-    console.error("[Execute] Unhandled error:", error);
+    logger.error({
+      message: 'Unhandled error in execute API',
+      error: errorMessage,
+    });
 
-    // RESILIENCE FIX: Return 503 instead of 500 to signal graceful 
+    // RESILIENCE FIX: Return 503 instead of 500 to signal graceful
     // degradation during chaos/load spikes.
     return NextResponse.json(
       {

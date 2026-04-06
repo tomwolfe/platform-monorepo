@@ -42,7 +42,7 @@ function runCommand(command: string, options?: { silent?: boolean; cwd?: string 
       stdio: options?.silent ? 'pipe' : 'inherit',
       cwd: options?.cwd || ROOT_DIR,
     }).trim();
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (!options?.silent) {
       console.error(`Command failed: ${command}`);
       console.error(error.message);
@@ -111,7 +111,7 @@ class CITestRunner {
       runCommand('pnpm tsx scripts/container-services.ts start');
       this.servicesStarted = true;
       logSuccess('All container services started');
-    } catch (error: any) {
+    } catch (error: unknown) {
       logError('Failed to start container services');
       throw error;
     }
@@ -159,7 +159,7 @@ class CITestRunner {
     try {
       runCommand('pnpm tsx scripts/container-services.ts stop');
       console.log('✓ All services stopped');
-    } catch (error: any) {
+    } catch (error: unknown) {
       logError('Failed to stop services');
       console.error(error.message);
     }
@@ -178,7 +178,7 @@ class CITestRunner {
       this.results.push(result);
       logSuccess(`Schema validation passed (${duration}ms)`);
       return result;
-    } catch (error: any) {
+    } catch (error: unknown) {
       const duration = Date.now() - startTime;
       const result: TestResult = { name: 'Schema Sync Validation', passed: false, duration, error: error.message };
       this.results.push(result);
@@ -200,7 +200,7 @@ class CITestRunner {
       this.results.push(result);
       logSuccess(`Environment validation passed (${duration}ms)`);
       return result;
-    } catch (error: any) {
+    } catch (error: unknown) {
       const duration = Date.now() - startTime;
       const result: TestResult = { name: 'Environment Validation', passed: false, duration, error: error.message };
       this.results.push(result);
@@ -222,7 +222,7 @@ class CITestRunner {
       this.results.push(result);
       logSuccess(`Integration tests passed (${duration}ms)`);
       return result;
-    } catch (error: any) {
+    } catch (error: unknown) {
       const duration = Date.now() - startTime;
       const result: TestResult = { name: 'Integration Tests', passed: false, duration, error: error.message };
       this.results.push(result);
@@ -244,7 +244,7 @@ class CITestRunner {
       this.results.push(result);
       logSuccess(`Chaos tests passed (${duration}ms)`);
       return result;
-    } catch (error: any) {
+    } catch (error: unknown) {
       const duration = Date.now() - startTime;
       const result: TestResult = { name: 'Chaos Tests', passed: false, duration, error: error.message };
       this.results.push(result);
@@ -319,7 +319,7 @@ class CITestRunner {
 
       // Print summary
       this.printSummary();
-    } catch (error: any) {
+    } catch (error: unknown) {
       logError('Test runner failed');
       console.error(error.message);
       this.printSummary();

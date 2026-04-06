@@ -95,8 +95,9 @@ export async function geocode(address: string, userLocation?: UserLocation): Pro
     // Fallback to Nominatim if Photon returns no results
     console.log('[Geo] No Photon results, falling back to Nominatim...');
     return await geocodeNominatim(address, userLocation);
-  } catch (error: any) {
-    console.warn(`[Geo] Photon geocoding failed: ${error.message}, falling back to Nominatim`);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.warn(`[Geo] Photon geocoding failed: ${errorMessage}, falling back to Nominatim`);
     return await geocodeNominatim(address, userLocation);
   }
 }
@@ -140,8 +141,8 @@ async function geocodeNominatim(address: string, userLocation?: UserLocation): P
     }
 
     return { success: false, error: 'Location not found' };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -193,7 +194,7 @@ export async function reverseGeocode(lat: number, lng: number): Promise<GeocodeR
     }
 
     return { success: false, error: 'No address found for coordinates' };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 }

@@ -632,7 +632,7 @@ export async function generatePlanWithRepair(
   try {
     // Attempt 1: Normal generation
     return await generatePlan(intent, context);
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Check if it's a validation error
     const isValidationError =
       error.code === "PLAN_VALIDATION_FAILED" ||

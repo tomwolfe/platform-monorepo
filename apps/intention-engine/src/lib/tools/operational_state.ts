@@ -49,7 +49,7 @@ export async function get_live_operational_state(params: LiveStateParams): Promi
         message: "Live operational state retrieved successfully."
       }
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[Tool: get_live_operational_state] Error:", error);
     return { success: false, error: error.message };
   }

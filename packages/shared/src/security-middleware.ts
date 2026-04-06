@@ -286,10 +286,32 @@ function createCSRFMiddleware(config: CSRFConfig, logger: Logger) {
 
 /**
  * In-memory rate limit store (use Redis for production)
+ * Auto-clears entries every 60 seconds to prevent memory leaks
  */
 class InMemoryRateLimitStore implements RateLimitStore {
   private store = new Map<string, RateLimitRecord>();
   private timeouts = new Map<string, NodeJS.Timeout>();
+  private globalCleanup: NodeJS.Timeout | null = null;
+
+  constructor() {
+    // Global cleanup interval to prevent memory leaks
+    this.globalCleanup = setInterval(() => {
+      const now = Date.now();
+      for (const [key, record] of this.store.entries()) {
+        if (now > record.resetTime) {
+          this.store.delete(key);
+          const timeout = this.timeouts.get(key);
+          if (timeout) {
+            clearTimeout(timeout);
+            this.timeouts.delete(key);
+          }
+        }
+      }
+    }, 60_000); // Clear every 60 seconds
+
+    // Unref cleanup interval so it doesn't keep process alive
+    this.globalCleanup.unref?.();
+  }
 
   async get(key: string): Promise<RateLimitRecord | null> {
     return this.store.get(key) || null;
@@ -351,61 +373,72 @@ function createRateLimitMiddleware(config: RateLimitConfig, logger: Logger) {
       return { valid: true };
     }
 
-    const key = `ratelimit:${keyGenerator(req)}`;
-    const now = Date.now();
-    const windowMs = windowSeconds * 1000;
+    try {
+      const key = `ratelimit:${keyGenerator(req)}`;
+      const now = Date.now();
+      const windowMs = windowSeconds * 1000;
 
-    const record = await store.get(key);
+      const record = await store.get(key);
 
-    if (!record || now > record.resetTime) {
-      // New window
-      await store.set(key, { count: 1, resetTime: now + windowMs }, windowSeconds);
+      if (!record || now > record.resetTime) {
+        // New window
+        await store.set(key, { count: 1, resetTime: now + windowMs }, windowSeconds);
+        return {
+          valid: true,
+          headers: {
+            'X-RateLimit-Limit': limit.toString(),
+            'X-RateLimit-Remaining': (limit - 1).toString(),
+            'X-RateLimit-Reset': Math.ceil((now + windowMs) / 1000).toString(),
+          },
+        };
+      }
+
+      if (record.count >= limit) {
+        // Rate limit exceeded
+        const retryAfter = Math.ceil((record.resetTime - now) / 1000);
+        logger.warn('Rate limit exceeded', {
+          key,
+          limit,
+          retryAfter,
+          path,
+        });
+
+        return {
+          valid: false,
+          error: rateLimitErrorResponse(retryAfter, {
+            details: { code: 'RATE_LIMIT_EXCEEDED' },
+          }),
+          status: 429,
+          headers: {
+            'X-RateLimit-Limit': limit.toString(),
+            'X-RateLimit-Remaining': '0',
+            'X-RateLimit-Reset': Math.ceil(record.resetTime / 1000).toString(),
+            'Retry-After': retryAfter.toString(),
+          },
+        };
+      }
+
+      // Increment count
+      await store.set(key, { count: record.count + 1, resetTime: record.resetTime }, windowSeconds);
+
       return {
         valid: true,
         headers: {
           'X-RateLimit-Limit': limit.toString(),
-          'X-RateLimit-Remaining': (limit - 1).toString(),
-          'X-RateLimit-Reset': Math.ceil((now + windowMs) / 1000).toString(),
+          'X-RateLimit-Remaining': (limit - record.count).toString(),
+          'X-RateLimit-Reset': Math.ceil(record.resetTime / 1000).toString(),
         },
       };
-    }
-
-    if (record.count >= limit) {
-      // Rate limit exceeded
-      const retryAfter = Math.ceil((record.resetTime - now) / 1000);
-      logger.warn('Rate limit exceeded', {
-        key,
-        limit,
-        retryAfter,
+    } catch (error) {
+      // FAIL-OPEN: If rate limiting fails (e.g., store error), allow traffic
+      // but log a CRITICAL alert so admins know rate limiting is degraded
+      logger.error('CRITICAL: Rate limiting failed - allowing traffic (fail-open)', {
+        error: error instanceof Error ? error.message : String(error),
         path,
       });
 
-      return {
-        valid: false,
-        error: rateLimitErrorResponse(retryAfter, {
-          details: { code: 'RATE_LIMIT_EXCEEDED' },
-        }),
-        status: 429,
-        headers: {
-          'X-RateLimit-Limit': limit.toString(),
-          'X-RateLimit-Remaining': '0',
-          'X-RateLimit-Reset': Math.ceil(record.resetTime / 1000).toString(),
-          'Retry-After': retryAfter.toString(),
-        },
-      };
+      return { valid: true };
     }
-
-    // Increment count
-    await store.set(key, { count: record.count + 1, resetTime: record.resetTime }, windowSeconds);
-
-    return {
-      valid: true,
-      headers: {
-        'X-RateLimit-Limit': limit.toString(),
-        'X-RateLimit-Remaining': (limit - record.count).toString(),
-        'X-RateLimit-Reset': Math.ceil(record.resetTime / 1000).toString(),
-      },
-    };
   };
 }
 

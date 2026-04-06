@@ -200,9 +200,26 @@ export class MockMobilityProvider implements IMobilityProvider {
  * Get mobility provider based on environment
  */
 export function getMobilityProvider(service?: MobilityService): IMobilityProvider {
-  // In production, you would instantiate real providers here
-  // For now, return mock provider for all services
+  // In production, throw an error to prevent silent false-positive ride requests
+  if (process.env.NODE_ENV === 'production') {
+    throw new NotImplementedError(
+      'Real mobility providers must be configured. ' +
+      'Implement a real provider (Uber, Lyft, etc.) before deploying to production.'
+    );
+  }
+
+  // In development/testing, return mock provider
   return new MockMobilityProvider();
+}
+
+/**
+ * Error thrown when a feature is not implemented for production
+ */
+export class NotImplementedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NotImplementedError';
+  }
 }
 
 /**

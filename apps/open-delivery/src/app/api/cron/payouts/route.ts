@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb, orders, orderItems, restaurants, drivers, eq, sql, and } from "@repo/database";
-import { createWalletClient, http, fallback, type Address, privateKeyToAccount } from 'viem';
+import { createWalletClient, createPublicClient, http, fallback, type Address, privateKeyToAccount, parseEther } from 'viem';
 import { base } from 'viem/chains';
 import { ESCROW_ABI } from '@repo/shared/utils/escrow-abi';
 import { withCronAuth } from '@repo/shared';
@@ -194,6 +194,63 @@ async function getCronHandler(req: NextRequest) {
           chain: base,
           transport: fallback(BASE_RPC_URLS.map((url) => http(url))),
         });
+
+        // ============================================================================
+        // GAS MONITORING: Check resolver wallet has sufficient gas before executing
+        // Prevents silent failures from depleted resolver wallet
+        // ============================================================================
+        const MIN_RESOLVER_BALANCE_ETH = 0.005; // Minimum 0.005 ETH (~$15 at $3k/ETH)
+
+        const publicClient = createPublicClient({
+          chain: base,
+          transport: fallback(BASE_RPC_URLS.map((url) => http(url))),
+        });
+
+        try {
+          const resolverBalance = await publicClient.getBalance({ address: resolverAccount.address });
+          const balanceInEth = Number(resolverBalance) / Number(parseEther('1'));
+
+          console.log(`[Payout Cron] Resolver wallet balance: ${balanceInEth.toFixed(6)} ETH (${resolverAccount.address})`);
+
+          if (balanceInEth < MIN_RESOLVER_BALANCE_ETH) {
+            console.error(
+              `[Payout Cron] CRITICAL: Resolver wallet balance (${balanceInEth.toFixed(6)} ETH) ` +
+              `is below minimum (${MIN_RESOLVER_BALANCE_ETH} ETH). Aborting tip releases to prevent broadcast failures.`
+            );
+
+            // Send monitoring alert if MonitoringService is available
+            try {
+              const { MonitoringService } = await import('@repo/shared/services/monitoring');
+              await MonitoringService.sendAlert({
+                severity: 'CRITICAL',
+                message: `Escrow resolver wallet low on gas`,
+                details: {
+                  address: resolverAccount.address,
+                  currentBalance: `${balanceInEth.toFixed(6)} ETH`,
+                  minimumBalance: `${MIN_RESOLVER_BALANCE_ETH} ETH`,
+                  pendingPayouts: driverPayouts.length,
+                  action: 'Fund resolver wallet immediately to resume tip releases',
+                },
+              });
+            } catch (alertError) {
+              console.error('[Payout Cron] Failed to send monitoring alert:', alertError);
+            }
+
+            return NextResponse.json({
+              success: false,
+              error: 'Resolver wallet insufficient gas',
+              message: `Resolver wallet has ${balanceInEth.toFixed(6)} ETH (minimum: ${MIN_RESOLVER_BALANCE_ETH} ETH). Fund wallet before retrying.`,
+              resolverAddress: resolverAccount.address,
+              currentBalance: `${balanceInEth.toFixed(6)} ETH`,
+              minimumBalance: `${MIN_RESOLVER_BALANCE_ETH} ETH`,
+              pendingPayouts: driverPayouts.length,
+              timestamp: new Date().toISOString(),
+            }, { status: 503 });
+          }
+        } catch (balanceError) {
+          console.error('[Payout Cron] Failed to check resolver wallet balance:', balanceError);
+          // Don't abort - proceed with caution, the balance check is best-effort
+        }
 
         console.log(`[Payout Cron] Releasing ${driverPayouts.length} tips via escrow from ${resolverAccount.address}`);
 

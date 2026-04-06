@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useAccount, useConnect, useDisconnect, useBalance } from "wagmi";
+import { formatUnits } from "viem";
 import { Wallet, LogOut, Copy, Check, ChevronDown } from "lucide-react";
 
 /**
@@ -48,7 +49,6 @@ export function ConnectWallet() {
   const formatBalance = (bal: typeof balance) => {
     if (!bal) return "0.0000";
     // In wagmi v3, balance uses 'value' (bigint) and 'decimals'
-    const { formatUnits } = require("viem");
     return parseFloat(formatUnits(bal.value, bal.decimals)).toFixed(4);
   };
 

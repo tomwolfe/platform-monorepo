@@ -34,8 +34,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Get database connection
+    const database = getDb();
+
     // 2. Look up driver profile with proper typing
-    const driverResult = await db
+    const driverResult = await database
       .select({
         id: driversTable.id,
         trustScore: driversTable.trustScore,
@@ -60,7 +63,7 @@ export async function GET(request: NextRequest) {
     tomorrow.setDate(tomorrow.getDate() + 1);
 
     // 3. Fetch today's completed deliveries and earnings with proper typing
-    const statsResult = await db
+    const statsResult = await database
       .select({
         deliveriesCount: sql<number>`COUNT(*) FILTER (WHERE ${ordersTable.status} = 'delivered')`,
         totalEarnings: sql<number>`COALESCE(SUM(${ordersTable.total}) FILTER (WHERE ${ordersTable.status} = 'delivered'), 0)`,

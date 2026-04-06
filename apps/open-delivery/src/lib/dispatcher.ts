@@ -161,8 +161,11 @@ export async function findAvailableDrivers(
 ): Promise<Array<Driver & { matchScore: number }>> {
   const requiredVehicle = getRequiredVehicleType(orderIntent.items);
 
+  // Get database connection
+  const database = getDb();
+
   // Query active drivers from Postgres using Drizzle ORM
-  const drivers = await db
+  const drivers = await database
     .select()
     .from(driversTable)
     .where(
@@ -239,8 +242,11 @@ export async function assignOrderToDriver(
   driverId: string
 ): Promise<boolean> {
   try {
+    // Get database connection
+    const database = getDb();
+
     // Use Drizzle ORM update with optimistic locking
-    const result = await db
+    const result = await database
       .update(ordersTable)
       .set({
         driverId,

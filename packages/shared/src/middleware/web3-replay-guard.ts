@@ -74,13 +74,10 @@ export interface ReplayGuardResult {
 
 export interface ReplayGuardMiddleware {
   /**
-   * Check if a transaction has already been processed
+   * Atomically check if a transaction is allowed and register it (TOCTOU-safe)
+   * This combines check + register into a single atomic operation
    */
   check(params: ReplayGuardCheck): Promise<ReplayGuardResult>;
-  /**
-   * Register a transaction after successful processing
-   */
-  register(params: ReplayGuardCheck): Promise<void>;
 }
 
 // ============================================================================
@@ -97,100 +94,87 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
   /**
    * Check if a transaction has already been processed (globally across all apps)
    *
-   * This is the FIRST check in any Web3 verification flow.
-   * It prevents an attacker from reusing a transaction hash to pay for multiple services.
+   * ATOMIC INSERT-FIRST PATTERN (TOCTOU-safe):
+   * Instead of SELECT-then-INSERT (which has a race condition), we INSERT first.
+   * If the insert fails due to a unique constraint violation, the tx was already
+   * processed by a concurrent request - this is a replay attack attempt.
    *
-   * @param params - Check parameters
+   * This prevents an attacker from reusing a transaction hash to pay for multiple services
+   * by eliminating the window between check and registration.
+   *
+   * @param params - Check parameters (entityId is REQUIRED for atomic registration)
    * @returns Result indicating if transaction is allowed to proceed
    */
   async check(params: ReplayGuardCheck): Promise<ReplayGuardResult> {
     const { txHash, appSource, entityId } = params;
 
-    try {
-      // Check if this transaction has already been processed
-      const existingTx = await this.db.query.processed_crypto_transactions.findFirst({
-        where: eq(processed_crypto_transactions.txHash, txHash),
-      });
-
-      if (existingTx) {
-        // Transaction already processed - BLOCK the request
-        return {
-          allowed: false,
-          error: `Transaction already processed by ${existingTx.appSource} for entity ${existingTx.entityId} on ${existingTx.createdAt.toISOString()}`,
-          existingTransaction: {
-            txHash: existingTx.txHash,
-            appSource: existingTx.appSource,
-            entityId: existingTx.entityId,
-            createdAt: existingTx.createdAt,
-          },
-        };
-      }
-
-      // Transaction not found - allowed to proceed
-      return {
-        allowed: true,
-      };
-    } catch (error) {
-      console.error("[ReplayGuard] Database error during replay check:", error);
-      
-      // Fail-closed: Block on database errors to prevent potential replay attacks
+    if (!entityId) {
       return {
         allowed: false,
-        error: `Replay guard check failed: ${error instanceof Error ? error.message : "Unknown database error"}`,
+        error: "entityId is required for atomic replay guard check",
       };
-    }
-  }
-
-  /**
-   * Register a transaction after successful processing
-   *
-   * This should be called AFTER successful verification to prevent future replay attacks.
-   * Uses INSERT ... ON CONFLICT to handle race conditions gracefully.
-   *
-   * @param params - Registration parameters
-   * @throws Error if registration fails (except duplicate key which is expected)
-   */
-  async register(params: ReplayGuardCheck): Promise<void> {
-    const { txHash, appSource, entityId } = params;
-
-    if (!entityId) {
-      throw new Error("Entity ID is required for registration");
     }
 
     try {
-      // Insert with ON CONFLICT DO NOTHING to handle race conditions
-      // If another request beat us to it, that's fine - transaction is still registered
+      // ATOMIC INSERT: Try to register the transaction first
+      // This eliminates the TOCTOU race condition
       await this.db
         .insert(processed_crypto_transactions)
         .values({
           txHash,
           appSource,
           entityId,
-        })
-        .onConflictDoNothing({
-          target: processed_crypto_transactions.txHash,
         });
 
+      // Insert succeeded - transaction is now registered and allowed to proceed
       console.log(
-        `[ReplayGuard] Registered tx ${txHash.substring(0, 10)}... ` +
+        `[ReplayGuard] Atomically registered tx ${txHash.substring(0, 10)}... ` +
         `for ${appSource} entity ${entityId}`
       );
+
+      return {
+        allowed: true,
+      };
     } catch (error) {
-      // Check if this is a duplicate key error (expected in race conditions)
-      if (error instanceof Error && error.message.includes('duplicate key')) {
-        console.warn(
-          `[ReplayGuard] Race condition detected: tx ${txHash.substring(0, 10)}... ` +
-          `already registered by another request`
-        );
-        return; // This is fine - transaction is registered
+      // Check if this is a duplicate key error (replay attack attempt)
+      const isDuplicateError = error instanceof Error && (
+        error.message.includes('duplicate key') ||
+        error.message.includes('unique constraint') ||
+        error.message.includes('23505') // Postgres unique violation SQLSTATE
+      );
+
+      if (isDuplicateError) {
+        // Transaction already exists - look it up to provide details
+        try {
+          const existingTx = await this.db.query.processed_crypto_transactions.findFirst({
+            where: eq(processed_crypto_transactions.txHash, txHash),
+          });
+
+          return {
+            allowed: false,
+            error: `Transaction already processed by ${existingTx?.appSource ?? 'unknown'} for entity ${existingTx?.entityId ?? 'unknown'} on ${existingTx?.createdAt?.toISOString() ?? 'unknown'}`,
+            existingTransaction: existingTx ? {
+              txHash: existingTx.txHash,
+              appSource: existingTx.appSource,
+              entityId: existingTx.entityId,
+              createdAt: existingTx.createdAt,
+            } : undefined,
+          };
+        } catch (lookupError) {
+          // Fallback if lookup fails - still block as replay
+          return {
+            allowed: false,
+            error: `Transaction already processed (replay detected)`,
+          };
+        }
       }
 
-      // Log but don't throw - registration is best-effort
-      // The transaction was already verified, so we don't want to fail the entire flow
-      console.error(
-        `[ReplayGuard] Failed to register transaction ${txHash}:`,
-        error instanceof Error ? error.message : error
-      );
+      // Other database error - fail-closed to prevent potential replay
+      console.error("[ReplayGuard] Database error during atomic replay check:", error);
+      return {
+        allowed: false,
+        error: `Replay guard check failed: ${error instanceof Error ? error.message : "Unknown database error"}`,
+      };
     }
   }
 
@@ -202,12 +186,12 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
    */
   async checkBatch(checks: ReplayGuardCheck[]): Promise<ReplayGuardResult[]> {
     const results: ReplayGuardResult[] = [];
-    
+
     for (const check of checks) {
       const result = await this.check(check);
       results.push(result);
     }
-    
+
     return results;
   }
 }
@@ -275,39 +259,27 @@ export async function createReplayGuardMiddleware(): Promise<ReplayGuardMiddlewa
 /**
  * Quick check helper - returns true if transaction is allowed
  *
+ * NOTE: This atomically registers the transaction if allowed.
+ * Do NOT call registerTransaction after this - it's already done.
+ *
  * Usage:
  * ```typescript
  * const allowed = await isReplayAllowed({
  *   txHash: '0x...',
  *   appSource: 'table-stack',
+ *   entityId: orderId, // REQUIRED for atomic registration
  * });
- * 
+ *
  * if (!allowed) {
  *   throw new Error('Transaction already processed');
  * }
+ * // Continue processing - transaction is already registered
  * ```
  */
 export async function isReplayAllowed(params: ReplayGuardCheck): Promise<boolean> {
   const guard = getReplayGuard();
   const result = await guard.check(params);
   return result.allowed;
-}
-
-/**
- * Quick register helper
- *
- * Usage:
- * ```typescript
- * await registerTransaction({
- *   txHash: '0x...',
- *   appSource: 'open-delivery',
- *   entityId: orderId,
- * });
- * ```
- */
-export async function registerTransaction(params: ReplayGuardCheck): Promise<void> {
-  const guard = getReplayGuard();
-  await guard.register(params);
 }
 
 // ============================================================================

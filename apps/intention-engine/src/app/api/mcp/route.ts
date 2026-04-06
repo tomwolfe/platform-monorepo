@@ -79,7 +79,26 @@ async function mcpHandler(req: NextRequest) {
         }, { status: 400 });
       }
 
-      const { name, arguments: args } = validatedParams.data;
+      const { name, arguments: rawArgs } = validatedParams.data;
+
+      // DISTRIBUTED TRACING: Extract trace context from incoming request
+      // and propagate it to the tool execution for end-to-end tracing
+      const traceId = req.headers.get('x-trace-id');
+      const correlationId = req.headers.get('x-correlation-id');
+
+      // Enrich tool arguments with tracing context
+      const args = rawArgs ? {
+        ...rawArgs,
+        _tracingContext: {
+          traceId: traceId || undefined,
+          correlationId: correlationId || undefined,
+        },
+      } : {
+        _tracingContext: {
+          traceId: traceId || undefined,
+          correlationId: correlationId || undefined,
+        },
+      };
 
       try {
         const result = await mcpManager.callTool(name, args);

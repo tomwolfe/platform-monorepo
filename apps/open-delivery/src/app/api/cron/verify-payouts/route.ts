@@ -39,8 +39,11 @@ async function getCronHandler(req: NextRequest) {
 
     console.log('[Verify Payouts Cron] Starting tip release verification...');
 
+    // Get database connection
+    const database = getDb();
+
     // Query all orders with released escrow status and a tx hash
-    const releasedOrders = await db
+    const releasedOrders = await database
       .select({
         id: orders.id,
         payoutTxHash: orders.payoutTxHash,

@@ -3,8 +3,10 @@
 import { getDb } from "@repo/database";
 import { sql } from "drizzle-orm";
 import { currentUser } from "@clerk/nextjs/server";
-import { RealtimeService } from "@repo/shared";
+import { RealtimeService, Logger } from "@repo/shared";
 import { revalidatePath } from "next/cache";
+
+const logger = new Logger({ serviceName: 'open-delivery-actions' });
 
 export interface AcceptDeliveryResult {
   success: boolean;
@@ -89,9 +91,9 @@ export async function acceptDelivery(orderId: string): Promise<AcceptDeliveryRes
         matchedAt: new Date().toISOString(),
         timestamp: new Date().toISOString(),
       });
-      console.log(`[AcceptDelivery] Broadcast order.matched for ${order.id}`);
+      logger.info(`Broadcast order.matched for ${order.id}`);
     } catch (error) {
-      console.warn(`[AcceptDelivery] Failed to broadcast to Ably:`, error);
+      logger.warn(`Failed to broadcast to Ably`, { error });
       // Non-fatal - continue even if broadcast fails
     }
 
@@ -103,10 +105,10 @@ export async function acceptDelivery(orderId: string): Promise<AcceptDeliveryRes
       orderId: order.id,
     };
   } catch (error) {
-    console.error("[AcceptDelivery] Error:", error);
-    return { 
-      success: false, 
-      error: error instanceof Error ? error.message : "Failed to accept order" 
+    logger.error("Error in acceptDelivery", { error: error instanceof Error ? error.message : String(error) });
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to accept order"
     };
   }
 }
@@ -125,7 +127,7 @@ export async function rejectDelivery(orderId: string, reason?: string): Promise<
     }
 
     // Log rejection for analytics (order remains pending for other drivers)
-    console.log(`[RejectDelivery] Driver ${user.id} rejected order ${orderId}${reason ? `: ${reason}` : ''}`);
+    logger.info(`Driver rejected order ${orderId}${reason ? `: ${reason}` : ''}`, { orderId, reason });
 
     // Could add rejection tracking here (e.g., track rejection rate)
 
@@ -133,7 +135,7 @@ export async function rejectDelivery(orderId: string, reason?: string): Promise<
 
     return { success: true };
   } catch (error) {
-    console.error("[RejectDelivery] Error:", error);
+    logger.error("Error in rejectDelivery", { error: error instanceof Error ? error.message : String(error) });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to reject order"
@@ -184,7 +186,7 @@ export async function linkDriverWallet(walletAddress: string): Promise<{ success
 
     return { success: true };
   } catch (error) {
-    console.error("[LinkDriverWallet] Error:", error);
+    logger.error("Error in linkDriverWallet", { error: error instanceof Error ? error.message : String(error) });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to link wallet"
@@ -217,7 +219,7 @@ export async function getDriverWallet(): Promise<{ success: boolean; walletAddre
 
     return { success: true, walletAddress: driver.wallet_address };
   } catch (error) {
-    console.error("[GetDriverWallet] Error:", error);
+    logger.error("Error in getDriverWallet", { error: error instanceof Error ? error.message : String(error) });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to get wallet"

@@ -194,6 +194,39 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
 
     return results;
   }
+
+  /**
+   * Rollback a previously registered transaction hash
+   *
+   * COMPENSATING ACTION: If business logic fails AFTER the replay guard
+   * has been triggered (INSERT succeeded), this removes the registration
+   * so the user can re-submit their valid payment without it being flagged
+   * as a replay attack.
+   *
+   * This is safe because:
+   * - The transaction was never actually processed on-chain
+   * - No side effects occurred (order was not created)
+   * - The user's payment is still valid and unspent
+   *
+   * @param txHash - Transaction hash to rollback
+   */
+  async rollback(txHash: Hash): Promise<void> {
+    try {
+      await this.db
+        .delete(processed_crypto_transactions)
+        .where(eq(processed_crypto_transactions.txHash, txHash));
+
+      console.log(
+        `[ReplayGuard] Rolled back tx ${txHash.substring(0, 10)}...`
+      );
+    } catch (error) {
+      // Log but don't throw - rollback failure is non-fatal
+      console.error(
+        "[ReplayGuard] Failed to rollback transaction:",
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }
 }
 
 // ============================================================================
@@ -280,6 +313,18 @@ export async function isReplayAllowed(params: ReplayGuardCheck): Promise<boolean
   const guard = getReplayGuard();
   const result = await guard.check(params);
   return result.allowed;
+}
+
+/**
+ * Rollback a previously registered transaction hash
+ *
+ * Convenience wrapper around ReplayGuardService.rollback()
+ *
+ * @param txHash - Transaction hash to rollback
+ */
+export async function rollbackReplayGuard(txHash: Hash): Promise<void> {
+  const guard = getReplayGuard();
+  await guard.rollback(txHash);
 }
 
 // ============================================================================

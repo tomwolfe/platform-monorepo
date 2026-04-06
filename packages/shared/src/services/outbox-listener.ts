@@ -238,7 +238,7 @@ export class OutboxListener {
     // Import neon serverless for direct SQL execution
     const { neon } = await import('@neondatabase/serverless');
 
-    const databaseUrl = process.env.DATABASE_URL;
+    const databaseUrl = AppConfig.getDatabaseUrl();
     if (!databaseUrl) {
       throw new Error('DATABASE_URL not configured');
     }

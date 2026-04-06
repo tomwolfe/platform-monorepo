@@ -16,6 +16,7 @@
 
 import { z } from "zod";
 import { CommunicationSchema } from "@repo/mcp-protocol";
+import { AppConfig } from "../config";
 
 // ============================================================================
 // TYPES
@@ -86,7 +87,7 @@ export class ResendEmailProvider implements ICommunicationProvider {
   private fromAddress?: string;
 
   constructor() {
-    this.apiKey = process.env.RESEND_API_KEY;
+    this.apiKey = AppConfig.getResendApiKey();
     this.fromAddress = process.env.EMAIL_FROM || "onboarding@resend.dev";
   }
 

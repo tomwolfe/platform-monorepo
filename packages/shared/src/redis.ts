@@ -1,4 +1,5 @@
 import { Redis } from '@upstash/redis';
+import { AppConfig } from './config';
 
 /**
  * Service Namespace Enum
@@ -102,12 +103,12 @@ export function wrapWithPrefix(obj: any, prefix: string): any {
 }
 
 export const getRedisConfig = (appName: string) => {
-  const url = process.env.SHARED_UPSTASH_REDIS_REST_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  const url = AppConfig.getRedisUrl();
+  const token = AppConfig.getRedisToken();
 
   // CRITICAL: Fail fast in production runtime if Redis is not configured
   // We allow CI/test environments to use fallback values
-  const isProductionRuntime = process.env.NODE_ENV === 'production' && process.env.CI !== 'true';
+  const isProductionRuntime = AppConfig.isProduction() && process.env.CI !== 'true';
 
   if (!url || !token) {
     if (isProductionRuntime) {
@@ -117,7 +118,7 @@ export const getRedisConfig = (appName: string) => {
       );
     }
     // Development/CI/test: provide fallback without warnings in CI
-    if (process.env.CI !== 'true' && process.env.NODE_ENV !== 'test') {
+    if (process.env.CI !== 'true' && !AppConfig.isTest()) {
       console.warn(
         `[${appName}] Redis environment variables missing. ` +
         'Using localhost fallback. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for production.'

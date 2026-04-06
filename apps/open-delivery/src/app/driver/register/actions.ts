@@ -4,6 +4,9 @@ import { getDb } from "@repo/database";
 import { sql } from "drizzle-orm";
 import { currentUser } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: 'open-delivery-driver-register' });
 
 export interface RegisterDriverResult {
   success: boolean;
@@ -57,14 +60,14 @@ export async function registerDriver(fullName: string, email: string): Promise<R
 
     const driver = result.rows[0] as any;
 
-    console.log(`[RegisterDriver] Created driver profile for ${user.id}: ${driver.id}`);
+    logger.info(`Created driver profile for ${user.id}`, { driverId: driver.id });
 
     // 5. Revalidate driver dashboard
     revalidatePath('/driver');
 
     return { success: true };
   } catch (error) {
-    console.error("[RegisterDriver] Error:", error);
+    logger.error("Error in registerDriver", { error: error instanceof Error ? error.message : String(error) });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to register as driver"

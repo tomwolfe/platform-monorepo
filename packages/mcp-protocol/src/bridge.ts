@@ -11,6 +11,17 @@ import {
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { z } from 'zod';
 
+// Narrow type for Drizzle table definitions that works across drizzle-orm versions
+// This avoids the `any` escape hatch while maintaining compatibility
+type DrizzleTable = {
+  [key: string]: unknown;
+  _: {
+    name: string;
+    schema: string | undefined;
+    columns: Record<string, unknown>;
+  };
+};
+
 /**
  * Drizzle-to-MCP Bridge
  * Automatically reflects Drizzle table definitions into Zod/JSON schemas
@@ -33,8 +44,7 @@ import { z } from 'zod';
  * @returns Zod schema for selecting from the table
  */
 function safeCreateSelectSchema(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  table: any,
+  table: DrizzleTable | undefined,
   name: string
 ): z.ZodObject<z.ZodRawShape> {
   if (!table) {
@@ -42,8 +52,6 @@ function safeCreateSelectSchema(
     return z.object({});
   }
   try {
-    // Note: drizzle-zod's Table type is incompatible with our PgTableWithColumns
-    // due to drizzle-orm version differences. Using `any` type to bypass.
     return createSelectSchema(table) as z.ZodObject<z.ZodRawShape>;
   } catch (error) {
     console.warn(`[Bridge] Failed to create select schema for ${name}:`, error);
@@ -61,8 +69,7 @@ function safeCreateSelectSchema(
  * @returns Zod schema for inserting into the table
  */
 function safeCreateInsertSchema(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  table: any,
+  table: DrizzleTable | undefined,
   name: string,
   omitFields?: string[]
 ): z.ZodObject<z.ZodRawShape> {
@@ -71,8 +78,6 @@ function safeCreateInsertSchema(
     return z.object({});
   }
   try {
-    // Note: drizzle-zod's Table type is incompatible with our PgTableWithColumns
-    // due to drizzle-orm version differences. Using `any` type to bypass.
     const schema = createInsertSchema(table) as z.ZodObject<z.ZodRawShape>;
     if (omitFields?.length) {
       const omitShape: Record<string, true> = {};

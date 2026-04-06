@@ -2,7 +2,7 @@
 
 import { getDb, restaurants, orders, orderItems, users, sql, restaurantProducts, eq, type CryptoAmount } from "@repo/database";
 import { currentUser } from "@clerk/nextjs/server";
-import { RealtimeService } from "@repo/shared";
+import { RealtimeService, isReplayAllowed, rollbackReplayGuard } from "@repo/shared";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
 import { createPublicClient, http, type Hash, type Address, parseUnits, parseEther, formatUnits } from "viem";
@@ -233,6 +233,21 @@ export async function placeRealOrder(
       throw new Error("Invalid wallet address format");
     }
 
+    // ============================================================================
+    // REPLAY GUARD: Atomically register the txHash to prevent replay attacks
+    // This is a TOCTOU-safe check that registers the transaction upfront.
+    // If the order creation fails later, we rollback this registration.
+    // ============================================================================
+    const replayCheck = await isReplayAllowed({
+      txHash: paymentParams.txHash as Hash,
+      appSource: 'open-delivery',
+      entityId: orderId,
+    });
+
+    if (!replayCheck) {
+      throw new Error(`Payment transaction ${paymentParams.txHash.substring(0, 10)}... was already used or blocked.`);
+    }
+
     // Verify transaction on-chain using shared utility
     // For ETH payments, apply slippage tolerance to handle price volatility
     const SLIPPAGE_BPS = 200; // 2% slippage tolerance
@@ -251,6 +266,9 @@ export async function placeRealOrder(
     });
 
     if (!verificationResult.success) {
+      // COMPENSATING ACTION: Rollback the replay guard registration
+      // so the user can retry with this valid txHash
+      await rollbackReplayGuard(paymentParams.txHash as Hash);
       throw new Error(`Payment verification failed: ${verificationResult.error}`);
     }
 
@@ -375,6 +393,13 @@ export async function placeRealOrder(
       },
     };
   } catch (error) {
+    // COMPENSATING ACTION: If the database transaction failed for non-Web3 reasons
+    // (e.g., constraint violation, connection error) AFTER the replay guard was
+    // triggered, rollback the registration so the user can re-submit.
+    if (paymentParams?.txHash && error instanceof Error && !error.message.includes("already used")) {
+      await rollbackReplayGuard(paymentParams.txHash as Hash);
+    }
+
     console.error("Order placement failed:", error);
     throw new Error("Failed to place order. Please try again.");
   }

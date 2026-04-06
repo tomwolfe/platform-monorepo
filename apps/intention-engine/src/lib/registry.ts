@@ -1,6 +1,9 @@
 import { TOOLS, ToolDefinition } from "./tools";
 import { z } from "zod";
 import { McpAdapter } from "../infrastructure/McpManager";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: 'intention-engine-registry' });
 
 /**
  * Registers a new tool into the engine's registry at runtime.
@@ -58,5 +61,5 @@ export function registerDynamicTool(definition: {
   };
 
   TOOLS.set(name, dynamicTool);
-  console.log(`Successfully registered dynamic tool: ${name}`);
+  logger.info(`Successfully registered dynamic tool: ${name}`);
 }

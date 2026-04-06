@@ -3,7 +3,7 @@ const redis = getRedisClient(ServiceNamespace.IE);
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { verifySignature } from "@repo/auth";
-import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, safeParseJson } from "@repo/shared";
+import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, safeParseJson, withApiErrorHandler, AppError } from "@repo/shared";
 
 // Schema for Ably message payloads from TableStack
 const AblyStateSchema = z.object({
@@ -16,59 +16,64 @@ const AblyStateSchema = z.object({
   }),
 });
 
-export async function POST(req: Request) {
-  try {
-    const rawBody = await req.text();
-    const signature = req.headers.get("x-signature");
-    const timestamp = Number(req.headers.get("x-timestamp"));
-    const idempotencyKey = req.headers.get(IDEMPOTENCY_KEY_HEADER);
+async function postHandler(req: Request) {
+  const rawBody = await req.text();
+  const signature = req.headers.get("x-signature");
+  const timestamp = Number(req.headers.get("x-timestamp"));
+  const idempotencyKey = req.headers.get(IDEMPOTENCY_KEY_HEADER);
 
-    // 1. Validate Webhook Security (HMAC)
-    if (signature && timestamp) {
-       const isValid = await verifySignature(rawBody, signature, timestamp);
-       if (!isValid) {
-         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-       }
-    }
-
-    // 2. Idempotency Check
-    if (idempotencyKey) {
-      const idempotencyService = new IdempotencyService(redis);
-      const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey, 'ably_state_sync');
-      if (isDuplicate) {
-        return NextResponse.json({ synced: true, duplicate: true });
-      }
-    }
-
-    // 3. Safe JSON parsing
-    const parseResult = safeParseJson(rawBody);
-    if (!parseResult.success) {
-      return NextResponse.json({ error: `Invalid request body: ${parseResult.error}` }, { status: 400 });
-    }
-
-    const body = parseResult.data;
-
-    // 4. Validate Ably Webhook Schema
-    const event = AblyStateSchema.parse(body);
-
-    // 5. Mirror UI state to AI memory (Redis)
-    // We use a separate prefix for state to avoid collisions if needed,
-    // but the redis client already adds 'ie:'
-    const key = `state:${event.data.restaurantId}:tables`;
-
-    await redis.hset(key, {
-      [event.data.tableId]: JSON.stringify({
-        status: event.data.status,
-        updatedAt: event.data.updatedAt
-      })
-    });
-
-    // 6. Set TTL to ensure memory stays "fresh" (e.g., 2 hours)
-    await redis.expire(key, 7200);
-
-    return NextResponse.json({ synced: true });
-  } catch (error) {
-    console.error("[State Bridge] Sync failed:", error);
-    return NextResponse.json({ error: "Sync failed" }, { status: 400 });
+  // 1. Validate Webhook Security (HMAC)
+  if (signature && timestamp) {
+     const isValid = await verifySignature(rawBody, signature, timestamp);
+     if (!isValid) {
+       throw new AppError({
+         code: 'UNAUTHORIZED',
+         message: 'Unauthorized',
+         statusCode: 401,
+       });
+     }
   }
+
+  // 2. Idempotency Check
+  if (idempotencyKey) {
+    const idempotencyService = new IdempotencyService(redis);
+    const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey, 'ably_state_sync');
+    if (isDuplicate) {
+      return NextResponse.json({ synced: true, duplicate: true });
+    }
+  }
+
+  // 3. Safe JSON parsing
+  const parseResult = safeParseJson(rawBody);
+  if (!parseResult.success) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      message: `Invalid request body: ${parseResult.error}`,
+      statusCode: 400,
+    });
+  }
+
+  const body = parseResult.data;
+
+  // 4. Validate Ably Webhook Schema
+  const event = AblyStateSchema.parse(body);
+
+  // 5. Mirror UI state to AI memory (Redis)
+  // We use a separate prefix for state to avoid collisions if needed,
+  // but the redis client already adds 'ie:'
+  const key = `state:${event.data.restaurantId}:tables`;
+
+  await redis.hset(key, {
+    [event.data.tableId]: JSON.stringify({
+      status: event.data.status,
+      updatedAt: event.data.updatedAt
+    })
+  });
+
+  // 6. Set TTL to ensure memory stays "fresh" (e.g., 2 hours)
+  await redis.expire(key, 7200);
+
+  return NextResponse.json({ synced: true });
 }
+
+export const POST = withApiErrorHandler(postHandler, { serviceName: 'ably-bridge' });

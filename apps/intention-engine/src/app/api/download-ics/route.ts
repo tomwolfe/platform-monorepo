@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { parseNaturalLanguageDate } from '@/lib/date-utils';
+import { withApiErrorHandler, AppError } from '@repo/shared';
 
 const DownloadIcsSchema = z.object({
   title: z.string().default('Event'),
@@ -14,23 +15,32 @@ function formatICalDate(date: Date): string {
   return date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
 }
 
-export async function GET(req: NextRequest) {
+async function getHandler(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const eventsParam = searchParams.get('events');
-  
+
   let events: any[] = [];
 
   if (eventsParam) {
     try {
       events = JSON.parse(eventsParam);
     } catch (e) {
-      return NextResponse.json({ error: "Invalid events JSON" }, { status: 400 });
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        message: 'Invalid events JSON',
+        statusCode: 400,
+      });
     }
   } else {
     const params = Object.fromEntries(searchParams.entries());
     const validatedParams = DownloadIcsSchema.safeParse(params);
     if (!validatedParams.success) {
-      return NextResponse.json({ error: "Invalid parameters", details: validatedParams.error.format() }, { status: 400 });
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        message: 'Invalid parameters',
+        statusCode: 400,
+        details: validatedParams.error.format(),
+      });
     }
     events = [{
       title: validatedParams.data.title,
@@ -69,7 +79,7 @@ export async function GET(req: NextRequest) {
   icsLines.push('END:VCALENDAR');
 
   const icsContent = icsLines.join('\r\n');
-  const filename = events.length === 1 
+  const filename = events.length === 1
     ? `${events[0].title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.ics`
     : 'events.ics';
 
@@ -80,3 +90,5 @@ export async function GET(req: NextRequest) {
     },
   });
 }
+
+export const GET = withApiErrorHandler(getHandler, { serviceName: 'download-ics' });

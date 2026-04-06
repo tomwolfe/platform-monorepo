@@ -73,17 +73,31 @@ describe('Chaos Engineering - Failure Modes', () => {
       const plan: Plan = {
         id: `plan-${Date.now()}`,
         intent_id: `intent-${Date.now()}`,
+        summary: 'Chaos test plan',
+        constraints: {
+          max_steps: 100,
+          max_total_tokens: 10000,
+          max_execution_time_ms: 60000,
+        },
+        metadata: {
+          version: '1.0',
+          created_at: new Date().toISOString(),
+          planning_model_id: 'test-model',
+          estimated_total_tokens: 100,
+          estimated_latency_ms: 5000,
+        },
         steps: [
           {
             id: 'step-1',
+            step_number: 0,
             tool_name: 'slow_tool',
             description: 'Tool that times out',
             parameters: { test: 'timeout' },
             dependencies: [],
+            requires_confirmation: false,
             timeout_ms: 8500,
           },
         ],
-        created_at: new Date().toISOString(),
       };
 
       let state = setPlan(initialState, plan);
@@ -115,17 +129,31 @@ describe('Chaos Engineering - Failure Modes', () => {
       const plan: Plan = {
         id: `plan-${Date.now()}`,
         intent_id: `intent-${Date.now()}`,
+        summary: 'Chaos test plan',
+        constraints: {
+          max_steps: 100,
+          max_total_tokens: 10000,
+          max_execution_time_ms: 60000,
+        },
+        metadata: {
+          version: '1.0',
+          created_at: new Date().toISOString(),
+          planning_model_id: 'test-model',
+          estimated_total_tokens: 100,
+          estimated_latency_ms: 5000,
+        },
         steps: [
           {
             id: 'step-1',
+            step_number: 0,
             tool_name: 'flaky_tool',
             description: 'Tool that throws',
             parameters: { test: 'exception' },
             dependencies: [],
+            requires_confirmation: false,
             timeout_ms: 8500,
           },
         ],
-        created_at: new Date().toISOString(),
       };
 
       let state = setPlan(initialState, plan);
@@ -158,18 +186,32 @@ describe('Chaos Engineering - Failure Modes', () => {
       const plan: Plan = {
         id: `plan-${Date.now()}`,
         intent_id: `intent-${Date.now()}`,
+        summary: 'Chaos test plan',
+        constraints: {
+          max_steps: 100,
+          max_total_tokens: 10000,
+          max_execution_time_ms: 60000,
+        },
+        metadata: {
+          version: '1.0',
+          created_at: new Date().toISOString(),
+          planning_model_id: 'test-model',
+          estimated_total_tokens: 100,
+          estimated_latency_ms: 5000,
+        },
         steps: [
           {
             id: 'step-1',
+            step_number: 0,
             tool_name: 'book_restaurant_table',
             description: 'Tool with invalid output',
             parameters: { restaurantId: 'test-123', partySize: 2, time: '19:00' },
             dependencies: [],
+            requires_confirmation: false,
             timeout_ms: 8500,
             // In production, this would have return_schema validation
           },
         ],
-        created_at: new Date().toISOString(),
       };
 
       let state = setPlan(initialState, plan);
@@ -230,25 +272,41 @@ describe('Chaos Engineering - Failure Modes', () => {
       const plan: Plan = {
         id: `plan-${Date.now()}`,
         intent_id: `intent-${Date.now()}`,
+        summary: 'Chaos test plan',
+        constraints: {
+          max_steps: 100,
+          max_total_tokens: 10000,
+          max_execution_time_ms: 60000,
+        },
+        metadata: {
+          version: '1.0',
+          created_at: new Date().toISOString(),
+          planning_model_id: 'test-model',
+          estimated_total_tokens: 100,
+          estimated_latency_ms: 5000,
+        },
         steps: [
           {
             id: 'step-1',
+            step_number: 0,
             tool_name: 'book_ride',
             description: 'Book ride',
             parameters: { destination: 'Restaurant' },
             dependencies: [],
+            requires_confirmation: false,
             timeout_ms: 8500,
           },
           {
             id: 'step-2',
+            step_number: 1,
             tool_name: 'book_restaurant_table',
             description: 'Book table',
             parameters: { restaurantId: 'test' },
             dependencies: ['step-1'],
+            requires_confirmation: false,
             timeout_ms: 8500,
           },
         ],
-        created_at: new Date().toISOString(),
       };
 
       let state = setPlan(initialState, plan);
@@ -310,12 +368,24 @@ describe('Chaos Engineering - Failure Modes', () => {
       const plan: Plan = {
         id: `plan-${Date.now()}`,
         intent_id: `intent-${Date.now()}`,
+        summary: 'Chaos test plan',
+        constraints: {
+          max_steps: 100,
+          max_total_tokens: 10000,
+          max_execution_time_ms: 60000,
+        },
+        metadata: {
+          version: '1.0',
+          created_at: new Date().toISOString(),
+          planning_model_id: 'test-model',
+          estimated_total_tokens: 100,
+          estimated_latency_ms: 5000,
+        },
         steps: [
-          { id: 'step-1', tool_name: 'book_ride', description: 'Book ride', parameters: {}, dependencies: [], timeout_ms: 8500 },
-          { id: 'step-2', tool_name: 'book_hotel', description: 'Book hotel', parameters: {}, dependencies: [], timeout_ms: 8500 },
-          { id: 'step-3', tool_name: 'book_restaurant', description: 'Book restaurant', parameters: {}, dependencies: ['step-1', 'step-2'], timeout_ms: 8500 },
+          { id: 'step-1', step_number: 0, tool_name: 'book_ride', description: 'Book ride', parameters: {}, dependencies: [], requires_confirmation: false, timeout_ms: 8500 },
+          { id: 'step-2', step_number: 1, tool_name: 'book_hotel', description: 'Book hotel', parameters: {}, dependencies: [], requires_confirmation: false, timeout_ms: 8500 },
+          { id: 'step-3', step_number: 2, tool_name: 'book_restaurant', description: 'Book restaurant', parameters: {}, dependencies: ['step-1', 'step-2'], requires_confirmation: false, timeout_ms: 8500 },
         ],
-        created_at: new Date().toISOString(),
       };
 
       let state = setPlan(initialState, plan);
@@ -361,17 +431,31 @@ describe('Chaos Engineering - Failure Modes', () => {
       const plan: Plan = {
         id: `plan-${Date.now()}`,
         intent_id: `intent-${Date.now()}`,
+        summary: 'Chaos test plan',
+        constraints: {
+          max_steps: 100,
+          max_total_tokens: 10000,
+          max_execution_time_ms: 60000,
+        },
+        metadata: {
+          version: '1.0',
+          created_at: new Date().toISOString(),
+          planning_model_id: 'test-model',
+          estimated_total_tokens: 100,
+          estimated_latency_ms: 5000,
+        },
         steps: [
           {
             id: 'step-1',
+            step_number: 0,
             tool_name: 'test_tool',
             description: 'Test tool',
             parameters: {},
             dependencies: [],
+            requires_confirmation: false,
             timeout_ms: 8500,
           },
         ],
-        created_at: new Date().toISOString(),
       };
 
       let state = setPlan(initialState, plan);
@@ -430,25 +514,41 @@ describe('Chaos Engineering - Failure Modes', () => {
       const plan: Plan = {
         id: `plan-${Date.now()}`,
         intent_id: `intent-${Date.now()}`,
+        summary: 'Circular dependency test',
+        constraints: {
+          max_steps: 100,
+          max_total_tokens: 10000,
+          max_execution_time_ms: 60000,
+        },
+        metadata: {
+          version: '1.0',
+          created_at: new Date().toISOString(),
+          planning_model_id: 'test-model',
+          estimated_total_tokens: 100,
+          estimated_latency_ms: 5000,
+        },
         steps: [
           {
             id: 'step-a',
+            step_number: 0,
             tool_name: 'tool_a',
             description: 'Tool A',
             parameters: {},
             dependencies: ['step-b'], // A depends on B
+            requires_confirmation: false,
             timeout_ms: 8500,
           },
           {
             id: 'step-b',
+            step_number: 1,
             tool_name: 'tool_b',
             description: 'Tool B',
             parameters: {},
             dependencies: ['step-a'], // B depends on A (circular!)
+            requires_confirmation: false,
             timeout_ms: 8500,
           },
         ],
-        created_at: new Date().toISOString(),
       };
 
       let state = setPlan(initialState, plan);
@@ -485,15 +585,29 @@ describe('Chaos Engineering - Failure Modes', () => {
       const plan: Plan = {
         id: `plan-${Date.now()}`,
         intent_id: `intent-${Date.now()}`,
+        summary: '100 step plan',
+        constraints: {
+          max_steps: 100,
+          max_total_tokens: 10000,
+          max_execution_time_ms: 60000,
+        },
+        metadata: {
+          version: '1.0',
+          created_at: new Date().toISOString(),
+          planning_model_id: 'test-model',
+          estimated_total_tokens: 100,
+          estimated_latency_ms: 5000,
+        },
         steps: Array(100).fill(null).map((_, i) => ({
           id: `step-${i + 1}`,
+          step_number: i,
           tool_name: 'test_tool',
           description: `Step ${i + 1}`,
           parameters: { index: i },
           dependencies: i > 0 ? [`step-${i}`] : [],
+          requires_confirmation: false,
           timeout_ms: 8500,
         })),
-        created_at: new Date().toISOString(),
       };
 
       let state = setPlan(initialState, plan);
@@ -544,17 +658,31 @@ describe('Chaos Engineering - Recovery Patterns', () => {
     const plan: Plan = {
       id: `plan-${Date.now()}`,
       intent_id: `intent-${Date.now()}`,
+      summary: 'Flaky retry test',
+      constraints: {
+        max_steps: 100,
+        max_total_tokens: 10000,
+        max_execution_time_ms: 60000,
+      },
+      metadata: {
+        version: '1.0',
+        created_at: new Date().toISOString(),
+        planning_model_id: 'test-model',
+        estimated_total_tokens: 100,
+        estimated_latency_ms: 5000,
+      },
       steps: [
         {
           id: 'step-1',
+          step_number: 0,
           tool_name: 'flaky_tool',
           description: 'Tool that fails transiently',
           parameters: {},
           dependencies: [],
+          requires_confirmation: false,
           timeout_ms: 8500,
         },
       ],
-      created_at: new Date().toISOString(),
     };
 
     let state = setPlan(initialState, plan);
@@ -582,17 +710,31 @@ describe('Chaos Engineering - Recovery Patterns', () => {
     const plan: Plan = {
       id: `plan-${Date.now()}`,
       intent_id: `intent-${Date.now()}`,
+      summary: 'Non-recoverable error test',
+      constraints: {
+        max_steps: 100,
+        max_total_tokens: 10000,
+        max_execution_time_ms: 60000,
+      },
+      metadata: {
+        version: '1.0',
+        created_at: new Date().toISOString(),
+        planning_model_id: 'test-model',
+        estimated_total_tokens: 100,
+        estimated_latency_ms: 5000,
+      },
       steps: [
         {
           id: 'step-1',
+          step_number: 0,
           tool_name: 'authenticated_tool',
           description: 'Tool requiring auth',
           parameters: {},
           dependencies: [],
+          requires_confirmation: false,
           timeout_ms: 8500,
         },
       ],
-      created_at: new Date().toISOString(),
     };
 
     let state = setPlan(initialState, plan);

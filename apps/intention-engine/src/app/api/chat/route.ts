@@ -1,7 +1,7 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { streamText, tool, stepCountIs, convertToModelMessages } from "ai";
 import { z } from "zod";
-import { getToolCapabilitiesPrompt } from "@/lib/tools";
+import { getToolCapabilitiesPrompt } from "@/lib/tools/registry";
 import { getUserPreferences } from "@/lib/preferences";
 import { getRedisClient, ServiceNamespace, AppConfig } from "@repo/shared";
 import { getMcpClients } from "@/lib/mcp-client";

@@ -5,12 +5,15 @@ import { NotifyService } from '@tablestack/lib/notifications';
 import { createPublicClient, http, parseUnits } from 'viem';
 import { base } from 'viem/chains';
 import { isValidTxHash } from '@repo/shared/utils/web3-verification';
-import { getCryptoPrices } from '@repo/shared/utils/crypto-price';
+import { getCryptoPrices, usdToCryptoBigIntWithSlippage } from '@repo/shared/utils/crypto-price';
 import { CheckoutRequestSchema, validateRequest as validateZodRequest, formatApiError, withApiErrorHandler, Logger } from '@repo/shared';
 
 export const runtime = 'nodejs';
 
 const logger = new Logger({ serviceName: 'table-stack' });
+
+// Global slippage tolerance for ETH-based payments (2% = 200 basis points)
+const SLIPPAGE_BPS = 200;
 
 /**
  * Crypto Payment Verification Endpoint
@@ -109,15 +112,8 @@ async function postHandler(req: NextRequest) {
   let expectedValue: bigint;
 
   if (paymentCurrency === 'ETH') {
-    const ethPrice = prices.ETH;
-    if (ethPrice <= 0) {
-      throw new Error('Failed to fetch ETH price from oracle');
-    }
-
-    // Convert USD to ETH: ETH = USD / price
-    const depositEth = depositUsd / ethPrice;
-    // Convert to Wei (18 decimals)
-    expectedValue = parseUnits(depositEth.toFixed(18), 18);
+    // Use standardized BigInt conversion with slippage
+    expectedValue = await usdToCryptoBigIntWithSlippage(BigInt(depositUsdCents), "ETH", SLIPPAGE_BPS);
   } else {
     // USDC: 6 decimals, 1 USD = 1 USDC
     expectedValue = parseUnits(depositUsd.toFixed(6), 6);

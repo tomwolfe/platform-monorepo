@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { McpManager } from '@/infrastructure/McpManager';
-import { listTools } from '@/lib/tools';
+import { listTools } from '@/lib/tools/registry';
 import { withApiErrorHandler, formatApiSuccess } from '@repo/shared';
 
 // Instantiate McpManager with all registered tools

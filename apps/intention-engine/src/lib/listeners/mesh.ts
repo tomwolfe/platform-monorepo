@@ -5,7 +5,7 @@ import { inferIntent } from "@/lib/engine/intent";
 import { generatePlan } from "@/lib/engine/unified-planner";
 import { createAuditLog } from "@/lib/audit";
 import { getAblyClient } from "@repo/shared";
-import { getToolDefinitions } from "@/lib/tools";
+import { listTools } from "@/lib/tools/registry";
 import { getEventSchemaRegistry } from "@repo/mcp-protocol";
 import {
   SystemEventSchema,

@@ -129,7 +129,7 @@ export function withApiErrorHandler<T extends (...args: any[]) => Promise<any>>(
 
   const logger = options.logger || new Logger({ serviceName });
 
-  return async (...args: Parameters<T>): Promise<ReturnType<T>> => {
+  return async (...args: Parameters<T>): Promise<Awaited<ReturnType<T>>> => {
     try {
       return await handler(...args);
     } catch (error) {
@@ -164,7 +164,7 @@ export function withApiErrorHandler<T extends (...args: any[]) => Promise<any>>(
       return formatApiError(appError, appError.code as ErrorCode, undefined, {
         includeStack: includeStackTrace,
         traceId,
-      }) as ReturnType<T>;
+      }) as Awaited<ReturnType<T>>;
     }
   };
 }

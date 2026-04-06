@@ -1,4 +1,4 @@
-import { TOOLS, ToolDefinition } from "./tools";
+import { TOOLS, type ToolDefinition } from "./tools/registry";
 import { z } from "zod";
 import { McpAdapter } from "../infrastructure/McpManager";
 import { Logger } from "@repo/shared";

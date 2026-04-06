@@ -1,4 +1,5 @@
 import { getRedisClient, ServiceNamespace } from '@repo/shared';
+import { getPrivacyGateway } from '@repo/shared/services/privacy-gateway';
 const redis = getRedisClient(ServiceNamespace.IE);
 import type { Plan, Intent } from "./schema";
 import type { AuditLog } from "./types";
@@ -17,7 +18,7 @@ export async function calculateIntentHash(intent: Omit<Intent, "hash">): Promise
     rawText: intent.rawText,
     parent_intent_id: intent.parent_intent_id
   });
-  
+
   const msgUint8 = new TextEncoder().encode(content);
   const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
@@ -25,22 +26,33 @@ export async function calculateIntentHash(intent: Omit<Intent, "hash">): Promise
 }
 
 export async function createAuditLog(
-  intent: Intent, 
-  plan?: Plan, 
+  intent: Intent,
+  plan?: Plan,
   userLocation?: { lat: number; lng: number },
   userId: string = "anonymous"
 ): Promise<AuditLog> {
   const id = crypto.randomUUID();
-  
-  // Ensure the primary intent has a hash
-  if (!intent.hash) {
-    intent.hash = await calculateIntentHash(intent);
+
+  // Enforce Privacy Gateway: scrub PII before persistence
+  const gateway = getPrivacyGateway();
+  const privacyResult = await gateway.scrubMemoryEntry(intent.rawText, intent.parameters);
+
+  // Store scrubbed versions in the intent
+  const scrubbedIntent = {
+    ...intent,
+    rawText: privacyResult.scrubbedText,
+    parameters: privacyResult.scrubbedParameters,
+  };
+
+  // Ensure the primary intent has a hash (computed on scrubbed data)
+  if (!scrubbedIntent.hash) {
+    scrubbedIntent.hash = await calculateIntentHash(scrubbedIntent);
   }
 
   const log: AuditLog = {
     id,
     timestamp: new Date().toISOString(),
-    intent,
+    intent: scrubbedIntent,
     intent_history: [],
     plan,
     userLocation,
@@ -48,6 +60,13 @@ export async function createAuditLog(
     toolExecutionLatencies: {
       latencies: {},
       totalToolExecutionTime: 0
+    },
+    // Store token map in metadata for authorized reversal
+    metadata: {
+      piiTokenMap: Object.keys(privacyResult.tokenMap).length > 0
+        ? privacyResult.tokenMap
+        : undefined,
+      piiDetectedCount: privacyResult.detectedPii.length,
     }
   };
 

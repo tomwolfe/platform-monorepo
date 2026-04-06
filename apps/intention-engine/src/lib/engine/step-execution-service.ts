@@ -21,6 +21,8 @@ import { getToolRegistry } from "@/lib/engine/tools/registry";
 import { loadExecutionState, saveExecutionState } from "@/lib/engine/memory";
 import { RealtimeService, QStashService, FailoverPolicyEngine, type PolicyEvaluationContext } from "@repo/shared";
 import { createRepairAgent, type ZombieSaga, type RepairResult } from "@repo/shared";
+import { getParameterAliaserService } from "@repo/shared/services/parameter-aliaser";
+import { getSchemaEvolutionService } from "@repo/shared/services/schema-evolution";
 import { ExecutionState } from "@/lib/engine/types";
 import { getCompletedSteps } from "@/lib/engine/state-machine";
 import { NervousSystemObserver } from "@/lib/listeners/nervous-system-observer";
@@ -380,11 +382,156 @@ export class StepExecutionService {
 
     const result = await machine.executeSingleStep(startStepIndex);
 
+    // SELF-HEALING LOOP: Close the Schema Evolution Loop
+    // If step failed with TOOL_VALIDATION_FAILED, trigger schema evolution
+    if (!result.success && result.stepState.status === "failed") {
+      await this.handleSchemaEvolutionLoop(
+        executionId,
+        result,
+        plan,
+        state
+      );
+    }
+
     // Save updated state
     const updatedState = machine.getState();
     await saveExecutionState(updatedState);
 
     return result;
+  }
+
+  /**
+   * Handle Schema Evolution Loop for TOOL_VALIDATION_FAILED errors
+   *
+   * When a tool fails with a validation error, this method:
+   * 1. Records the mismatch via SchemaEvolutionService
+   * 2. If mismatchCount for a field exceeds 5, creates a Virtual Alias
+   *    in the ParameterAliaser Redis registry to map the LLM's hallucinated
+   *    field to the correct schema key immediately
+   *
+   * This closes the loop from "Logging" to "Learning" - the system
+   * automatically adapts to recurring LLM parameter naming patterns.
+   */
+  private async handleSchemaEvolutionLoop(
+    executionId: string,
+    result: any,
+    plan: any,
+    state: ExecutionState
+  ): Promise<void> {
+    const errorMessage = result.stepState.error?.message || "";
+
+    // Only handle validation failures
+    if (!errorMessage.toLowerCase().includes("validation") &&
+        !errorMessage.toLowerCase().includes("schema") &&
+        !errorMessage.toLowerCase().includes("invalid")) {
+      return;
+    }
+
+    try {
+      // Extract tool name and parameters from the failed step
+      const executedStep = plan.steps.find((step: any) => step.id === result.stepId);
+      if (!executedStep) {
+        logger.warn({
+          message: `[SchemaEvolution] Step ${result.stepId} not found in plan, skipping evolution`,
+        });
+        return;
+      }
+
+      const toolName = executedStep.tool_name;
+      const llmParameters = executedStep.parameters || {};
+
+      // Extract expected vs unexpected fields from error message
+      // Error format: "Validation failed: unexpected fields: [user_notes], missing fields: [notes]"
+      const unexpectedFields = this.extractFieldsFromError(errorMessage, "unexpected");
+      const missingFields = this.extractFieldsFromError(errorMessage, "missing");
+
+      // Record mismatch via SchemaEvolutionService
+      const schemaEvolution = getSchemaEvolutionService(redis);
+      const mismatchEventId = await schemaEvolution.recordMismatch({
+        intentType: state.intent?.type || "unknown",
+        toolName,
+        llmParameters,
+        expectedFields: missingFields.length > 0 ? missingFields : Object.keys(llmParameters),
+        unexpectedFields,
+        missingFields,
+        errors: [{
+          field: unexpectedFields.join(", "),
+          message: result.stepState.error?.message || "Validation failed",
+          code: "SCHEMA_MISMATCH",
+        }],
+      });
+
+      logger.info({
+        message: `[SchemaEvolution] Recorded mismatch ${mismatchEventId} for ${toolName}`,
+      });
+
+      // Check if any unexpected field has exceeded threshold for virtual aliasing
+      // Default threshold is 5 mismatches before auto-creating alias
+      if (unexpectedFields.length > 0 && missingFields.length > 0) {
+        const parameterAliaser = getParameterAliaserService(redis);
+
+        // For each unexpected field, try to match it to a missing field
+        for (const unexpectedField of unexpectedFields) {
+          // Simple heuristic: match first unexpected to first missing field
+          // In production, use more sophisticated matching
+          const canonicalField = missingFields[0];
+
+          // Record mismatch in ParameterAliaser (tracks count)
+          await parameterAliaser.recordMismatch(
+            toolName,
+            unexpectedField,
+            canonicalField,
+            llmParameters
+          );
+
+          // Get current mismatch count
+          const aliases = await parameterAliaser.getAllAliases(toolName);
+          const existingAlias = aliases.find(
+            (a) => a.aliasField === unexpectedField && a.primaryField === canonicalField
+          );
+
+          const mismatchCount = existingAlias?.mismatchCount || 1;
+
+          // If mismatchCount exceeds 5, write to hot-patch registry for instant aliasing
+          if (mismatchCount >= 5) {
+            await parameterAliaser.writeToHotPatchRegistry(
+              toolName,
+              unexpectedField,
+              canonicalField,
+              mismatchCount
+            );
+
+            logger.info({
+              message: `[SchemaEvolution] Virtual Alias created: ${unexpectedField} -> ${canonicalField} for ${toolName} (count: ${mismatchCount})`,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      // Do not let schema evolution failures break the main execution flow
+      logger.error({
+        message: '[SchemaEvolution] Failed to handle schema evolution loop',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Extract field names from validation error messages
+   *
+   * Parses error messages to identify which fields were unexpected or missing
+   * Example: "Validation failed: unexpected fields: [user_notes], missing fields: [notes]"
+   */
+  private extractFieldsFromError(errorMessage: string, fieldType: "unexpected" | "missing"): string[] {
+    const pattern = new RegExp(`${fieldType}\\s+fields?:\\s*\\[([^\\]]+)\\]`, "i");
+    const match = errorMessage.match(pattern);
+
+    if (!match) return [];
+
+    return match[1]
+      .split(",")
+      .map((f) => f.trim())
+      .filter((f) => f.length > 0);
   }
 
   private createToolExecutor(executionId: string): WorkflowToolExecutor {

@@ -400,3 +400,19 @@ export function getToolsRequiringConfirmation(): ToolDefinition[] {
 export function listTools(): ToolDefinition[] {
   return Array.from(TOOLS.values());
 }
+
+/**
+ * Returns a formatted capabilities string for the system prompt.
+ * Includes a hard rule about having tool access.
+ */
+export function getToolCapabilitiesPrompt(): string {
+  const tools = listTools();
+  const toolDescriptions = tools.map(t => `- ${t.name}: ${t.description}`).join('\n');
+
+  return `You are a specialized Intention Engine. You HAVE the ability to request rides, book tables, check weather, send communications, and more using the provided tools. Never tell the user you lack these abilities if the tool is listed.
+
+YOUR ACTUAL CAPABILITIES:
+${toolDescriptions}
+
+IMPORTANT RULE: You MUST use the available tools when a user's request matches their capabilities. Do not provide manual instructions or claim you cannot perform actions that the tools enable.`;
+}

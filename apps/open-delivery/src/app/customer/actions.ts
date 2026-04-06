@@ -7,8 +7,11 @@ import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
 import { createPublicClient, http, type Hash, type Address, parseUnits, parseEther, formatUnits } from "viem";
 import { base } from "viem/chains";
-import { getCryptoPrices } from "@repo/shared/utils/crypto-price";
+import { getCryptoPrices, usdToCryptoBigIntWithSlippage } from "@repo/shared/utils/crypto-price";
 import { verifyTransaction, isValidTxHash, isValidAddress } from "@repo/shared/utils/web3-verification";
+
+// Global slippage tolerance for ETH-based payments (2% = 200 basis points)
+const SLIPPAGE_BPS = 200;
 
 export interface Vendor {
   id: string;
@@ -187,30 +190,14 @@ export async function placeRealOrder(
   let totalCrypto: string;
 
   if (paymentCurrency === "ETH") {
-    // Fetch live ETH price from CoinGecko (cached in Redis)
-    const { ETH: ethPriceUsd } = await getCryptoPrices();
-
-    if (ethPriceUsd <= 0) {
-      throw new Error("Failed to fetch ETH price from oracle");
-    }
-
-    // CRITICAL: Use BigInt math to avoid floating-point precision errors
-    // Convert USD to ETH using basis points (10000 = 1.0) for precision
-    // Formula: ETH_Wei = (USD_cents * 10^20) / (ETH_price_USD_scaled)
-    const BASIS_POINTS = 10_000n;
-    const ethPriceScaled = BigInt(Math.round(ethPriceUsd * Number(BASIS_POINTS)));
-    
-    // Convert fiat amounts to cents first (integer), then to Wei
-    // Multiplier: 10^20 to convert cents to Wei with price scaling (18 decimals + 2 for cents)
-    const CENTS_TO_WEI_MULTIPLIER = 10n ** 20n;
-    
+    // Use standardized BigInt conversion with slippage
     const subtotalCents = BigInt(Math.round(subtotalFiat * 100));
     const tipCents = BigInt(Math.round(tipFiat * 100));
     const totalCents = BigInt(Math.round(totalFiat * 100));
-    
-    subtotalCrypto = ((subtotalCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled).toString();
-    tipCrypto = ((tipCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled).toString();
-    totalCrypto = ((totalCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled).toString();
+
+    subtotalCrypto = (await usdToCryptoBigIntWithSlippage(subtotalCents, "ETH", SLIPPAGE_BPS)).toString();
+    tipCrypto = (await usdToCryptoBigIntWithSlippage(tipCents, "ETH", SLIPPAGE_BPS)).toString();
+    totalCrypto = (await usdToCryptoBigIntWithSlippage(totalCents, "ETH", SLIPPAGE_BPS)).toString();
   } else {
     // USDC: 6 decimals, assume 1 USD = 1 USDC
     subtotalCrypto = parseUnits(subtotalFiat.toFixed(6), 6).toString();
@@ -249,8 +236,7 @@ export async function placeRealOrder(
     }
 
     // Verify transaction on-chain using shared utility
-    // For ETH payments, apply slippage tolerance to handle price volatility
-    const SLIPPAGE_BPS = 200; // 2% slippage tolerance
+    // ETH slippage tolerance is handled via the global SLIPPAGE_BPS constant
 
     const verificationResult = await verifyTransaction({
       txHash: paymentParams.txHash as Hash,

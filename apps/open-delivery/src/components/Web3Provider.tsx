@@ -13,8 +13,9 @@ import { createStorage, fallback } from "wagmi";
 // Default to Base for low fees and fast transactions
 // ============================================================================
 
-const TREASURY_ADDRESS = process.env.NEXT_PUBLIC_TREASURY_WALLET_ADDRESS || "0x0000000000000000000000000000000000000000";
+const ESCROW_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || "0x0000000000000000000000000000000000000000";
 const USDC_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS;
+const PLATFORM_FEE_WALLET = process.env.NEXT_PUBLIC_PLATFORM_FEE_WALLET || "0x0000000000000000000000000000000000000000";
 
 // Supported chains for delivery payments
 const chains = [base, polygon, mainnet] as const;
@@ -87,7 +88,8 @@ function getQueryClient() {
 // ============================================================================
 
 interface Web3ContextType {
-  treasuryAddress: string;
+  escrowContractAddress: string;
+  platformFeeWallet: string;
   usdcContractAddress?: string | null;
   defaultChainId: number;
   supportedChainIds: number[];
@@ -114,10 +116,11 @@ interface Web3ProviderProps {
 
 export function Web3Provider({ children }: Web3ProviderProps) {
   const queryClient = getQueryClient();
-  const [treasuryAddress] = useState(TREASURY_ADDRESS);
+  const [escrowContractAddress] = useState(ESCROW_CONTRACT_ADDRESS);
 
   const web3ContextValue: Web3ContextType = {
-    treasuryAddress,
+    escrowContractAddress,
+    platformFeeWallet: PLATFORM_FEE_WALLET,
     usdcContractAddress: USDC_CONTRACT_ADDRESS,
     defaultChainId: defaultChain.id,
     supportedChainIds: chains.map((c) => c.id),

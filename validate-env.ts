@@ -192,22 +192,28 @@ const ENV_VAR_CONFIGS: EnvVarConfig[] = [
   // WEB3 / CRYPTO (Optional)
   // ============================================================================
   {
-    name: 'NEXT_PUBLIC_TREASURY_WALLET_ADDRESS',
+    name: 'NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS',
     required: false,
-    description: 'Treasury wallet address for crypto payments',
+    description: 'Non-custodial escrow smart contract address',
     pattern: /^0x[a-fA-F0-9]{40}$/,
+  },
+  {
+    name: 'NEXT_PUBLIC_PLATFORM_FEE_WALLET',
+    required: false,
+    description: 'Platform fee wallet address (receives fees directly from escrow)',
+    pattern: /^0x[a-fA-F0-9]{40}$/,
+  },
+  {
+    name: 'ESCROW_RESOLVER_PRIVATE_KEY',
+    required: false,
+    description: 'Escrow resolver private key (backend key for release() only, KEEP SECRET!)',
+    pattern: /^0x[a-fA-F0-9]{64}$/,
   },
   {
     name: 'BASE_RPC_URL',
     required: false,
     description: 'Base blockchain RPC URL',
     pattern: /^https?:\/\//,
-  },
-  {
-    name: 'TREASURY_PRIVATE_KEY',
-    required: false,
-    description: 'Treasury private key for automated payouts (KEEP SECRET!)',
-    pattern: /^0x[a-fA-F0-9]{64}$/,
   },
   {
     name: 'CRON_SECRET',

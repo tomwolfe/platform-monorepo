@@ -10,31 +10,16 @@
  * - Monitors pending transactions via cron job
  * - Detects transactions pending > 10 minutes
  * - Re-submits with 20% higher gas fee (replacement transaction)
- * - Uses TreasurySigner for gas fee management
+ * - Uses Escrow Resolver key for backend-initiated transactions
  *
  * Architecture:
  * 1. VerifyPendingCron detects stuck transactions
  * 2. GasPriceOracle fetches current optimal gas prices
  * 3. TransactionReplacer creates replacement transaction with higher gas
- * 4. TreasurySigner signs and broadcasts replacement
+ * 4. EscrowResolverWalletClient signs and broadcasts replacement
  *
- * Usage:
- * ```typescript
- * // In verify-pending cron job
- * const speedUpService = createTransactionSpeedUpService();
- * 
- * for (const order of pendingOrders) {
- *   const isStuck = await speedUpService.checkIfStuck(order.paymentTxHash);
- *   if (isStuck) {
- *     await speedUpService.speedUpTransaction({
- *       originalTxHash: order.paymentTxHash,
- *       orderId: order.id,
- *     });
- *   }
- * }
- * ```
- *
- * @package @repo/shared
+ * Note: Customer-initiated escrow deposits can only be speed-up by the
+ * customer's own wallet. This service handles backend-initiated transactions.
  */
 
 import { 
@@ -318,15 +303,15 @@ export class TransactionSpeedUpService {
         maxPriorityFeePerGas: newGasPrice / BigInt(2), // 50% of max fee as priority
       };
 
-      // Get treasury signer to broadcast replacement
-      const walletClient = await this.getTreasuryWalletClient();
-      
+      // Get escrow resolver wallet client to broadcast replacement
+      const walletClient = await this.getEscrowResolverWalletClient();
+
       if (!walletClient) {
         return {
           success: false,
           originalTxHash,
           gasBumpPercentage,
-          error: "Treasury signer not available",
+          error: "Escrow resolver wallet not available",
         };
       }
 
@@ -409,22 +394,31 @@ export class TransactionSpeedUpService {
   }
 
   /**
-   * Get treasury wallet client for signing transactions
+   * Get escrow resolver wallet client for signing transactions
+   *
+   * Note: In the non-custodial escrow model, this uses the escrow resolver key.
+   * Speed-ups for customer-initiated escrow deposits may require the customer's
+   * own wallet to rebroadcast. This client is primarily used for escrow contract
+   * interactions that might need gas bumps (e.g., tip releases).
    */
-  private async getTreasuryWalletClient() {
+  private async getEscrowResolverWalletClient() {
     try {
-      // Dynamically import treasury signer (Node.js only)
-      const { getTreasurySigner } = await import('../utils/treasury');
-      const signer = await getTreasurySigner();
-      if (!signer) return null;
+      const resolverPrivateKey = process.env.ESCROW_RESOLVER_PRIVATE_KEY;
+      if (!resolverPrivateKey) {
+        console.warn("[TransactionSpeedUp] ESCROW_RESOLVER_PRIVATE_KEY not configured");
+        return null;
+      }
+
+      const { privateKeyToAccount } = await import('viem/accounts');
+      const account = privateKeyToAccount(resolverPrivateKey as `0x${string}`);
 
       return createWalletClient({
         chain: base,
         transport: http(SPEED_UP_CONFIG.rpcUrls.base[0]),
-        account: signer.account,
+        account,
       });
     } catch (error) {
-      console.error("[TransactionSpeedUp] Failed to get treasury signer:", error);
+      console.error("[TransactionSpeedUp] Failed to get escrow resolver wallet client:", error);
       return null;
     }
   }

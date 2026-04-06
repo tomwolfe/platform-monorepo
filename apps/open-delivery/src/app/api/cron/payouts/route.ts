@@ -1,109 +1,85 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb, orders, orderItems, restaurants, drivers, eq, sql, and } from "@repo/database";
-import { createWalletClient, createPublicClient, http, fallback, parseAbi, parseUnits, type Address } from 'viem';
+import { createWalletClient, http, fallback, type Address, privateKeyToAccount } from 'viem';
 import { base } from 'viem/chains';
-import { ERC20_ABI } from '@repo/shared/utils/erc20-abi';
+import { ESCROW_ABI } from '@repo/shared/utils/escrow-abi';
 import { withCronAuth } from '@repo/shared';
-import { getCachedTreasurySigner, type TransactionData } from '@repo/shared/utils/treasury';
 
 /**
- * Payout Ledger Cron Endpoint
+ * Driver Tip Release Cron Endpoint
  *
- * SECURE PAYOUT DISTRIBUTION FOR OPEN-DELIVERY
+ * NON-CUSTODIAL P2P ESCROW MODEL
  *
- * Problem Solved:
- * - Previously, tips were sent directly to restaurant wallets (tip theft)
- * - Now all payments go to treasury, and this cron generates payout instructions
+ * How it works:
+ * - At checkout, the customer deposits funds into the escrow smart contract
+ * - The escrow contract instantly routes: subtotal -> restaurant, fee -> platform
+ * - The driver's tip is LOCKED in the escrow contract
+ * - This cron job calls releaseTip() to unlock and send the tip to the driver
  *
- * What it does:
- * 1. Queries all delivered orders with pending payout status
- * 2. Calculates split: restaurant (subtotal), driver (tip + base pay), platform (fee)
- * 3. EXECUTES batch payment execution via treasury wallet
- * 4. Saves payout tx hash for async verification (Vercel 10s timeout pattern)
- * 5. Marks orders as "processing" - verify-payouts cron confirms completion
+ * The backend NEVER holds customer funds. It only acts as an authorized resolver
+ * with permission to trigger the escrow's releaseTip() function.
  *
  * Security:
  * - Requires CRON_SECRET header for authentication
  * - Idempotent: won't process same order twice
- * - Audit trail: logs all payout calculations
+ * - The escrow resolver key CANNOT withdraw funds, only release tips
  *
  * Usage:
  * GET /api/cron/payouts
  * Headers:
  *   Authorization: Bearer <CRON_SECRET>
- *
- * Response:
- * {
- *   success: true,
- *   payouts: {
- *     restaurants: [{ address: string, amount: string, orderId: string }],
- *     drivers: [{ address: string, amount: string, orderId: string }],
- *     platform: { totalFees: string }
- *   },
- *   processedCount: number,
- *   executedCount: number
- * }
  */
-
-// Platform fee percentage (in basis points, 100 = 1%)
-const PLATFORM_FEE_BPS = parseInt(process.env.PLATFORM_FEE_BPS || "100", 10);
-
-// Base pay for drivers per delivery (in USDC cents)
-const DRIVER_BASE_PAY = parseInt(process.env.DRIVER_BASE_PAY_CENTS || "200", 10);
 
 async function getCronHandler(req: NextRequest) {
   try {
 
-    console.log('[Payout Cron] Starting payout processing...');
+    console.log('[Payout Cron] Starting driver tip release processing...');
 
     // ============================================================================
-    // STATE RECOVERY: Reset orphaned 'processing' payouts back to 'pending'
+    // STATE RECOVERY: Reset orphaned 'releasing' payouts back to 'locked'
     // If cron crashed mid-payout, these would be stuck forever otherwise
     // ============================================================================
     const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
-    
+
     const orphanedPayouts = await db
       .select({ id: orders.id })
       .from(orders)
       .where(
         and(
-          eq(orders.payoutStatus, 'processing'),
+          eq(orders.escrowStatus, 'releasing'),
           sql`${orders.payoutProcessedAt} < ${fifteenMinutesAgo}`
         )
       )
       .limit(50);
 
     if (orphanedPayouts.length > 0) {
-      console.log(`[Payout Cron] Recovering ${orphanedPayouts.length} orphaned payouts stuck in 'processing'`);
-      
+      console.log(`[Payout Cron] Recovering ${orphanedPayouts.length} orphaned payouts stuck in 'releasing'`);
+
       for (const order of orphanedPayouts) {
         await getDb().update(orders)
-          .set({ payoutStatus: 'pending', payoutProcessedAt: null })
+          .set({ escrowStatus: 'locked', payoutProcessedAt: null })
           .where(eq(orders.id, order.id));
       }
-      
+
       console.log(`[Payout Cron] Successfully recovered ${orphanedPayouts.length} orphaned payouts`);
     }
 
-    // Query all delivered orders with pending payout status
+    // Query all delivered orders with locked escrow (tip needs to be released)
     const deliveredOrders = await db
       .select({
         id: orders.id,
-        subtotal: orders.subtotal,
         tip: orders.tip,
-        total: orders.total,
         paymentCurrency: orders.paymentCurrency,
         paymentTxHash: orders.paymentTxHash,
         walletAddress: orders.walletAddress,
         storeId: orders.storeId,
         driverId: orders.driverId,
         deliveredAt: orders.deliveredAt,
-        payoutStatus: orders.payoutStatus,
+        escrowStatus: orders.escrowStatus,
         restaurant: {
           id: restaurants.id,
           name: restaurants.name,
           walletAddress: restaurants.walletAddress,
-          ownerEmail: restaurants.ownerEmail,
         },
         driver: {
           id: drivers.id,
@@ -117,7 +93,7 @@ async function getCronHandler(req: NextRequest) {
       .where(
         and(
           eq(orders.status, 'delivered'),
-          eq(orders.payoutStatus, 'pending'), // Only process pending payouts
+          eq(orders.escrowStatus, 'locked'), // Only process orders with locked tips
         )
       )
       .limit(100); // Process up to 100 orders per run
@@ -125,55 +101,31 @@ async function getCronHandler(req: NextRequest) {
     if (deliveredOrders.length === 0) {
       return NextResponse.json({
         success: true,
-        message: 'No pending payouts to process',
+        message: 'No locked tips to release',
         payouts: {
-          restaurants: [],
           drivers: [],
-          platform: { totalFees: '0' },
         },
         processedCount: 0,
       });
     }
 
-    // Calculate payouts
-    const restaurantPayouts: Array<{
-      address: string;
-      amount: string;
-      currency: string;
-      orderId: string;
-      restaurantName: string;
-    }> = [];
-
+    // Build driver payout list
     const driverPayouts: Array<{
       address: string;
-      amount: string;
+      tipAmount: string;
       currency: string;
       orderId: string;
       driverName: string;
-      breakdown: {
-        tip: string;
-        basePay: string;
-      };
     }> = [];
-
-    let totalPlatformFees = BigInt(0);
 
     for (const order of deliveredOrders) {
       try {
-        const subtotal = BigInt(order.subtotal || '0');
         const tip = BigInt(order.tip || '0');
-        const total = BigInt(order.total || '0');
         const currency = order.paymentCurrency || 'USDC';
 
         // Skip if no payment was made
         if (!order.paymentTxHash) {
           console.warn(`[Payout Cron] Order ${order.id} has no payment transaction, skipping`);
-          continue;
-        }
-
-        // Skip if restaurant has no wallet address
-        if (!order.restaurant?.walletAddress) {
-          console.warn(`[Payout Cron] Restaurant ${order.restaurant?.name} has no wallet address, skipping payout for order ${order.id}`);
           continue;
         }
 
@@ -183,61 +135,44 @@ async function getCronHandler(req: NextRequest) {
           continue;
         }
 
-        // Calculate platform fee (1% of subtotal)
-        const platformFee = (subtotal * BigInt(PLATFORM_FEE_BPS)) / BigInt(10000);
-        totalPlatformFees += platformFee;
-
-        // Restaurant receives subtotal minus platform fee
-        const restaurantAmount = subtotal - platformFee;
-
-        // Driver receives tip + base pay
-        const basePayCents = BigInt(DRIVER_BASE_PAY);
-        // Convert base pay to same units as tip (USDC cents = 6 decimals)
-        const basePay = currency === 'USDC' ? basePayCents * BigInt(10000) : basePayCents; // Adjust for token decimals
-        const driverAmount = tip + basePay;
-
-        // Add to payout lists
-        restaurantPayouts.push({
-          address: order.restaurant.walletAddress,
-          amount: restaurantAmount.toString(),
-          currency,
-          orderId: order.id,
-          restaurantName: order.restaurant.name || 'Unknown',
-        });
-
         driverPayouts.push({
           address: order.driver.walletAddress,
-          amount: driverAmount.toString(),
+          tipAmount: tip.toString(),
           currency,
           orderId: order.id,
           driverName: order.driver.fullName || 'Unknown',
-          breakdown: {
-            tip: tip.toString(),
-            basePay: basePay.toString(),
-          },
         });
 
-        console.log(`[Payout Cron] Calculated payouts for order ${order.id}:`, {
-          restaurant: { amount: restaurantAmount.toString(), address: order.restaurant.walletAddress },
-          driver: { amount: driverAmount.toString(), address: order.driver.walletAddress },
-          platformFee: platformFee.toString(),
-        });
+        console.log(`[Payout Cron] Queued tip release for order ${order.id}: ${tip.toString()} ${currency} -> ${order.driver.walletAddress}`);
       } catch (error) {
         console.error(`[Payout Cron] Error processing order ${order.id}:`, error);
-        // Continue processing other orders
       }
     }
 
     // ============================================================================
-    // EXECUTE PAYOUTS
-    // Actually send the crypto payments to restaurants and drivers
+    // EXECUTE TIP RELEASES
+    // Call escrow.releaseTip() to unlock and send tips to drivers
     // ============================================================================
 
     let executedCount = 0;
     const startTime = Date.now();
     const VERCEL_TIMEOUT_THRESHOLD = 8000; // Exit at 8 seconds to avoid 10s hard timeout
 
-    if (restaurantPayouts.length + driverPayouts.length > 0) {
+    if (driverPayouts.length > 0) {
+      // Check for escrow resolver key
+      const resolverPrivateKey = process.env.ESCROW_RESOLVER_PRIVATE_KEY;
+      if (!resolverPrivateKey) {
+        console.warn('[Payout Cron] ESCROW_RESOLVER_PRIVATE_KEY not set - tips queued but NOT released');
+        return NextResponse.json({
+          success: true,
+          message: `${driverPayouts.length} tips queued for release, but no resolver key configured`,
+          payouts: { drivers: driverPayouts },
+          processedCount: driverPayouts.length,
+          executedCount: 0,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
       try {
         // RPC URLs with fallbacks for resilience
         const BASE_RPC_URLS = [
@@ -246,141 +181,121 @@ async function getCronHandler(req: NextRequest) {
           "https://base.publicnode.com",
         ];
 
-        // Get treasury signer (abstracted key management - supports KMS migration)
-        const treasurySigner = getCachedTreasurySigner();
-        const treasuryAddress = treasurySigner.getAddress();
+        // Escrow contract address
+        const ESCROW_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS as Address;
+        if (!ESCROW_CONTRACT_ADDRESS) {
+          throw new Error('NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS not configured');
+        }
 
+        // Create wallet client with resolver key
+        const resolverAccount = privateKeyToAccount(resolverPrivateKey as `0x${string}`);
         const walletClient = createWalletClient({
-          account: treasuryAddress,
+          account: resolverAccount,
           chain: base,
           transport: fallback(BASE_RPC_URLS.map((url) => http(url))),
         });
 
-        console.log(`[Payout Cron] Executing ${restaurantPayouts.length + driverPayouts.length} payouts from ${treasuryAddress}`);
-
-        // USDC contract address on Base
-        const USDC_CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913') as Address;
+        console.log(`[Payout Cron] Releasing ${driverPayouts.length} tips via escrow from ${resolverAccount.address}`);
 
         /**
-         * Execute a single payout with timeout protection
+         * Execute a single tip release with timeout protection
          */
-        const executePayout = async (
-          payout: { address: string; amount: string; currency: string; orderId: string },
-          payoutType: 'restaurant' | 'driver'
+        const executeTipRelease = async (
+          payout: { address: string; tipAmount: string; currency: string; orderId: string }
         ): Promise<boolean> => {
           // Check if we're approaching Vercel timeout
           if (Date.now() - startTime > VERCEL_TIMEOUT_THRESHOLD) {
-            console.warn(`[Payout Cron] Approaching Vercel timeout, skipping ${payoutType} payout ${payout.orderId}`);
+            console.warn(`[Payout Cron] Approaching Vercel timeout, skipping tip release ${payout.orderId}`);
             return false;
           }
 
           try {
-            // Mark as processing first (idempotency)
+            // Mark as releasing first (idempotency)
             await getDb().update(orders)
-              .set({ payoutStatus: 'processing' })
+              .set({ escrowStatus: 'releasing' })
               .where(eq(orders.id, payout.orderId));
 
-            // Execute USDC transfer
+            // Call escrow.releaseTip(orderId, driver)
             const hash = await walletClient.writeContract({
-              address: USDC_CONTRACT_ADDRESS,
-              abi: ERC20_ABI,
-              functionName: 'transfer',
-              args: [payout.address as Address, BigInt(payout.amount)],
+              address: ESCROW_CONTRACT_ADDRESS,
+              abi: ESCROW_ABI,
+              functionName: 'releaseTip',
+              args: [payout.orderId, payout.address as Address],
             });
 
-            console.log(`[Payout Cron] ${payoutType} payout submitted: ${payout.orderId} -> ${payout.address} (${payout.amount} ${payout.currency}) tx: ${hash}`);
+            console.log(`[Payout Cron] Tip release submitted: ${payout.orderId} -> ${payout.address} (${payout.tipAmount} ${payout.currency}) tx: ${hash}`);
 
-            // CRITICAL FIX: Do NOT wait for transaction receipt (Vercel 10s timeout)
-            // Instead, save the tx hash and let verify-payouts cron confirm asynchronously
+            // Save the tx hash and mark as released
             await getDb().update(orders)
               .set({
+                escrowStatus: 'released',
                 payoutTxHash: hash,
+                payoutProcessedAt: new Date(),
               })
               .where(eq(orders.id, payout.orderId));
 
             return true;
           } catch (error) {
-            console.error(`[Payout Cron] Failed to execute ${payoutType} payout ${payout.orderId}:`, error);
+            console.error(`[Payout Cron] Failed to release tip for ${payout.orderId}:`, error);
             // Mark as failed
             await getDb().update(orders)
-              .set({ payoutStatus: 'failed' })
+              .set({ escrowStatus: 'failed' })
               .where(eq(orders.id, payout.orderId));
             return false;
           }
         };
 
-        // Combine all payouts into a single array for batch processing
-        const allPayouts = [
-          ...restaurantPayouts.map(p => ({ ...p, type: 'restaurant' as const })),
-          ...driverPayouts.map(p => ({ ...p, type: 'driver' as const })),
-        ];
-
         // Process in batches of 5 to avoid overwhelming the RPC and manage timeout risk
         const BATCH_SIZE = 5;
         const batches = [];
-        for (let i = 0; i < allPayouts.length; i += BATCH_SIZE) {
-          batches.push(allPayouts.slice(i, i + BATCH_SIZE));
+        for (let i = 0; i < driverPayouts.length; i += BATCH_SIZE) {
+          batches.push(driverPayouts.slice(i, i + BATCH_SIZE));
         }
 
-        console.log(`[Payout Cron] Processing ${allPayouts.length} payouts in ${batches.length} batches of ${BATCH_SIZE}`);
+        console.log(`[Payout Cron] Processing ${driverPayouts.length} tip releases in ${batches.length} batches of ${BATCH_SIZE}`);
 
         // Execute batches sequentially, but payouts within each batch in parallel
         for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
           const batch = batches[batchIndex];
-          
+
           // Check timeout before starting batch
           if (Date.now() - startTime > VERCEL_TIMEOUT_THRESHOLD) {
             console.warn(`[Payout Cron] Approaching Vercel timeout before batch ${batchIndex + 1}, stopping execution`);
             break;
           }
 
-          console.log(`[Payout Cron] Executing batch ${batchIndex + 1}/${batches.length} (${batch.length} payouts)`);
+          console.log(`[Payout Cron] Executing batch ${batchIndex + 1}/${batches.length} (${batch.length} tip releases)`);
 
           // Execute batch in parallel with Promise.allSettled
           const results = await Promise.allSettled(
-            batch.map(payout => executePayout(payout, payout.type))
+            batch.map(payout => executeTipRelease(payout))
           );
 
           // Count successful executions
           const batchSuccesses = results.filter(
             r => r.status === 'fulfilled' && r.value === true
           ).length;
-          
+
           executedCount += batchSuccesses;
 
           console.log(`[Payout Cron] Batch ${batchIndex + 1} completed: ${batchSuccesses}/${batch.length} successful`);
         }
 
-        console.log(`[Payout Cron] Successfully executed ${executedCount} payouts`);
+        console.log(`[Payout Cron] Successfully released ${executedCount} tips`);
       } catch (error) {
-        console.error('[Payout Cron] Critical error during payout execution:', error);
+        console.error('[Payout Cron] Critical error during tip release execution:', error);
       }
-    } else if (!process.env.TREASURY_PRIVATE_KEY) {
-      console.warn('[Payout Cron] TREASURY_PRIVATE_KEY not set - payouts calculated but NOT executed');
-      console.warn('[Payout Cron] Set TREASURY_PRIVATE_KEY in environment to enable automatic payouts');
     }
 
     const result = {
       success: true,
-      message: `Processed ${restaurantPayouts.length + driverPayouts.length} payouts, executed ${executedCount}`,
+      message: `Processed ${driverPayouts.length} tip releases, executed ${executedCount}`,
       payouts: {
-        restaurants: restaurantPayouts,
         drivers: driverPayouts,
-        platform: {
-          totalFees: totalPlatformFees.toString(),
-          feeBps: PLATFORM_FEE_BPS,
-        },
       },
-      processedCount: restaurantPayouts.length + driverPayouts.length,
+      processedCount: driverPayouts.length,
       executedCount,
       timestamp: new Date().toISOString(),
-      // Metadata for batch payment execution
-      batchMetadata: {
-        totalRestaurantPayouts: restaurantPayouts.length,
-        totalDriverPayouts: driverPayouts.length,
-        estimatedGasCost: '0', // Calculate based on current gas prices
-        recommendedExecutionTime: new Date(Date.now() + 3600000).toISOString(), // 1 hour from now
-      },
     };
 
     console.log('[Payout Cron] Completed successfully:', result);

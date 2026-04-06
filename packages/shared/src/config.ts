@@ -66,10 +66,12 @@ const BaseConfigSchema = z.object({
   // Email Service
   RESEND_API_KEY: z.string().optional(),
 
-  // Web3 / Blockchain
-  TREASURY_PRIVATE_KEY: z.string().optional(),
+  // Web3 / Blockchain - Non-custodial escrow model
+  ESCROW_RESOLVER_PRIVATE_KEY: z.string().optional(),
   BASE_RPC_URL: z.string().url().optional(),
   NEXT_PUBLIC_USDC_CONTRACT_ADDRESS: z.string().optional(),
+  NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS: z.string().optional(),
+  NEXT_PUBLIC_PLATFORM_FEE_WALLET: z.string().optional(),
 
   // Platform / Fees
   CRON_SECRET: z.string().optional(),
@@ -458,20 +460,21 @@ export class AppConfig {
   // ========================================================================
 
   /**
-   * Get treasury private key for Web3 payouts
+   * Get escrow resolver private key for Web3 payouts
    *
    * SECURITY: In production, this throws a fatal error if the key is missing.
-   * This prevents the system from running with insecure defaults.
+   * This key only has permission to call release() on the escrow contract,
+   * not to withdraw funds.
    */
-  static getTreasuryPrivateKey(): string | undefined {
+  static getEscrowResolverPrivateKey(): string | undefined {
     const config = this.init();
-    const key = config.TREASURY_PRIVATE_KEY;
+    const key = config.ESCROW_RESOLVER_PRIVATE_KEY;
 
     // In production, fail fast if key is missing
     if (!key && process.env.NODE_ENV === 'production') {
       throw new Error(
-        'CRITICAL: TREASURY_PRIVATE_KEY is not configured. ' +
-        'This is a required security credential for Web3 payouts. ' +
+        'CRITICAL: ESCROW_RESOLVER_PRIVATE_KEY is not configured. ' +
+        'This is a required security credential for Web3 escrow resolution. ' +
         'Set a strong, random value in your production environment variables.'
       );
     }
@@ -493,6 +496,22 @@ export class AppConfig {
   static getUsdcContractAddress(): string | undefined {
     const config = this.init();
     return config.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS;
+  }
+
+  /**
+   * Get escrow contract address for non-custodial payments
+   */
+  static getEscrowContractAddress(): string | undefined {
+    const config = this.init();
+    return config.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS;
+  }
+
+  /**
+   * Get platform fee wallet address
+   */
+  static getPlatformFeeWallet(): string | undefined {
+    const config = this.init();
+    return config.NEXT_PUBLIC_PLATFORM_FEE_WALLET;
   }
 
   // ========================================================================

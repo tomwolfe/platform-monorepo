@@ -112,7 +112,7 @@ import {
   isValidAddress,
   isValidTxHash,
   shortenAddress,
-  getTreasuryAddress,
+  getEscrowAddress,
   createPaymentRequest,
   getPublicClient,
   TOKEN_DECIMALS,
@@ -164,7 +164,7 @@ function createMockReceipt(overrides?: Partial<any>) {
     status: 'success',
     blockNumber: BigInt(1000000),
     from: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1' as Address,
-    to: '0x0000000000000000000000000000000000000000' as Address, // Match default TREASURY_ADDRESS
+    to: '0x0000000000000000000000000000000000000000' as Address, // Match default ESCROW_CONTRACT_ADDRESS
     logs: [],
     ...overrides,
   };
@@ -184,6 +184,24 @@ function createMockTransaction(overrides?: Partial<any>) {
 }
 
 /**
+ * Create mock OrderDeposited event log for escrow contract
+ */
+function createMockOrderDepositedLog(overrides?: Partial<any>) {
+  return {
+    eventName: 'OrderDeposited',
+    args: {
+      orderId: 'order-123',
+      customer: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1' as Address,
+      restaurant: '0x2234567890123456789012345678901234567890' as Address,
+      subtotal: BigInt('10000000'), // 10 USDC
+      tip: BigInt('2000000'), // 2 USDC
+      platformFee: BigInt('100000'), // 0.1 USDC
+    },
+    ...overrides,
+  };
+}
+
+/**
  * Create mock Transfer event log for ERC-20 tokens
  */
 function createMockTransferLog(overrides?: Partial<any>) {
@@ -191,7 +209,7 @@ function createMockTransferLog(overrides?: Partial<any>) {
     eventName: 'Transfer',
     args: {
       from: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1' as Address,
-      to: '0x0000000000000000000000000000000000000000' as Address, // Match default TREASURY_ADDRESS
+      to: '0x0000000000000000000000000000000000000000' as Address, // Match default ESCROW_CONTRACT_ADDRESS
       value: BigInt('10000000'), // 10 USDC (6 decimals)
     },
     ...overrides,
@@ -495,6 +513,86 @@ describe('Web3 Verification', () => {
       });
 
       expect(result.success).toBe(false);
+    });
+  });
+
+  // ============================================================================
+  // verifyTransaction: Escrow Payments
+  // ============================================================================
+
+  describe('verifyTransaction - Escrow Payments', () => {
+    it('should verify valid escrow deposit via OrderDeposited event', async () => {
+      mockProcessedTxsFindFirst.mockResolvedValue(null);
+
+      const mockClient = setupMockClient();
+      mockClient.getTransactionReceipt.mockResolvedValue(
+        createMockReceipt({
+          logs: [createMockOrderDepositedLog()],
+        })
+      );
+      mockClient.getTransaction.mockResolvedValue(
+        createMockTransaction({ value: BigInt('12100000') }) // subtotal + tip + fee
+      );
+      mockClient.getBlockNumber.mockResolvedValue(BigInt(1000003));
+      mockVerifyMessage.mockResolvedValue(true);
+      mockParseEventLogs.mockReturnValue([createMockOrderDepositedLog()]);
+
+      const result = await verifyTransaction({
+        txHash: '0x1234567890123456789012345678901234567890123456789012345678901234' as Hash,
+        expectedValue: BigInt('12100000'),
+        orderId: 'order-123',
+        signature: '0xsignature' as Hex,
+        walletAddress: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1' as Address,
+        isEscrowPayment: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.receipt?.value).toBe(BigInt('12100000')); // 10 + 2 + 0.1 USDC
+      expect(mockParseEventLogs).toHaveBeenCalled();
+    });
+
+    it('should reject escrow transaction with no OrderDeposited event', async () => {
+      mockProcessedTxsFindFirst.mockResolvedValue(null);
+
+      const mockClient = setupMockClient();
+      mockClient.getTransactionReceipt.mockResolvedValue(createMockReceipt({ logs: [] }));
+      mockParseEventLogs.mockReturnValue([]);
+
+      const result = await verifyTransaction({
+        txHash: '0x1234567890123456789012345678901234567890123456789012345678901234' as Hash,
+        expectedValue: BigInt('12100000'),
+        orderId: 'order-123',
+        signature: '0xsignature' as Hex,
+        walletAddress: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1' as Address,
+        isEscrowPayment: true,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('No OrderDeposited event found');
+    });
+
+    it('should reject escrow transaction with mismatched orderId', async () => {
+      mockProcessedTxsFindFirst.mockResolvedValue(null);
+
+      const mockClient = setupMockClient();
+      mockClient.getTransactionReceipt.mockResolvedValue(
+        createMockReceipt({
+          logs: [createMockOrderDepositedLog({ orderId: 'wrong-order-id' })],
+        })
+      );
+      mockParseEventLogs.mockReturnValue([createMockOrderDepositedLog({ orderId: 'wrong-order-id' })]);
+
+      const result = await verifyTransaction({
+        txHash: '0x1234567890123456789012345678901234567890123456789012345678901234' as Hash,
+        expectedValue: BigInt('12100000'),
+        orderId: 'order-123', // Different from event
+        signature: '0xsignature' as Hex,
+        walletAddress: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1' as Address,
+        isEscrowPayment: true,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('No OrderDeposited event found');
     });
   });
 

@@ -14,13 +14,14 @@ export const runtime = 'nodejs';
  * Crypto Payment Verification Endpoint
  *
  * Verifies on-chain transactions for restaurant reservation deposits.
- * Replaces the Stripe webhook with zero-trust blockchain verification.
+ * Direct P2P model: payments go directly to restaurant wallet (not escrow).
  *
  * CRITICAL SECURITY FIXES:
  * 1. Verifies transaction data contains reservation ID (prevents spoofing)
  * 2. Dynamic price oracle integration with slippage buffer
  * 3. Supports both USDC and ETH payments
  * 4. SECURITY: expectedAmount is NOWHERE trusted from client - always fetched from DB
+ * 5. Enforces restaurant.walletAddress exists before confirming
  *
  * Expected payload:
  * {
@@ -87,6 +88,14 @@ async function postHandler(req: NextRequest) {
   // SERVER-SIDE CALCULATION: Never trust client for financial data
   // ============================================================================
 
+  // Enforce restaurant wallet address exists (direct P2P requirement)
+  if (!reservation.restaurant?.walletAddress) {
+    return NextResponse.json(
+      { message: 'Restaurant wallet address not configured - cannot accept P2P payment' },
+      { status: 400 }
+    );
+  }
+
   // Fetch deposit amount from database (in USD cents)
   const depositUsdCents = reservation.depositAmount || 0;
   const depositUsd = depositUsdCents / 100; // Convert cents to dollars
@@ -113,13 +122,16 @@ async function postHandler(req: NextRequest) {
   }
 
   // Zero-Trust On-Chain Verification using shared utility
+  // isEscrowPayment=false because TableStack uses direct P2P to restaurant
   const { verifyTransaction } = await import('@repo/shared/utils/web3-verification');
 
   const verificationResult = await verifyTransaction({
     txHash: txHash as `0x${string}`,
     expectedValue,
-    expectedRecipient: reservation.restaurant.walletAddress as `0x${string}` | undefined,
+    expectedRecipient: reservation.restaurant.walletAddress as `0x${string}`,
     paymentCurrency,
+    orderId: targetReservationId,
+    isEscrowPayment: false, // Direct P2P to restaurant wallet
   });
 
   if (!verificationResult.success) {

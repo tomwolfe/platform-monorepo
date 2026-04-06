@@ -29,6 +29,13 @@
       "when": 1774119491763,
       "tag": "0003_nosy_sinister_six",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1743811200000,
+      "tag": "0008_escrow_to_non_custodial",
+      "breakpoints": true
     }
   ]
 }

@@ -32,7 +32,7 @@ describe("Transaction Verification", () => {
 
   const mockTxHash = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef" as Hash;
   const mockWalletAddress = "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb" as Address;
-  const mockTreasuryAddress = "0x1234567890123456789012345678901234567890" as Address;
+  const mockEscrowAddress = "0x1234567890123456789012345678901234567890" as Address;
 
   describe("verifyOnChainTransaction", () => {
     it("should verify successful transaction with correct value", async () => {
@@ -43,12 +43,12 @@ describe("Transaction Verification", () => {
         status: "success",
         blockNumber: BigInt(1000),
         from: mockWalletAddress,
-        to: mockTreasuryAddress,
+        to: mockEscrowAddress,
       });
 
       mockGetTransaction.mockResolvedValue({
         value: BigInt("10000000"), // 10 USDC
-        to: mockTreasuryAddress,
+        to: mockEscrowAddress,
         from: mockWalletAddress,
       });
 
@@ -86,7 +86,7 @@ describe("Transaction Verification", () => {
 
       mockGetTransaction.mockResolvedValue({
         value: BigInt("5000000"), // Wrong amount
-        to: mockTreasuryAddress,
+        to: mockEscrowAddress,
       });
 
       expect(mockGetTransactionReceipt).toBeDefined();
@@ -101,7 +101,7 @@ describe("Transaction Verification", () => {
 
       mockGetTransaction.mockResolvedValue({
         value: BigInt("10000000"),
-        to: mockTreasuryAddress,
+        to: mockEscrowAddress,
       });
 
       mockGetBlockNumber.mockResolvedValue(BigInt(1001)); // Only 1 confirmation
@@ -109,7 +109,7 @@ describe("Transaction Verification", () => {
       expect(mockGetTransactionReceipt).toBeDefined();
     });
 
-    it("should fail if recipient doesn't match treasury", async () => {
+    it("should fail if recipient doesn't match escrow contract", async () => {
       mockGetTransactionReceipt.mockResolvedValue({
         status: "success",
         blockNumber: BigInt(1000),
@@ -118,7 +118,7 @@ describe("Transaction Verification", () => {
 
       mockGetTransaction.mockResolvedValue({
         value: BigInt("10000000"),
-        to: "0xWrongTreasury" as Address,
+        to: "0xWrongEscrow" as Address,
       });
 
       mockGetBlockNumber.mockResolvedValue(BigInt(1010));

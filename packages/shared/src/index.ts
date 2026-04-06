@@ -229,6 +229,7 @@ export type {
 // Do NOT export these from main index - they require Node.js crypto
 // Import directly: import { ... } from '@repo/shared/utils/treasury'
 export * from './utils/erc20-abi';
+export * from './utils/escrow-abi';
 export * from './utils/crypto'; // NEW: Timing-safe comparison and secure random generation
 // Note: api-error exports some conflicting names (getErrorStatusCode, withApiErrorHandler)
 // Export only non-conflicting items from utils/api-error

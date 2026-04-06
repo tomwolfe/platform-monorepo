@@ -7,6 +7,7 @@ import { base } from "viem/chains";
 import { Loader2, CheckCircle, AlertCircle, ArrowRight, Coins, Shield, Wallet } from "lucide-react";
 import { useWeb3 } from "./Web3Provider";
 import { ERC20_ABI } from "@repo/shared/utils/erc20-abi";
+import { ESCROW_ABI } from "@repo/shared/utils/escrow-abi";
 
 interface CartItem {
   id: string;
@@ -20,35 +21,38 @@ interface CryptoCheckoutProps {
   tip: number;
   deliveryAddress: string;
   selectedVendor: { id: string; name: string } | null;
-  restaurantWalletAddress?: string | null; // Deprecated: all payments go to treasury for proper tip routing
+  restaurantWalletAddress: string; // REQUIRED: Direct P2P escrow routing needs restaurant address
   onCheckoutComplete: (result: { orderId: string; txHash?: string; signature?: `0x${string}` }) => void;
   onError: (error: string) => void;
   onCancel: () => void;
   orderId?: string; // Order ID to bind to transaction (prevents spoofing)
+  platformFeeBps?: number; // Platform fee in basis points (default: 100 = 1%)
 }
 
 /**
  * CryptoCheckout Component
  *
- * Web3-native checkout flow with CRITICAL SECURITY FIXES:
- * 1. Real USDC transfers via ERC20 contract (not fake ETH transfers)
- * 2. All payments route to treasury (prevents tip theft)
+ * Non-custodial P2P escrow checkout flow:
+ * 1. Real USDC/ETH deposits via Escrow Contract (not treasury)
+ * 2. Funds split instantly: restaurant gets subtotal, platform gets fee, tip locked
  * 3. Order ID bound to transaction data (prevents spoofing)
  * 4. Dynamic ETH pricing from oracle (not hardcoded)
+ * 5. Signature-based wallet ownership verification
  */
 export function CryptoCheckout({
   cart,
   tip,
   deliveryAddress,
   selectedVendor,
-  restaurantWalletAddress, // Deprecated but kept for backwards compatibility
+  restaurantWalletAddress,
   onCheckoutComplete,
   onError,
   onCancel,
   orderId,
+  platformFeeBps = 100, // Default 1%
 }: CryptoCheckoutProps) {
   const { address, chain } = useAccount();
-  const { treasuryAddress, defaultChainId, usdcContractAddress } = useWeb3();
+  const { escrowContractAddress, platformFeeWallet, defaultChainId, usdcContractAddress } = useWeb3();
 
   // CRITICAL: Signature hook for front-running prevention
   const { signMessage, data: signature, error: signatureError, isPending: isSigning } = useSignMessage();
@@ -63,18 +67,22 @@ export function CryptoCheckout({
   const subtotalFiat = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const totalFiat = subtotalFiat + tip;
 
+  // Calculate platform fee (in USD cents)
+  const platformFeeFiat = (subtotalFiat * platformFeeBps) / 10000;
+
   // CRITICAL: Convert to USDC (6 decimals) using integer cents to avoid floating-point errors
   // 1 USD = 1 USDC, so we convert USD -> cents -> atomic USDC units
   // Formula: USDC_atomic = (USD_cents * 10^6) / 100 = USD_cents * 10^4
   const USDC_CENTS_MULTIPLIER = 10_000n; // Convert cents to USDC atomic units
-  
+
   const subtotalCents = BigInt(Math.round(subtotalFiat * 100));
   const tipCents = BigInt(Math.round(tip * 100));
-  const totalCents = BigInt(Math.round(totalFiat * 100));
-  
-  const totalUSDC = totalCents * USDC_CENTS_MULTIPLIER;
+  const platformFeeCents = BigInt(Math.round(platformFeeFiat * 100));
+  const totalCents = subtotalCents + tipCents; // Customer pays subtotal + tip (platform fee is separate)
+
   const subtotalUSDC = subtotalCents * USDC_CENTS_MULTIPLIER;
   const tipUSDC = tipCents * USDC_CENTS_MULTIPLIER;
+  const platformFeeUSDC = platformFeeCents * USDC_CENTS_MULTIPLIER;
 
   // Transaction state - added "signing" step for signature before transaction
   const [step, setStep] = useState<"review" | "signing" | "sending" | "confirming" | "completed" | "error">("review");
@@ -103,26 +111,28 @@ export function CryptoCheckout({
   // Formula: ETH_Wei = (USD_cents * 10^20) / (ETH_price_USD_scaled)
   const BASIS_POINTS = 10_000n;
   const ethPriceScaled = BigInt(Math.round(ethPrice * Number(BASIS_POINTS)));
-  
+
   // Convert fiat amounts to cents first (integer), then to Wei
   // Multiplier: 10^20 to convert cents to Wei with price scaling (18 decimals + 2 for cents)
   const CENTS_TO_WEI_MULTIPLIER = 10n ** 20n;
-  
+
   // Calculate ETH amounts in Wei using BigInt division
-  const subtotalEthWei = paymentCurrency === "ETH" 
-    ? (subtotalCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled 
+  const subtotalEthWei = paymentCurrency === "ETH"
+    ? (subtotalCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
     : BigInt(0);
   const tipEthWei = paymentCurrency === "ETH"
     ? (tipCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
     : BigInt(0);
-  const totalEthWei = paymentCurrency === "ETH" 
-    ? (totalCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled 
+  const platformFeeEthWei = paymentCurrency === "ETH"
+    ? (platformFeeCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
     : BigInt(0);
-  
+  const totalEthWei = paymentCurrency === "ETH"
+    ? ((subtotalCents + tipCents + platformFeeCents) * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
+    : BigInt(0);
+
   // Calculate display ETH amounts (for UI only, not for transactions)
-  const { formatUnits } = require("viem");
-  const totalEth = paymentCurrency === "ETH" 
-    ? parseFloat(formatUnits(totalEthWei, 18)) 
+  const totalEth = paymentCurrency === "ETH"
+    ? parseFloat(formatUnits(totalEthWei, 18))
     : 0;
 
   // Send transaction hook (for native ETH)
@@ -164,38 +174,46 @@ export function CryptoCheckout({
   useEffect(() => {
     if (step === "sending" && address) {
       try {
-        // CRITICAL FIX 1: ALL payments go to treasury (not restaurant wallet)
-        // This ensures tips are not stolen and can be properly distributed
-        const recipient = treasuryAddress;
+        // Non-custodial escrow: all payments go to the escrow contract
+        const escrowAddress = escrowContractAddress as Address;
 
-        if (!recipient) {
-          throw new Error("No payment recipient configured");
+        if (!escrowAddress || escrowAddress === "0x0000000000000000000000000000000000000000") {
+          throw new Error("Escrow contract address not configured");
+        }
+
+        // Restaurant wallet is required for P2P routing
+        if (!restaurantWalletAddress) {
+          throw new Error("Restaurant wallet address is required for P2P escrow routing");
         }
 
         if (paymentCurrency === "USDC") {
-          // CRITICAL FIX 2: Real USDC transfer via ERC20 contract
+          // ERC20 approval + escrow deposit
           if (!usdcContractAddress) {
             throw new Error("USDC contract address not configured");
           }
 
+          // Call escrow.deposit(orderId, restaurant, subtotal, tip, platformFee)
+          // For USDC, the contract will pull funds via approve/transferFrom
           writeContract({
-            address: usdcContractAddress as Address,
-            abi: ERC20_ABI,
-            functionName: "transfer",
-            args: [recipient as Address, totalUSDC],
+            address: escrowAddress,
+            abi: ESCROW_ABI,
+            functionName: "deposit",
+            args: [
+              orderId || "",
+              restaurantWalletAddress as Address,
+              subtotalUSDC,
+              tipUSDC,
+              platformFeeUSDC,
+            ],
             chainId: defaultChainId,
           });
         } else {
-          // CRITICAL FIX 3: Correct ETH conversion (not 30 ETH for $30 burger)
-          // totalEthWei already calculated correctly above
-          
-          // CRITICAL FIX 4: Bind order ID to transaction data (prevents spoofing)
-          const txData = orderId ? stringToHex(orderId) : undefined;
-
+          // Native ETH deposit to escrow
+          // Send totalEthWei (subtotal + tip + platformFee) with deposit call
           sendTransaction({
-            to: recipient as Address,
+            to: escrowAddress,
             value: totalEthWei,
-            data: txData,
+            data: orderId ? stringToHex(orderId) : undefined,
             chainId: defaultChainId,
           });
         }
@@ -207,8 +225,11 @@ export function CryptoCheckout({
   }, [
     step,
     address,
-    treasuryAddress,
-    totalUSDC,
+    escrowContractAddress,
+    restaurantWalletAddress,
+    subtotalUSDC,
+    tipUSDC,
+    platformFeeUSDC,
     totalEthWei,
     paymentCurrency,
     usdcContractAddress,
@@ -247,7 +268,8 @@ export function CryptoCheckout({
 
     if (paymentCurrency === "USDC") {
       if (!usdcBalance) return false;
-      return usdcBalance >= totalUSDC;
+      const totalUSDCRequired = subtotalUSDC + tipUSDC + platformFeeUSDC;
+      return usdcBalance >= totalUSDCRequired;
     } else {
       const balanceEth = parseFloat(formatUnits(balance.value, balance.decimals));
       return balanceEth >= totalEth;
@@ -342,9 +364,9 @@ export function CryptoCheckout({
             <div className="text-right">
               <p className="font-medium">${subtotalFiat.toFixed(2)}</p>
               <p className="text-xs text-gray-400">
-                {paymentCurrency === "USDC" 
+                {paymentCurrency === "USDC"
                   ? `${formatUnits(subtotalUSDC, 6)} USDC`
-                  : `≈ ${totalEth.toFixed(6)} ETH`}
+                  : `≈ ${formatUnits(subtotalEthWei, 18)} ETH`}
               </p>
             </div>
           </div>
@@ -355,17 +377,28 @@ export function CryptoCheckout({
               <p className="text-xs text-gray-400">
                 {paymentCurrency === "USDC"
                   ? `${formatUnits(tipUSDC, 6)} USDC`
-                  : `≈ ${(tip / ethPrice).toFixed(6)} ETH`}
+                  : `≈ ${formatUnits(tipEthWei, 18)} ETH`}
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-500">Platform Fee</span>
+            <div className="text-right">
+              <p className="font-medium text-gray-600">${platformFeeFiat.toFixed(2)}</p>
+              <p className="text-xs text-gray-400">
+                {paymentCurrency === "USDC"
+                  ? `${formatUnits(platformFeeUSDC, 6)} USDC`
+                  : `≈ ${formatUnits(platformFeeEthWei, 18)} ETH`}
               </p>
             </div>
           </div>
           <div className="border-t pt-2 flex justify-between items-center">
             <span className="font-bold text-gray-900">Total</span>
             <div className="text-right">
-              <p className="text-xl font-black text-blue-600">${totalFiat.toFixed(2)}</p>
+              <p className="text-xl font-black text-blue-600">${(totalFiat + platformFeeFiat).toFixed(2)}</p>
               <p className="text-xs text-gray-400">
                 {paymentCurrency === "USDC"
-                  ? `≈ ${formatUnits(totalUSDC, 6)} USDC`
+                  ? `≈ ${formatUnits(subtotalUSDC + tipUSDC + platformFeeUSDC, 6)} USDC`
                   : `≈ ${totalEth.toFixed(6)} ETH (@ $${ethPrice.toLocaleString()})`}
               </p>
             </div>
@@ -377,11 +410,11 @@ export function CryptoCheckout({
           <div className="flex items-start gap-3">
             <Shield className="h-5 w-5 text-blue-600 mt-0.5" />
             <div className="flex-1">
-              <p className="text-sm font-semibold text-gray-900">Secure On-Chain Payment</p>
+              <p className="text-sm font-semibold text-gray-900">Non-Custodial P2P Escrow</p>
               <p className="text-xs text-gray-600 mt-1">
-                Your payment is sent to the protocol treasury wallet where it is held in escrow.
-                Funds are split between the restaurant, driver (including tip), and platform fee.
-                This ensures proper distribution and prevents tip theft.
+                Your payment is sent directly to a smart contract escrow—no central wallet holds your funds.
+                The restaurant receives the food subtotal instantly, the platform fee routes to the protocol,
+                and your tip is locked in escrow until delivery is confirmed.
               </p>
             </div>
           </div>

@@ -19,7 +19,10 @@ import type { Hash, Address, TransactionReceipt, Transaction } from "viem";
 // ============================================================================
 
 export const MOCK_ADDRESSES = {
-  TREASURY: "0x1234567890123456789012345678901234567890" as Address,
+  ESCROW_CONTRACT: "0x1234567890123456789012345678901234567890" as Address,
+  RESTAURANT: "0x2234567890123456789012345678901234567890" as Address,
+  PLATFORM_FEE_WALLET: "0x3234567890123456789012345678901234567890" as Address,
+  DRIVER: "0x4234567890123456789012345678901234567890" as Address,
   USER_1: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1" as Address,
   USER_2: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb2" as Address,
   USER_3: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb3" as Address,
@@ -49,7 +52,7 @@ export function createMockReceipt(overrides?: Partial<TransactionReceipt>): Tran
     transactionHash: MOCK_TX_HASHES.SUCCESS,
     transactionIndex: 0,
     from: MOCK_ADDRESSES.USER_1,
-    to: MOCK_ADDRESSES.TREASURY,
+    to: MOCK_ADDRESSES.ESCROW_CONTRACT,
     status: "success",
     type: "0x2",
     cumulativeGasUsed: BigInt(100000),
@@ -69,7 +72,7 @@ export function createMockTransaction(overrides?: Partial<Transaction>): Transac
   return {
     hash: MOCK_TX_HASHES.SUCCESS,
     from: MOCK_ADDRESSES.USER_1,
-    to: MOCK_ADDRESSES.TREASURY,
+    to: MOCK_ADDRESSES.ESCROW_CONTRACT,
     value: BigInt("10000000"), // 10 USDC
     gas: BigInt(21000),
     gasPrice: BigInt(1000000000),
@@ -82,6 +85,55 @@ export function createMockTransaction(overrides?: Partial<Transaction>): Transac
     chainId: 8453,
     ...overrides,
   } as Transaction;
+}
+
+// ============================================================================
+// MOCK ESCROW EVENT LOGS
+// ============================================================================
+
+/**
+ * Create mock OrderDeposited event log from escrow contract
+ */
+export function createMockOrderDepositedLog(overrides?: {
+  orderId?: string;
+  customer?: Address;
+  restaurant?: Address;
+  subtotal?: bigint;
+  tip?: bigint;
+  platformFee?: bigint;
+}) {
+  const orderId = overrides?.orderId || "order-123";
+  return {
+    address: MOCK_ADDRESSES.ESCROW_CONTRACT,
+    eventName: "OrderDeposited" as const,
+    args: {
+      orderId,
+      customer: overrides?.customer || MOCK_ADDRESSES.USER_1,
+      restaurant: overrides?.restaurant || MOCK_ADDRESSES.RESTAURANT,
+      subtotal: overrides?.subtotal ?? BigInt("10000000"), // 10 USDC
+      tip: overrides?.tip ?? BigInt("2000000"), // 2 USDC
+      platformFee: overrides?.platformFee ?? BigInt("100000"), // 0.1 USDC
+    },
+  };
+}
+
+/**
+ * Create mock TipReleased event log from escrow contract
+ */
+export function createMockTipReleasedLog(overrides?: {
+  orderId?: string;
+  driver?: Address;
+  tipAmount?: bigint;
+}) {
+  return {
+    address: MOCK_ADDRESSES.ESCROW_CONTRACT,
+    eventName: "TipReleased" as const,
+    args: {
+      orderId: overrides?.orderId || "order-123",
+      driver: overrides?.driver || MOCK_ADDRESSES.DRIVER,
+      tipAmount: overrides?.tipAmount ?? BigInt("2000000"), // 2 USDC
+    },
+  };
 }
 
 // ============================================================================
@@ -232,6 +284,70 @@ export const scenarios = {
     expected: {
       success: false,
       error: "WRONG_AMOUNT",
+    },
+  },
+
+  /**
+   * Escrow deposit successful scenario (OrderDeposited event)
+   */
+  escrowDepositSuccess: {
+    setup: () => {
+      mockPublicClient.getTransactionReceipt.mockResolvedValueOnce(
+        createMockReceipt({
+          status: "success",
+          logs: [createMockOrderDepositedLog()],
+        })
+      );
+      mockPublicClient.getTransaction.mockResolvedValueOnce(
+        createMockTransaction({ to: MOCK_ADDRESSES.ESCROW_CONTRACT })
+      );
+      mockPublicClient.getBlockNumber.mockResolvedValueOnce(MOCK_BLOCKS.CURRENT);
+    },
+    expected: {
+      success: true,
+      confirmations: 10,
+      isEscrowPayment: true,
+    },
+  },
+
+  /**
+   * Escrow tip release scenario (TipReleased event)
+   */
+  escrowTipRelease: {
+    setup: () => {
+      mockPublicClient.getTransactionReceipt.mockResolvedValueOnce(
+        createMockReceipt({
+          status: "success",
+          logs: [createMockTipReleasedLog()],
+        })
+      );
+      mockPublicClient.getTransaction.mockResolvedValueOnce(
+        createMockTransaction({ to: MOCK_ADDRESSES.ESCROW_CONTRACT })
+      );
+      mockPublicClient.getBlockNumber.mockResolvedValueOnce(MOCK_BLOCKS.CURRENT);
+    },
+    expected: {
+      success: true,
+      confirmations: 10,
+      isTipRelease: true,
+    },
+  },
+
+  /**
+   * Missing escrow OrderDeposited event scenario
+   */
+  missingEscrowEvent: {
+    setup: () => {
+      mockPublicClient.getTransactionReceipt.mockResolvedValueOnce(
+        createMockReceipt({ status: "success", logs: [] })
+      );
+      mockPublicClient.getTransaction.mockResolvedValueOnce(
+        createMockTransaction({ to: MOCK_ADDRESSES.ESCROW_CONTRACT })
+      );
+    },
+    expected: {
+      success: false,
+      error: "NO_ESCROW_EVENT",
     },
   },
 };

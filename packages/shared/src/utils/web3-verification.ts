@@ -8,7 +8,8 @@
  * - Supports both ETH (native) and ERC-20 (USDC, USDT) verification
  * - For ERC-20: parses Transfer event logs (transaction.value is always 0)
  * - For ETH: verifies transaction.value and optional order ID in tx data
- * - Configurable confirmations, RPC URLs, and treasury addresses
+ * - NON-CUSTODIAL ESCROW: parses OrderDeposited event from escrow contract
+ * - Configurable confirmations, RPC URLs, and treasury/escrow addresses
  * - Fail-closed: returns explicit error objects, never throws
  * - CRITICAL: Implements global replay prevention via processed_crypto_transactions table
  * - CRITICAL: Requires cryptographic signature verification to prevent front-running
@@ -29,6 +30,7 @@ import {
 } from "viem";
 import { base, polygon, mainnet } from "viem/chains";
 import { ERC20_ABI } from "./erc20-abi";
+import { ESCROW_ABI } from "./escrow-abi";
 import { getDb, processed_crypto_transactions, eq } from "@repo/database";
 
 // ============================================================================
@@ -53,8 +55,9 @@ const RPC_URLS = {
   ],
 };
 
-const TREASURY_ADDRESS = (
-  process.env.NEXT_PUBLIC_TREASURY_WALLET_ADDRESS || "0x0000000000000000000000000000000000000000"
+// Non-custodial escrow contract address (for Open-Delivery P2P payments)
+const ESCROW_CONTRACT_ADDRESS = (
+  process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || "0x0000000000000000000000000000000000000000"
 ) as Address;
 
 const MIN_CONFIRMATIONS = parseInt(process.env.NEXT_PUBLIC_MIN_CONFIRMATIONS || "3", 10);
@@ -131,7 +134,8 @@ export interface TransactionVerificationResult {
  * 1. CHECKS replay prevention table first (prevents front-running)
  * 2. Verifies cryptographic signature (proves wallet ownership)
  * 3. Checks if transaction exists and was successful
- * 4. Verifies the recipient matches treasury/restaurant address
+ * 4. For ESCROW: parses OrderDeposited event from escrow contract
+ *    For DIRECT P2P: verifies recipient matches restaurant address
  * 5. Confirms the value matches expected amount
  * 6. Waits for minimum confirmations
  * 7. CRITICAL: Verifies transaction data contains order ID (prevents spoofing)
@@ -141,13 +145,14 @@ export interface TransactionVerificationResult {
  * @param params - Verification parameters
  * @param params.txHash - Transaction hash to verify
  * @param params.expectedValue - Expected value in smallest units (Wei for ETH, atomic for USDC)
- * @param params.expectedRecipient - Expected recipient address (treasury or restaurant)
+ * @param params.expectedRecipient - Expected recipient address (restaurant for P2P, escrow for Open-Delivery)
  * @param params.chainId - Chain ID (default: Base)
  * @param params.orderId - Order/reservation ID to verify in transaction data
  * @param params.paymentCurrency - 'ETH' or 'USDC' (affects verification logic)
  * @param params.walletAddress - Sender's wallet address (for additional verification)
  * @param params.signature - REQUIRED: Personal signature of the orderId/reservationId (prevents front-running)
  * @param params.appSource - Source app ('open-delivery' or 'table-stack') for replay prevention
+ * @param params.isEscrowPayment - True if payment goes to escrow contract (Open-Delivery), false for direct P2P (TableStack)
  * @param params.minConfirmations - Override default minimum confirmations
  * @returns Verification result with success status and optional receipt
  */
@@ -161,6 +166,7 @@ export async function verifyTransaction(params: {
   walletAddress?: Address;
   signature?: Hex; // REQUIRED: Personal sign of orderId/reservationId
   appSource?: string; // 'open-delivery' | 'table-stack'
+  isEscrowPayment?: boolean; // True for Open-Delivery escrow, false for TableStack direct P2P
   minConfirmations?: number;
 }): Promise<TransactionVerificationResult> {
   const {
@@ -173,6 +179,7 @@ export async function verifyTransaction(params: {
     walletAddress,
     signature,
     appSource = "unknown",
+    isEscrowPayment = false,
     minConfirmations = MIN_CONFIRMATIONS,
   } = params;
 
@@ -229,9 +236,12 @@ export async function verifyTransaction(params: {
       };
     }
 
-    // Step 4: Verify recipient (if provided)
-    const recipient = expectedRecipient || TREASURY_ADDRESS;
-    if (receipt.to && receipt.to.toLowerCase() !== recipient.toLowerCase()) {
+    // Step 4: Verify recipient
+    // For escrow payments: recipient should be the escrow contract
+    // For direct P2P: recipient should be the restaurant wallet
+    const recipient = expectedRecipient || (isEscrowPayment ? ESCROW_CONTRACT_ADDRESS : undefined);
+    
+    if (recipient && receipt.to && receipt.to.toLowerCase() !== recipient.toLowerCase()) {
       return {
         success: false,
         error: `Transaction recipient mismatch. Expected: ${recipient}, Got: ${receipt.to}`,
@@ -242,13 +252,51 @@ export async function verifyTransaction(params: {
     const transaction = await client.getTransaction({ hash: txHash });
 
     // ============================================================================
-    // CRITICAL: Handle ERC-20 (USDC) vs ETH verification differently
+    // CRITICAL: Handle Escrow vs ERC-20 (USDC) vs ETH verification differently
     // ============================================================================
 
     let actualValue: bigint;
 
-    if (paymentCurrency === "USDC" || paymentCurrency === "USDT") {
-      // For ERC-20 tokens, transaction.value is always 0
+    if (isEscrowPayment) {
+      // For escrow payments: parse OrderDeposited event from escrow contract
+      try {
+        const orderDepositedLogs = parseEventLogs({
+          logs: receipt.logs,
+          abi: ESCROW_ABI,
+          eventName: "OrderDeposited",
+        });
+
+        // Find the OrderDeposited event matching our order ID
+        const matchingEvent = orderDepositedLogs.find((log: any) => {
+          const args = log.args as { orderId?: string; subtotal?: bigint };
+          return args.orderId === orderId && args.subtotal !== undefined;
+        });
+
+        if (!matchingEvent) {
+          return {
+            success: false,
+            error: `No OrderDeposited event found for orderId ${orderId}`,
+          };
+        }
+
+        const eventArgs = matchingEvent.args as { orderId: string; subtotal: bigint; tip: bigint; platformFee: bigint };
+        actualValue = eventArgs.subtotal + eventArgs.tip + eventArgs.platformFee;
+
+        console.log(`[verifyTransaction] Escrow OrderDeposited event verified:`, {
+          orderId: eventArgs.orderId,
+          subtotal: eventArgs.subtotal.toString(),
+          tip: eventArgs.tip.toString(),
+          platformFee: eventArgs.platformFee.toString(),
+          total: actualValue.toString(),
+        });
+      } catch (parseError) {
+        return {
+          success: false,
+          error: `Failed to parse OrderDeposited events: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
+        };
+      }
+    } else if (paymentCurrency === "USDC" || paymentCurrency === "USDT") {
+      // For ERC-20 tokens (direct P2P), transaction.value is always 0
       // We need to parse the Transfer event logs to get the actual token amount
 
       try {
@@ -262,7 +310,7 @@ export async function verifyTransaction(params: {
         // Find the Transfer event matching our expected recipient
         const matchingTransfer = transferLogs.find((log: any) => {
           const args = log.args as { from?: Address; to?: Address; value?: bigint };
-          return args.to?.toLowerCase() === recipient.toLowerCase() && args.value !== undefined;
+          return args.to?.toLowerCase() === recipient?.toLowerCase() && args.value !== undefined;
         });
 
         if (!matchingTransfer) {
@@ -565,18 +613,18 @@ export function shortenAddress(address: string, chars: number = 4): string {
 }
 
 // ============================================================================
-// TREASURY UTILITIES
+// ESCROW UTILITIES
 // ============================================================================
 
 /**
- * Get the treasury wallet address
+ * Get the escrow contract address
  */
-export function getTreasuryAddress(): Address {
-  return TREASURY_ADDRESS;
+export function getEscrowAddress(): Address {
+  return ESCROW_CONTRACT_ADDRESS;
 }
 
 /**
- * Generate payment request data for wallet
+ * Generate payment request data for wallet (escrow contract)
  */
 export interface PaymentRequest {
   to: Address;
@@ -593,7 +641,7 @@ export function createPaymentRequest(params: {
   const { amount, chainId = base.id } = params;
 
   return {
-    to: TREASURY_ADDRESS,
+    to: ESCROW_CONTRACT_ADDRESS,
     value: amount,
     chainId,
   };

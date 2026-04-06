@@ -10,9 +10,10 @@ import { createStorage, fallback } from "wagmi";
 // ============================================================================
 // CONFIGURATION
 // Default to Base for low fees and fast transactions
+// TableStack uses direct P2P payments to restaurant wallets (not escrow)
 // ============================================================================
 
-const TREASURY_ADDRESS = process.env.NEXT_PUBLIC_TREASURY_WALLET_ADDRESS || "0x0000000000000000000000000000000000000000";
+const ESCROW_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || "";
 const USDC_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS;
 
 // Supported chains for delivery payments
@@ -86,7 +87,7 @@ function getQueryClient() {
 // ============================================================================
 
 interface Web3ContextType {
-  treasuryAddress: string;
+  escrowContractAddress: string;
   usdcContractAddress?: string | null;
   defaultChainId: number;
   supportedChainIds: number[];
@@ -113,10 +114,10 @@ interface Web3ProviderProps {
 
 export function Web3Provider({ children }: Web3ProviderProps) {
   const queryClient = getQueryClient();
-  const [treasuryAddress] = useState(TREASURY_ADDRESS);
+  const [escrowContractAddress] = useState(ESCROW_CONTRACT_ADDRESS);
 
   const web3ContextValue: Web3ContextType = {
-    treasuryAddress,
+    escrowContractAddress,
     usdcContractAddress: USDC_CONTRACT_ADDRESS,
     defaultChainId: defaultChain.id,
     supportedChainIds: chains.map((c) => c.id),

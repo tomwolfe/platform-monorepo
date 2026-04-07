@@ -20,12 +20,25 @@ import { generatePlan } from "./unified-planner";
 import { createAuditLog } from "@/lib/audit";
 import { handleTableStackRejection } from "@/lib/listeners/tablestack";
 import { signServiceToken } from "@repo/auth";
-import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, RealtimeService, Logger } from "@repo/shared";
+import {
+  IdempotencyService,
+  IDEMPOTENCY_KEY_HEADER,
+  RealtimeService,
+  Logger,
+} from "@repo/shared";
 import { getAblyClient } from "@repo/shared";
-import { NervousSystemObserver, type TableVacatedEvent } from "@/lib/listeners/nervous-system-observer";
+import {
+  NervousSystemObserver,
+  type TableVacatedEvent,
+} from "@/lib/listeners/nervous-system-observer";
+import {
+  ReservationEventPayloadSchema,
+  HighValueGuestEventPayloadSchema,
+  SystemEventSchema,
+} from "@repo/mcp-protocol/src/schemas/events";
 import type { Redis } from "@upstash/redis";
 
-const logger = new Logger({ serviceName: 'intention-engine' });
+const logger = new Logger({ serviceName: "intention-engine" });
 
 // ============================================================================
 // TYPES
@@ -80,10 +93,21 @@ export interface WebhookContext {
 export class WebhookDispatcherService {
   private redis: Redis;
   private observer: NervousSystemObserver;
+  private idempotencyService: IdempotencyService | undefined;
 
   constructor(redis: Redis) {
     this.redis = redis;
     this.observer = new NervousSystemObserver();
+  }
+
+  /**
+   * Lazily initialize IdempotencyService to avoid unnecessary instantiation
+   */
+  private getIdempotencyService(): IdempotencyService {
+    if (!this.idempotencyService) {
+      this.idempotencyService = new IdempotencyService(this.redis);
+    }
+    return this.idempotencyService;
   }
 
   /**
@@ -100,7 +124,7 @@ export class WebhookDispatcherService {
 
       if (!validatedBody.valid) {
         logger.warn({
-          message: '[WebhookDispatcher] Schema mismatch',
+          message: "[WebhookDispatcher] Schema mismatch",
           error: validatedBody.error,
         });
         return {
@@ -125,7 +149,7 @@ export class WebhookDispatcherService {
 
         default:
           logger.info({
-            message: '[WebhookDispatcher] Unknown event type',
+            message: "[WebhookDispatcher] Unknown event type",
             details: { event },
           });
           return {
@@ -135,7 +159,7 @@ export class WebhookDispatcherService {
       }
     } catch (error) {
       logger.error({
-        message: '[WebhookDispatcher] Error processing webhook',
+        message: "[WebhookDispatcher] Error processing webhook",
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
@@ -148,7 +172,7 @@ export class WebhookDispatcherService {
   async verifySignature(
     rawBody: string,
     signature?: string | null,
-    timestamp?: number | null
+    timestamp?: number | null,
   ): Promise<boolean> {
     const { verifySignature } = await import("@repo/auth");
 
@@ -167,8 +191,10 @@ export class WebhookDispatcherService {
       return false;
     }
 
-    const idempotencyService = new IdempotencyService(this.redis);
-    return await idempotencyService.isDuplicate(idempotencyKey, "intention_engine_webhook");
+    return await this.getIdempotencyService().isDuplicate(
+      idempotencyKey,
+      "intention_engine_webhook",
+    );
   }
 
   // ============================================================================
@@ -178,7 +204,9 @@ export class WebhookDispatcherService {
   /**
    * Handle reservation rejected event - triggers failover orchestration
    */
-  private async handleReservationRejected(data: WebhookEvent): Promise<WebhookHandlerResult> {
+  private async handleReservationRejected(
+    data: WebhookEvent,
+  ): Promise<WebhookHandlerResult> {
     const failoverPayload = {
       guestEmail: data.guestEmail || "",
       restaurantName: data.restaurantName || "",
@@ -201,7 +229,7 @@ export class WebhookDispatcherService {
           alternativePlan: result.plan,
           hypotheses: result.hypotheses,
           timestamp: new Date().toISOString(),
-        }
+        },
       );
 
       logger.info({
@@ -222,7 +250,9 @@ export class WebhookDispatcherService {
   /**
    * Handle high-value guest reservation - proactive engagement
    */
-  private async handleHighValueGuest(data: WebhookEvent): Promise<WebhookHandlerResult> {
+  private async handleHighValueGuest(
+    data: WebhookEvent,
+  ): Promise<WebhookHandlerResult> {
     const { guest, reservation } = data;
 
     if (!guest || !reservation) {
@@ -243,7 +273,7 @@ export class WebhookDispatcherService {
     }
 
     logger.info({
-      message: '[WebhookDispatcher] Proactive Trigger',
+      message: "[WebhookDispatcher] Proactive Trigger",
       details: { proactiveText },
     });
 
@@ -258,7 +288,9 @@ export class WebhookDispatcherService {
       success: true,
       message: "High-value guest event processed",
       data: {
-        proactive_action: guest.defaultDeliveryAddress ? "delivery_quote_suggested" : "welcome_offer_prepared",
+        proactive_action: guest.defaultDeliveryAddress
+          ? "delivery_quote_suggested"
+          : "welcome_offer_prepared",
       },
     };
   }
@@ -266,12 +298,23 @@ export class WebhookDispatcherService {
   /**
    * Handle table vacated event - proactive re-engagement
    */
-  private async handleTableVacated(data: WebhookEvent): Promise<WebhookHandlerResult> {
-    const { tableId, restaurantId, restaurantName, restaurantSlug, capacity, timestamp, traceId } = data;
+  private async handleTableVacated(
+    data: WebhookEvent,
+  ): Promise<WebhookHandlerResult> {
+    const {
+      tableId,
+      restaurantId,
+      restaurantName,
+      restaurantSlug,
+      capacity,
+      timestamp,
+      traceId,
+    } = data;
 
     if (!tableId || !restaurantId) {
       logger.warn({
-        message: '[TableVacated] Missing required fields (tableId or restaurantId)',
+        message:
+          "[TableVacated] Missing required fields (tableId or restaurantId)",
       });
       return {
         success: true,
@@ -330,7 +373,7 @@ export class WebhookDispatcherService {
       };
     } else {
       logger.warn({
-        message: '[TableVacated] Re-engagement failed',
+        message: "[TableVacated] Re-engagement failed",
         error: result.error,
       });
       return {
@@ -348,65 +391,75 @@ export class WebhookDispatcherService {
   // ============================================================================
 
   /**
-   * Validate event body against schema
+   * Validate event body against canonical schemas from @repo/mcp-protocol
    */
-  private validateEventBody(body: unknown): { valid: boolean; data?: WebhookEvent; error?: string } {
-    const WebhookEventSchema = z.object({
+  private validateEventBody(body: unknown): {
+    valid: boolean;
+    data?: WebhookEvent;
+    error?: string;
+  } {
+    // Try parsing as a SystemEvent first (full envelope format)
+    const systemEventResult = SystemEventSchema.safeParse(body);
+    if (systemEventResult.success) {
+      return {
+        valid: true,
+        data: systemEventResult.data.payload as unknown as WebhookEvent,
+      };
+    }
+
+    // Fallback: try domain-specific payload schemas
+    // Reservation events
+    const reservationResult = ReservationEventPayloadSchema.safeParse(body);
+    if (reservationResult.success) {
+      return {
+        valid: true,
+        data: reservationResult.data as unknown as WebhookEvent,
+      };
+    }
+
+    // High-value guest events
+    const guestResult = HighValueGuestEventPayloadSchema.safeParse(body);
+    if (guestResult.success) {
+      return {
+        valid: true,
+        data: guestResult.data as unknown as WebhookEvent,
+      };
+    }
+
+    // If no canonical schema matches, fall back to minimal structural validation
+    const MinimalWebhookEventSchema = z.object({
       event: z.string(),
-      guest: z
-        .object({
-          name: z.string(),
-          email: z.string(),
-          visitCount: z.number(),
-          defaultDeliveryAddress: z.string().optional().nullable(),
-        })
-        .optional(),
-      reservation: z
-        .object({
-          id: z.string().optional(),
-          restaurantName: z.string(),
-          startTime: z.string(),
-          partySize: z.number(),
-        })
-        .optional(),
-      guestEmail: z.string().optional(),
-      startTime: z.string().optional(),
-      partySize: z.number().optional(),
-      visitCount: z.number().optional(),
-      preferences: z.record(z.unknown()).optional(),
-      tableId: z.string().optional(),
-      restaurantId: z.string().optional(),
-      restaurantName: z.string().optional(),
-      restaurantSlug: z.string().optional(),
-      capacity: z.number().optional(),
-      timestamp: z.string().optional(),
-      traceId: z.string().optional(),
     });
 
-    const result = WebhookEventSchema.safeParse(body);
-
-    if (!result.success) {
+    const minimalResult = MinimalWebhookEventSchema.safeParse(body);
+    if (!minimalResult.success) {
       return {
         valid: false,
-        error: result.error.format().message as string,
+        error: minimalResult.error.errors
+          .map((e) => `${e.path.join(".")}: ${e.message}`)
+          .join("; "),
       };
     }
 
     return {
       valid: true,
-      data: result.data,
+      data: minimalResult.data as WebhookEvent,
     };
   }
 
   /**
    * Publish event to Ably
    */
-  private async publishToAbly(channelName: string, eventName: string, data: unknown): Promise<void> {
+  private async publishToAbly(
+    channelName: string,
+    eventName: string,
+    data: unknown,
+  ): Promise<void> {
     try {
       await RealtimeService.publish(channelName, eventName, data, {});
     } catch (err) {
       logger.error({
-        message: '[WebhookDispatcher] Ably publish failed',
+        message: "[WebhookDispatcher] Ably publish failed",
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -417,6 +470,8 @@ export class WebhookDispatcherService {
 // FACTORY
 // ============================================================================
 
-export function createWebhookDispatcherService(redis: Redis): WebhookDispatcherService {
+export function createWebhookDispatcherService(
+  redis: Redis,
+): WebhookDispatcherService {
   return new WebhookDispatcherService(redis);
 }

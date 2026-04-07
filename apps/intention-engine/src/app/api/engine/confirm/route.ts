@@ -28,10 +28,14 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { ConfirmationApiRequestSchema } from "@repo/mcp-protocol/src/schemas/state-machine";
 import { RealtimeService } from "@repo/shared";
 import { Tracer } from "@/lib/engine/tracing";
-import { ConfirmationService, type ConfirmationData, type ConfirmationResult } from "@/lib/engine/confirmation-service";
+import {
+  ConfirmationService,
+  type ConfirmationData,
+  type ConfirmationResult,
+} from "@/lib/engine/confirmation-service";
 
 // ============================================================================
 // CONFIGURATION
@@ -41,25 +45,13 @@ export const runtime = "nodejs";
 export const maxDuration = 10; // Vercel Hobby limit
 
 // ============================================================================
-// REQUEST SCHEMA
-// ============================================================================
-
-const ConfirmRequestSchema = z.object({
-  token: z.string().uuid("Invalid confirmation token format"),
-  metadata: z.object({
-    clerkId: z.string().optional(),
-    userId: z.string().optional(),
-  }).optional(),
-});
-
-// ============================================================================
 // API HANDLER
 // ============================================================================
 
 async function confirmHandler(
   request: NextRequest,
   token: string,
-  userContext?: { clerkId?: string; userId?: string }
+  userContext?: { clerkId?: string; userId?: string },
 ): Promise<NextResponse<ConfirmationResult>> {
   const startTime = performance.now();
 
@@ -70,7 +62,7 @@ async function confirmHandler(
       // Validate token
       const confirmationData = await ConfirmationService.validateToken(
         token,
-        userContext
+        userContext,
       );
 
       if (!confirmationData) {
@@ -84,7 +76,7 @@ async function confirmHandler(
               message: "Invalid or expired confirmation token",
             },
           },
-          { status: 404 }
+          { status: 404 },
         );
       }
 
@@ -97,13 +89,13 @@ async function confirmHandler(
 
       console.log(
         `[ConfirmEndpoint] Validated confirmation token for execution ${confirmationData.executionId}, ` +
-        `step ${confirmationData.stepIndex} (${confirmationData.toolName})`
+          `step ${confirmationData.stepIndex} (${confirmationData.toolName})`,
       );
 
       // Resume suspended saga
       const newState = await ConfirmationService.resumeSuspendedSaga(
         confirmationData.executionId,
-        confirmationData
+        confirmationData,
       );
 
       // Delete token (consume it)
@@ -114,7 +106,7 @@ async function confirmHandler(
         confirmationData.executionId,
         newState,
         traceId,
-        confirmationData.executionId // Use executionId as correlationId
+        confirmationData.executionId, // Use executionId as correlationId
       );
 
       // Publish real-time update to UI
@@ -131,7 +123,7 @@ async function confirmHandler(
             message: "Confirmation received, resuming execution...",
             timestamp: new Date().toISOString(),
             traceId,
-          }
+          },
         );
       } catch (err) {
         console.warn("[ConfirmEndpoint] Failed to publish to Ably:", err);
@@ -147,11 +139,14 @@ async function confirmHandler(
         nextStepTriggered,
       });
     } catch (error) {
-      span.recordException(error instanceof Error ? error : new Error(String(error)));
+      span.recordException(
+        error instanceof Error ? error : new Error(String(error)),
+      );
 
       console.error("[ConfirmEndpoint] Handler error:", error);
 
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       const isExpired = errorMessage.includes("expired");
 
       return NextResponse.json(
@@ -164,7 +159,7 @@ async function confirmHandler(
             message: errorMessage,
           },
         },
-        { status: isExpired ? 410 : 500 }
+        { status: isExpired ? 410 : 500 },
       );
     }
   });
@@ -174,11 +169,13 @@ async function confirmHandler(
 // API ROUTE
 // ============================================================================
 
-export async function POST(request: NextRequest): Promise<NextResponse<ConfirmationResult>> {
+export async function POST(
+  request: NextRequest,
+): Promise<NextResponse<ConfirmationResult>> {
   try {
     // Parse and validate request
     const rawBody = await request.json();
-    const validatedBody = ConfirmRequestSchema.safeParse(rawBody);
+    const validatedBody = ConfirmationApiRequestSchema.safeParse(rawBody);
 
     if (!validatedBody.success) {
       return NextResponse.json(
@@ -191,7 +188,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Confirmat
             message: `Invalid request: ${validatedBody.error.message}`,
           },
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -212,7 +209,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Confirmat
           message: error instanceof Error ? error.message : String(error),
         },
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

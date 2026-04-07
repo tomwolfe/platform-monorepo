@@ -16,6 +16,7 @@
     "@clerk/nextjs": "^6.10.6",
     "@metamask/sdk": "^0.34.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "@opentelemetry/api": "^1.9.0",
     "@repo/auth": "workspace:*",
     "@repo/database": "workspace:*",
     "@repo/mcp-protocol": "workspace:*",

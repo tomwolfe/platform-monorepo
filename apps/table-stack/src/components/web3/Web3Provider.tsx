@@ -13,7 +13,8 @@ import { createStorage, fallback } from "wagmi";
 // TableStack uses direct P2P payments to restaurant wallets (not escrow)
 // ============================================================================
 
-const ESCROW_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || "";
+const ESCROW_CONTRACT_ADDRESS =
+  process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || "";
 const USDC_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS;
 
 // Supported chains for delivery payments
@@ -22,19 +23,31 @@ const defaultChain = base; // Base is default for low fees
 
 // Create persistent storage for wagmi (optional, for session persistence)
 const storage = createStorage({
-  storage: typeof window !== 'undefined' ? window.localStorage : undefined,
-  key: 'wagmi.store',
+  storage: typeof window !== "undefined" ? window.localStorage : undefined,
+  key: "wagmi.store",
 });
 
 // Create wagmi config with client auto-detection
+// RPC URLs are configurable via environment variables, with public defaults as fallback
 const config = createConfig({
   chains: [defaultChain, ...chains],
   ssr: true, // Enable SSR compatibility for Next.js
   storage,
   transports: {
-    [base.id]: fallback([http(), http("https://mainnet.base.org")]),
-    [polygon.id]: fallback([http(), http("https://polygon-rpc.com")]),
-    [mainnet.id]: fallback([http(), http("https://eth.llamarpc.com")]),
+    [base.id]: fallback([
+      http(),
+      http(process.env.NEXT_PUBLIC_BASE_RPC_URL || "https://mainnet.base.org"),
+    ]),
+    [polygon.id]: fallback([
+      http(),
+      http(
+        process.env.NEXT_PUBLIC_POLYGON_RPC_URL || "https://polygon-rpc.com",
+      ),
+    ]),
+    [mainnet.id]: fallback([
+      http(),
+      http(process.env.NEXT_PUBLIC_ETH_RPC_URL || "https://eth.llamarpc.com"),
+    ]),
   },
   connectors: [
     coinbaseWallet({
@@ -139,5 +152,14 @@ export function Web3Provider({ children }: Web3ProviderProps) {
 // Re-export commonly used wagmi hooks for convenience
 // ============================================================================
 
-export { useAccount, useConnect, useDisconnect, useSendTransaction, useWaitForTransactionReceipt, useBalance, useReadContract, useWriteContract } from "wagmi";
+export {
+  useAccount,
+  useConnect,
+  useDisconnect,
+  useSendTransaction,
+  useWaitForTransactionReceipt,
+  useBalance,
+  useReadContract,
+  useWriteContract,
+} from "wagmi";
 export { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";

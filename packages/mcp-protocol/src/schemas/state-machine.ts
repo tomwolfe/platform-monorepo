@@ -2,7 +2,7 @@ import { z } from "zod";
 
 /**
  * State Machine & Safety Protocol Schemas
- * 
+ *
  * Vercel Hobby Tier Optimization:
  * - Task Queue state machine types for durable execution
  * - Safety guardrails for high-risk tool validation
@@ -58,11 +58,13 @@ export const TaskStateSchema = z.object({
   completed_at: z.string().datetime().optional(),
   transitions: z.array(TaskStateTransitionSchema).default([]),
   context: z.record(z.unknown()).default({}),
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
-    step_id: z.string().optional(),
-  }).optional(),
+  error: z
+    .object({
+      code: z.string(),
+      message: z.string(),
+      step_id: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type TaskState = z.infer<typeof TaskStateSchema>;
@@ -95,10 +97,12 @@ export const StateTransitionResultSchema = z.object({
   success: z.boolean(),
   previous_state: TaskStateSchema.optional(),
   new_state: TaskStateSchema.optional(),
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
-  }).optional(),
+  error: z
+    .object({
+      code: z.string(),
+      message: z.string(),
+    })
+    .optional(),
 });
 
 export type StateTransitionResult = z.infer<typeof StateTransitionResultSchema>;
@@ -200,7 +204,25 @@ export const ConfirmationStatusSchema = z.enum([
 export type ConfirmationStatus = z.infer<typeof ConfirmationStatusSchema>;
 
 /**
- * Confirmation request
+ * Confirmation API request payload
+ * Used by the /api/engine/confirm endpoint to validate incoming requests
+ */
+export const ConfirmationApiRequestSchema = z.object({
+  token: z.string().uuid("Invalid confirmation token format"),
+  metadata: z
+    .object({
+      clerkId: z.string().optional(),
+      userId: z.string().optional(),
+    })
+    .optional(),
+});
+
+export type ConfirmationApiRequest = z.infer<
+  typeof ConfirmationApiRequestSchema
+>;
+
+/**
+ * Confirmation request (internal data stored in Redis)
  */
 export const ConfirmationRequestSchema = z.object({
   execution_id: z.string(),
@@ -233,11 +255,14 @@ export type ConfirmationResponse = z.infer<typeof ConfirmationResponseSchema>;
 
 /**
  * Table vacated event payload
- * 
+ *
  * Note: This schema is now defined centrally in event-registry.ts
  * to avoid duplication. We re-export it here for backward compatibility.
  */
-export { TableVacatedEventSchema, type TableVacatedEvent } from "./event-registry";
+export {
+  TableVacatedEventSchema,
+  type TableVacatedEvent,
+} from "./event-registry";
 
 /**
  * User context match for proactive notifications
@@ -359,7 +384,13 @@ export type StreamingStatusUpdate = z.infer<typeof StreamingStatusUpdateSchema>;
  */
 export const ValidStateTransitions: Record<TaskStatus, TaskStatus[]> = {
   pending: ["in_progress", "cancelled"],
-  in_progress: ["completed", "failed", "awaiting_confirmation", "cancelled", "compensating"],
+  in_progress: [
+    "completed",
+    "failed",
+    "awaiting_confirmation",
+    "cancelled",
+    "compensating",
+  ],
   awaiting_confirmation: ["in_progress", "cancelled", "failed"],
   completed: [],
   failed: ["compensating"],

@@ -80,7 +80,7 @@
   "packageManager": "pnpm@8.15.9",
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [
-      "eslint --fix",
+      "node scripts/lint-staged.mjs",
       "prettier --write"
     ],
     "*.{json,md}": [

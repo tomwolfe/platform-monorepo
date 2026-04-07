@@ -1,10 +1,7 @@
-import { neon, neonConfig } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-http';
-import * as tablestackSchema from './schema/tablestack';
-import * as pgvectorSchema from './schema/pgvector';
-
-// Enable fetch connection caching for serverless environments (reduces TLS connection overhead)
-neonConfig.fetchConnectionCache = true;
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
+import * as tablestackSchema from "./schema/tablestack";
+import * as pgvectorSchema from "./schema/pgvector";
 
 export const schema = {
   ...tablestackSchema,
@@ -44,7 +41,7 @@ export {
   driversRelations,
   ordersRelations,
   orderItemsRelations,
-} from './schema/tablestack';
+} from "./schema/tablestack";
 
 // Re-export pgvector items (semanticMemories is defined here, not in tablestack)
 export {
@@ -63,7 +60,7 @@ export {
   type NewSemanticMemory,
   type SemanticMemorySearchQuery,
   type SemanticMemorySearchResult,
-} from './schema/pgvector';
+} from "./schema/pgvector";
 
 // ============================================================================
 // DATABASE CONFIGURATION & CONNECTION POOLING
@@ -131,9 +128,9 @@ let totalQueryTimeMs = 0;
 
 /**
  * Configure database connection pooling and query monitoring
- * 
+ *
  * @param config - Database configuration options
- * 
+ *
  * @example
  * ```typescript
  * configureDatabase({
@@ -146,19 +143,15 @@ let totalQueryTimeMs = 0;
  */
 export function configureDatabase(config: DatabaseConfig): void {
   dbConfig = { ...DEFAULT_DB_CONFIG, ...config };
-  
-  // Configure neon connection pool
-  if (dbConfig.poolSize) {
-    neonConfig.poolSize = dbConfig.poolSize;
-  }
-  if (dbConfig.connectionTimeout) {
-    neonConfig.connectionTimeoutMillis = dbConfig.connectionTimeout;
-  }
-  
+
+  // Note: The Neon HTTP driver (drizzle-orm/neon-http) is stateless and does not
+  // use connection pooling. poolSize and connectionTimeout settings are retained
+  // for configuration tracking but do not affect the HTTP client behavior.
+  // For long-running processes requiring true pooling, use the Pool client instead.
+
   console.log(
-    `[Database] Configured with poolSize=${dbConfig.poolSize}, ` +
-    `queryTimeout=${dbConfig.queryTimeout}ms, ` +
-    `slowQueryThreshold=${dbConfig.slowQueryThresholdMs}ms`
+    `[Database] Configured with queryTimeout=${dbConfig.queryTimeout}ms, ` +
+      `slowQueryThreshold=${dbConfig.slowQueryThresholdMs}ms`,
   );
 }
 
@@ -191,7 +184,9 @@ export function resetQueryStats(): void {
 }
 
 // Standard Next.js global caching to prevent connection bloat during HMR
-const globalForDb = globalThis as unknown as { _dbInstance: ReturnType<typeof drizzle> | null };
+const globalForDb = globalThis as unknown as {
+  _dbInstance: ReturnType<typeof drizzle> | null;
+};
 
 /**
  * Get the database instance with lazy initialization and HMR-safe global caching.
@@ -216,27 +211,24 @@ export function getDb() {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
     throw new Error(
-      'DATABASE_URL is not configured. ' +
-      'Please set the DATABASE_URL environment variable to connect to the database.'
+      "DATABASE_URL is not configured. " +
+        "Please set the DATABASE_URL environment variable to connect to the database.",
     );
   }
 
   const client = neon(databaseUrl);
   globalForDb._dbInstance = drizzle(client, { schema });
 
-  // Log configuration on first initialization
-  console.log(
-    `[Database] Initialized with poolSize=${neonConfig.poolSize || 10}, ` +
-    `connectionTimeout=${neonConfig.connectionTimeoutMillis || 30000}ms`
-  );
+  // Log initialization
+  console.log("[Database] Initialized with Neon HTTP driver");
 
   return globalForDb._dbInstance;
 }
 
-export type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
+export type { InferSelectModel, InferInsertModel } from "drizzle-orm";
 
 // Re-export sql directly
-export { sql } from 'drizzle-orm';
+export { sql } from "drizzle-orm";
 
 // Database optimization utilities
 export {
@@ -250,7 +242,7 @@ export {
   logSlowQuery,
   measureQuery,
   type QueryOptimizationOptions,
-} from './optimization';
+} from "./optimization";
 
 // Import drizzle-orm comparison functions with aliases
 import {
@@ -277,45 +269,66 @@ import {
   notBetween as drizzleNotBetween,
   type SQL,
   type SQLWrapper,
-} from 'drizzle-orm';
+} from "drizzle-orm";
 
 // Type-safe wrapper functions for drizzle-orm comparison operators
 // These preserve type inference while providing a cleaner API
-export const eq = <T>(col: SQLWrapper, value: T) => drizzleEq(col, value as any);
-export const lt = <T>(col: SQLWrapper, value: T) => drizzleLt(col, value as any);
-export const gt = <T>(col: SQLWrapper, value: T) => drizzleGt(col, value as any);
-export const gte = <T>(col: SQLWrapper, value: T) => drizzleGte(col, value as any);
-export const lte = <T>(col: SQLWrapper, value: T) => drizzleLte(col, value as any);
+export const eq = <T>(col: SQLWrapper, value: T) =>
+  drizzleEq(col, value as any);
+export const lt = <T>(col: SQLWrapper, value: T) =>
+  drizzleLt(col, value as any);
+export const gt = <T>(col: SQLWrapper, value: T) =>
+  drizzleGt(col, value as any);
+export const gte = <T>(col: SQLWrapper, value: T) =>
+  drizzleGte(col, value as any);
+export const lte = <T>(col: SQLWrapper, value: T) =>
+  drizzleLte(col, value as any);
 export const desc = <T>(col: SQLWrapper) => drizzleDesc(col);
-export const and = (...conditions: Array<SQL | SQLWrapper | undefined | null | false>) => drizzleAnd(conditions as any);
-export const or = (...conditions: Array<SQL | SQLWrapper | undefined | null | false>) => drizzleOr(conditions as any);
-export const ne = <T>(col: SQLWrapper, value: T) => drizzleNe(col, value as any);
+export const and = (
+  ...conditions: Array<SQL | SQLWrapper | undefined | null | false>
+) => drizzleAnd(conditions as any);
+export const or = (
+  ...conditions: Array<SQL | SQLWrapper | undefined | null | false>
+) => drizzleOr(conditions as any);
+export const ne = <T>(col: SQLWrapper, value: T) =>
+  drizzleNe(col, value as any);
 export const isNull = (col: SQLWrapper) => drizzleIsNull(col);
 export const isNotNull = (col: SQLWrapper) => drizzleIsNotNull(col);
-export const inArray = <T>(col: SQLWrapper, values: readonly T[] | SQLWrapper) => drizzleInArray(col, values as any);
-export const notInArray = <T>(col: SQLWrapper, values: readonly T[] | SQLWrapper) => drizzleNotInArray(col, values as any);
+export const inArray = <T>(
+  col: SQLWrapper,
+  values: readonly T[] | SQLWrapper,
+) => drizzleInArray(col, values as any);
+export const notInArray = <T>(
+  col: SQLWrapper,
+  values: readonly T[] | SQLWrapper,
+) => drizzleNotInArray(col, values as any);
 export const like = (col: SQLWrapper, value: string) => drizzleLike(col, value);
-export const notLike = (col: SQLWrapper, value: string) => drizzleNotLike(col, value);
-export const ilike = (col: SQLWrapper, value: string) => drizzleIlike(col, value);
-export const notIlike = (col: SQLWrapper, value: string) => drizzleNotIlike(col, value);
+export const notLike = (col: SQLWrapper, value: string) =>
+  drizzleNotLike(col, value);
+export const ilike = (col: SQLWrapper, value: string) =>
+  drizzleIlike(col, value);
+export const notIlike = (col: SQLWrapper, value: string) =>
+  drizzleNotIlike(col, value);
 export const exists = (subquery: SQL) => drizzleExists(subquery);
 export const notExists = (subquery: SQL) => drizzleNotExists(subquery);
-export const between = <T>(col: SQLWrapper, min: T, max: T) => drizzleBetween(col, min as any, max as any);
-export const notBetween = <T>(col: SQLWrapper, min: T, max: T) => drizzleNotBetween(col, min as any, max as any);
+export const between = <T>(col: SQLWrapper, min: T, max: T) =>
+  drizzleBetween(col, min as any, max as any);
+export const notBetween = <T>(col: SQLWrapper, min: T, max: T) =>
+  drizzleNotBetween(col, min as any, max as any);
 
 // ============================================================================
 // WEB3 PAYMENT TYPES
 // Type helpers for crypto payment handling with numeric precision
 // ============================================================================
 
-import type { InferSelectModel as DrizzleInferSelectModel } from 'drizzle-orm';
-import { orders } from './schema/tablestack';
+import type { InferSelectModel as DrizzleInferSelectModel } from "drizzle-orm";
+import { orders } from "./schema/tablestack";
 
 /**
  * CryptoAmount - String representation of token amounts in smallest units
  * - For ETH: Wei (18 decimals) - e.g., "1000000000000000000" = 1 ETH
  * - For USDC: Atomic units (6 decimals) - e.g., "1000000" = 1 USDC
- * 
+ *
  * Use viem's formatUnits() to convert to human-readable format
  * Use viem's parseUnits() to convert from human-readable format
  */

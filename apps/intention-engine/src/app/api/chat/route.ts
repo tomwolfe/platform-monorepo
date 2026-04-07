@@ -1,14 +1,32 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import { streamText, tool, stepCountIs, convertToModelMessages, type CoreMessage } from "ai";
+import {
+  streamText,
+  tool,
+  stepCountIs,
+  convertToModelMessages,
+  type CoreMessage,
+} from "ai";
 import { z } from "zod";
 import { getToolCapabilitiesPrompt } from "@/lib/tools/registry";
 import { getUserPreferences } from "@/lib/preferences";
-import { getRedisClient, ServiceNamespace, AppConfig, withApiErrorHandler, formatApiError, formatApiSuccess, getErrorStatusCode, Logger } from "@repo/shared";
+import {
+  getRedisClient,
+  ServiceNamespace,
+  AppConfig,
+  withApiErrorHandler,
+  formatApiError,
+  formatApiSuccess,
+  getErrorStatusCode,
+  Logger,
+} from "@repo/shared";
 import { getMcpClients } from "@/lib/mcp-client";
 import { TOOLS } from "@repo/mcp-protocol";
 import { rateLimitMiddleware } from "@/lib/middleware/rate-limiter";
 import { fetchLiveOperationalState } from "@/lib/engine/live-state";
-import { createChatOrchestrator, type ChatOrchestrationResult } from "@/lib/engine/chat-orchestrator";
+import {
+  createChatOrchestrator,
+  type ChatOrchestrationResult,
+} from "@/lib/engine/chat-orchestrator";
 import { NextResponse } from "next/server";
 
 const logger = new Logger({ serviceName: "intention-engine-chat" });
@@ -29,21 +47,28 @@ const openai = createOpenAI({
 });
 
 const ChatRequestSchema = z.object({
-  messages: z.array(z.object({
-    role: z.enum(["user", "assistant", "system", "data"]),
-    content: z.union([
-      z.string(),
-      z.array(z.object({
-        type: z.string(),
-        text: z.string().optional(),
-        image: z.string().optional(),
-      })),
-    ]),
-  })),
-  userLocation: z.object({
-    lat: z.number().min(-90).max(90),
-    lng: z.number().min(-180).max(180),
-  }).nullable().optional(),
+  messages: z.array(
+    z.object({
+      role: z.enum(["user", "assistant", "system", "data"]),
+      content: z.union([
+        z.string(),
+        z.array(
+          z.object({
+            type: z.string(),
+            text: z.string().optional(),
+            image: z.string().optional(),
+          }),
+        ),
+      ]),
+    }),
+  ),
+  userLocation: z
+    .object({
+      lat: z.number().min(-90).max(90),
+      lng: z.number().min(-180).max(180),
+    })
+    .nullable()
+    .optional(),
 });
 
 /**
@@ -52,16 +77,23 @@ const ChatRequestSchema = z.object({
  * All tool execution is routed through DynamicMcpClientManager.executeTool()
  * for consistent parameter aliasing and server routing.
  */
-async function getTools(auditLogId: string, userLocation?: { lat: number, lng: number }) {
+async function getTools(
+  auditLogId: string,
+  userLocation?: { lat: number; lng: number },
+) {
   const { manager } = await getMcpClients();
   const tools: Record<string, ReturnType<typeof tool>> = {};
 
   // Helper to get schema from McpToolRegistry
   const getSchemaForTool = (toolName: string): z.ZodType | undefined => {
     // Flatten the TOOLS registry to find matching schema
-    const allTools = Object.values(TOOLS).flatMap(service => Object.values(service));
-    const toolDef = allTools.find(t => 'name' in t && t.name === toolName);
-    return toolDef && 'schema' in toolDef ? toolDef.schema as z.ZodType : undefined;
+    const allTools = Object.values(TOOLS).flatMap((service) =>
+      Object.values(service),
+    );
+    const toolDef = allTools.find((t) => "name" in t && t.name === toolName);
+    return toolDef && "schema" in toolDef
+      ? (toolDef.schema as z.ZodType)
+      : undefined;
   };
 
   // Get discovered tools from the dynamic manager
@@ -73,9 +105,10 @@ async function getTools(auditLogId: string, userLocation?: { lat: number, lng: n
       const registrySchema = getSchemaForTool(toolName);
       const inputSchema = registrySchema ?? z.record(z.unknown());
 
-      const description = 'description' in toolDef
-        ? (toolDef.description as string) ?? toolDef.name
-        : toolDef.name;
+      const description =
+        "description" in toolDef
+          ? ((toolDef.description as string) ?? toolDef.name)
+          : toolDef.name;
 
       tools[toolName] = tool({
         description,
@@ -90,12 +123,13 @@ async function getTools(auditLogId: string, userLocation?: { lat: number, lng: n
           if (result.success) {
             return result.output;
           } else {
-            throw new Error(result.error ?? 'Tool execution failed');
+            throw new Error(result.error ?? "Tool execution failed");
           }
         },
       });
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       console.error(`Error registering tool ${toolName}:`, errorMessage);
     }
   }
@@ -106,48 +140,86 @@ async function getTools(auditLogId: string, userLocation?: { lat: number, lng: n
 /**
  * Build live state context string from operational state result
  */
-function buildLiveStateContext(liveOperationalState: ReturnType<typeof fetchLiveOperationalState> extends Promise<infer T> ? T : never): string {
+function buildLiveStateContext(
+  liveOperationalState: ReturnType<
+    typeof fetchLiveOperationalState
+  > extends Promise<infer T>
+    ? T
+    : never,
+): string {
   const liveStateContextParts: string[] = [];
 
   if (liveOperationalState.restaurantStates) {
     liveStateContextParts.push(
       `\n### LIVE RESTAURANT STATE (Real-time from Redis/DB):\n${liveOperationalState.restaurantStates
-        .map(r => `- ${r.name}: ${r.tableAvailability.toUpperCase()}${r.waitlistCount ? ` (${r.waitlistCount} on waitlist)` : ""}${r.nextAvailableSlot ? ` - Next: ${r.nextAvailableSlot}` : ""}${r.hasRecentFailures ? " ⚠️ RECENT FAILURES" : ""}`)
-        .join("\n")}\n\n**IMPORTANT**: Use this live state to avoid suggesting restaurants that are full. If a restaurant shows "full", suggest alternatives or recommend joining the waitlist.`
+        .map(
+          (r) =>
+            `- ${r.name}: ${r.tableAvailability.toUpperCase()}${r.waitlistCount ? ` (${r.waitlistCount} on waitlist)` : ""}${r.nextAvailableSlot ? ` - Next: ${r.nextAvailableSlot}` : ""}${r.hasRecentFailures ? " ⚠️ RECENT FAILURES" : ""}`,
+        )
+        .join(
+          "\n",
+        )}\n\n**IMPORTANT**: Use this live state to avoid suggesting restaurants that are full. If a restaurant shows "full", suggest alternatives or recommend joining the waitlist.`,
     );
   }
 
-  if (liveOperationalState.failedBookings && liveOperationalState.failedBookings.length > 0) {
+  if (
+    liveOperationalState.failedBookings &&
+    liveOperationalState.failedBookings.length > 0
+  ) {
     liveStateContextParts.push(
       `\n### ⚠️ RECENT BOOKING FAILURES (Avoid These):\n${liveOperationalState.failedBookings
-        .map(f => `- ${f.restaurantName || f.restaurantId}: ${f.failureReason} (at ${new Date(f.failedAt).toLocaleTimeString()})`)
-        .join("\n")}\n\n**CRITICAL**: These restaurants have recent booking failures. DO NOT attempt to book these unless the user explicitly insists. Instead, suggest alternative restaurants or explain the issue to the user.`
+        .map(
+          (f) =>
+            `- ${f.restaurantName || f.restaurantId}: ${f.failureReason} (at ${new Date(f.failedAt).toLocaleTimeString()})`,
+        )
+        .join(
+          "\n",
+        )}\n\n**CRITICAL**: These restaurants have recent booking failures. DO NOT attempt to book these unless the user explicitly insists. Instead, suggest alternative restaurants or explain the issue to the user.`,
     );
   }
 
   // HARD CONSTRAINTS - Block invalid plans before generation
-  if (liveOperationalState.hardConstraints && liveOperationalState.hardConstraints.length > 0) {
+  if (
+    liveOperationalState.hardConstraints &&
+    liveOperationalState.hardConstraints.length > 0
+  ) {
     liveStateContextParts.push(
       `\n### 🚫 HARD CONSTRAINTS (MUST FOLLOW):\n${liveOperationalState.hardConstraints
-        .map(c => `- ${c}`)
-        .join("\n")}\n\n**WARNING**: Violating these constraints will result in immediate plan rejection.`
+        .map((c) => `- ${c}`)
+        .join(
+          "\n",
+        )}\n\n**WARNING**: Violating these constraints will result in immediate plan rejection.`,
     );
   }
 
   // FAILOVER SUGGESTIONS - Pre-computed alternatives
-  if (liveOperationalState.failoverSuggestions && liveOperationalState.failoverSuggestions.length > 0) {
+  if (
+    liveOperationalState.failoverSuggestions &&
+    liveOperationalState.failoverSuggestions.length > 0
+  ) {
     liveStateContextParts.push(
       `\n### 💡 RECOMMENDED ALTERNATIVES (Pre-computed):\n${liveOperationalState.failoverSuggestions
-        .map(s => `- [${s.type.toUpperCase()}] ${s.message || JSON.stringify(s.value)} (Confidence: ${(s.confidence * 100).toFixed(0)}%)`)
-        .join("\n")}\n\n**TIP**: These alternatives have been pre-validated and are ready to offer.`
+        .map(
+          (s) =>
+            `- [${s.type.toUpperCase()}] ${s.message || JSON.stringify(s.value)} (Confidence: ${(s.confidence * 100).toFixed(0)}%)`,
+        )
+        .join(
+          "\n",
+        )}\n\n**TIP**: These alternatives have been pre-validated and are ready to offer.`,
     );
   }
 
   // DELIVERY LOAD STATE - Real-time demand/supply for tip recommendations
   if (liveOperationalState.deliveryLoadState) {
-    const { isHighLoad, avgWaitTimeMinutes, activeDrivers, pendingOrders, recommendedTipBoost } = liveOperationalState.deliveryLoadState;
+    const {
+      isHighLoad,
+      avgWaitTimeMinutes,
+      activeDrivers,
+      pendingOrders,
+      recommendedTipBoost,
+    } = liveOperationalState.deliveryLoadState;
     liveStateContextParts.push(
-      `\n### 🚗 DELIVERY LOAD STATE (Real-time):\n- Active Drivers: ${activeDrivers}\n- Pending Orders: ${pendingOrders}\n- Load Status: ${isHighLoad ? "HIGH DEMAND" : "Normal"}\n- Avg Wait Time: ${avgWaitTimeMinutes} minutes\n\n**TIP BOOST RECOMMENDATION**: ${isHighLoad ? `Suggest increasing tip by $${recommendedTipBoost} to prioritize this order. Higher tips attract drivers faster during high demand.` : "Current tip levels are adequate for normal demand."}`
+      `\n### 🚗 DELIVERY LOAD STATE (Real-time):\n- Active Drivers: ${activeDrivers}\n- Pending Orders: ${pendingOrders}\n- Load Status: ${isHighLoad ? "HIGH DEMAND" : "Normal"}\n- Avg Wait Time: ${avgWaitTimeMinutes} minutes\n\n**TIP BOOST RECOMMENDATION**: ${isHighLoad ? `Suggest increasing tip by $${recommendedTipBoost} to prioritize this order. Higher tips attract drivers faster during high demand.` : "Current tip levels are adequate for normal demand."}`,
     );
   }
 
@@ -160,18 +232,23 @@ function buildLiveStateContext(liveOperationalState: ReturnType<typeof fetchLive
  * Extract user text from core messages
  */
 function extractUserText(coreMessages: CoreMessage[]): string {
-  const lastUserMessage = [...coreMessages].reverse().find(m => m.role === "user");
+  const lastUserMessage = [...coreMessages]
+    .reverse()
+    .find((m) => m.role === "user");
   let userText = "";
-  
+
   if (typeof lastUserMessage?.content === "string") {
     userText = lastUserMessage.content;
   } else if (Array.isArray(lastUserMessage?.content)) {
     userText = lastUserMessage.content
-      .filter((part): part is { type: "text"; text: string } => part.type === "text" && "text" in part)
-      .map(part => part.text)
+      .filter(
+        (part): part is { type: "text"; text: string } =>
+          part.type === "text" && "text" in part,
+      )
+      .map((part) => part.text)
       .join("\n");
   }
-  
+
   return userText;
 }
 
@@ -179,14 +256,17 @@ function extractUserText(coreMessages: CoreMessage[]): string {
  * Get relevant failure warnings from recent audit logs
  */
 function getRelevantFailures(text: string, logs: any[]): string[] {
-  const keywords = text.toLowerCase().split(/\W+/).filter(w => w.length > 3);
+  const keywords = text
+    .toLowerCase()
+    .split(/\W+/)
+    .filter((w) => w.length > 3);
   const failures: string[] = [];
   for (const log of logs) {
     if (log.steps) {
       for (const step of log.steps) {
         if (step.status === "failed") {
           const inputStr = JSON.stringify(step.input).toLowerCase();
-          const hasOverlap = keywords.some(k => inputStr.includes(k));
+          const hasOverlap = keywords.some((k) => inputStr.includes(k));
 
           if (hasOverlap) {
             const specificWarning = `Previous attempt at ${step.tool_name} with parameters ${JSON.stringify(step.input)} failed with error: "${step.error}".`;
@@ -200,13 +280,29 @@ function getRelevantFailures(text: string, logs: any[]): string[] {
 }
 
 export const POST = withApiErrorHandler(async (req: Request) => {
-  const rawBody = await req.json();
+  let rawBody: unknown;
+  try {
+    rawBody = await req.json();
+  } catch {
+    return NextResponse.json(
+      formatApiError(
+        new Error("Invalid or malformed JSON request body"),
+        "VALIDATION_ERROR",
+      ),
+      { status: 400 },
+    );
+  }
+
   const validatedBody = ChatRequestSchema.safeParse(rawBody);
 
   if (!validatedBody.success) {
     return NextResponse.json(
-      formatApiError(new Error("Invalid request parameters"), "VALIDATION_ERROR", validatedBody.error.format()),
-      { status: 400 }
+      formatApiError(
+        new Error("Invalid request parameters"),
+        "VALIDATION_ERROR",
+        validatedBody.error.format(),
+      ),
+      { status: 400 },
     );
   }
 
@@ -215,7 +311,7 @@ export const POST = withApiErrorHandler(async (req: Request) => {
   if (messages.length === 0) {
     return NextResponse.json(
       formatApiError(new Error("No messages provided"), "VALIDATION_ERROR"),
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -238,22 +334,28 @@ export const POST = withApiErrorHandler(async (req: Request) => {
         limit: rateLimitResult.result.headers["X-RateLimit-Limit"],
         remaining: rateLimitResult.result.headers["X-RateLimit-Remaining"],
       }),
-      { status: getErrorStatusCode("RATE_LIMIT_EXCEEDED"), headers: rateLimitResult.result.headers }
+      {
+        status: getErrorStatusCode("RATE_LIMIT_EXCEEDED"),
+        headers: rateLimitResult.result.headers,
+      },
     );
   }
 
   let recentLogs: any[] = [];
-  const { createAuditLog, updateAuditLog, getUserAuditLogs } = await import("@/lib/audit");
+  const { createAuditLog, updateAuditLog, getUserAuditLogs } =
+    await import("@/lib/audit");
   const { getPlanWithAvoidance, getProvider } = await import("@/app/actions");
 
   if (redis) {
     try {
       [, recentLogs] = await Promise.all([
         getUserPreferences(userId),
-        getUserAuditLogs(userId, 10)
+        getUserAuditLogs(userId, 10),
       ]);
     } catch (err) {
-      logger.warn("Failed to retrieve user data from Redis", { error: err instanceof Error ? err.message : String(err) });
+      logger.warn("Failed to retrieve user data from Redis", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -271,17 +373,22 @@ export const POST = withApiErrorHandler(async (req: Request) => {
   const lastInteractionContext = await (async () => {
     if (clerkId) {
       try {
-        const { getLastInteractionContextByClerkId } = await import("@/lib/intent");
+        const { getLastInteractionContextByClerkId } =
+          await import("@/lib/intent");
         return await getLastInteractionContextByClerkId(clerkId);
       } catch (err) {
-        logger.warn("Failed to retrieve last interaction context by clerkId", { error: err instanceof Error ? err.message : String(err) });
+        logger.warn("Failed to retrieve last interaction context by clerkId", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     } else if (userIp !== "anonymous") {
       try {
         const { getLastInteractionContext } = await import("@/lib/intent");
         return await getLastInteractionContext(userIp);
       } catch (err) {
-        logger.warn("Failed to retrieve last interaction context", { error: err instanceof Error ? err.message : String(err) });
+        logger.warn("Failed to retrieve last interaction context", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
     return null;
@@ -290,8 +397,11 @@ export const POST = withApiErrorHandler(async (req: Request) => {
   // Orchestrate the chat request (security, intent inference, live state, async execution)
   const { avoidTools } = await getPlanWithAvoidance(userText, userIp);
   const history = recentLogs
-    .filter(log => log.final_outcome && !log.steps?.some(s => s.status === "failed"))
-    .map(log => ({
+    .filter(
+      (log) =>
+        log.final_outcome && !log.steps?.some((s) => s.status === "failed"),
+    )
+    .map((log) => ({
       intentType: log.intent.type,
       rawText: log.intent.rawText,
       parameters: log.intent.parameters || {},
@@ -311,46 +421,61 @@ export const POST = withApiErrorHandler(async (req: Request) => {
       coreMessages,
       avoidTools,
       history,
-      lastInteractionContext
+      lastInteractionContext,
     );
   } catch (securityError: any) {
     // Handle security check failures (prompt injection)
     if (securityError.message.includes("Input blocked for security reasons")) {
-      const detectionResult = securityError.message.split(": ")[1] || "Security check failed";
+      const detectionResult =
+        securityError.message.split(": ")[1] || "Security check failed";
       return NextResponse.json(
-        formatApiError(new Error("Input blocked for security reasons"), "VALIDATION_ERROR", {
-          message: "Your input contains patterns that may attempt to manipulate the AI system. Please rephrase your request.",
-          riskLevel: "high",
-          ...(process.env.NODE_ENV === "development" && {
-            debug: {
-              attackTypes: ["PROMPT_INJECTION"],
-              explanation: detectionResult,
-            },
-          }),
-        }),
-        { status: 400 }
+        formatApiError(
+          new Error("Input blocked for security reasons"),
+          "VALIDATION_ERROR",
+          {
+            message:
+              "Your input contains patterns that may attempt to manipulate the AI system. Please rephrase your request.",
+            riskLevel: "high",
+            ...(process.env.NODE_ENV === "development" && {
+              debug: {
+                attackTypes: ["PROMPT_INJECTION"],
+                explanation: detectionResult,
+              },
+            }),
+          },
+        ),
+        { status: 400 },
       );
     }
     throw securityError;
   }
 
-  const { intent, auditLogId, executionId, requiresAsyncExecution, liveOperationalState } = orchestrationResult;
+  const {
+    intent,
+    auditLogId,
+    executionId,
+    requiresAsyncExecution,
+    liveOperationalState,
+  } = orchestrationResult;
 
   // Handle saga-style async execution
   if (requiresAsyncExecution && executionId) {
-    return NextResponse.json(formatApiSuccess({
-      executionId,
-      message: "I've started working on that. Track progress in real-time.",
-      status: "STARTED",
-      intentType: intent.type,
-    }));
+    return NextResponse.json(
+      formatApiSuccess({
+        executionId,
+        message: "I've started working on that. Track progress in real-time.",
+        status: "STARTED",
+        intentType: intent.type,
+      }),
+    );
   }
 
   // Build failure warnings from recent logs
   const relevantFailures = getRelevantFailures(userText, recentLogs);
-  const failureWarnings = relevantFailures.length > 0
-    ? `\n### DO NOT REPEAT THESE MISTAKES:\n${relevantFailures.map(f => `- ${f}`).join('\n')}`
-    : "";
+  const failureWarnings =
+    relevantFailures.length > 0
+      ? `\n### DO NOT REPEAT THESE MISTAKES:\n${relevantFailures.map((f) => `- ${f}`).join("\n")}`
+      : "";
 
   // Build live state context (for non-saga requests)
   const liveStateContext = liveOperationalState
@@ -364,14 +489,15 @@ export const POST = withApiErrorHandler(async (req: Request) => {
     ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}.`
     : "The user's location is unknown.";
 
-  const memoryContext = recentLogs.length > 0
-    ? `Recent interaction history:\n${recentLogs.map(l => `- Intent: ${l.intent}, Outcome: ${l.final_outcome || 'N/A'}`).join('\n')}`
-    : "";
+  const memoryContext =
+    recentLogs.length > 0
+      ? `Recent interaction history:\n${recentLogs.map((l) => `- Intent: ${l.intent}, Outcome: ${l.final_outcome || "N/A"}`).join("\n")}`
+      : "";
 
   const toolCapabilitiesPrompt = getToolCapabilitiesPrompt();
 
   const systemPrompt = `You are an Intention Engine.
-    Today's date is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.
+    Today's date is ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}.
     The user's inferred intent is: ${intent.type} (Confidence: ${intent.confidence})
 
     ${locationContext}
@@ -403,12 +529,13 @@ export const POST = withApiErrorHandler(async (req: Request) => {
           final_outcome: event.text,
           inferenceLatencies: {
             total: totalLatency,
-          }
+          },
         });
 
         // Contextual Memory: Save the interaction context for future pronoun resolution
         if (userId) {
-          const { saveInteractionContextByClerkId, saveInteractionContext } = await import("@/lib/intent");
+          const { saveInteractionContextByClerkId, saveInteractionContext } =
+            await import("@/lib/intent");
           if (clerkId) {
             await saveInteractionContextByClerkId(clerkId, intent, auditLogId);
           } else if (userIp !== "anonymous") {
@@ -416,9 +543,11 @@ export const POST = withApiErrorHandler(async (req: Request) => {
           }
         }
       } catch (err) {
-        logger.error("Failed to update final audit log", { error: err instanceof Error ? err.message : String(err) });
+        logger.error("Failed to update final audit log", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
-    }
+    },
   });
 
   return result.toUIMessageStreamResponse({

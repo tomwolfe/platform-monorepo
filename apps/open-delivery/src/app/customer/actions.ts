@@ -1,14 +1,44 @@
 "use server";
 
-import { getDb, restaurants, orders, orderItems, users, sql, restaurantProducts, eq, type CryptoAmount } from "@repo/database";
+import {
+  getDb,
+  restaurants,
+  orders,
+  orderItems,
+  users,
+  sql,
+  restaurantProducts,
+  eq,
+  type CryptoAmount,
+} from "@repo/database";
 import { currentUser } from "@clerk/nextjs/server";
-import { RealtimeService, isReplayAllowed, rollbackReplayGuard, AppConfig } from "@repo/shared";
+import {
+  RealtimeService,
+  isReplayAllowed,
+  rollbackReplayGuard,
+  AppConfig,
+} from "@repo/shared";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
-import { createPublicClient, http, type Hash, type Address, parseUnits, parseEther, formatUnits } from "viem";
+import {
+  createPublicClient,
+  http,
+  type Hash,
+  type Address,
+  parseUnits,
+  parseEther,
+  formatUnits,
+} from "viem";
 import { base } from "viem/chains";
-import { getCryptoPrices, usdToCryptoBigIntWithSlippage } from "@repo/shared/utils/crypto-price";
-import { verifyTransaction, isValidTxHash, isValidAddress } from "@repo/shared/utils/web3-verification";
+import {
+  getCryptoPrices,
+  usdToCryptoBigInt,
+} from "@repo/shared/utils/crypto-price";
+import {
+  verifyTransaction,
+  isValidTxHash,
+  isValidAddress,
+} from "@repo/shared/utils/web3-verification";
 
 export interface Vendor {
   id: string;
@@ -29,7 +59,10 @@ export interface MenuItem {
   category: string;
 }
 
-export async function getRealVendors(userLat?: number, userLng?: number): Promise<Vendor[]> {
+export async function getRealVendors(
+  userLat?: number,
+  userLng?: number,
+): Promise<Vendor[]> {
   try {
     if (!userLat || !userLng) {
       // Return empty list if no location provided (no fallback to SF)
@@ -156,7 +189,7 @@ export async function placeRealOrder(
     chainId?: number; // Blockchain chain ID (default: Base)
     restaurantWalletAddress?: string; // Direct payment to restaurant wallet
     signature?: string; // Cryptographic signature of orderId (required for verification)
-  }
+  },
 ) {
   const user = await currentUser();
 
@@ -177,7 +210,10 @@ export async function placeRealOrder(
   // Convert fiat amounts to crypto smallest units (Wei for ETH, atomic for USDC)
   // Fetch live ETH price from oracle for accurate conversion
   const paymentCurrency = paymentParams?.paymentCurrency || "USDC";
-  const subtotalFiat = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const subtotalFiat = items.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0,
+  );
   const tipFiat = Math.max(0, tipAmount);
   const totalFiat = subtotalFiat + tipFiat;
 
@@ -186,15 +222,14 @@ export async function placeRealOrder(
   let totalCrypto: string;
 
   if (paymentCurrency === "ETH") {
-    // Use standardized BigInt conversion with slippage
+    // Use exact market rate - slippage is checked inside verifyTransaction
     const subtotalCents = BigInt(Math.round(subtotalFiat * 100));
     const tipCents = BigInt(Math.round(tipFiat * 100));
     const totalCents = BigInt(Math.round(totalFiat * 100));
 
-    const slippageBps = AppConfig.getSlippageBps();
-    subtotalCrypto = (await usdToCryptoBigIntWithSlippage(subtotalCents, "ETH", slippageBps)).toString();
-    tipCrypto = (await usdToCryptoBigIntWithSlippage(tipCents, "ETH", slippageBps)).toString();
-    totalCrypto = (await usdToCryptoBigIntWithSlippage(totalCents, "ETH", slippageBps)).toString();
+    subtotalCrypto = (await usdToCryptoBigInt(subtotalCents, "ETH")).toString();
+    tipCrypto = (await usdToCryptoBigInt(tipCents, "ETH")).toString();
+    totalCrypto = (await usdToCryptoBigInt(totalCents, "ETH")).toString();
   } else {
     // USDC: 6 decimals, assume 1 USD = 1 USDC
     subtotalCrypto = parseUnits(subtotalFiat.toFixed(6), 6).toString();
@@ -224,33 +259,41 @@ export async function placeRealOrder(
     // ============================================================================
     const replayCheck = await isReplayAllowed({
       txHash: paymentParams.txHash as Hash,
-      appSource: 'open-delivery',
+      appSource: "open-delivery",
       entityId: orderId,
     });
 
     if (!replayCheck) {
-      throw new Error(`Payment transaction ${paymentParams.txHash.substring(0, 10)}... was already used or blocked.`);
+      throw new Error(
+        `Payment transaction ${paymentParams.txHash.substring(0, 10)}... was already used or blocked.`,
+      );
     }
 
     // Verify transaction on-chain using shared utility
+    const slippageBps =
+      paymentCurrency === "ETH" ? AppConfig.getSlippageBps() : undefined;
     const verificationResult = await verifyTransaction({
       txHash: paymentParams.txHash as Hash,
       expectedValue: BigInt(totalCrypto),
       walletAddress: paymentParams.walletAddress as Address,
       chainId: paymentParams.chainId,
-      expectedRecipient: paymentParams.restaurantWalletAddress as Address | undefined,
+      expectedRecipient: paymentParams.restaurantWalletAddress as
+        | Address
+        | undefined,
       paymentCurrency,
       orderId, // Required for signature verification
       signature: paymentParams.signature as `0x${string}` | undefined,
       appSource: "open-delivery",
-      slippageBps: paymentCurrency === "ETH" ? slippageBps : undefined,
+      slippageBps,
     });
 
     if (!verificationResult.success) {
       // COMPENSATING ACTION: Rollback the replay guard registration
       // so the user can retry with this valid txHash
       await rollbackReplayGuard(paymentParams.txHash as Hash);
-      throw new Error(`Payment verification failed: ${verificationResult.error}`);
+      throw new Error(
+        `Payment verification failed: ${verificationResult.error}`,
+      );
     }
 
     console.log(`[Order ${orderId}] Payment verified on-chain:`, {
@@ -270,7 +313,7 @@ export async function placeRealOrder(
         .from(users)
         .where(sql`${users.clerkId} = ${user.id}`)
         .limit(1)
-        .then((rows: typeof users.$inferSelect[]) => rows[0]);
+        .then((rows: (typeof users.$inferSelect)[]) => rows[0]);
 
       if (!userRecord) {
         const [newUser] = await tx
@@ -290,7 +333,9 @@ export async function placeRealOrder(
       const address = deliveryAddress || userRecord.defaultDeliveryAddress;
 
       if (!address) {
-        throw new Error("No delivery address provided and no default found in profile.");
+        throw new Error(
+          "No delivery address provided and no default found in profile.",
+        );
       }
 
       // CRITICAL: Check for duplicate payment hash within transaction
@@ -304,7 +349,9 @@ export async function placeRealOrder(
           .then((rows: Array<{ id: string }>) => rows[0]);
 
         if (existingOrder) {
-          throw new Error(`Payment transaction ${paymentParams.txHash} already used for order ${existingOrder.id}`);
+          throw new Error(
+            `Payment transaction ${paymentParams.txHash} already used for order ${existingOrder.id}`,
+          );
         }
       }
 
@@ -337,29 +384,37 @@ export async function placeRealOrder(
           quantity: item.quantity,
           price: item.price,
           createdAt: new Date(),
-        }))
+        })),
       );
 
       return newOrder;
     });
 
     // Publish Ably event AFTER transaction commits (not inside transaction)
-    await RealtimeService.publish("nervous-system:updates", "delivery.intent_created", {
-      orderId: result.id,
-      fulfillmentId: result.id,
-      pickupAddress: result.pickupAddress,
-      deliveryAddress: result.deliveryAddress,
-      price: result.total,
-      priority: "standard",
-      items: items.map((item) => ({ name: item.name, quantity: item.quantity, price: item.price })),
-      timestamp: new Date().toISOString(),
-      traceId: `order-${orderId}`,
-      payment: {
-        txHash: paymentParams?.txHash,
-        currency: paymentCurrency,
-        walletAddress: paymentParams?.walletAddress,
+    await RealtimeService.publish(
+      "nervous-system:updates",
+      "delivery.intent_created",
+      {
+        orderId: result.id,
+        fulfillmentId: result.id,
+        pickupAddress: result.pickupAddress,
+        deliveryAddress: result.deliveryAddress,
+        price: result.total,
+        priority: "standard",
+        items: items.map((item) => ({
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+        })),
+        timestamp: new Date().toISOString(),
+        traceId: `order-${orderId}`,
+        payment: {
+          txHash: paymentParams?.txHash,
+          currency: paymentCurrency,
+          walletAddress: paymentParams?.walletAddress,
+        },
       },
-    });
+    );
 
     revalidatePath("/customer");
 
@@ -377,7 +432,11 @@ export async function placeRealOrder(
     // COMPENSATING ACTION: If the database transaction failed for non-Web3 reasons
     // (e.g., constraint violation, connection error) AFTER the replay guard was
     // triggered, rollback the registration so the user can re-submit.
-    if (paymentParams?.txHash && error instanceof Error && !error.message.includes("already used")) {
+    if (
+      paymentParams?.txHash &&
+      error instanceof Error &&
+      !error.message.includes("already used")
+    ) {
       await rollbackReplayGuard(paymentParams.txHash as Hash);
     }
 

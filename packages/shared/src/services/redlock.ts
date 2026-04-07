@@ -24,7 +24,7 @@
  *   quorum: 2, // N/2 + 1
  *   retryCount: 3,
  * });
- * 
+ *
  * const lock = await redlock.acquire('exec:123:lock', 30000);
  * try {
  *   // Critical section
@@ -41,26 +41,10 @@ import { Redis } from "@upstash/redis";
 
 /**
  * Generate a random UUID v4
- * Uses Web Crypto API for Edge runtime compatibility
+ * Uses Node.js crypto module for cryptographically secure randomness
  */
 function randomUUID(): string {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  // Fallback for environments without crypto.randomUUID
-  const bytes = new Uint8Array(16);
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    crypto.getRandomValues(bytes);
-  } else {
-    // Ultimate fallback for non-browser environments
-    for (let i = 0; i < 16; i++) {
-      bytes[i] = Math.floor(Math.random() * 256);
-    }
-  }
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0'));
-  return `${hex[0]}${hex[1]}${hex[2]}${hex[3]}-${hex[4]}${hex[5]}-${hex[6]}${hex[7]}-${hex[8]}${hex[9]}-${hex[10]}${hex[11]}${hex[12]}${hex[13]}${hex[14]}${hex[15]}`;
+  return crypto.randomUUID();
 }
 
 // ============================================================================
@@ -181,7 +165,7 @@ export class RedlockClient {
     if (this.config.debug) {
       console.log(
         `[Redlock] Initialized with ${this.config.resources.length} resources, ` +
-        `quorum=${this.config.quorum}`
+          `quorum=${this.config.quorum}`,
       );
     }
   }
@@ -199,7 +183,7 @@ export class RedlockClient {
     validityMs: number,
     options?: {
       retryCount?: number;
-    }
+    },
   ): Promise<AcquireResult> {
     const maxRetries = options?.retryCount ?? this.config.retryCount;
     let lastError: string | undefined;
@@ -212,40 +196,38 @@ export class RedlockClient {
 
       try {
         // Try to acquire on all resources in parallel
-        const acquirePromises = this.config.resources.map(async (resource, index) => {
-          try {
-            const result = await resource.redis.set(
-              key,
-              lockId,
-              {
+        const acquirePromises = this.config.resources.map(
+          async (resource, index) => {
+            try {
+              const result = await resource.redis.set(key, lockId, {
                 nx: true,
                 ex: Math.ceil(validityMs / 1000), // Convert to seconds
-              }
-            );
+              });
 
-            return {
-              index,
-              success: result === "OK",
-              name: resource.name || `redis-${index}`,
-            };
-          } catch (error) {
-            if (this.config.debug) {
-              console.error(
-                `[Redlock] Failed to acquire on ${resource.name || index}:`,
-                error
-              );
+              return {
+                index,
+                success: result === "OK",
+                name: resource.name || `redis-${index}`,
+              };
+            } catch (error) {
+              if (this.config.debug) {
+                console.error(
+                  `[Redlock] Failed to acquire on ${resource.name || index}:`,
+                  error,
+                );
+              }
+              return {
+                index,
+                success: false,
+                name: resource.name || `redis-${index}`,
+                error: error instanceof Error ? error.message : String(error),
+              };
             }
-            return {
-              index,
-              success: false,
-              name: resource.name || `redis-${index}`,
-              error: error instanceof Error ? error.message : String(error),
-            };
-          }
-        });
+          },
+        );
 
         const results = await Promise.all(acquirePromises);
-        const successful = results.filter(r => r.success);
+        const successful = results.filter((r) => r.success);
         const elapsed = Date.now() - startTime;
 
         // Calculate drift (time spent acquiring)
@@ -255,8 +237,8 @@ export class RedlockClient {
         if (this.config.debug) {
           console.log(
             `[Redlock] Acquire attempt ${attempt + 1}/${maxRetries + 1} for ${key}: ` +
-            `${successful.length}/${this.config.resources.length} successful, ` +
-            `elapsed=${elapsed}ms, drift=${drift}ms`
+              `${successful.length}/${this.config.resources.length} successful, ` +
+              `elapsed=${elapsed}ms, drift=${drift}ms`,
           );
         }
 
@@ -265,13 +247,18 @@ export class RedlockClient {
           if (this.config.debug) {
             console.log(
               `[Redlock] Lock acquired for ${key} (quorum=${successful.length}, ` +
-              `validity=${validityWithDrift}ms)`
+                `validity=${validityWithDrift}ms)`,
             );
           }
 
           return {
             success: true,
-            lock: this.createLock(key, lockId, validityWithDrift, successful.length),
+            lock: this.createLock(
+              key,
+              lockId,
+              validityWithDrift,
+              successful.length,
+            ),
             attempts,
           };
         }
@@ -289,9 +276,12 @@ export class RedlockClient {
         }
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
-        
+
         if (this.config.debug) {
-          console.error(`[Redlock] Acquire attempt ${attempt + 1} failed:`, error);
+          console.error(
+            `[Redlock] Acquire attempt ${attempt + 1} failed:`,
+            error,
+          );
         }
 
         // Backoff before retry
@@ -305,7 +295,7 @@ export class RedlockClient {
 
     if (this.config.debug) {
       console.warn(
-        `[Redlock] Failed to acquire lock ${key} after ${attempts} attempts: ${lastError}`
+        `[Redlock] Failed to acquire lock ${key} after ${attempts} attempts: ${lastError}`,
       );
     }
 
@@ -323,7 +313,7 @@ export class RedlockClient {
     key: string,
     lockId: string,
     validityMs: number,
-    quorumCount: number
+    quorumCount: number,
   ): RedlockLock {
     const acquiredAt = Date.now();
 
@@ -333,11 +323,11 @@ export class RedlockClient {
       validityMs,
       acquiredAt,
       quorumCount,
-      
+
       release: async () => {
         return this.release(key, lockId);
       },
-      
+
       extend: async (additionalMs: number) => {
         return this.extend(key, lockId, additionalMs);
       },
@@ -350,44 +340,46 @@ export class RedlockClient {
    */
   async release(key: string, lockId: string): Promise<ReleaseResult> {
     try {
-      const releasePromises = this.config.resources.map(async (resource, index) => {
-        try {
-          // Use atomic Lua script to safely release only if we still own it
-          const result = await resource.redis.eval(
-            LUA_RELEASE_SCRIPT,
-            [key],       // KEYS
-            [lockId]     // ARGV
-          );
-
-          const success = result === 1;
-          return {
-            index,
-            success,
-            name: resource.name || `redis-${index}`,
-            reason: success ? undefined : "not_owner",
-          };
-        } catch (error) {
-          if (this.config.debug) {
-            console.error(
-              `[Redlock] Failed to release on ${resource.name || index}:`,
-              error
+      const releasePromises = this.config.resources.map(
+        async (resource, index) => {
+          try {
+            // Use atomic Lua script to safely release only if we still own it
+            const result = await resource.redis.eval(
+              LUA_RELEASE_SCRIPT,
+              [key], // KEYS
+              [lockId], // ARGV
             );
+
+            const success = result === 1;
+            return {
+              index,
+              success,
+              name: resource.name || `redis-${index}`,
+              reason: success ? undefined : "not_owner",
+            };
+          } catch (error) {
+            if (this.config.debug) {
+              console.error(
+                `[Redlock] Failed to release on ${resource.name || index}:`,
+                error,
+              );
+            }
+            return {
+              index,
+              success: false,
+              name: resource.name || `redis-${index}`,
+              error: error instanceof Error ? error.message : String(error),
+            };
           }
-          return {
-            index,
-            success: false,
-            name: resource.name || `redis-${index}`,
-            error: error instanceof Error ? error.message : String(error),
-          };
-        }
-      });
+        },
+      );
 
       const results = await Promise.all(releasePromises);
-      const successful = results.filter(r => r.success);
+      const successful = results.filter((r) => r.success);
 
       if (this.config.debug) {
         console.log(
-          `[Redlock] Released lock ${key} on ${successful.length}/${this.config.resources.length} resources`
+          `[Redlock] Released lock ${key} on ${successful.length}/${this.config.resources.length} resources`,
         );
       }
 
@@ -412,45 +404,47 @@ export class RedlockClient {
   async extend(
     key: string,
     lockId: string,
-    additionalMs: number
+    additionalMs: number,
   ): Promise<ExtendResult> {
     try {
-      const extendPromises = this.config.resources.map(async (resource, index) => {
-        try {
-          // Use atomic Lua script to safely extend only if we still own it
-          const expireSeconds = Math.ceil(additionalMs / 1000);
-          const result = await resource.redis.eval(
-            LUA_EXTEND_SCRIPT,
-            [key],              // KEYS
-            [lockId, String(expireSeconds)]  // ARGV
-          );
-
-          const success = result === 1;
-          return { index, success, name: resource.name || `redis-${index}` };
-        } catch (error) {
-          if (this.config.debug) {
-            console.error(
-              `[Redlock] Failed to extend on ${resource.name || index}:`,
-              error
+      const extendPromises = this.config.resources.map(
+        async (resource, index) => {
+          try {
+            // Use atomic Lua script to safely extend only if we still own it
+            const expireSeconds = Math.ceil(additionalMs / 1000);
+            const result = await resource.redis.eval(
+              LUA_EXTEND_SCRIPT,
+              [key], // KEYS
+              [lockId, String(expireSeconds)], // ARGV
             );
+
+            const success = result === 1;
+            return { index, success, name: resource.name || `redis-${index}` };
+          } catch (error) {
+            if (this.config.debug) {
+              console.error(
+                `[Redlock] Failed to extend on ${resource.name || index}:`,
+                error,
+              );
+            }
+            return {
+              index,
+              success: false,
+              name: resource.name || `redis-${index}`,
+              error: error instanceof Error ? error.message : String(error),
+            };
           }
-          return {
-            index,
-            success: false,
-            name: resource.name || `redis-${index}`,
-            error: error instanceof Error ? error.message : String(error),
-          };
-        }
-      });
+        },
+      );
 
       const results = await Promise.all(extendPromises);
-      const successful = results.filter(r => r.success);
+      const successful = results.filter((r) => r.success);
 
       // Need quorum to successfully extend
       if (successful.length >= this.config.quorum) {
         if (this.config.debug) {
           console.log(
-            `[Redlock] Extended lock ${key} by ${additionalMs}ms on ${successful.length} resources`
+            `[Redlock] Extended lock ${key} by ${additionalMs}ms on ${successful.length} resources`,
           );
         }
 
@@ -486,24 +480,24 @@ export class RedlockClient {
   private async releasePartial(
     key: string,
     lockId: string,
-    acquireResults: Array<{ index: number; success: boolean; name: string }>
+    acquireResults: Array<{ index: number; success: boolean; name: string }>,
   ): Promise<void> {
     const releasePromises = acquireResults
-      .filter(r => r.success)
+      .filter((r) => r.success)
       .map(async (result) => {
         const resource = this.config.resources[result.index];
         try {
           // Use atomic Lua script to safely release only if we still own it
           await resource.redis.eval(
             LUA_RELEASE_SCRIPT,
-            [key],      // KEYS
-            [lockId]    // ARGV
+            [key], // KEYS
+            [lockId], // ARGV
           );
         } catch (error) {
           if (this.config.debug) {
             console.error(
               `[Redlock] Failed to release partial on ${result.name}:`,
-              error
+              error,
             );
           }
         }
@@ -516,7 +510,7 @@ export class RedlockClient {
    * Sleep helper
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -527,17 +521,27 @@ export class RedlockClient {
     quorumRequired: number;
     healthyResources: number;
   }> {
-    const healthPromises = this.config.resources.map(async (resource, index) => {
-      try {
-        await resource.redis.ping();
-        return { index, healthy: true, name: resource.name || `redis-${index}` };
-      } catch {
-        return { index, healthy: false, name: resource.name || `redis-${index}` };
-      }
-    });
+    const healthPromises = this.config.resources.map(
+      async (resource, index) => {
+        try {
+          await resource.redis.ping();
+          return {
+            index,
+            healthy: true,
+            name: resource.name || `redis-${index}`,
+          };
+        } catch {
+          return {
+            index,
+            healthy: false,
+            name: resource.name || `redis-${index}`,
+          };
+        }
+      },
+    );
 
     const results = await Promise.all(healthPromises);
-    const healthy = results.filter(r => r.healthy).length;
+    const healthy = results.filter((r) => r.healthy).length;
 
     return {
       totalResources: this.config.resources.length,
@@ -560,7 +564,7 @@ export class RedlockClient {
  */
 export function createVirtualRedlockResources(
   redis: Redis,
-  count: number = 3
+  count: number = 3,
 ): RedlockResource[] {
   return Array.from({ length: count }, (_, i) => ({
     redis,
@@ -598,7 +602,7 @@ export function createRedlock(options: RedlockOptions = {}): RedlockClient {
 
   if (!resources || resources.length === 0) {
     throw new Error(
-      "Redlock requires either 'resources' array or single 'redis' instance"
+      "Redlock requires either 'resources' array or single 'redis' instance",
     );
   }
 
@@ -623,15 +627,15 @@ export async function withRedlock<T>(
   key: string,
   validityMs: number,
   fn: (lock: RedlockLock) => Promise<T>,
-  options?: RedlockOptions
+  options?: RedlockOptions,
 ): Promise<T> {
   const redlock = createRedlock(options);
-  
+
   const result = await redlock.acquire(key, validityMs);
-  
+
   if (!result.success || !result.lock) {
     throw new Error(
-      `Failed to acquire redlock ${key}: ${result.error || "unknown error"}`
+      `Failed to acquire redlock ${key}: ${result.error || "unknown error"}`,
     );
   }
 

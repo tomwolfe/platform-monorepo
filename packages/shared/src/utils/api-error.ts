@@ -24,6 +24,7 @@
 
 import { z } from "zod";
 import { isNextRedirectError } from "./next-errors";
+import type { NextRequest } from "next/server";
 
 /**
  * Standard API error response structure
@@ -107,7 +108,8 @@ export const EngineErrorCodes = {
   INSUFFICIENT_PERMISSIONS: "INSUFFICIENT_PERMISSIONS",
 } as const;
 
-export type EngineErrorCode = (typeof EngineErrorCodes)[keyof typeof EngineErrorCodes];
+export type EngineErrorCode =
+  (typeof EngineErrorCodes)[keyof typeof EngineErrorCodes];
 
 /**
  * HTTP status codes mapped to error categories
@@ -177,7 +179,7 @@ export function formatApiError(
   error: unknown,
   code: EngineErrorCode = "INTERNAL_ERROR",
   details?: unknown,
-  options: FormatApiErrorOptions = {}
+  options: FormatApiErrorOptions = {},
 ): ApiErrorResponse {
   const message = extractErrorMessage(error);
   const fields = extractFieldErrors(error);
@@ -207,14 +209,16 @@ export function formatApiError(
 export function createApiError(
   code: EngineErrorCode,
   message: string,
-  details?: unknown
+  details?: unknown,
 ): ApiErrorResponse {
   return {
     success: false,
     error: {
       code,
       message,
-      ...(details !== undefined && { details: details as Record<string, unknown> }),
+      ...(details !== undefined && {
+        details: details as Record<string, unknown>,
+      }),
     },
   };
 }
@@ -228,7 +232,7 @@ export function createApiError(
  */
 export function formatApiSuccess<T>(
   data: T,
-  metadata?: ApiSuccessResponse["metadata"]
+  metadata?: ApiSuccessResponse["metadata"],
 ): ApiSuccessResponse<T> {
   return {
     success: true,
@@ -258,7 +262,7 @@ function extractErrorMessage(error: unknown): string {
     return error;
   }
   if (error && typeof error === "object" && "message" in error) {
-    return String((error as any).message);
+    return String((error as { message: unknown }).message);
   }
   return "An unexpected error occurred";
 }
@@ -266,7 +270,9 @@ function extractErrorMessage(error: unknown): string {
 /**
  * Extract field-specific errors (useful for validation errors)
  */
-function extractFieldErrors(error: unknown): Record<string, string> | undefined {
+function extractFieldErrors(
+  error: unknown,
+): Record<string, string> | undefined {
   if (error instanceof z.ZodError) {
     const fields: Record<string, string> = {};
     error.errors.forEach((err) => {
@@ -319,10 +325,10 @@ function extractErrorDetails(error: unknown): unknown {
  * ```
  */
 export function withApiErrorHandler<T>(
-  fn: (req: any) => Promise<T>,
-  errorCode: EngineErrorCode = "INTERNAL_ERROR"
+  fn: (req: Request | NextRequest) => Promise<T>,
+  errorCode: EngineErrorCode = "INTERNAL_ERROR",
 ) {
-  return async (req: any) => {
+  return async (req: Request | NextRequest) => {
     try {
       return await fn(req);
     } catch (error) {
@@ -342,7 +348,7 @@ export function withApiErrorHandler<T>(
  * Type guard to check if a response is an error response
  */
 export function isErrorResponse(
-  response: unknown
+  response: unknown,
 ): response is ApiErrorResponse {
   return (
     typeof response === "object" &&
@@ -356,7 +362,7 @@ export function isErrorResponse(
  * Type guard to check if a response is a success response
  */
 export function isSuccessResponse<T>(
-  response: unknown
+  response: unknown,
 ): response is ApiSuccessResponse<T> {
   return (
     typeof response === "object" &&
@@ -401,19 +407,14 @@ export type ServerActionResponse<T> =
  *
  * @see https://nextjs.org/docs/app/building-your-application/data-fetching/server-actions-and-mutations#error-handling
  */
-export function withServerActionHandler<
-  TArgs extends unknown[],
-  TReturn
->(
+export function withServerActionHandler<TArgs extends unknown[], TReturn>(
   fn: (...args: TArgs) => Promise<TReturn>,
   options?: {
     errorCode?: string;
     transformError?: (error: unknown) => string;
-  }
+  },
 ) {
-  return async (
-    ...args: TArgs
-  ): Promise<ServerActionResponse<TReturn>> => {
+  return async (...args: TArgs): Promise<ServerActionResponse<TReturn>> => {
     try {
       const result = await fn(...args);
       return { success: true, data: result };
@@ -432,7 +433,7 @@ export function withServerActionHandler<
 
       console.error(
         `[ServerAction] Error${options?.errorCode ? ` (${options.errorCode})` : ""}:`,
-        errorMessage
+        errorMessage,
       );
 
       return {

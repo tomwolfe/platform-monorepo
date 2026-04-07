@@ -1,17 +1,31 @@
-export const dynamic = 'force-dynamic';
-import { NextRequest, NextResponse } from 'next/server';
+export const dynamic = "force-dynamic";
+import { NextRequest, NextResponse } from "next/server";
 import { getDb, restaurantReservations, eq, restaurants } from "@repo/database";
-import { NotifyService } from '@tablestack/lib/notifications';
-import { createPublicClient, http, parseUnits } from 'viem';
-import { base } from 'viem/chains';
-import { isValidTxHash } from '@repo/shared/utils/web3-verification';
-import { getCryptoPrices, usdToCryptoBigIntWithSlippage } from '@repo/shared/utils/crypto-price';
-import { CheckoutRequestSchema, validateRequest as validateZodRequest, errorResponse, successResponse, withApiErrorHandler, Logger, AppConfig } from '@repo/shared';
-import { isReplayAllowed, rollbackReplayGuard } from '@repo/shared/middleware/web3-replay-guard';
+import { NotifyService } from "@tablestack/lib/notifications";
+import { createPublicClient, http, parseUnits } from "viem";
+import { base } from "viem/chains";
+import { isValidTxHash } from "@repo/shared/utils/web3-verification";
+import {
+  getCryptoPrices,
+  usdToCryptoBigInt,
+} from "@repo/shared/utils/crypto-price";
+import {
+  CheckoutRequestSchema,
+  validateRequest as validateZodRequest,
+  errorResponse,
+  successResponse,
+  withApiErrorHandler,
+  Logger,
+  AppConfig,
+} from "@repo/shared";
+import {
+  isReplayAllowed,
+  rollbackReplayGuard,
+} from "@repo/shared/middleware/web3-replay-guard";
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 
-const logger = new Logger({ serviceName: 'table-stack' });
+const logger = new Logger({ serviceName: "table-stack" });
 
 /**
  * Crypto Payment Verification Endpoint
@@ -34,7 +48,18 @@ const logger = new Logger({ serviceName: 'table-stack' });
  * }
  */
 async function postHandler(req: NextRequest) {
-  const body = await req.json();
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json(
+      errorResponse(
+        "VALIDATION_ERROR",
+        "Invalid or malformed JSON request body",
+      ),
+      { status: 400 },
+    );
+  }
 
   // Validate request body with Zod schema
   const validation = validateZodRequest(CheckoutRequestSchema, body);
@@ -43,15 +68,20 @@ async function postHandler(req: NextRequest) {
   }
 
   // CRITICAL: Do NOT trust expectedAmount from client - it's removed from the destructuring
-  const { txHash, paymentCurrency = 'USDC', orderId, reservationId } = validation.data;
+  const {
+    txHash,
+    paymentCurrency = "USDC",
+    orderId,
+    reservationId,
+  } = validation.data;
 
   // Use reservationId for table-stack (orderId is for open-delivery)
   const targetReservationId = reservationId || orderId;
 
   if (!targetReservationId) {
     return NextResponse.json(
-      errorResponse('VALIDATION_ERROR', 'reservationId is required'),
-      { status: 400 }
+      errorResponse("VALIDATION_ERROR", "reservationId is required"),
+      { status: 400 },
     );
   }
 
@@ -59,8 +89,8 @@ async function postHandler(req: NextRequest) {
   // Note: txHash is already validated by CheckoutRequestSchema, but extra validation doesn't hurt
   if (!isValidTxHash(txHash)) {
     return NextResponse.json(
-      errorResponse('VALIDATION_ERROR', 'Invalid transaction hash format'),
-      { status: 400 }
+      errorResponse("VALIDATION_ERROR", "Invalid transaction hash format"),
+      { status: 400 },
     );
   }
 
@@ -74,16 +104,19 @@ async function postHandler(req: NextRequest) {
 
   if (!reservation) {
     return NextResponse.json(
-      errorResponse('NOT_FOUND', 'Reservation not found'),
-      { status: 404 }
+      errorResponse("NOT_FOUND", "Reservation not found"),
+      { status: 404 },
     );
   }
 
   // Already verified?
   if (reservation.isVerified) {
     return NextResponse.json(
-      successResponse({ isVerified: true }, { message: 'Reservation already verified' }),
-      { status: 200 }
+      successResponse(
+        { isVerified: true },
+        { message: "Reservation already verified" },
+      ),
+      { status: 200 },
     );
   }
 
@@ -94,8 +127,11 @@ async function postHandler(req: NextRequest) {
   // Enforce restaurant wallet address exists (direct P2P requirement)
   if (!reservation.restaurant?.walletAddress) {
     return NextResponse.json(
-      errorResponse('VALIDATION_ERROR', 'Restaurant wallet address not configured - cannot accept P2P payment'),
-      { status: 400 }
+      errorResponse(
+        "VALIDATION_ERROR",
+        "Restaurant wallet address not configured - cannot accept P2P payment",
+      ),
+      { status: 400 },
     );
   }
 
@@ -109,10 +145,9 @@ async function postHandler(req: NextRequest) {
   // Calculate expected crypto amount based on payment currency
   let expectedValue: bigint;
 
-  if (paymentCurrency === 'ETH') {
-    // Use standardized BigInt conversion with centralized slippage
-    const slippageBps = AppConfig.getSlippageBps();
-    expectedValue = await usdToCryptoBigIntWithSlippage(BigInt(depositUsdCents), "ETH", slippageBps);
+  if (paymentCurrency === "ETH") {
+    // Use exact market rate for expectedValue - slippage is checked inside verifyTransaction
+    expectedValue = await usdToCryptoBigInt(BigInt(depositUsdCents), "ETH");
   } else {
     // USDC: 6 decimals, 1 USD = 1 USDC
     expectedValue = parseUnits(depositUsd.toFixed(6), 6);
@@ -121,21 +156,24 @@ async function postHandler(req: NextRequest) {
   // REPLAY GUARD: Check if this transaction hash has already been used
   const replayCheck = await isReplayAllowed({
     txHash: txHash as `0x${string}`,
-    appSource: 'table-stack',
+    appSource: "table-stack",
     entityId: targetReservationId,
   });
 
   if (!replayCheck) {
     return NextResponse.json(
-      errorResponse('CONFLICT', `Payment transaction already used or blocked.`),
-      { status: 409 }
+      errorResponse("CONFLICT", `Payment transaction already used or blocked.`),
+      { status: 409 },
     );
   }
 
   // Zero-Trust On-Chain Verification using shared utility
   // isEscrowPayment=false because TableStack uses direct P2P to restaurant
-  const { verifyTransaction } = await import('@repo/shared/utils/web3-verification');
+  const { verifyTransaction } =
+    await import("@repo/shared/utils/web3-verification");
 
+  const slippageBps =
+    paymentCurrency === "ETH" ? AppConfig.getSlippageBps() : undefined;
   const verificationResult = await verifyTransaction({
     txHash: txHash as `0x${string}`,
     expectedValue,
@@ -143,39 +181,50 @@ async function postHandler(req: NextRequest) {
     paymentCurrency,
     orderId: targetReservationId,
     isEscrowPayment: false, // Direct P2P to restaurant wallet
+    slippageBps,
   });
 
   if (!verificationResult.success) {
     // Rollback the replay guard to allow future attempts with this hash
     await rollbackReplayGuard(txHash as `0x${string}`);
     return NextResponse.json(
-      errorResponse('VALIDATION_ERROR', verificationResult.error || 'Transaction verification failed'),
-      { status: 400 }
+      errorResponse(
+        "VALIDATION_ERROR",
+        verificationResult.error || "Transaction verification failed",
+      ),
+      { status: 400 },
     );
   }
 
   // Additional check: Verify transaction data contains reservation ID (for ETH payments)
   // For USDC, the exact amount + recipient verification is sufficient
-  if (paymentCurrency !== 'USDC') {
+  if (paymentCurrency !== "USDC") {
     const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
     const client = createPublicClient({ transport: http(rpcUrl), chain: base });
     const tx = await client.getTransaction({ hash: txHash as `0x${string}` });
 
-    if (tx.input && tx.input !== '0x' && tx.input.length > 2) {
+    if (tx.input && tx.input !== "0x" && tx.input.length > 2) {
       try {
-        const { hexToString } = await import('viem');
+        const { hexToString } = await import("viem");
         const decodedData = hexToString(tx.input);
 
         if (decodedData !== targetReservationId) {
           return NextResponse.json(
-            errorResponse('VALIDATION_ERROR', 'Transaction data mismatch. Reservation ID not found in transaction data.', {
-              details: { expected: targetReservationId, received: decodedData },
-            }),
-            { status: 400 }
+            errorResponse(
+              "VALIDATION_ERROR",
+              "Transaction data mismatch. Reservation ID not found in transaction data.",
+              {
+                details: {
+                  expected: targetReservationId,
+                  received: decodedData,
+                },
+              },
+            ),
+            { status: 400 },
           );
         }
       } catch (decodeError) {
-        logger.warn('Could not decode transaction data for ETH payment');
+        logger.warn("Could not decode transaction data for ETH payment");
       }
     }
   }
@@ -184,18 +233,19 @@ async function postHandler(req: NextRequest) {
   const confirmations = verificationResult.receipt?.confirmations || 0;
   if (confirmations < 1) {
     return NextResponse.json(
-      errorResponse('VALIDATION_ERROR', 'Waiting for more confirmations', {
+      errorResponse("VALIDATION_ERROR", "Waiting for more confirmations", {
         details: { confirmations },
       }),
-      { status: 400 }
+      { status: 400 },
     );
   }
 
   // Mark reservation as verified
-  await getDb().update(restaurantReservations)
+  await getDb()
+    .update(restaurantReservations)
     .set({
       isVerified: true,
-      status: 'confirmed',
+      status: "confirmed",
       paymentTxHash: txHash,
     })
     .where(eq(restaurantReservations.id, targetReservationId));
@@ -209,15 +259,20 @@ async function postHandler(req: NextRequest) {
     });
   }
 
-  logger.info(
-    `Reservation verified with tx ${txHash}`,
-    { reservationId: targetReservationId, txHash }
-  );
-
-  return NextResponse.json(successResponse({
+  logger.info(`Reservation verified with tx ${txHash}`, {
+    reservationId: targetReservationId,
     txHash,
-    confirmations,
-  }, { message: 'Crypto payment verified successfully' }));
+  });
+
+  return NextResponse.json(
+    successResponse(
+      {
+        txHash,
+        confirmations,
+      },
+      { message: "Crypto payment verified successfully" },
+    ),
+  );
 }
 
-export const POST = withApiErrorHandler(postHandler, 'EXECUTION_FAILED');
+export const POST = withApiErrorHandler(postHandler, "EXECUTION_FAILED");

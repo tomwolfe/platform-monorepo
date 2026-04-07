@@ -1,18 +1,48 @@
 import 'dotenv/config';
 import { getDb, restaurants, restaurantTables, users, restaurantReservations, restaurantWaitlist, eq } from "@repo/database";
+import { sql } from "drizzle-orm";
 
 /**
  * Enhanced Seed Script
- * 
+ *
  * Creates:
  * - Demo restaurant with tables
  * - Diverse user profiles with interaction contexts
  * - Sample reservations and waitlist entries
  * - Failed booking scenarios for testing failover policies
+ * - High-value guest with >5 visits for proactive engagement testing
+ *
+ * Usage:
+ *   pnpm tsx seed-enhanced.ts          # Normal seed
+ *   pnpm tsx seed-enhanced.ts --reset  # Drop and recreate schema before seeding
  */
+
+// Parse command-line arguments
+const args = process.argv.slice(2);
+const shouldReset = args.includes('--reset');
+
+async function resetSchema() {
+  console.log('🔄 Resetting database schema...');
+  
+  const db = getDb();
+  
+  // Drop and recreate tables in correct order (respecting foreign keys)
+  await db.execute(sql`DROP TABLE IF EXISTS restaurant_waitlist CASCADE`);
+  await db.execute(sql`DROP TABLE IF EXISTS restaurant_reservations CASCADE`);
+  await db.execute(sql`DROP TABLE IF EXISTS restaurant_tables CASCADE`);
+  await db.execute(sql`DROP TABLE IF EXISTS users CASCADE`);
+  await db.execute(sql`DROP TABLE IF EXISTS restaurants CASCADE`);
+  
+  console.log('   ✅ Schema dropped');
+  console.log('   ⏳ Tables will be recreated by Drizzle migrations\n');
+}
 
 async function seed() {
   console.log('🌱 Seeding demo data with diverse interaction contexts...\n');
+  
+  if (shouldReset) {
+    await resetSchema();
+  }
 
   // ==========================================================================
   // RESTAURANTS
@@ -293,22 +323,95 @@ async function seed() {
   }
 
   // ==========================================================================
+  // HIGH VALUE GUEST (>5 visits for proactive engagement testing)
+  // ==========================================================================
+
+  console.log('\n⭐ Creating high-value guest for proactive engagement testing...');
+
+  const [highValueGuest] = await getDb().insert(users).values({
+    clerkId: 'user_test_high_value_guest',
+    email: 'vip@example.com',
+    name: 'Victoria Sterling',
+    lastInteractionContext: {
+      intentType: 'BOOKING',
+      rawText: 'Book my usual table for 2 at 8pm',
+      parameters: {
+        restaurantId: restaurant.id,
+        restaurantSlug: 'demo',
+        restaurantName: 'The Pesto Place',
+        partySize: 2,
+        time: '20:00',
+        date: new Date().toISOString().split('T')[0],
+        isVIP: true,
+      },
+      timestamp: new Date().toISOString(),
+      executionId: 'exec_vip_001',
+      outcome: 'success',
+      visitCount: 7, // >5 visits to trigger proactive engagement
+      lifetimeValue: 450.50,
+      lastVisitDate: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(), // 3 days ago
+    },
+  }).onConflictDoUpdate({
+    target: users.clerkId,
+    set: {
+      name: 'Victoria Sterling',
+      lastInteractionContext: {
+        intentType: 'BOOKING',
+        rawText: 'Book my usual table for 2 at 8pm',
+        parameters: {
+          restaurantId: restaurant.id,
+          restaurantSlug: 'demo',
+          restaurantName: 'The Pesto Place',
+          partySize: 2,
+          time: '20:00',
+          date: new Date().toISOString().split('T')[0],
+          isVIP: true,
+        },
+        timestamp: new Date().toISOString(),
+        executionId: 'exec_vip_001',
+        outcome: 'success',
+        visitCount: 7,
+        lifetimeValue: 450.50,
+        lastVisitDate: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(),
+      } as any,
+    },
+  }).returning();
+
+  console.log(`   ✅ High-value guest created: ${highValueGuest.name}`);
+  console.log(`      - Visit count: 7`);
+  console.log(`      - Lifetime value: $450.50`);
+  console.log(`      - Triggers proactive engagement logic: ✅`);
+
+  // ==========================================================================
   // SUMMARY
   // ==========================================================================
-  
+
   console.log('\n📊 Seed Summary:');
   console.log(`   - Restaurants: 2`);
+  console.log(`     • ${restaurant.name} (ID: ${restaurant.id})`);
+  console.log(`     • ${restaurant2.name} (ID: ${restaurant2.id})`);
   console.log(`   - Tables: ${tables.length}`);
-  console.log(`   - Users: ${usersData.length}`);
+  console.log(`   - Users: ${usersData.length + 1} (including high-value guest)`);
+  console.log(`     • High-value guest: ${highValueGuest.name} (ID: ${highValueGuest.id})`);
   console.log(`   - Reservations: ${reservations.length}`);
   console.log(`   - Waitlist entries: ${waitlistEntries.length}`);
-  
+
   console.log('\n🎯 Test Scenarios Enabled:');
   console.log('   - ✅ Pre-flight state injection (restaurant availability)');
   console.log('   - ✅ Failover policies (full restaurant → alternatives)');
   console.log('   - ✅ Semantic memory (diverse user interaction contexts)');
   console.log('   - ✅ Schema evolution (failed bookings with mismatched parameters)');
-  
+  console.log('   - ✅ Proactive engagement (high-value guest with >5 visits)');
+
+  console.log('\n🔑 Copy-Paste IDs for Manual Testing:');
+  console.log(`   Restaurant ID:  ${restaurant.id}`);
+  console.log(`   Restaurant 2 ID: ${restaurant2.id}`);
+  console.log(`   High-Value User ID: ${highValueGuest.id}`);
+  console.log(`   User IDs:`);
+  console.log(`     - Alice Chen: user_test_001`);
+  console.log(`     - Bob Martinez: user_test_002`);
+  console.log(`     - Victoria Sterling (VIP): user_test_high_value_guest`);
+
   console.log('\n🚀 Seed complete! Ready for testing.\n');
 }
 

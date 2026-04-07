@@ -38,8 +38,11 @@ const BINANCE_SYMBOLS = {
   MATIC: "MATICUSDT",
 } as const;
 
-// Cache TTL in seconds (5 minutes)
-const CACHE_TTL = 300;
+// Cache TTL in seconds (30 seconds for fresh data)
+const CACHE_TTL = 30;
+
+// Stale-while-revalidate threshold (5 minutes max age for stale data)
+const STALE_CACHE_TTL = 300;
 
 // CI/TEST MODE: Static mock prices for deterministic testing
 const CI_MOCK_PRICES = {
@@ -137,13 +140,25 @@ export async function getCryptoPrices(options?: {
 
   // Try to get from cache first (wrapped in try-catch to prevent SPOF)
   let cached: any = null;
+  let isStale = false;
   try {
     const cachedRaw = await redis.get("@apps:crypto-prices");
     if (cachedRaw) {
       cached = JSON.parse(cachedRaw as string);
-      // Return cached data if less than 5 minutes old
-      if (Date.now() - cached.timestamp < CACHE_TTL * 1000) {
-        return { ...cached, source: 'cache' as const };
+      const cacheAge = Date.now() - cached.timestamp;
+      
+      // Return cached data if less than 30 seconds old (fresh cache)
+      if (cacheAge < CACHE_TTL * 1000) {
+        return { ...cached, source: 'cache' as const, isStale: false };
+      }
+      
+      // Mark as stale if between 30 seconds and 5 minutes old
+      if (cacheAge < STALE_CACHE_TTL * 1000) {
+        isStale = true;
+        console.warn(
+          `[CryptoPrice] Using stale cache data (${Math.round(cacheAge / 1000)}s old). ` +
+          `Attempting to refresh in background.`
+        );
       }
     }
   } catch (error) {
@@ -190,7 +205,7 @@ export async function getCryptoPrices(options?: {
       JSON.stringify(prices)
     );
 
-    return { ...prices, source: 'coingecko' as const };
+    return { ...prices, source: 'coingecko' as const, isStale: false };
   } catch (coingeckoError) {
     console.warn("CoinGecko failed, trying Coinbase:", coingeckoError);
 
@@ -258,7 +273,7 @@ export async function getCryptoPrices(options?: {
         JSON.stringify(prices)
       );
 
-      return { ...prices, source: 'coinbase' as const };
+      return { ...prices, source: 'coinbase' as const, isStale: false };
     } catch (coinbaseError) {
       console.warn("Coinbase also failed:", coinbaseError);
 
@@ -320,7 +335,7 @@ export async function getCryptoPrices(options?: {
           JSON.stringify(prices)
         );
 
-        return { ...prices, source: 'binance' as const };
+        return { ...prices, source: 'binance' as const, isStale: false };
       } catch (binanceError) {
         console.warn("Binance also failed:", binanceError);
 
@@ -336,7 +351,7 @@ export async function getCryptoPrices(options?: {
               MATIC: maticHistorical,
               timestamp: Date.now(),
             };
-            return { ...prices, source: 'historical' as const };
+            return { ...prices, source: 'historical' as const, isStale: true };
           }
         } catch (historicalError) {
           console.warn("Historical average also unavailable:", historicalError);

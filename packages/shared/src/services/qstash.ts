@@ -192,8 +192,39 @@ export class QStashService {
   /**
    * Trigger next step execution via QStash
    *
+   * This method publishes a message to QStash which will then trigger the
+   * `/api/engine/execute-step` endpoint with automatic retries on failure.
+   *
+   * **Fire-and-Forget Pattern:** This method returns immediately after publishing
+   * to QStash. The actual step execution happens asynchronously when QStash
+   * delivers the message to the callback endpoint.
+   *
+   * **Side Effects:**
+   * - Publishes message to QStash topic
+   * - QStash will POST to `/api/engine/execute-step` with retry logic
+   * - Triggers distributed tracing if traceId is provided
+   * - Generates short-lived JWT token for service-to-service auth
+   *
    * @param options - Execution parameters
-   * @returns Message ID if successful, null if QStash not configured
+   * @param options.executionId - Unique saga execution ID
+   * @param options.stepIndex - Index of the next step to execute
+   * @param options.traceId - Optional trace ID for distributed tracing
+   * @param options.correlationId - Optional correlation ID for request correlation
+   * @returns Message ID if successful, null if QStash not configured (dev only)
+   *
+   * @example
+   * ```typescript
+   * // After completing step 0, trigger step 1
+   * const messageId = await QStashService.triggerNextStep({
+   *   executionId: 'exec_abc123',
+   *   stepIndex: 1,
+   *   traceId: 'trace_xyz789',
+   * });
+   *
+   * console.log(`QStash message published: ${messageId}`);
+   * ```
+   *
+   * @throws Error in production if QStash is not configured
    */
   static async triggerNextStep(options: QStashTriggerOptions): Promise<string | null> {
     const client = this.getClient();
@@ -272,8 +303,52 @@ export class QStashService {
   /**
    * Schedule step execution with delay
    *
+   * This method schedules a step to be executed after a specified delay using
+   * QStash's scheduling feature. QStash will trigger the `/api/engine/execute-step`
+   * endpoint after the delay elapses.
+   *
+   * **Use Cases:**
+   * - Wait for user confirmation (e.g., delay 1 hour for user to approve)
+   * - Retry failed steps with backoff (e.g., delay 5 minutes before retry)
+   * - Time-based workflows (e.g., send reminder 30 minutes before reservation)
+   *
+   * **Side Effects:**
+   * - Schedules message in QStash (not published immediately)
+   * - QStash will POST to `/api/engine/execute-step` after delay
+   * - Generates short-lived JWT token (valid for 5 minutes from scheduling)
+   *
+   * **Important:** The JWT token expires 5 minutes after scheduling. If the delay
+   * is longer than 5 minutes, the token will be expired when the step executes.
+   * For long delays, consider implementing token refresh logic in the execute-step handler.
+   *
    * @param options - Scheduling parameters
+   * @param options.executionId - Unique saga execution ID
+   * @param options.stepIndex - Index of the step to execute
+   * @param options.delay - Delay string (e.g., "1h", "30m", "10s")
+   * @param options.cron - Optional cron expression for recurring execution
    * @returns Message ID if successful, null if QStash not configured
+   *
+   * @example
+   * ```typescript
+   * // Schedule a retry attempt in 5 minutes
+   * const messageId = await QStashService.scheduleStep({
+   *   executionId: 'exec_abc123',
+   *   stepIndex: 2,
+   *   delay: '5m',
+   * });
+   *
+   * console.log(`Step scheduled for later execution: ${messageId}`);
+   * ```
+   *
+   * @example
+   * ```typescript
+   * // Wait 1 hour for user confirmation
+   * await QStashService.scheduleStep({
+   *   executionId: executionId,
+   *   stepIndex: nextStepIndex,
+   *   delay: '1h',
+   * });
+   * ```
    */
   static async scheduleStep(options: QStashScheduleOptions): Promise<string | null> {
     const client = this.getClient();

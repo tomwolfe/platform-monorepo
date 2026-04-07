@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useState, useEffect } from "react";
-import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useBalance, useWriteContract, useReadContract, useSignMessage } from "wagmi";
+import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useBalance, useWriteContract, useReadContract, useSignMessage, useEstimateGas } from "wagmi";
 import { parseUnits, stringToHex, type Address, formatUnits } from "viem";
 import { base } from "viem/chains";
 import { Loader2, CheckCircle, AlertCircle, ArrowRight, Coins, Shield, Wallet } from "lucide-react";
@@ -63,6 +63,29 @@ export function CryptoCheckout({
     address,
     chainId: chain?.id || defaultChainId,
   });
+
+  // Estimate gas for ETH transactions
+  const { data: estimatedGas, isError: isGasEstimationError } = useEstimateGas({
+    to: escrowContractAddress as Address,
+    value: totalEthWei > 0n ? totalEthWei : undefined,
+    data: orderId ? stringToHex(orderId) : undefined,
+    chainId: defaultChainId,
+    query: {
+      enabled: paymentCurrency === "ETH" && !!address && totalEthWei > 0n,
+    },
+  });
+
+  // Calculate estimated gas fee in USD
+  const [estimatedGasFeeUsd, setEstimatedGasFeeUsd] = useState<number>(0);
+
+  useEffect(() => {
+    if (estimatedGas && ethPrice) {
+      // Gas is in wei, convert to ETH then to USD
+      const gasEth = parseFloat(formatUnits(estimatedGas, 18));
+      const gasFeeUsd = gasEth * ethPrice;
+      setEstimatedGasFeeUsd(gasFeeUsd);
+    }
+  }, [estimatedGas, ethPrice]);
 
   // Calculate totals
   const subtotalFiat = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -276,7 +299,12 @@ export function CryptoCheckout({
       // Fail-closed: if ethPrice is null, cannot determine balance
       if (ethPrice === null) return false;
       const balanceEth = parseFloat(formatUnits(balance.value, balance.decimals));
-      return balanceEth >= totalEth;
+      
+      // Include estimated gas in the total required amount
+      const estimatedGasEth = estimatedGas ? parseFloat(formatUnits(estimatedGas, 18)) : 0;
+      const totalRequiredWithGas = totalEth + estimatedGasEth;
+      
+      return balanceEth >= totalRequiredWithGas;
     }
   })();
 
@@ -409,6 +437,20 @@ export function CryptoCheckout({
               </p>
             </div>
           </div>
+          
+          {/* Estimated Gas Fee - Only for ETH payments */}
+          {paymentCurrency === "ETH" && ethPrice !== null && (
+            <div className="flex justify-between text-xs text-gray-500 pt-1">
+              <span className="text-gray-500">Estimated Gas Fee</span>
+              <span className="font-medium">
+                {estimatedGasFeeUsd > 0 
+                  ? `$${estimatedGasFeeUsd.toFixed(4)}` 
+                  : isGasEstimationError 
+                    ? "Unable to estimate" 
+                    : "Calculating..."}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Payment Method Info */}
@@ -491,7 +533,11 @@ export function CryptoCheckout({
             className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3.5 rounded-lg font-bold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
           >
             <Coins className="h-5 w-5" />
-            {paymentCurrency === "ETH" && ethPrice === null ? "Price Unavailable" : `Pay with ${paymentCurrency}`}
+            {!hasSufficientBalance && paymentCurrency === "ETH"
+              ? "Insufficient Balance (Including Gas)"
+              : paymentCurrency === "ETH" && ethPrice === null
+                ? "Price Unavailable"
+                : `Pay with ${paymentCurrency}`}
             <ArrowRight className="h-5 w-5" />
           </button>
         )}

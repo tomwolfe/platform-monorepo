@@ -13,12 +13,61 @@ concurrency:
 
 jobs:
   # ============================================================================
+  # SCHEMA VALIDATION
+  # Validates MCP tool definitions match database schemas before running tests
+  # ============================================================================
+  schema-validation:
+    name: Schema Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.15.9
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Validate schema sync
+        run: pnpm validate:schema-sync:strict
+        continue-on-error: true
+        id: schema-check
+
+      - name: Upload schema sync report
+        uses: actions/upload-artifact@v4
+        if: always() && steps.schema-check.outcome != 'success'
+        with:
+          name: schema-sync-report
+          path: |
+            schema-sync-report.json
+            **/schema-sync-report.json
+          retention-days: 30
+
+      - name: Fail on schema validation error
+        if: steps.schema-check.outcome != 'success'
+        run: |
+          echo "❌ Schema validation failed. MCP tool definitions may be out of sync with database schemas."
+          echo "Please run 'pnpm validate:schema-sync:strict' locally to see the issues."
+          exit 1
+
+  # ============================================================================
   # LINT & TYPE CHECK
   # ============================================================================
   lint-and-typecheck:
     name: Lint & Type Check
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: [schema-validation]
 
     steps:
       - name: Checkout code
@@ -612,6 +661,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs:
+      - schema-validation
       - lint-and-typecheck
       - unit-tests
       - integration-tests
@@ -626,6 +676,7 @@ jobs:
       - name: Check CI status
         run: |
           echo "=== CI Test Summary ==="
+          echo "Schema Validation: ${{ needs.schema-validation.result }}"
           echo "Lint & Typecheck: ${{ needs.lint-and-typecheck.result }}"
           echo "Unit Tests: ${{ needs.unit-tests.result }}"
           echo "Integration Tests: ${{ needs.integration-tests.result }}"
@@ -636,7 +687,8 @@ jobs:
           echo "Check Migrations: ${{ needs.check-migrations.result }}"
 
           # Fail if any critical jobs failed
-          if [[ "${{ needs.unit-tests.result }}" == "failure" ]] || \
+          if [[ "${{ needs.schema-validation.result }}" == "failure" ]] || \
+             [[ "${{ needs.unit-tests.result }}" == "failure" ]] || \
              [[ "${{ needs.integration-tests.result }}" == "failure" ]] || \
              [[ "${{ needs.coverage-check.result }}" == "failure" ]] || \
              [[ "${{ needs.build-verification.result }}" == "failure" ]]; then

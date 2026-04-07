@@ -15,6 +15,34 @@
  * - If elapsed > 6000ms, atomically saves state to Redis and yields
  * - Emits WORKFLOW_RESUME event via Ably for continuation
  * - On resume, loads state from Redis and continues from next step
+ *
+ * @example
+ * ```typescript
+ * // Create a new workflow
+ * const machine = new WorkflowMachine(executionId, toolExecutor);
+ *
+ * // Set the execution plan (from unified-planner)
+ * machine.setPlan(plan);
+ *
+ * // Run the workflow (handles async saga execution with yield-and-resume)
+ * const result = await machine.execute();
+ *
+ * console.log(`Workflow completed: ${result.state.status}`);
+ * console.log(`Steps completed: ${result.completedSteps}/${result.totalSteps}`);
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Check workflow status
+ * const status = machine.getStatus();
+ * if (status === WorkflowStatus.YIELDING) {
+ *   console.log('Workflow is yielding - state checkpointed to Redis');
+ * }
+ *
+ * // Get current state for debugging
+ * const state = machine.getState();
+ * console.log(`Current step: ${state.current_step_index}`);
+ * ```
  */
 
 import {
@@ -296,6 +324,34 @@ export class WorkflowMachine {
   }> = [];
   private batchPlanner: BatchExecutionPlanner | null = null;
 
+  /**
+   * Create a new WorkflowMachine instance
+   *
+   * @param executionId - Unique execution ID (must be a valid UUID)
+   * @param toolExecutor - Executor for running MCP tools (implements ToolExecutor interface)
+   * @param options - Optional configuration
+   * @param options.intentId - ID of the parsed intent that created this workflow
+   * @param options.initialState - Resume from existing state (for yield-and-resume)
+   * @param options.traceId - Distributed trace ID for observability
+   * @param options.correlationId - Correlation ID for request tracking
+   * @param options.idempotencyService - Service for preventing duplicate executions
+   * @param options.safetyPolicy - Safety policy for plan validation
+   *
+   * @example
+   * ```typescript
+   * // Basic usage
+   * const machine = new WorkflowMachine(executionId, toolExecutor);
+   *
+   * @example
+   * ```typescript
+   * // Resume from persisted state (after QStash trigger)
+   * const savedState = await loadExecutionState(executionId);
+   * const machine = new WorkflowMachine(executionId, toolExecutor, {
+   *   initialState: savedState,
+   *   traceId: savedState.trace_id,
+   * });
+   * ```
+   */
   constructor(
     executionId: string,
     toolExecutor: ToolExecutor,
@@ -331,6 +387,28 @@ export class WorkflowMachine {
 
   /**
    * Set the plan for execution
+   *
+   * This method accepts the LLM-generated plan and prepares the workflow machine
+   * for execution. It transitions the state from PLANNING to PLANNED and
+   * initializes the batch execution planner for DAG-based step ordering.
+   *
+   * **Side Effects:**
+   * - Transitions state to PLANNED
+   * - Initializes BatchExecutionPlanner for dependency resolution
+   * - Updates state with plan reference
+   *
+   * @param plan - Execution plan from unified-planner.generatePlan()
+   *
+   * @example
+   * ```typescript
+   * const plan = await generatePlan(intent, { available_tools: tools });
+   * const verification = verifyPlan(plan, DEFAULT_SAFETY_POLICY);
+   *
+   * if (verification.valid) {
+   *   machine.setPlan(plan);
+   *   const result = await machine.execute();
+   * }
+   * ```
    */
   setPlan(plan: Plan): void {
     this.plan = plan;
@@ -733,7 +811,56 @@ export class WorkflowMachine {
   }
 
   /**
-   * Execute the workflow with yield-and-resume pattern
+   * Execute the workflow plan with saga pattern and yield-and-resume support
+   *
+   * This is the **synchronous handler** that executes steps until completion or
+   * until the yield threshold is reached. Unlike `triggerNextStep` (which is
+   * fire-and-forget via QStash), this method actually executes the steps and
+   * returns the result.
+   *
+   * **Execution Flow:**
+   * 1. Validates plan against safety policy
+   * 2. Executes steps in dependency order (DAG-based batching)
+   * 3. Checkpoints state to Redis when approaching timeout (6s threshold)
+   * 4. Triggers QStash for async continuation if yielding
+   * 5. Registers compensations for state-modifying operations
+   * 6. Rolls back compensations on failure (saga pattern)
+   *
+   * **Side Effects:**
+   * - Executes MCP tools via toolExecutor
+   * - Checkpoints state to Redis (publishes to Ably channel on yield)
+   * - Triggers QStash for async continuation if yielding
+   * - Writes audit log entries with latency metrics
+   * - May trigger failover policy engine on errors
+   *
+   * **Yield-and-Resume Pattern:**
+   * When approaching Vercel's 10s timeout (at 6s), the workflow:
+   * 1. Saves state to Redis with OCC (Optimistic Concurrency Control)
+   * 2. Publishes WORKFLOW_RESUME event via Ably
+   * 3. Triggers QStash to call `/api/engine/execute-step`
+   * 4. Returns with `yielded: true` flag
+   *
+   * @returns WorkflowResult with execution state, completed steps, and trace
+   * @returns.result.yielded - True if workflow yielded for async continuation
+   * @returns.result.success - True if all steps completed successfully
+   * @returns.result.completedSteps - Number of successfully completed steps
+   * @returns.result.failedSteps - Number of failed steps
+   *
+   * @example
+   * ```typescript
+   * const machine = new WorkflowMachine(executionId, toolExecutor);
+   * machine.setPlan(plan);
+   *
+   * const result = await machine.execute();
+   *
+   * if (result.yielded) {
+   *   console.log('Workflow yielded - will resume via QStash');
+   * } else if (result.success) {
+   *   console.log(`Workflow completed: ${result.completedSteps} steps`);
+   * } else {
+   *   console.error(`Workflow failed at step ${result.failedSteps}`);
+   * }
+   * ```
    */
   async execute(): Promise<WorkflowResult> {
     const startTime = performance.now();

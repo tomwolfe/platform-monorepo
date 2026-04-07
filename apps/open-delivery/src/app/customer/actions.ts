@@ -2,16 +2,13 @@
 
 import { getDb, restaurants, orders, orderItems, users, sql, restaurantProducts, eq, type CryptoAmount } from "@repo/database";
 import { currentUser } from "@clerk/nextjs/server";
-import { RealtimeService, isReplayAllowed, rollbackReplayGuard } from "@repo/shared";
+import { RealtimeService, isReplayAllowed, rollbackReplayGuard, AppConfig } from "@repo/shared";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
 import { createPublicClient, http, type Hash, type Address, parseUnits, parseEther, formatUnits } from "viem";
 import { base } from "viem/chains";
 import { getCryptoPrices, usdToCryptoBigIntWithSlippage } from "@repo/shared/utils/crypto-price";
 import { verifyTransaction, isValidTxHash, isValidAddress } from "@repo/shared/utils/web3-verification";
-
-// Global slippage tolerance for ETH-based payments (2% = 200 basis points)
-const SLIPPAGE_BPS = 200;
 
 export interface Vendor {
   id: string;
@@ -194,9 +191,10 @@ export async function placeRealOrder(
     const tipCents = BigInt(Math.round(tipFiat * 100));
     const totalCents = BigInt(Math.round(totalFiat * 100));
 
-    subtotalCrypto = (await usdToCryptoBigIntWithSlippage(subtotalCents, "ETH", SLIPPAGE_BPS)).toString();
-    tipCrypto = (await usdToCryptoBigIntWithSlippage(tipCents, "ETH", SLIPPAGE_BPS)).toString();
-    totalCrypto = (await usdToCryptoBigIntWithSlippage(totalCents, "ETH", SLIPPAGE_BPS)).toString();
+    const slippageBps = AppConfig.getSlippageBps();
+    subtotalCrypto = (await usdToCryptoBigIntWithSlippage(subtotalCents, "ETH", slippageBps)).toString();
+    tipCrypto = (await usdToCryptoBigIntWithSlippage(tipCents, "ETH", slippageBps)).toString();
+    totalCrypto = (await usdToCryptoBigIntWithSlippage(totalCents, "ETH", slippageBps)).toString();
   } else {
     // USDC: 6 decimals, assume 1 USD = 1 USDC
     subtotalCrypto = parseUnits(subtotalFiat.toFixed(6), 6).toString();
@@ -235,8 +233,6 @@ export async function placeRealOrder(
     }
 
     // Verify transaction on-chain using shared utility
-    // ETH slippage tolerance is handled via the global SLIPPAGE_BPS constant
-
     const verificationResult = await verifyTransaction({
       txHash: paymentParams.txHash as Hash,
       expectedValue: BigInt(totalCrypto),
@@ -247,7 +243,7 @@ export async function placeRealOrder(
       orderId, // Required for signature verification
       signature: paymentParams.signature as `0x${string}` | undefined,
       appSource: "open-delivery",
-      slippageBps: paymentCurrency === "ETH" ? SLIPPAGE_BPS : undefined,
+      slippageBps: paymentCurrency === "ETH" ? slippageBps : undefined,
     });
 
     if (!verificationResult.success) {

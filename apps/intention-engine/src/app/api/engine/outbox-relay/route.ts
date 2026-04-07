@@ -21,7 +21,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withQStashAuth, getOutboxService, getRedisClient, ServiceNamespace } from '@repo/shared';
-import { verifyServiceToken } from '@repo/auth';
 
 const redis = getRedisClient(ServiceNamespace.IE);
 

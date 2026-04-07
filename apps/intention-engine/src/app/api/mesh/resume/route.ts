@@ -11,7 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { verifyServiceToken } from "@repo/auth";
+import { verifyAsymmetricJWT } from "@repo/auth";
 import { resumeFromCheckpoint, ToolExecutor, WorkflowResult } from "@/lib/engine/workflow-machine";
 import { loadExecutionState } from "@/lib/engine/memory";
 import { getMcpClients, ToolCallResult } from "@/lib/mcp-client";
@@ -43,7 +43,7 @@ async function meshResumeHandler(req: NextRequest) {
     );
   }
 
-  const verified = await verifyServiceToken(token);
+  const verified = await verifyAsymmetricJWT(token, 'intention-engine', 'mesh-resume');
   if (!verified) {
     return NextResponse.json(
       formatApiError(new Error("Invalid or expired service token"), "UNAUTHORIZED"),

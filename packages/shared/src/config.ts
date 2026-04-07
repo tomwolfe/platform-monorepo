@@ -77,6 +77,11 @@ const BaseConfigSchema = z.object({
   CRON_SECRET: z.string().optional(),
   PLATFORM_FEE_BPS: z.string().optional(),
   DRIVER_BASE_PAY_CENTS: z.string().optional(),
+  SLIPPAGE_BPS: z.string().optional().default("200"),
+
+  // Routing / Mobility
+  OPENROUTESERVICE_API_KEY: z.string().optional(),
+  ORS_ROUTING_TIMEOUT_MS: z.string().optional().default("5000"),
 
   // Application URLs
   NEXT_PUBLIC_APP_URL: z.string().url().optional(),
@@ -540,6 +545,31 @@ export class AppConfig {
   static getDriverBasePayCents(): number {
     const config = this.init();
     return config.DRIVER_BASE_PAY_CENTS ? parseInt(config.DRIVER_BASE_PAY_CENTS, 10) : 200;
+  }
+
+  /**
+   * Get Web3 slippage tolerance in basis points
+   */
+  static getSlippageBps(): number {
+    const config = this.init();
+    return config.SLIPPAGE_BPS ? parseInt(config.SLIPPAGE_BPS, 10) : 200;
+  }
+
+  /**
+   * Get OpenRouteService API key for production-grade routing
+   * Free tier: ~2,500 requests/day. Get key at https://openrouteservice.org/sign-up
+   */
+  static getOpenrouteserviceApiKey(): string | undefined {
+    const config = this.init();
+    return config.OPENROUTESERVICE_API_KEY;
+  }
+
+  /**
+   * Get ORS routing request timeout in milliseconds
+   */
+  static getOrsRoutingTimeoutMs(): number {
+    const config = this.init();
+    return config.ORS_ROUTING_TIMEOUT_MS ? parseInt(config.ORS_ROUTING_TIMEOUT_MS, 10) : 5000;
   }
 
   // ========================================================================

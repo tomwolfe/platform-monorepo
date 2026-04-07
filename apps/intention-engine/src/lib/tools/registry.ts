@@ -29,74 +29,37 @@ import {
   getLiveOperationalStateToolDefinition
 } from "./operational_state";
 import { RestaurantResultSchema } from "../schema";
-import { AppCapabilitiesSchema } from "@repo/mcp-protocol";
+import { AppCapabilitiesSchema, GeocodeSchema, SearchRestaurantSchema, AddCalendarEventSchema, WeatherDataSchema } from "@repo/mcp-protocol";
 import { SERVICES } from "@repo/shared";
+import zodToJsonSchema from "zod-to-json-schema";
 
 // ============================================================================
-// LOCAL TOOL SCHEMAS - Eliminate dependency on legacy exports
-// These schemas are now defined locally for better type safety and maintainability
+// TOOL SCHEMAS FROM MCP PROTOCOL - Single Source of Truth
+// These schemas are imported from @repo/mcp-protocol to ensure consistency
 // ============================================================================
 
 const GEOCODE_LOCATION_TOOL = {
   name: "geocode_location",
   description: "Converts city names, addresses, or place names to precise lat/lon coordinates.",
-  inputSchema: {
-    type: "object" as const,
-    properties: {
-      location: { type: "string" as const }
-    },
-    required: ["location"]
-  }
+  inputSchema: zodToJsonSchema(GeocodeSchema, { target: "jsonSchema7" }) as any,
 } as const;
 
 const SEARCH_RESTAURANT_TOOL = {
   name: "search_restaurant",
   description: "Search for restaurants based on cuisine and location.",
-  inputSchema: {
-    type: "object" as const,
-    properties: {
-      cuisine: { type: "string" as const },
-      lat: { type: "number" as const },
-      lon: { type: "number" as const },
-      location: { type: "string" as const }
-    }
-  }
+  inputSchema: zodToJsonSchema(SearchRestaurantSchema, { target: "jsonSchema7" }) as any,
 } as const;
 
 const ADD_CALENDAR_EVENT_TOOL = {
   name: "add_calendar_event",
   description: "Add one or more events to the calendar.",
-  inputSchema: {
-    type: "object" as const,
-    properties: {
-      events: {
-        type: "array" as const,
-        items: {
-          type: "object" as const,
-          properties: {
-            title: { type: "string" as const },
-            start_time: { type: "string" as const },
-            end_time: { type: "string" as const }
-          },
-          required: ["title", "start_time", "end_time"]
-        }
-      }
-    },
-    required: ["events"]
-  }
+  inputSchema: zodToJsonSchema(AddCalendarEventSchema, { target: "jsonSchema7" }) as any,
 } as const;
 
 const GET_WEATHER_DATA_TOOL = {
   name: "get_weather_data",
   description: "Authorized to access real-time weather data. Provides live forecasts and current conditions with full meteorological authority.",
-  inputSchema: {
-    type: "object" as const,
-    properties: {
-      lat: { type: "number" as const, description: "Latitude of the location." },
-      lon: { type: "number" as const, description: "Longitude of the location." }
-    },
-    required: ["lat", "lon"]
-  }
+  inputSchema: zodToJsonSchema(WeatherDataSchema, { target: "jsonSchema7" }) as any,
 } as const;
 
 /**

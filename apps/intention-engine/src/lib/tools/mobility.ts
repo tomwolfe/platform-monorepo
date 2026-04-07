@@ -12,6 +12,7 @@ import {
   validateMobilityRequest,
   type MobilityRequest,
 } from "@repo/shared/services/mobility-provider";
+import { AppConfig } from "@repo/shared";
 
 export {
   MobilityRequestSchema,
@@ -162,6 +163,28 @@ function estimateDuration(distanceKm: number, travelMode: string): number {
   return Math.round((distanceKm / speed) * 60);
 }
 
+/**
+ * Fetch wrapper with AbortController timeout support
+ */
+async function fetchWithFallback(
+  url: string,
+  options: RequestInit,
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export async function get_route_estimate(params: RouteEstimateParams): Promise<{ success: boolean; result?: any; error?: string }> {
   const validated = RouteEstimateSchema.safeParse(params);
   if (!validated.success) {
@@ -203,83 +226,131 @@ export async function get_route_estimate(params: RouteEstimateParams): Promise<{
       return getHaversineFallback(normalizedOrigin, normalizedDestination, originCoords, destCoords, travel_mode);
     }
 
-    // OSRM handles driving, walking, cycling
-    // Note: We use 'driving' profile since the public OSRM server only supports it
-    const _osrmMode = travel_mode === "bicycling" ? "bicycle" :
-                    travel_mode === "walking" ? "foot" : "car";
+    // ROUTING FALLBACK CHAIN (100% Free):
+    // 1. Primary: OpenRouteService (free tier: ~2,500 req/day)
+    //    - Rich metadata: elevation, surface type, way types
+    //    - Profiles: driving-car, driving-hgv, foot-walking, cycling-regular
+    // 2. Fallback: Public OSRM demo server (unlimited but rate-limited)
+    //    - Driving profile only, no metadata
+    // 3. Offline: Haversine straight-line distance (always available)
+    const orsApiKey = AppConfig.getOpenrouteserviceApiKey();
+    const hasOrsKey = !!orsApiKey;
 
-    // Note: Public OSRM demo server only supports 'driving' (car) reliably.
-    // We'll use 'driving' as base and adjust for other modes if car is the only available profile.
-    const url = `https://router.project-osrm.org/route/v1/driving/${originCoords.lon},${originCoords.lat};${destCoords.lon},${destCoords.lat}?overview=false`;
+    if (hasOrsKey) {
+      console.log('[get_route_estimate] Using OpenRouteService (primary)');
+    } else {
+      console.log('[get_route_estimate] No ORS API key, falling back to public OSRM');
+    }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-
+    // Try primary provider (ORS or OSRM)
     return await withNervousSystemTracing(async ({ correlationId }) => {
-      let response: Response;
+      // ---- PRIMARY: OpenRouteService ----
+      if (hasOrsKey) {
+        const orsProfile = travel_mode === "walking" ? "foot-walking" :
+                          travel_mode === "bicycling" ? "cycling-regular" :
+                          travel_mode === "transit" ? "driving-car" : // ORS doesn't have transit
+                          "driving-car";
+        const orsUrl = `https://api.openrouteservice.org/v2/directions/${orsProfile}/geojson`;
+        const orsBody = {
+          coordinates: [[originCoords.lon, originCoords.lat], [destCoords.lon, destCoords.lat]],
+          format: "geojson",
+        };
+        const orsTimeout = AppConfig.getOrsRoutingTimeoutMs();
+
+        try {
+          const orsResponse = await fetchWithFallback(
+            orsUrl,
+            {
+              method: "POST",
+              headers: {
+                ...injectTracingHeaders({ "Content-Type": "application/json" }, correlationId),
+                "Authorization": orsApiKey!,
+              },
+              body: JSON.stringify(orsBody),
+            },
+            orsTimeout
+          );
+
+          if (orsResponse.ok) {
+            const data = await orsResponse.json();
+            if (data.features && data.features.length > 0) {
+              const feature = data.features[0];
+              const props = feature.properties;
+              const distanceKm = (props.summary.distance / 1000);
+              const durationMins = Math.round(props.summary.duration / 60);
+
+              return {
+                success: true,
+                result: {
+                  origin: normalizedOrigin,
+                  destination: normalizedDestination,
+                  distance_km: parseFloat(distanceKm.toFixed(1)),
+                  duration_minutes: durationMins,
+                  traffic_status: "n/a",
+                  provider: "openrouteservice",
+                  // Rich ORS metadata when available
+                  ascent: props.ascent ? Math.round(props.ascent) : undefined,
+                  descent: props.descent ? Math.round(props.descent) : undefined,
+                }
+              };
+            }
+          } else {
+            const statusCode = orsResponse.status;
+            if (statusCode === 429 || statusCode === 403 || statusCode >= 500) {
+              console.warn(`[get_route_estimate] ORS API ${statusCode}, falling back to OSRM`);
+            } else {
+              console.warn(`[get_route_estimate] ORS API error ${statusCode}, falling back to OSRM`);
+            }
+          }
+        } catch (err) {
+          console.warn('[get_route_estimate] ORS request failed, falling back to OSRM:', err instanceof Error ? err.message : String(err));
+        }
+      }
+
+      // ---- FALLBACK: Public OSRM ----
+      const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${originCoords.lon},${originCoords.lat};${destCoords.lon},${destCoords.lat}?overview=false`;
 
       try {
-        response = await fetch(url, {
+        const osrmResponse = await fetchWithFallback(osrmUrl, {
           headers: injectTracingHeaders({}, correlationId),
-          signal: controller.signal
-        });
-      } catch (fetchError: any) {
-        clearTimeout(timeoutId);
+        }, 8000);
 
-        // Handle AbortError (timeout) or network errors - FALLBACK TO HAVERSINE
-        if (fetchError.name === 'AbortError' || fetchError.message?.includes('fetch')) {
-          console.warn('[get_route_estimate] OSRM API timeout, using Haversine fallback');
-          return getHaversineFallback(normalizedOrigin, normalizedDestination, originCoords, destCoords, travel_mode);
+        if (osrmResponse.ok) {
+          const data = await osrmResponse.json();
+          if (data.routes && data.routes.length > 0) {
+            const route = data.routes[0];
+            const distanceKm = route.distance / 1000;
+            let durationMins = route.duration / 60;
+
+            // Adjust for non-driving modes since OSRM only supports driving
+            if (travel_mode === "walking") {
+              durationMins = (distanceKm / 5) * 60;
+            } else if (travel_mode === "bicycling") {
+              durationMins = (distanceKm / 15) * 60;
+            }
+
+            return {
+              success: true,
+              result: {
+                origin: normalizedOrigin,
+                destination: normalizedDestination,
+                distance_km: parseFloat(distanceKm.toFixed(1)),
+                duration_minutes: Math.round(durationMins),
+                traffic_status: travel_mode === "driving" ? "moderate" : "n/a",
+                provider: "osrm-public",
+              }
+            };
+          }
+        } else {
+          console.warn(`[get_route_estimate] OSRM API ${osrmResponse.status}, falling back to Haversine`);
         }
-
-        throw fetchError;
+      } catch (err) {
+        console.warn('[get_route_estimate] OSRM request failed, falling back to Haversine:', err instanceof Error ? err.message : String(err));
       }
 
-      clearTimeout(timeoutId);
-
-      // Handle HTTP error status codes
-      if (!response.ok) {
-        const statusCode = response.status;
-
-        // Handle rate limiting (429) or service unavailable (503) - FALLBACK TO HAVERSINE
-        if (statusCode === 429 || statusCode === 503 || statusCode >= 500) {
-          console.warn(`[get_route_estimate] OSRM API ${statusCode}, using Haversine fallback`);
-          return getHaversineFallback(normalizedOrigin, normalizedDestination, originCoords, destCoords, travel_mode);
-        }
-
-        // For other errors (400, 404), try Haversine as fallback
-        console.warn(`[get_route_estimate] OSRM API error ${statusCode}, using Haversine fallback`);
-        return getHaversineFallback(normalizedOrigin, normalizedDestination, originCoords, destCoords, travel_mode);
-      }
-
-      const data = await response.json();
-      if (!data.routes || data.routes.length === 0) {
-        // No route found - use Haversine fallback
-        console.warn('[get_route_estimate] No route found, using Haversine fallback');
-        return getHaversineFallback(normalizedOrigin, normalizedDestination, originCoords, destCoords, travel_mode);
-      }
-
-      const route = data.routes[0];
-      const distanceKm = route.distance / 1000;
-      let durationMins = route.duration / 60;
-
-      // Adjust for non-driving modes since we use the driving profile
-      if (travel_mode === "walking") {
-        durationMins = (distanceKm / 5) * 60; // 5 km/h
-      } else if (travel_mode === "bicycling") {
-        durationMins = (distanceKm / 15) * 60; // 15 km/h
-      }
-
-      return {
-        success: true,
-        result: {
-          origin: normalizedOrigin,
-          destination: normalizedDestination,
-          distance_km: parseFloat(distanceKm.toFixed(1)),
-          duration_minutes: Math.round(durationMins),
-          traffic_status: travel_mode === "driving" ? "moderate" : "n/a"
-        }
-      };
+      // ---- LAST RESORT: Haversine ----
+      console.log('[get_route_estimate] All routing providers failed, using Haversine fallback');
+      return getHaversineFallback(normalizedOrigin, normalizedDestination, originCoords, destCoords, travel_mode);
     });
   } catch (error: unknown) {
     // Final fallback: return Haversine-based estimate

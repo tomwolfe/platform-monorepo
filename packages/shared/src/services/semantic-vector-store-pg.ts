@@ -364,8 +364,7 @@ export class HybridSemanticStore {
     }
 
     if (includeUserSubscription) {
-      // Note: Add subscription tier column when implemented
-      selectColumns.userSubscriptionTier = sql<string>`NULL`.as('user_subscription_tier');
+      selectColumns.userSubscriptionTier = users.subscriptionTier;
     }
 
     // Build query with joins

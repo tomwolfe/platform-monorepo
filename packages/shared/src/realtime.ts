@@ -1,5 +1,5 @@
 import { getAblyClient } from './clients';
-import { signServiceToken } from '@repo/auth';
+import { signAsymmetricJWT } from '@repo/auth';
 import { SequenceIdService, type SequenceIdEvent } from './services/sequence-id';
 
 export interface PublishOptions {
@@ -73,12 +73,15 @@ export class RealtimeService {
       data.sequenceId = options.sequenceId;
     }
 
-    // Sign the payload for service-to-service security
-    const token = await signServiceToken({
-      event: eventName,
-      data,
-      timestamp: Date.now(),
-    });
+    // Sign the payload for service-to-service security using RS256 asymmetric JWT
+    const token = await signAsymmetricJWT(
+      {
+        event: eventName,
+        data,
+        timestamp: Date.now(),
+      },
+      { issuer: 'shared-realtime', audience: 'ably-mesh' }
+    );
 
     const channel = ably.channels.get(channelName);
     try {
@@ -141,11 +144,14 @@ export class RealtimeService {
       return;
     }
 
-    const token = await signServiceToken({
-      event: 'ExecutionStepUpdate',
-      data: update,
-      timestamp: Date.now(),
-    });
+    const token = await signAsymmetricJWT(
+      {
+        event: 'ExecutionStepUpdate',
+        data: update,
+        timestamp: Date.now(),
+      },
+      { issuer: 'shared-realtime', audience: 'ably-mesh' }
+    );
 
     const channel = ably.channels.get('nervous-system:updates');
     try {

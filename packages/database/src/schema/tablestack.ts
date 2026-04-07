@@ -23,6 +23,7 @@ export const users = pgTable('user', {
   email: text('email').notNull().unique(),
   image: text('image'),
   role: userRoleEnum('role').notNull().default('shopper'),
+  subscriptionTier: text('subscription_tier').default('free'),
   // Contextual continuity: Store last inferred intent for conversation context
   lastInteractionContext: jsonb('last_interaction_context').$type<{
     intentType?: string;

@@ -6,15 +6,12 @@ import { createPublicClient, http, parseUnits } from 'viem';
 import { base } from 'viem/chains';
 import { isValidTxHash } from '@repo/shared/utils/web3-verification';
 import { getCryptoPrices, usdToCryptoBigIntWithSlippage } from '@repo/shared/utils/crypto-price';
-import { CheckoutRequestSchema, validateRequest as validateZodRequest, errorResponse, successResponse, withApiErrorHandler, Logger } from '@repo/shared';
+import { CheckoutRequestSchema, validateRequest as validateZodRequest, errorResponse, successResponse, withApiErrorHandler, Logger, AppConfig } from '@repo/shared';
 import { isReplayAllowed, rollbackReplayGuard } from '@repo/shared/middleware/web3-replay-guard';
 
 export const runtime = 'nodejs';
 
 const logger = new Logger({ serviceName: 'table-stack' });
-
-// Global slippage tolerance for ETH-based payments (2% = 200 basis points)
-const SLIPPAGE_BPS = 200;
 
 /**
  * Crypto Payment Verification Endpoint
@@ -113,8 +110,9 @@ async function postHandler(req: NextRequest) {
   let expectedValue: bigint;
 
   if (paymentCurrency === 'ETH') {
-    // Use standardized BigInt conversion with slippage
-    expectedValue = await usdToCryptoBigIntWithSlippage(BigInt(depositUsdCents), "ETH", SLIPPAGE_BPS);
+    // Use standardized BigInt conversion with centralized slippage
+    const slippageBps = AppConfig.getSlippageBps();
+    expectedValue = await usdToCryptoBigIntWithSlippage(BigInt(depositUsdCents), "ETH", slippageBps);
   } else {
     // USDC: 6 decimals, 1 USD = 1 USDC
     expectedValue = parseUnits(depositUsd.toFixed(6), 6);

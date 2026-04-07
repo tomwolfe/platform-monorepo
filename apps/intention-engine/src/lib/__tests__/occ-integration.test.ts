@@ -62,7 +62,8 @@ vi.mock("@repo/shared/redis", () => {
       const store = this.store;
       const key = keys[0];
 
-      if (script.includes('expectedVersion')) {
+      // Handle ATOMIC_CAS_SCRIPT
+      if (script.includes('expectedVersion') && script.includes('newState')) {
         const expectedVersion = args[0];
         const newState = args[1];
         const newVersion = parseInt(args[2], 10);
@@ -80,13 +81,16 @@ vi.mock("@repo/shared/redis", () => {
         }
 
         if (expectedVersion !== "any" && String(currentVersion) !== expectedVersion) {
+          // Conflict detected - return current state
           return [0, currentVersion, currentState || "null"];
         }
 
+        // Perform update
         store.set(key, newState);
         return [1, newVersion, newState];
       }
 
+      // Handle ATOMIC_DELTA_SCRIPT
       if (script.includes('deltaJson')) {
         const deltaJson = JSON.parse(args[0]);
         const newVersion = parseInt(args[1], 10);
@@ -214,6 +218,10 @@ describe("AtomicStateRebaser", () => {
     });
 
     it.skip("should handle conflicts with automatic rebase", async () => {
+      // NOTE: This test requires a more sophisticated mock that properly simulates
+      // Lua script CAS behavior with version conflicts. The current in-memory mock
+      // doesn't fully replicate the atomic compare-and-swap semantics.
+      // TODO: Implement proper Lua script simulation in InMemoryRedis mock.
       // Simulate concurrent modification
       const conflictingUpdate = async () => {
         await new Promise(resolve => setTimeout(resolve, 50));
@@ -252,6 +260,9 @@ describe("AtomicStateRebaser", () => {
     });
 
     it.skip("should fail after max retries exceeded", async () => {
+      // NOTE: This test requires proper Lua script CAS conflict simulation.
+      // The current mock doesn't correctly handle the retry/backoff semantics.
+      // TODO: Implement proper conflict simulation in InMemoryRedis mock.
       // Aggressive concurrent modification
       const aggressiveConflict = async () => {
         for (let i = 0; i < 5; i++) {
@@ -418,6 +429,9 @@ describe("atomicUpdateState()", () => {
 // ============================================================================
 
 describe.skip("MemoryClient.saveStateWithOCC()", () => {
+  // NOTE: These tests require proper MemoryClient integration with the OCC mock.
+  // The current mock doesn't implement updateStateAtomically which MemoryClient uses.
+  // TODO: Implement MemoryClient-compatible OCC mock that supports CAS operations.
   let redis: Redis;
   let memory: ReturnType<typeof getMemoryClient>;
   let executionId: string;

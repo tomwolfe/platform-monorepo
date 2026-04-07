@@ -188,22 +188,23 @@ export class TwilioSmsProvider implements ICommunicationProvider {
     }
 
     try {
-      // TODO: Implement Twilio SMS integration
-      // const twilio = require('twilio')(this.accountSid, this.authToken);
-      // const result = await twilio.messages.create({
-      //   body: message,
-      //   from: this.fromNumber,
-      //   to: recipient,
-      // });
+      const twilio = require('twilio');
+      const client = twilio(this.accountSid, this.authToken);
+      
+      const result = await client.messages.create({
+        body: message,
+        from: this.fromNumber,
+        to: recipient,
+      });
 
-      console.warn(`[Twilio] SMS not yet implemented for ${recipient}`);
+      console.log(`[Twilio] SMS sent to ${recipient}, messageId: ${result.sid}`);
 
       return {
-        status: "failed",
+        status: "sent",
         channel: "sms",
         recipient,
         timestamp: new Date().toISOString(),
-        error: "SMS channel not yet implemented. Twilio credentials detected but integration is pending.",
+        messageId: result.sid,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";

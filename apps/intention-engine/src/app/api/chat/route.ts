@@ -1,5 +1,5 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import { streamText, tool, stepCountIs, convertToModelMessages } from "ai";
+import { streamText, tool, stepCountIs, convertToModelMessages, type CoreMessage } from "ai";
 import { z } from "zod";
 import { getToolCapabilitiesPrompt } from "@/lib/tools/registry";
 import { getUserPreferences } from "@/lib/preferences";
@@ -150,17 +150,19 @@ function buildLiveStateContext(liveOperationalState: ReturnType<typeof fetchLive
 /**
  * Extract user text from core messages
  */
-function extractUserText(coreMessages: any[]): string {
+function extractUserText(coreMessages: CoreMessage[]): string {
   const lastUserMessage = [...coreMessages].reverse().find(m => m.role === "user");
   let userText = "";
+  
   if (typeof lastUserMessage?.content === "string") {
     userText = lastUserMessage.content;
   } else if (Array.isArray(lastUserMessage?.content)) {
     userText = lastUserMessage.content
-      .filter(part => part.type === "text")
-      .map(part => (part as any).text)
+      .filter((part): part is { type: "text"; text: string } => part.type === "text" && "text" in part)
+      .map(part => part.text)
       .join("\n");
   }
+  
   return userText;
 }
 

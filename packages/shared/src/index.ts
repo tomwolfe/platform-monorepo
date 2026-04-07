@@ -102,6 +102,9 @@ export type { SequenceIdEvent, OrderedEventBufferConfig } from './services/seque
 export * from './services/occ-rebase';
 export type { AtomicUpdateResult, AtomicUpdateOptions } from './services/occ-rebase';
 
+// Failover policy engine for resilient execution
+export * from './policies/failover-policy';
+
 // Semantic versioning enforcement with compatibility adapters
 export * from './services/semantic-versioning';
 

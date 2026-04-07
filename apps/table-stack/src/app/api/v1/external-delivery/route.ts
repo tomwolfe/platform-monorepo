@@ -1,8 +1,8 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { validateRequest } from '@tablestack/lib/auth';
+import { validateRequest, verifySignature } from '@tablestack/lib/auth';
 import { NotifyService } from '@tablestack/lib/notifications';
-import { withApiErrorHandler } from '@repo/shared';
+import { withApiErrorHandler, safeParseJson, formatApiError } from '@repo/shared';
 import { z } from 'zod';
 
 export const runtime = 'nodejs';
@@ -14,10 +14,38 @@ const ExternalDeliverySchema = z.object({
 });
 
 async function postHandler(req: NextRequest) {
+  // CRITICAL: Verify cryptographic signature (same as delivery-log/route.ts)
+  const bodyText = await req.text();
+  const signature = req.headers.get('x-signature');
+  const timestamp = Number(req.headers.get('x-timestamp'));
+
+  const secret = process.env.INTERNAL_SYSTEM_KEY;
+  if (!secret) {
+    throw new Error(
+      'CRITICAL: INTERNAL_SYSTEM_KEY environment variable is not configured. ' +
+      'Cannot verify webhook signatures without this key. ' +
+      'Please set INTERNAL_SYSTEM_KEY in your environment.'
+    );
+  }
+
+  const isValid = await verifySignature(bodyText, signature || '', timestamp, secret);
+  if (!isValid) {
+    return NextResponse.json({ message: 'Invalid signature or expired request' }, { status: 401 });
+  }
+
   const { error, status, context } = await validateRequest(req);
   if (error) return NextResponse.json({ message: error }, { status });
 
-  const body = await req.json();
+  // Safe JSON parsing with proper error handling
+  const parseResult = safeParseJson(bodyText);
+  if (!parseResult.success) {
+    return NextResponse.json(
+      formatApiError(new Error(`Invalid request body: ${parseResult.error}`), 'VALIDATION_ERROR'),
+      { status: 400 }
+    );
+  }
+
+  const body = parseResult.data;
 
   // Validate request body with Zod schema
   const validationResult = ExternalDeliverySchema.safeParse(body);

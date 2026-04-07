@@ -11,7 +11,7 @@ import {
 import * as zod from "zod";
 import { AllToolsMap, ToolInput, validateToolParams } from "@repo/mcp-protocol";
 import { mapJsonSchemaToZod } from "../lib/engine/schema-utils";
-import { JSONSchema7 } from "json-schema";
+import { JSONSchema7, JSONSchema7Definition } from "json-schema";
 
 /**
  * McpAdapter provides bi-directional compatibility between
@@ -23,7 +23,7 @@ export class McpAdapter {
    * Supports nested objects and recursion for complex schemas.
    */
   static parametersToInputSchema(parameters: ToolParameter[]): JSONSchema7 {
-    const properties: Record<string, JSONSchema7> = {};
+    const properties: Record<string, JSONSchema7Definition> = {};
     const required: string[] = [];
 
     const mapType = (type: string): JSONSchema7["type"] => {
@@ -37,22 +37,29 @@ export class McpAdapter {
       }
     };
 
-    const processParam = (param: ToolParameter): JSONSchema7 => {
+    const processParam = (param: ToolParameter): JSONSchema7Definition => {
       const schema: JSONSchema7 = {
         type: mapType(param.type),
         description: param.description,
       };
 
       if (param.type === "object" && param.properties) {
-        schema.properties = {} as Record<string, JSONSchema7>;
-        schema.required = [] as string[];
+        const objProperties: Record<string, JSONSchema7Definition> = {};
+        const objRequired: string[] = [];
+        
         for (const [propName, propValue] of Object.entries(param.properties)) {
-          (schema.properties as Record<string, JSONSchema7>)[propName] = processParam(propValue as ToolParameter);
-          if ((propValue as ToolParameter).required) {
-            (schema.required as string[]).push(propName);
+          if (typeof propValue === 'object' && propValue !== null && 'name' in propValue) {
+            objProperties[propName] = processParam(propValue as ToolParameter);
+            if ((propValue as ToolParameter).required) {
+              objRequired.push(propName);
+            }
           }
         }
-        if ((schema.required as string[]).length === 0) delete schema.required;
+        
+        schema.properties = objProperties;
+        if (objRequired.length > 0) {
+          schema.required = objRequired;
+        }
       }
 
       if (param.type === "array" && param.items) {

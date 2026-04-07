@@ -7,6 +7,48 @@ interface NervousSystemEvent {
   data: Record<string, unknown>;
 }
 
+// Module-level singleton to prevent duplicate Ably connections in React 18 Strict Mode
+let ablyInstance: Ably.Realtime | null = null;
+let channelInstance: Ably.RealtimeChannel | null = null;
+let connectionCount = 0;
+
+/**
+ * Get or create the Ably singleton instance
+ */
+function getAblyInstance(): Ably.Realtime {
+  if (!ablyInstance || ablyInstance.connection.state === 'closed' || ablyInstance.connection.state === 'failed') {
+    ablyInstance = new Ably.Realtime({
+      authUrl: '/api/ably/auth',
+    });
+    channelInstance = ablyInstance.channels.get('nervous-system:updates');
+  }
+  return ablyInstance;
+}
+
+/**
+ * Clean up the Ably instance when all consumers have unmounted
+ */
+function cleanupAblyInstance(): void {
+  connectionCount = Math.max(0, connectionCount - 1);
+  
+  if (connectionCount === 0 && ablyInstance) {
+    try {
+      if (channelInstance) {
+        channelInstance.unsubscribe();
+        channelInstance = null;
+      }
+      
+      if (ablyInstance.connection.state !== 'closed' && ablyInstance.connection.state !== 'closing') {
+        ablyInstance.close();
+      }
+    } catch (err) {
+      console.warn('[Mesh] Cleanup error:', err);
+    } finally {
+      ablyInstance = null;
+    }
+  }
+}
+
 export function useMesh(onEvent: (name: string, data: Record<string, unknown>) => void) {
   // Store the latest callback in a ref to avoid reconnecting Ably when the callback changes
   const savedOnEvent = useRef(onEvent);
@@ -16,16 +58,19 @@ export function useMesh(onEvent: (name: string, data: Record<string, unknown>) =
   }, [onEvent]);
 
   useEffect(() => {
-    let ably: Ably.Realtime | null = null;
-    let channel: Ably.RealtimeChannel | null = null;
     let isMounted = true;
+    let listener: ((message: NervousSystemEvent) => void) | null = null;
 
     try {
-      ably = new Ably.Realtime({
-        authUrl: '/api/ably/auth',
-      });
-
-      channel = ably.channels.get('nervous-system:updates');
+      // Increment connection count
+      connectionCount++;
+      
+      const ably = getAblyInstance();
+      
+      if (!channelInstance) {
+        console.error('[Mesh] Channel not initialized');
+        return;
+      }
 
       // Handle connection state changes
       ably.connection.on((stateChange) => {
@@ -36,37 +81,32 @@ export function useMesh(onEvent: (name: string, data: Record<string, unknown>) =
         }
       });
 
-      const listener = (message: NervousSystemEvent) => {
+      listener = (message: NervousSystemEvent) => {
         if (!isMounted) return;
         console.log('[Mesh] Received real-time event:', message.name, message.data);
         savedOnEvent.current(message.name!, message.data);
       };
 
-      channel.subscribe(listener);
-
-      // Store on channel object for cleanup
-      (channel as any)._listener = listener;
+      channelInstance.subscribe(listener);
     } catch (err) {
       console.error('[Mesh] Failed to initialize:', err);
+      connectionCount = Math.max(0, connectionCount - 1);
     }
 
     return () => {
       isMounted = false;
 
       try {
-        if (channel && (channel as any)._listener) {
-          channel.unsubscribe((channel as any)._listener);
-        }
-        if (ably) {
-          // Prevent race conditions by checking connection state before closing
-          if (ably.connection.state !== 'closed' && ably.connection.state !== 'closing') {
-            ably.close();
-          }
+        if (listener && channelInstance) {
+          channelInstance.unsubscribe(listener);
         }
       } catch (err) {
         // Ignore cleanup errors - connection may already be closed
         console.warn('[Mesh] Cleanup error:', err);
       }
+
+      // Clean up the singleton when component unmounts
+      cleanupAblyInstance();
     };
   }, []); // Empty dependency array ensures we only connect to Ably once
 }

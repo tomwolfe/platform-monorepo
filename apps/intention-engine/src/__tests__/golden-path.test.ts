@@ -27,23 +27,28 @@ vi.mock("@/lib/redis-client", () => ({
   },
 }));
 
-// Mock @repo/shared redis to avoid module not found errors
+// Mock @repo/shared to avoid requiring live Redis and other services
 vi.mock("@repo/shared", async () => {
+  // Dynamically import the actual module and selectively mock
   const actual = await vi.importActual("@repo/shared");
+  
+  // Create a mock Redis client
+  const mockRedisClient = {
+    keys: vi.fn().mockResolvedValue([]),
+    del: vi.fn().mockResolvedValue(1),
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue("OK"),
+    setex: vi.fn().mockResolvedValue("OK"),
+    scan: vi.fn().mockResolvedValue([]),
+    hset: vi.fn().mockResolvedValue(1),
+    hget: vi.fn().mockResolvedValue(null),
+    hgetall: vi.fn().mockResolvedValue({}),
+    expire: vi.fn().mockResolvedValue(1),
+  };
+  
   return {
     ...actual,
-    getRedisClient: vi.fn(() => ({
-      keys: vi.fn().mockResolvedValue([]),
-      del: vi.fn().mockResolvedValue(1),
-      get: vi.fn().mockResolvedValue(null),
-      set: vi.fn().mockResolvedValue("OK"),
-      setex: vi.fn().mockResolvedValue("OK"),
-      scan: vi.fn().mockResolvedValue([]),
-      hset: vi.fn().mockResolvedValue(1),
-      hget: vi.fn().mockResolvedValue(null),
-      hgetall: vi.fn().mockResolvedValue({}),
-      expire: vi.fn().mockResolvedValue(1),
-    })),
+    getRedisClient: vi.fn(() => mockRedisClient),
     ServiceNamespace: {
       IE: 'ie',
       CACHE: 'cache',
@@ -57,6 +62,7 @@ import { generatePlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/unified-planne
 import { verifyPlan } from "@/lib/engine/verifier";
 import { WorkflowMachine } from "@/lib/engine/workflow-machine";
 import { loadExecutionState } from "@/lib/engine/memory";
+import { transitionState } from "@/lib/engine/state-machine";
 
 import { getRedisClient, ServiceNamespace } from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.IE);;
@@ -122,6 +128,10 @@ function createMockToolExecutor() {
 // Canonical flow: User wants to book a restaurant table
 // ============================================================================
 
+// NOTE: This test is temporarily skipped due to complex WorkflowMachine execution infrastructure
+// that requires proper tool registry and state machine setup. The test structure and assertions
+// are correct - it needs a proper integration test environment with mocked tool execution.
+// TODO: Set up proper WorkflowMachine integration test environment
 describe.skip("Golden Path - Restaurant Booking", () => {
   beforeEach(async () => {
     // Clean up Redis before each test
@@ -212,12 +222,17 @@ describe.skip("Golden Path - Restaurant Booking", () => {
     // =========================================================================
     // STEP 4: Execute Plan via WorkflowMachine
     // =========================================================================
-    
-    const executionId = `exec_golden_${randomUUID().slice(0, 8)}`;
+
+    const executionId = randomUUID(); // Use valid UUID for WorkflowMachine validation
     const toolExecutor = createMockToolExecutor();
-    
+
     const machine = new WorkflowMachine(executionId, toolExecutor);
-    machine.setPlan(planResult.plan);
+    
+    // Transition state machine properly: RECEIVED -> PARSING -> PARSED -> PLANNING -> PLANNED
+    machine.state = transitionState(machine.state, "PARSING");
+    machine.state = transitionState(machine.state, "PARSED");
+    machine.state = transitionState(machine.state, "PLANNING");
+    machine.setPlan(planResult.plan); // This will transition to PLANNED
     
     const result = await machine.execute();
     

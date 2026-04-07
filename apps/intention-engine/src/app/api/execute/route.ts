@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { randomUUID } from "crypto";
 import { withNervousSystemTracing } from "@repo/shared/tracing";
+import { withApiErrorHandler, ServiceUnavailableError } from "@repo/shared/errors";
 import { startTrace } from "@/lib/observability";
 import { saveUserInteractionContext } from "@/lib/context-persistence";
 import { QStashService, Logger } from "@repo/shared";
@@ -452,136 +453,99 @@ async function getExecutionStatus(
   }
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
+async function postHandler(request: NextRequest): Promise<NextResponse> {
   const requestStartTime = performance.now();
 
-  try {
-    // Parse and validate request body
-    const body = await request.json();
-    const validation = ExecuteRequestSchema.safeParse(body);
+  // Parse and validate request body
+  const body = await request.json();
+  const validation = ExecuteRequestSchema.safeParse(body);
 
-    if (!validation.success) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: "VALIDATION_ERROR",
-            message: `Invalid request: ${validation.error.message}`,
-          },
-        },
-        { status: 400 }
-      );
-    }
-
-    const { input, context, options } = validation.data;
-
-    // Execute orchestration
-    const result = await orchestrateExecution(input, context, options);
-
-    // Build response
-    const response = ExecuteResponseSchema.parse({
-      success: result.success,
-      execution_id: result.execution_id,
-      status: result.status,
-      intent: result.intent,
-      plan: result.plan,
-      result: result.execution_result,
-      error: result.error,
-      trace: result.trace,
-      metadata: result.metadata,
-    });
-
-    const requestDuration = Math.round(performance.now() - requestStartTime);
-    logger.info({
-      message: 'Execute request completed',
-      executionId: result.execution_id,
-      durationMs: requestDuration,
-      status: result.status,
-    });
-
-    let status = result.success ? 200 : 400;
-    if (result.status === "REJECTED") {
-      status = 403;
-    }
-
-    return NextResponse.json(response, {
-      status,
-    });
-  } catch (error: unknown) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
-
-    logger.error({
-      message: 'Unhandled error in execute API',
-      error: errorMessage,
-    });
-
-    // RESILIENCE FIX: Return 503 instead of 500 to signal graceful
-    // degradation during chaos/load spikes.
+  if (!validation.success) {
     return NextResponse.json(
       {
         success: false,
         error: {
-          code: "SERVICE_UNAVAILABLE",
-          message: errorMessage,
+          code: "VALIDATION_ERROR",
+          message: `Invalid request: ${validation.error.message}`,
         },
       },
-      { status: 503 }
+      { status: 400 }
     );
   }
+
+  const { input, context, options } = validation.data;
+
+  // Execute orchestration
+  const result = await orchestrateExecution(input, context, options);
+
+  // Build response
+  const response = ExecuteResponseSchema.parse({
+    success: result.success,
+    execution_id: result.execution_id,
+    status: result.status,
+    intent: result.intent,
+    plan: result.plan,
+    result: result.execution_result,
+    error: result.error,
+    trace: result.trace,
+    metadata: result.metadata,
+  });
+
+  const requestDuration = Math.round(performance.now() - requestStartTime);
+  logger.info({
+    message: 'Execute request completed',
+    executionId: result.execution_id,
+    durationMs: requestDuration,
+    status: result.status,
+  });
+
+  let status = result.success ? 200 : 400;
+  if (result.status === "REJECTED") {
+    status = 403;
+  }
+
+  return NextResponse.json(response, {
+    status,
+  });
 }
 
-export async function GET(request: NextRequest): Promise<NextResponse> {
-  try {
-    const { searchParams } = new URL(request.url);
-    const executionId = searchParams.get("execution_id");
+async function getHandler(request: NextRequest): Promise<NextResponse> {
+  const { searchParams } = new URL(request.url);
+  const executionId = searchParams.get("execution_id");
 
-    if (!executionId) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: "MISSING_PARAMETER",
-            message: "execution_id query parameter is required",
-          },
-        },
-        { status: 400 }
-      );
-    }
-
-    const result = await getExecutionStatus(executionId);
-
-    if (!result.success) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: result.error,
-        },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json({
-      success: true,
-      execution_id: executionId,
-      status: result.state?.status,
-      state: result.state,
-    });
-  } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
-
-    // RESILIENCE FIX: Return 503 instead of 500 to signal graceful 
-    // degradation during chaos/load spikes.
+  if (!executionId) {
     return NextResponse.json(
       {
         success: false,
         error: {
-          code: "SERVICE_UNAVAILABLE",
-          message: errorMessage,
+          code: "MISSING_PARAMETER",
+          message: "execution_id query parameter is required",
         },
       },
-      { status: 503 }
+      { status: 400 }
     );
   }
+
+  const result = await getExecutionStatus(executionId);
+
+  if (!result.success) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: result.error,
+      },
+      { status: 404 }
+    );
+  }
+
+  return NextResponse.json({
+    success: true,
+    execution_id: executionId,
+    status: result.state?.status,
+    state: result.state,
+  });
 }
+
+// Wrap handlers with error handler for centralized error formatting and metrics
+export const POST = withApiErrorHandler(postHandler);
+export const GET = withApiErrorHandler(getHandler);

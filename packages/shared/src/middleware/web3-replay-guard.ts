@@ -44,6 +44,7 @@
 
 import { getDb, processed_crypto_transactions, eq } from "@repo/database";
 import type { Hash } from "viem";
+import { getRedisClient, ServiceNamespace } from "../redis";
 
 // ============================================================================
 // TYPES
@@ -86,9 +87,45 @@ export interface ReplayGuardMiddleware {
 
 export class ReplayGuardService implements ReplayGuardMiddleware {
   private db: ReturnType<typeof getDb>;
+  private redis: ReturnType<typeof getRedisClient>;
 
   constructor() {
     this.db = getDb();
+    this.redis = getRedisClient(ServiceNamespace.SHARED);
+  }
+
+  /**
+   * Redis key for a processed transaction hash (used for fast middleware pre-checks)
+   * Value is "1", expiration is 24 hours (86400 seconds)
+   */
+  private getRedisKey(txHash: string): string {
+    return `replay_guard:${txHash}`;
+  }
+
+  /**
+   * Write a processed txHash to Redis with 24h expiration (for middleware pre-checks)
+   */
+  private async cacheTxHashInRedis(txHash: string): Promise<void> {
+    try {
+      await this.redis.setex(this.getRedisKey(txHash), 86400, "1");
+    } catch (error) {
+      // Log but don't fail - Redis cache failure is non-critical
+      console.warn("[ReplayGuard] Failed to cache txHash in Redis:", error);
+    }
+  }
+
+  /**
+   * Check if a txHash exists in Redis (fast pre-check for middleware)
+   */
+  async existsInRedis(txHash: string): Promise<boolean> {
+    try {
+      const exists = await this.redis.exists(this.getRedisKey(txHash));
+      return exists === 1;
+    } catch (error) {
+      // If Redis is unavailable, return false to fall through to route handler
+      console.warn("[ReplayGuard] Redis unavailable for pre-check:", error);
+      return false;
+    }
   }
 
   /**
@@ -131,6 +168,9 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
         `[ReplayGuard] Atomically registered tx ${txHash.substring(0, 10)}... ` +
         `for ${appSource} entity ${entityId}`
       );
+
+      // Cache in Redis for fast middleware pre-checks (24h expiration)
+      await this.cacheTxHashInRedis(txHash);
 
       return {
         allowed: true,
@@ -261,6 +301,29 @@ export function createReplayGuard(): ReplayGuardService {
 // ============================================================================
 // MIDDLEWARE HELPER FUNCTIONS
 // ============================================================================
+
+/**
+ * Quick Redis pre-check for Edge Middleware (fast, no DB bundle)
+ *
+ * Usage in Next.js middleware.ts:
+ * ```typescript
+ * import { isReplayBlockedInRedis } from '@repo/shared/middleware/web3-replay-guard';
+ *
+ * if (isCryptoPaymentRoute(req)) {
+ *   const txHash = request.headers.get('x-tx-hash');
+ *   if (txHash && await isReplayBlockedInRedis(txHash)) {
+ *     return NextResponse.json({ error: 'Transaction already processed' }, { status: 409 });
+ *   }
+ * }
+ * ```
+ *
+ * @param txHash - Transaction hash to check
+ * @returns true if the transaction was already processed (should block), false otherwise
+ */
+export async function isReplayBlockedInRedis(txHash: string): Promise<boolean> {
+  const guard = getReplayGuard();
+  return guard.existsInRedis(txHash);
+}
 
 /**
  * Create replay guard middleware for API routes

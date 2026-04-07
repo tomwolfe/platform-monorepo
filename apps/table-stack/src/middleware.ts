@@ -3,8 +3,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { securityHeadersMiddleware, API_SECURITY_CONFIG } from '@repo/shared/security-headers';
 import { SecurityProvider } from '@repo/auth';
-import { getDb, processed_crypto_transactions, eq } from '@repo/database';
-import type { Hash } from 'viem';
+import { isReplayBlockedInRedis } from '@repo/shared/web3-replay-guard';
 
 const isProtectedRoute = createRouteMatcher([
   '/dashboard(.*)',
@@ -31,30 +30,27 @@ export default clerkMiddleware(async (auth, req) => {
   }
 
   // Web3 Replay Guard: Fast-fail duplicate transaction hashes on payment routes
-  // This is a read-only pre-check; the definitive atomic registration happens in the route handler
+  // Uses Redis for fast pre-check (no DB bundle in Edge runtime)
+  // The definitive atomic registration happens in the route handler
   if (isCryptoPaymentRoute(req)) {
     const txHash = request.headers.get('x-tx-hash');
     if (txHash) {
       try {
-        const db = getDb();
-        const existingTx = await db.query.processed_crypto_transactions.findFirst({
-          where: eq(processed_crypto_transactions.txHash, txHash as Hash),
-        });
-
-        if (existingTx) {
+        const isReplayed = await isReplayBlockedInRedis(txHash);
+        if (isReplayed) {
           return NextResponse.json(
             {
               success: false,
               error: {
                 code: 'CONFLICT',
-                message: `Transaction already processed by ${existingTx.appSource ?? 'unknown'} for entity ${existingTx.entityId ?? 'unknown'}`,
+                message: 'Transaction already processed',
               },
             },
             { status: 409, headers: { 'Content-Type': 'application/json' } }
           );
         }
       } catch (error) {
-        // If DB is unavailable, log and allow the route handler to perform the definitive check
+        // If Redis is unavailable, log and allow the route handler to perform the definitive check
         console.warn('[Middleware] Replay guard pre-check unavailable, deferring to route handler:', error);
       }
     }

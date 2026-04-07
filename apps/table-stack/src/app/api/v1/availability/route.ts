@@ -230,37 +230,49 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
   const MAX_COMBOS = 5; // Return top 5 combinations max
   let comboCount = 0;
 
+  // PERFORMANCE OPTIMIZATION: Pre-filter and early-exit to avoid wasteful comparisons
+  // 1. Find the largest table capacity to filter impossible combinations
+  const MAX_KNOWN_TABLE_CAPACITY = vacantTables.length > 0
+    ? Math.max(...vacantTables.map(t => t.maxCapacity))
+    : 0;
+
+  // 2. Pre-filter: exclude tables that cannot possibly satisfy partySize even when combined
+  const feasibleTables = vacantTables.filter(t => t.maxCapacity + MAX_KNOWN_TABLE_CAPACITY >= partySize);
+
   comboSearch:
-  for (let i = 0; i < vacantTables.length; i++) {
-    for (let j = i + 1; j < vacantTables.length; j++) {
+  for (let i = 0; i < feasibleTables.length; i++) {
+    const t1 = feasibleTables[i];
+    if (!t1) continue;
+
+    // Early continue: if t1 alone satisfies partySize, it would have been caught by single-table check
+    if (t1.maxCapacity >= partySize) continue;
+
+    for (let j = i + 1; j < feasibleTables.length; j++) {
       if (comboCount >= MAX_COMBOS) break comboSearch;
-      const t1 = vacantTables[i];
-      const t2 = vacantTables[j];
-      
+      const t2 = feasibleTables[j];
       if (!t1 || !t2) continue;
 
-      // Join capacity (e.g., two 2-tops = 4-top)
+      // Join capacity check - only compute distance if capacity is sufficient
       const combinedCapacity = t1.maxCapacity + t2.maxCapacity;
+      if (combinedCapacity < partySize) continue;
 
-      if (combinedCapacity >= partySize) {
-        // Check adjacency (distance formula with threshold)
-        const distance = Math.sqrt(
-          Math.pow((t1.xPos || 0) - (t2.xPos || 0), 2) +
-          Math.pow((t1.yPos || 0) - (t2.yPos || 0), 2)
-        );
+      // Check adjacency (distance formula with threshold)
+      const distance = Math.sqrt(
+        Math.pow((t1.xPos || 0) - (t2.xPos || 0), 2) +
+        Math.pow((t1.yPos || 0) - (t2.yPos || 0), 2)
+      );
 
-        if (distance < 120) { // Adjacency threshold in floor plan units
-          suggestedCombos.push({
-            id: `${t1.id}+${t2.id}`,
-            tableNumber: `${t1.tableNumber}+${t2.tableNumber}`,
-            combinedTableIds: [t1.id, t2.id],
-            maxCapacity: combinedCapacity,
-            isCombined: true,
-            table1: t1,
-            table2: t2,
-          });
-          comboCount++;
-        }
+      if (distance < 120) { // Adjacency threshold in floor plan units
+        suggestedCombos.push({
+          id: `${t1.id}+${t2.id}`,
+          tableNumber: `${t1.tableNumber}+${t2.tableNumber}`,
+          combinedTableIds: [t1.id, t2.id],
+          maxCapacity: combinedCapacity,
+          isCombined: true,
+          table1: t1,
+          table2: t2,
+        });
+        comboCount++;
       }
     }
   }

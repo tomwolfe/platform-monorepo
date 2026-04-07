@@ -319,7 +319,8 @@ export async function saveExecutionState(
   }
 ): Promise<MemoryEntry | { success: boolean; version?: number; attempts: number; error?: string }> {
   if (useOCC) {
-    const { getMemoryClient } = require('@repo/shared');
+    // Use the locally exported getMemoryClient instead of dynamic require
+    // This avoids circular dependency issues and enables proper static analysis
     const sharedMemory = getMemoryClient();
 
     return sharedMemory.saveStateWithOCC(

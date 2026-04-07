@@ -113,6 +113,7 @@ export function CryptoCheckout({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [paymentCurrency, setPaymentCurrency] = useState<"USDC" | "ETH">("USDC");
   const [ethPrice, setEthPrice] = useState<number | null>(null); // null until fetched; fail-closed
+  const [isPriceStale, setIsPriceStale] = useState(false); // Track if price is stale (financial safety)
 
   // Fetch ETH price dynamically on mount from server-side oracle
   useEffect(() => {
@@ -122,10 +123,13 @@ export function CryptoCheckout({
         const data = await response.json();
         if (data.ETH) {
           setEthPrice(data.ETH);
+          // Extract stale flag from response
+          setIsPriceStale(data.isStale === true);
         }
       } catch (error) {
         console.warn("Failed to fetch ETH price from oracle", error);
         setEthPrice(null);
+        setIsPriceStale(false);
       }
     }
     fetchEthPrice();
@@ -296,14 +300,14 @@ export function CryptoCheckout({
       const totalUSDCRequired = subtotalUSDC + tipUSDC + platformFeeUSDC;
       return usdcBalance >= totalUSDCRequired;
     } else {
-      // Fail-closed: if ethPrice is null, cannot determine balance
-      if (ethPrice === null) return false;
+      // Fail-closed: if ethPrice is null or stale, cannot safely determine balance
+      if (ethPrice === null || isPriceStale) return false;
       const balanceEth = parseFloat(formatUnits(balance.value, balance.decimals));
-      
+
       // Include estimated gas in the total required amount
       const estimatedGasEth = estimatedGas ? parseFloat(formatUnits(estimatedGas, 18)) : 0;
       const totalRequiredWithGas = totalEth + estimatedGasEth;
-      
+
       return balanceEth >= totalRequiredWithGas;
     }
   })();
@@ -525,19 +529,32 @@ export function CryptoCheckout({
           </div>
         )}
 
+        {/* ETH Price Stale Warning - Financial Safety */}
+        {step === "review" && paymentCurrency === "ETH" && isPriceStale && (
+          <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-xl flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 mt-0.5" />
+            <div>
+              <p className="font-semibold text-sm">Live ETH Price Unavailable</p>
+              <p className="text-xs mt-1">ETH price data is stale. Please switch to USDC or try again later.</p>
+            </div>
+          </div>
+        )}
+
         {/* Action Buttons */}
         {step === "review" && (
           <button
             onClick={handlePay}
-            disabled={!hasSufficientBalance || !address || (paymentCurrency === "ETH" && ethPrice === null)}
+            disabled={!hasSufficientBalance || !address || (paymentCurrency === "ETH" && (ethPrice === null || isPriceStale))}
             className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3.5 rounded-lg font-bold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
           >
             <Coins className="h-5 w-5" />
             {!hasSufficientBalance && paymentCurrency === "ETH"
               ? "Insufficient Balance (Including Gas)"
-              : paymentCurrency === "ETH" && ethPrice === null
-                ? "Price Unavailable"
-                : `Pay with ${paymentCurrency}`}
+              : paymentCurrency === "ETH" && isPriceStale
+                ? "Price Stale - Use USDC"
+                : paymentCurrency === "ETH" && ethPrice === null
+                  ? "Price Unavailable"
+                  : `Pay with ${paymentCurrency}`}
             <ArrowRight className="h-5 w-5" />
           </button>
         )}

@@ -5,8 +5,9 @@
  * security-critical functions.
  *
  * COMPATIBILITY: Works in both Node.js runtime and Edge runtime.
- * - Node.js: Uses native crypto.timingSafeEqual
- * - Edge: Uses Web Crypto API with fallback comparison
+ * - Uses standardized globalThis.crypto (Web Crypto API)
+ * - Node.js 20+ provides Web Crypto API compatibility natively
+ * - Edge runtime and browsers also support Web Crypto API
  */
 
 /**
@@ -25,36 +26,24 @@
  * ```
  */
 export function isTimingSafeEqual(provided: string, expected: string): boolean {
-  // Try Node.js crypto first (Node.js runtime)
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const cryptoModule = require('crypto');
-    // Hash both inputs to fixed-length digests before comparison
-    // This prevents length leakage and ensures constant-time comparison
-    const providedHash = cryptoModule.createHash('sha256').update(provided).digest();
-    const expectedHash = cryptoModule.createHash('sha256').update(expected).digest();
-    return cryptoModule.timingSafeEqual(providedHash, expectedHash);
-  } catch {
-    // Fallback for Edge runtime - use Web Crypto API (digestSync)
-    // SHA-256 for length-normalized comparison
-    const encoder = new TextEncoder();
-    const providedData = encoder.encode(provided);
-    const expectedData = encoder.encode(expected);
+  // Use Web Crypto API (available in Node.js 20+, Edge, and Browsers)
+  const encoder = new TextEncoder();
+  const providedData = encoder.encode(provided);
+  const expectedData = encoder.encode(expected);
 
-    // Hash both inputs using SubtleCrypto digestSync (synchronous)
-    const providedHash = (crypto as any).subtle.digestSync('SHA-256', providedData);
-    const expectedHash = (crypto as any).subtle.digestSync('SHA-256', expectedData);
+  // Hash both inputs using SubtleCrypto digestSync (synchronous)
+  const providedHash = globalThis.crypto.subtle.digestSync('SHA-256', providedData);
+  const expectedHash = globalThis.crypto.subtle.digestSync('SHA-256', expectedData);
 
-    // Compare fixed-length hashes in constant time
-    const providedBytes = new Uint8Array(providedHash);
-    const expectedBytes = new Uint8Array(expectedHash);
+  // Compare fixed-length hashes in constant time
+  const providedBytes = new Uint8Array(providedHash);
+  const expectedBytes = new Uint8Array(expectedHash);
 
-    let diff = 0;
-    for (let i = 0; i < providedBytes.length; i++) {
-      diff |= providedBytes[i] ^ expectedBytes[i];
-    }
-    return diff === 0;
+  let diff = 0;
+  for (let i = 0; i < providedBytes.length; i++) {
+    diff |= providedBytes[i] ^ expectedBytes[i];
   }
+  return diff === 0;
 }
 
 /**
@@ -69,19 +58,12 @@ export function isTimingSafeEqual(provided: string, expected: string): boolean {
  * ```
  */
 export function generateSecureRandom(length: number = 32): string {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const cryptoModule = require('crypto');
-    const { randomBytes } = cryptoModule;
-    return randomBytes(length).toString('hex');
-  } catch {
-    // Fallback for Edge runtime - use Web Crypto API
-    const array = new Uint8Array(length);
-    crypto.getRandomValues(array);
-    return Array.from(array)
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-  }
+  // Use Web Crypto API (available in Node.js 20+, Edge, and Browsers)
+  const array = new Uint8Array(length);
+  globalThis.crypto.getRandomValues(array);
+  return Array.from(array)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 /**

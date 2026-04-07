@@ -116,7 +116,7 @@ const mockProps = {
   onCancel: vi.fn(),
 };
 
-describe.skip("CryptoCheckout Integration", () => {
+describe("CryptoCheckout Integration", () => {
   beforeEach(() => {
     // Don't clear all mocks - we need to preserve Web3Provider
     vi.restoreAllMocks();
@@ -271,7 +271,7 @@ describe.skip("CryptoCheckout Integration", () => {
   });
 });
 
-describe.skip("CryptoCheckout Edge Cases", () => {
+describe("CryptoCheckout Edge Cases", () => {
   it("should handle empty cart gracefully", () => {
     const emptyCartProps = {
       cart: [],

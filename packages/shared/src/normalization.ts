@@ -223,9 +223,10 @@ export class NormalizationService {
         }
 
         // Record the mismatch event (async, non-blocking)
+        // Use the matchedTool from validation result if available
         this.schemaEvolutionService.recordMismatch({
           intentType,
-          toolName: "unknown", // Could be improved with better tool detection
+          toolName: result.matchedTool || "unknown_tool",
           timestamp: new Date().toISOString(),
           llmParameters: parameters,
           expectedFields: Array.from(expectedFields),

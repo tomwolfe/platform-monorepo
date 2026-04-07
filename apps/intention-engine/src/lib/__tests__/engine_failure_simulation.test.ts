@@ -32,7 +32,7 @@ import { ExecutionTracer } from "../engine/tracing";
 // TEST 1: SCHEMA FAILURE
 // ============================================================================
 
-describe.skip("Schema Failure", () => {
+describe("Schema Failure", () => {
   it("Invalid execution status should be rejected", async () => {
     const state = createInitialState(randomUUID());
     // Try to create state with invalid status - this would fail schema validation
@@ -108,7 +108,7 @@ describe.skip("Schema Failure", () => {
 // TEST 2: TOOL TIMEOUT
 // ============================================================================
 
-describe.skip("Tool Timeout", () => {
+describe("Tool Timeout", () => {
   it("Tool timeout detection logic should work correctly", () => {
     // Create a tool definition with a 100ms timeout
     const slowToolDef: ToolDefinition = {
@@ -166,8 +166,8 @@ describe.skip("Tool Timeout", () => {
     };
 
     expect(plan.steps[0].timeout_ms).toBe(100);
-    expect((plan.steps[0].parameters as any).delay_ms).toBe(1000);
-    expect((plan.steps[0].parameters as any).delay_ms).toBeGreaterThan(plan.steps[0].timeout_ms);
+    expect((plan.steps[0].parameters as Record<string, unknown>).delay_ms).toBe(1000);
+    expect((plan.steps[0].parameters as Record<string, unknown>).delay_ms).toBeGreaterThan(plan.steps[0].timeout_ms);
   });
 });
 
@@ -175,7 +175,7 @@ describe.skip("Tool Timeout", () => {
 // TEST 3: CIRCULAR PLAN REJECTION
 // ============================================================================
 
-describe.skip("Circular Plan Rejection", () => {
+describe("Circular Plan Rejection", () => {
   it("Direct circular dependency should be detected", () => {
     const step1Id = randomUUID();
     const step2Id = randomUUID();
@@ -234,7 +234,7 @@ describe.skip("Circular Plan Rejection", () => {
 // TEST 4: INVALID STATE TRANSITION
 // ============================================================================
 
-describe.skip("Invalid State Transition", () => {
+describe("Invalid State Transition", () => {
   it("RECEIVED to PARSING should be valid", () => {
     expect(validateStateTransition("RECEIVED", "PARSING").valid).toBe(true);
   });
@@ -265,7 +265,7 @@ describe.skip("Invalid State Transition", () => {
 // TEST 5: TOKEN BUDGET EXCEEDED
 // ============================================================================
 
-describe.skip("Token Budget Exceeded", () => {
+describe("Token Budget Exceeded", () => {
   it("Token budget exceeded should be detected", () => {
     const plan: Plan = {
       id: randomUUID(),
@@ -312,7 +312,7 @@ describe.skip("Token Budget Exceeded", () => {
 // TEST 6: REDIS UNAVAILABLE
 // ============================================================================
 
-describe.skip("Redis Unavailable", () => {
+describe("Redis Unavailable", () => {
   it("Execution without persistence should work", () => {
     const plan: Plan = {
       id: randomUUID(),
@@ -354,7 +354,7 @@ describe.skip("Redis Unavailable", () => {
 // TEST 7: ADDITIONAL FAILURE SCENARIOS
 // ============================================================================
 
-describe.skip("Additional Failure Scenarios", () => {
+describe("Additional Failure Scenarios", () => {
   it("Plan should reference a non-existent tool", () => {
     const planWithMissingTool: Plan = {
       id: randomUUID(),
@@ -430,7 +430,7 @@ describe.skip("Additional Failure Scenarios", () => {
 // TEST 8: UNIFIED LOCATION VALIDATION
 // ============================================================================
 
-describe.skip("Unified Location Validation", () => {
+describe("Unified Location Validation", () => {
   it("String locations should pass MobilityRequestSchema validation", async () => {
     const { MobilityRequestSchema } = await import("../tools/mobility");
 

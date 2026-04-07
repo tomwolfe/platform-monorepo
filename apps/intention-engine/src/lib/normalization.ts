@@ -12,8 +12,8 @@ export const NormalizationService = {
    */
   normalizeIntentParameters(
     intentType: IntentType,
-    parameters: Record<string, any>
-  ): { success: boolean; data?: Record<string, any>; errors?: string[] } {
+    parameters: Record<string, unknown>
+  ): { success: boolean; data?: Record<string, unknown>; errors?: string[] } {
     const { isValid, missingFields } = validateIntentParams(intentType, parameters);
 
     if (!isValid) {
@@ -38,7 +38,7 @@ export const NormalizationService = {
  * 4. Ensures Chain-of-Thought consistency.
  */
 export function normalizeIntent(
-  candidate: any,
+  candidate: Partial<Intent> & Record<string, unknown>,
   rawText: string,
   modelId: string
 ): Intent {

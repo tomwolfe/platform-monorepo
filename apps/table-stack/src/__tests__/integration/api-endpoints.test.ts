@@ -94,7 +94,7 @@ function createMockApiRequest(options: {
 // INTEGRATION TESTS
 // ============================================================================
 
-describe.skip('API Endpoint Integration Tests', () => {
+describe('API Endpoint Integration Tests', () => {
   let testRestaurant: typeof restaurants.$inferSelect;
   let testTables: Array<typeof restaurantTables.$inferSelect>;
   let testApiKey: string;

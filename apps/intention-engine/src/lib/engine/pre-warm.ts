@@ -235,38 +235,48 @@ export class PreWarmService {
       // Use Next.js after() to ensure the request completes even after response
       const { after } = await import('next/server');
 
-      after(() =>
-        fetch(warmUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-pre-warm-hint": hint || 'GENERIC',
-          },
-          body: JSON.stringify({
-            executionId: this.executionId,
-            nextStepIndex: this.state.nextStepIndex,
-            triggeredAt: this.state.preWarmTriggeredAt,
-            hint: hint || 'GENERIC',
-            nextToolName,
-          }),
-        }).then(response => {
-          // Silently ignore response - pre-warm is best-effort
-          if (PRE_WARM_CONFIG.debug && !response.ok) {
+      after(async () => {
+        // Use AbortController with short timeout to prevent hanging in serverless
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 500); // 500ms timeout
+
+        try {
+          const response = await fetch(warmUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-pre-warm-hint": hint || 'GENERIC',
+            },
+            body: JSON.stringify({
+              executionId: this.executionId,
+              nextStepIndex: this.state.nextStepIndex,
+              triggeredAt: this.state.preWarmTriggeredAt,
+              hint: hint || 'GENERIC',
+              nextToolName,
+            }),
+            signal: controller.signal,
+          });
+
+          clearTimeout(timeoutId);
+
+          // Log failures for observability
+          if (!response.ok && PRE_WARM_CONFIG.debug) {
             logger.warn({
               message: '[PreWarm] Pre-warm request failed',
               error: `Status: ${response.status}`,
             });
           }
-        }).catch(error => {
-          // Silently ignore errors - pre-warm is best-effort
+        } catch (error) {
+          clearTimeout(timeoutId);
+          // Log errors for observability but don't throw - pre-warm is best-effort
           if (PRE_WARM_CONFIG.debug) {
             logger.warn({
               message: '[PreWarm] Request error (ignored)',
               error: error instanceof Error ? error.message : String(error),
             });
           }
-        })
-      );
+        }
+      });
 
       // Mark lambda as warmed (optimistic)
       this.state.lambdaWarmed = true;

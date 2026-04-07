@@ -17,7 +17,7 @@
  */
 
 import { getRedisClient, ServiceNamespace } from "../redis";
-import { getDb } from "@repo/database";
+import { getDb, cryptoPrices, eq, lt, gt, and } from "@repo/database";
 import { sql } from "drizzle-orm";
 import { parseUnits, formatUnits } from "viem";
 
@@ -76,13 +76,21 @@ interface PriceResponse {
  */
 async function getHistoricalMovingAverage(token: "ETH" | "MATIC"): Promise<number | null> {
   try {
-    // Query last 7 days of price data from crypto_prices table (if it exists)
+    // Query last 7 days of price data from crypto_prices table
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
     const result = await getDb()
       .select({
-        avgPrice: sql<number>`AVG(price_usd)::numeric`,
+        avgPrice: sql<number>`AVG(${cryptoPrices.priceUsd})::numeric`,
       })
-      .from(sql<any>`crypto_prices`)
-      .where(sql`token = ${token} AND created_at > NOW() - INTERVAL '7 days'`);
+      .from(cryptoPrices)
+      .where(
+        and(
+          eq(cryptoPrices.token, token),
+          gt(cryptoPrices.createdAt, sevenDaysAgo)
+        )
+      );
 
     if (result[0]?.avgPrice) {
       return parseFloat(result[0].avgPrice.toString());

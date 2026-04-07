@@ -32,7 +32,7 @@ import {
   numberToHex,
 } from "viem";
 import { base, polygon, mainnet } from "viem/chains";
-import { getDb, processed_crypto_transactions, eq, and, sql, lt, or } from "@repo/database";
+import { getDb, processed_crypto_transactions, crypto_transaction_speedups, eq, and, sql, lt, or } from "@repo/database";
 import { Logger } from "../logger";
 import { getEscrowResolverWalletClient } from "../utils/wallet-provider";
 
@@ -368,26 +368,24 @@ export class TransactionSpeedUpService {
     gasBumpPercentage: number
   ): Promise<void> {
     try {
-      // Insert or update speed-up tracking
-      await this.db.execute(sql`
-        INSERT INTO crypto_transaction_speedups (
-          original_tx_hash,
-          replacement_tx_hash,
-          entity_id,
-          gas_bump_percentage,
-          created_at
-        ) VALUES (
-          ${originalTxHash},
-          ${replacementTxHash},
-          ${entityId},
-          ${gasBumpPercentage},
-          NOW()
-        )
-        ON CONFLICT (original_tx_hash) DO UPDATE SET
-          replacement_tx_hash = EXCLUDED.replacement_tx_hash,
-          gas_bump_percentage = EXCLUDED.gas_bump_percentage,
-          updated_at = NOW()
-      `);
+      // Insert or update speed-up tracking using Drizzle ORM upsert
+      await this.db
+        .insert(crypto_transaction_speedups)
+        .values({
+          originalTxHash,
+          replacementTxHash,
+          entityId,
+          gasBumpPercentage,
+          createdAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: crypto_transaction_speedups.originalTxHash,
+          set: {
+            replacementTxHash,
+            gasBumpPercentage,
+            updatedAt: new Date(),
+          },
+        });
     } catch (error: unknown) {
       logger.error({
         message: 'Failed to track speed-up attempt',
@@ -490,14 +488,16 @@ export async function processStuckTransactions(options?: {
       })
       .from(processed_crypto_transactions)
       .leftJoin(
-        sql`crypto_transaction_speedups`,
-        sql`${processed_crypto_transactions.txHash} = ${sql`crypto_transaction_speedups.original_tx_hash`} 
-            AND ${sql`crypto_transaction_speedups.created_at`}> NOW() - INTERVAL '1 hour'`
+        crypto_transaction_speedups,
+        and(
+          eq(processed_crypto_transactions.txHash, crypto_transaction_speedups.originalTxHash),
+          sql`${crypto_transaction_speedups.createdAt} > NOW() - INTERVAL '1 hour'`
+        )
       )
       .where(
         and(
           lt(processed_crypto_transactions.createdAt, stuckThreshold),
-          sql`${sql`crypto_transaction_speedups.original_tx_hash`} IS NULL`
+          sql`${crypto_transaction_speedups.originalTxHash} IS NULL`
         )
       )
       .limit(maxTransactions);

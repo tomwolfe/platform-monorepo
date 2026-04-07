@@ -26,20 +26,20 @@ export interface TestContainer {
 }
 
 export interface MockedRedis {
-  get: MockedFunction<(key: string) => Promise<any>>;
-  set: MockedFunction<(key: string, value: any) => Promise<number>>;
+  get: MockedFunction<(key: string) => Promise<unknown>>;
+  set: MockedFunction<(key: string, value: unknown) => Promise<number>>;
   del: MockedFunction<(key: string) => Promise<number>>;
   incr: MockedFunction<(key: string) => Promise<number>>;
   expire: MockedFunction<(key: string, seconds: number) => Promise<number>>;
   pipeline: MockedFunction<() => RedisPipeline>;
-  hget: MockedFunction<(key: string, field: string) => Promise<any>>;
-  hset: MockedFunction<(key: string, field: string, value: any) => Promise<number>>;
-  hgetall: MockedFunction<(key: string) => Promise<Record<string, any>>>;
+  hget: MockedFunction<(key: string, field: string) => Promise<unknown>>;
+  hset: MockedFunction<(key: string, field: string, value: unknown) => Promise<number>>;
+  hgetall: MockedFunction<(key: string) => Promise<Record<string, unknown>>>;
   hdel: MockedFunction<(key: string, field: string) => Promise<number>>;
-  lpush: MockedFunction<(key: string, value: any) => Promise<number>>;
-  rpop: MockedFunction<(key: string) => Promise<any>>;
+  lpush: MockedFunction<(key: string, value: unknown) => Promise<number>>;
+  rpop: MockedFunction<(key: string) => Promise<unknown>>;
   llen: MockedFunction<(key: string) => Promise<number>>;
-  lrange: MockedFunction<(key: string, start: number, stop: number) => Promise<any[]>>;
+  lrange: MockedFunction<(key: string, start: number, stop: number) => Promise<unknown[]>>;
   sadd: MockedFunction<(key: string, member: string) => Promise<number>>;
   sismember: MockedFunction<(key: string, member: string) => Promise<number>>;
   smembers: MockedFunction<(key: string) => Promise<string[]>>;
@@ -47,19 +47,19 @@ export interface MockedRedis {
 
 export interface RedisPipeline {
   get: MockedFunction<(key: string) => RedisPipeline>;
-  set: MockedFunction<(key: string, value: any) => RedisPipeline>;
+  set: MockedFunction<(key: string, value: unknown) => RedisPipeline>;
   incr: MockedFunction<(key: string) => RedisPipeline>;
   expire: MockedFunction<(key: string, seconds: number) => RedisPipeline>;
-  exec: MockedFunction<() => Promise<any[]>>;
+  exec: MockedFunction<() => Promise<unknown[]>>;
 }
 
 export interface MockedDatabase {
-  select: MockedFunction<(table: any) => any>;
-  insert: MockedFunction<(table: any) => any>;
-  update: MockedFunction<(table: any) => any>;
-  delete: MockedFunction<(table: any) => any>;
-  transaction: MockedFunction<(fn: any) => Promise<any>>;
-  $client: any;
+  select: MockedFunction<(table: unknown) => unknown>;
+  insert: MockedFunction<(table: unknown) => unknown>;
+  update: MockedFunction<(table: unknown) => unknown>;
+  delete: MockedFunction<(table: unknown) => unknown>;
+  transaction: MockedFunction<(fn: (tx: unknown) => Promise<unknown>) => Promise<unknown>>;
+  $client: unknown;
 }
 
 export interface MockedAbly {
@@ -68,7 +68,7 @@ export interface MockedAbly {
   disconnect: MockedFunction<() => void>;
   connection: {
     state: string;
-    on: MockedFunction<(event: string, callback: any) => void>;
+    on: MockedFunction<(event: string, callback: (...args: unknown[]) => void) => void>;
   };
 }
 
@@ -77,15 +77,15 @@ export interface MockedAblyChannels {
 }
 
 export interface MockedAblyChannel {
-  publish: MockedFunction<(name: string, data: any) => Promise<void>>;
-  subscribe: MockedFunction<(event: string, callback: any) => void>;
-  unsubscribe: MockedFunction<(event: string, callback: any) => void>;
+  publish: MockedFunction<(name: string, data: unknown) => Promise<void>>;
+  subscribe: MockedFunction<(event: string, callback: (...args: unknown[]) => void) => void>;
+  unsubscribe: MockedFunction<(event: string, callback: (...args: unknown[]) => void) => void>;
 }
 
 export interface MockedQStash {
-  publish: MockedFunction<(options: any) => Promise<any>>;
-  publishJSON: MockedFunction<(options: any) => Promise<any>>;
-  enqueue: MockedFunction<(options: any) => Promise<any>>;
+  publish: MockedFunction<(options: unknown) => Promise<unknown>>;
+  publishJSON: MockedFunction<(options: unknown) => Promise<unknown>>;
+  enqueue: MockedFunction<(options: unknown) => Promise<unknown>>;
 }
 
 // ============================================================================
@@ -116,9 +116,9 @@ export function createTestContainer(): TestContainer {
 // In-memory Redis mock with realistic behavior
 // ============================================================================
 
-const inMemoryStore = new Map<string, any>();
-const inMemoryHashes = new Map<string, Map<string, any>>();
-const inMemoryLists = new Map<string, any[]>();
+const inMemoryStore = new Map<string, unknown>();
+const inMemoryHashes = new Map<string, Map<string, unknown>>();
+const inMemoryLists = new Map<string, unknown[]>();
 const inMemorySets = new Map<string, Set<string>>();
 const inMemoryExpiry = new Map<string, number>();
 
@@ -135,7 +135,7 @@ function createMockRedis(): MockedRedis {
       return inMemoryStore.get(key) ?? null;
     }),
 
-    set: vi.fn(async (key: string, value: any) => {
+    set: vi.fn(async (key: string, value: unknown) => {
       inMemoryStore.set(key, value);
       return 1;
     }),
@@ -163,14 +163,14 @@ function createMockRedis(): MockedRedis {
     }),
 
     pipeline: vi.fn(() => {
-      const commands: Array<{ fn: string; args: any[] }> = [];
+      const commands: Array<{ fn: string; args: unknown[] }> = [];
 
       const pipeline: RedisPipeline = {
         get: vi.fn((key: string) => {
           commands.push({ fn: 'get', args: [key] });
           return pipeline;
         }),
-        set: vi.fn((key: string, value: any) => {
+        set: vi.fn((key: string, value: unknown) => {
           commands.push({ fn: 'set', args: [key, value] });
           return pipeline;
         }),
@@ -183,16 +183,16 @@ function createMockRedis(): MockedRedis {
           return pipeline;
         }),
         exec: vi.fn(async () => {
-          const results: any[] = [];
+          const results: unknown[] = [];
           for (const { fn, args } of commands) {
             if (fn === 'get') {
-              results.push(await mock.get(args[0]));
+              results.push(await mock.get(args[0] as string));
             } else if (fn === 'set') {
-              results.push(await mock.set(args[0], args[1]));
+              results.push(await mock.set(args[0] as string, args[1]));
             } else if (fn === 'incr') {
-              results.push(await mock.incr(args[0]));
+              results.push(await mock.incr(args[0] as string));
             } else if (fn === 'expire') {
-              results.push(await mock.expire(args[0], args[1]));
+              results.push(await mock.expire(args[0] as string, args[1] as number));
             }
           }
           return results;
@@ -207,7 +207,7 @@ function createMockRedis(): MockedRedis {
       return hash?.get(field) ?? null;
     }),
 
-    hset: vi.fn(async (key: string, field: string, value: any) => {
+    hset: vi.fn(async (key: string, field: string, value: unknown) => {
       if (!inMemoryHashes.has(key)) {
         inMemoryHashes.set(key, new Map());
       }
@@ -230,7 +230,7 @@ function createMockRedis(): MockedRedis {
       return hadField ? 1 : 0;
     }),
 
-    lpush: vi.fn(async (key: string, value: any) => {
+    lpush: vi.fn(async (key: string, value: unknown) => {
       if (!inMemoryLists.has(key)) {
         inMemoryLists.set(key, []);
       }
@@ -288,42 +288,42 @@ function createMockRedis(): MockedRedis {
 
 function createMockDatabase(): MockedDatabase {
   const mock: MockedDatabase = {
-    select: vi.fn((table: any) => ({
-      from: vi.fn((table: any) => mock),
-      where: vi.fn((condition: any) => mock),
+    select: vi.fn((table: unknown) => ({
+      from: vi.fn((table: unknown) => mock),
+      where: vi.fn((condition: unknown) => mock),
       limit: vi.fn((limit: number) => mock),
       offset: vi.fn((offset: number) => mock),
-      orderBy: vi.fn((...args: any[]) => mock),
+      orderBy: vi.fn((...args: unknown[]) => mock),
       all: vi.fn(async () => []),
       get: vi.fn(async () => null),
     })),
 
-    insert: vi.fn((table: any) => ({
-      values: vi.fn((values: any) => mock),
-      returning: vi.fn((...args: any[]) => mock),
+    insert: vi.fn((table: unknown) => ({
+      values: vi.fn((values: unknown) => mock),
+      returning: vi.fn((...args: unknown[]) => mock),
       run: vi.fn(async () => ({ changes: 1, lastInsertRowid: 1 })),
       get: vi.fn(async () => null),
       all: vi.fn(async () => []),
     })),
 
-    update: vi.fn((table: any) => ({
-      set: vi.fn((values: any) => mock),
-      where: vi.fn((condition: any) => mock),
-      returning: vi.fn((...args: any[]) => mock),
+    update: vi.fn((table: unknown) => ({
+      set: vi.fn((values: unknown) => mock),
+      where: vi.fn((condition: unknown) => mock),
+      returning: vi.fn((...args: unknown[]) => mock),
       run: vi.fn(async () => ({ changes: 1 })),
       get: vi.fn(async () => null),
       all: vi.fn(async () => []),
     })),
 
-    delete: vi.fn((table: any) => ({
-      where: vi.fn((condition: any) => mock),
-      returning: vi.fn((...args: any[]) => mock),
+    delete: vi.fn((table: unknown) => ({
+      where: vi.fn((condition: unknown) => mock),
+      returning: vi.fn((...args: unknown[]) => mock),
       run: vi.fn(async () => ({ changes: 1 })),
       get: vi.fn(async () => null),
       all: vi.fn(async () => []),
     })),
 
-    transaction: vi.fn(async (fn: any) => {
+    transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
       // Execute transaction function with mock transaction object
       return await fn({
         select: mock.select,
@@ -366,7 +366,7 @@ function createMockAbly(): MockedAbly {
 
     connection: {
       state: 'connected',
-      on: vi.fn((event: string, callback: any) => {}),
+      on: vi.fn((event: string, callback: (...args: unknown[]) => void) => {}),
     },
   };
 
@@ -379,20 +379,20 @@ function createMockAbly(): MockedAbly {
 // ============================================================================
 
 function createMockQStash(): MockedQStash {
-  const queue: any[] = [];
+  const queue: unknown[] = [];
 
   return {
-    publish: vi.fn(async (options: any) => {
+    publish: vi.fn(async (options: unknown) => {
       queue.push(options);
       return { messageId: `msg_${Date.now()}`, success: true };
     }),
 
-    publishJSON: vi.fn(async (options: any) => {
+    publishJSON: vi.fn(async (options: unknown) => {
       queue.push({ ...options, json: true });
       return { messageId: `msg_${Date.now()}`, success: true };
     }),
 
-    enqueue: vi.fn(async (options: any) => {
+    enqueue: vi.fn(async (options: unknown) => {
       queue.push(options);
       return { success: true };
     }),
@@ -530,23 +530,23 @@ export function setupTestEnvironment(): MockServiceProvider {
 // Custom matchers for common assertions
 // ============================================================================
 
-export function expectToBeCalledWith(mock: MockedFunction<any>, ...args: any[]) {
+export function expectToBeCalledWith(mock: MockedFunction<(...args: unknown[]) => unknown>, ...args: unknown[]) {
   expect(mock).toHaveBeenCalledWith(...args);
 }
 
-export function expectToBeCalledTimes(mock: MockedFunction<any>, times: number) {
+export function expectToBeCalledTimes(mock: MockedFunction<(...args: unknown[]) => unknown>, times: number) {
   expect(mock).toHaveBeenCalledTimes(times);
 }
 
-export function expectNotToBeCalled(mock: MockedFunction<any>) {
+export function expectNotToBeCalled(mock: MockedFunction<(...args: unknown[]) => unknown>) {
   expect(mock).not.toHaveBeenCalled();
 }
 
-export function expectToReturn(mock: MockedFunction<any>, value: any) {
+export function expectToReturn(mock: MockedFunction<(...args: unknown[]) => unknown>, value: unknown) {
   expect(mock).toHaveReturnedWith(value);
 }
 
-export function expectToThrow(mock: MockedFunction<any>, errorClass: any) {
+export function expectToThrow(mock: MockedFunction<(...args: unknown[]) => unknown>, errorClass: new (...args: unknown[]) => Error) {
   expect(mock).toThrow(errorClass);
 }
 

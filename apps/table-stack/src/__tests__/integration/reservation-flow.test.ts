@@ -109,7 +109,7 @@ vi.mock('@repo/database', async () => {
 import { describe, it, expect, beforeEach } from 'vitest';
 import { randomUUID } from 'crypto';
 
-describe.skip('Integration: Reservation Flow', () => {
+describe('Integration: Reservation Flow', () => {
   const mockRestaurant = {
     id: 'mock-restaurant-id',
     name: 'Test Restaurant',

@@ -58,11 +58,11 @@ vi.mock("@repo/shared/redis", () => {
     }
 
     // Simplified eval: interprets Lua scripts used by OCC (CAS and delta scripts)
-    async eval(script: string, keys: string[], args: string[]): Promise<any> {
+    async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
       const store = this.store;
       const key = keys[0];
 
-      // Handle ATOMIC_CAS_SCRIPT
+      // Handle ATOMIC_CAS_SCRIPT (Compare-And-Swap)
       if (script.includes('expectedVersion') && script.includes('newState')) {
         const expectedVersion = args[0];
         const newState = args[1];
@@ -81,11 +81,18 @@ vi.mock("@repo/shared/redis", () => {
         }
 
         if (expectedVersion !== "any" && String(currentVersion) !== expectedVersion) {
-          // Conflict detected - return current state
+          // Conflict detected - return current state for rebase
           return [0, currentVersion, currentState || "null"];
         }
 
-        // Perform update
+        // Perform update - parse newState to ensure it's valid JSON, then store
+        try {
+          JSON.parse(newState); // Validate JSON
+        } catch {
+          // If newState isn't valid JSON, wrap it
+          store.set(key, JSON.stringify({ value: newState, version: newVersion }));
+          return [1, newVersion, store.get(key)!];
+        }
         store.set(key, newState);
         return [1, newVersion, newState];
       }
@@ -217,16 +224,13 @@ describe("AtomicStateRebaser", () => {
       expect(savedState?.version).toBe(2);
     });
 
-    it.skip("should handle conflicts with automatic rebase", async () => {
-      // NOTE: This test requires a more sophisticated mock that properly simulates
-      // Lua script CAS behavior with version conflicts. The current in-memory mock
-      // doesn't fully replicate the atomic compare-and-swap semantics.
-      // TODO: Implement proper Lua script simulation in InMemoryRedis mock.
-      // Simulate concurrent modification
+    it("should handle conflicts with automatic rebase", async () => {
+      // Simulate concurrent modification during our update
       const conflictingUpdate = async () => {
-        await new Promise(resolve => setTimeout(resolve, 50));
+        // Read current state
         const currentState = await redis.get<TestState>(testKey);
         if (currentState) {
+          // Write with incremented version (simulating concurrent writer)
           await redis.set(testKey, JSON.stringify({
             ...currentState,
             counter: currentState.counter + 100,
@@ -235,10 +239,10 @@ describe("AtomicStateRebaser", () => {
         }
       };
 
-      // Start conflicting update
-      const conflictPromise = conflictingUpdate();
+      // Start conflicting update (runs synchronously before our update)
+      await conflictingUpdate();
 
-      // Attempt our update
+      // Attempt our update with rebase support
       const result = await rebaser.update(
         (state) => ({
           counter: state.counter + 1,
@@ -247,49 +251,57 @@ describe("AtomicStateRebaser", () => {
         { maxRetries: 3, baseDelayMs: 50, debug: false }
       );
 
-      await conflictPromise;
-
-      // Should succeed via rebase
+      // Should succeed via rebase (read latest state, re-apply our delta)
       expect(result.success).toBe(true);
       expect(result.rebaseAttempts).toBeGreaterThanOrEqual(1);
       expect(result.succeededViaRebase).toBe(true);
 
-      // Final state should have both updates applied (last write wins with rebase)
+      // Final state should have both updates applied
       expect(result.updatedState?.counter).toBeGreaterThan(0);
       expect(result.updatedState?.data).toBe("rebased");
     });
 
-    it.skip("should fail after max retries exceeded", async () => {
-      // NOTE: This test requires proper Lua script CAS conflict simulation.
-      // The current mock doesn't correctly handle the retry/backoff semantics.
-      // TODO: Implement proper conflict simulation in InMemoryRedis mock.
-      // Aggressive concurrent modification
-      const aggressiveConflict = async () => {
-        for (let i = 0; i < 5; i++) {
-          await new Promise(resolve => setTimeout(resolve, 20));
-          const currentState = await redis.get<TestState>(testKey);
-          if (currentState) {
-            await redis.set(testKey, JSON.stringify({
-              ...currentState,
-              version: currentState.version! + 1,
-            }));
+    it("should fail after max retries exceeded", async () => {
+      // Force continuous conflicts during retries
+      const originalEval = InMemoryRedis.prototype.eval;
+      let conflictCount = 0;
+
+      // Patch eval to always cause conflicts during retry window
+      const conflictEval = async function(this: any, script: string, keys: string[], args: string[]) {
+        if (script.includes('expectedVersion') && script.includes('newState')) {
+          conflictCount++;
+          // Force conflict on first N attempts
+          if (conflictCount <= 5) {
+            const current = this.store.get(keys[0]);
+            let currentVersion = 0;
+            if (current) {
+              try {
+                const decoded = JSON.parse(current);
+                currentVersion = (decoded.version ?? decoded._version ?? 0) + 1; // Always ahead
+              } catch { /* ignore */ }
+            }
+            return [0, currentVersion, current || "null"];
           }
         }
+        return originalEval.call(this, script, keys, args);
       };
 
-      const conflictPromise = aggressiveConflict();
+      InMemoryRedis.prototype.eval = conflictEval;
 
-      const result = await rebaser.update(
-        (state) => ({ counter: state.counter + 1 }),
-        { maxRetries: 2, baseDelayMs: 10 }
-      );
+      try {
+        const result = await rebaser.update(
+          (state) => ({ counter: state.counter + 1 }),
+          { maxRetries: 2, baseDelayMs: 10, debug: false }
+        );
 
-      await conflictPromise;
-
-      // Should fail due to max retries
-      expect(result.success).toBe(false);
-      expect(result.rebaseAttempts).toBeGreaterThanOrEqual(2);
-      expect(result.error).toContain("Max rebase attempts exceeded");
+        // Should fail due to max retries exceeded
+        expect(result.success).toBe(false);
+        expect(result.rebaseAttempts).toBeGreaterThanOrEqual(2);
+        expect(result.error).toContain("Max rebase attempts exceeded");
+      } finally {
+        // Restore original eval
+        InMemoryRedis.prototype.eval = originalEval;
+      }
     });
 
     it("should handle non-existent state", async () => {
@@ -428,10 +440,7 @@ describe("atomicUpdateState()", () => {
 // MEMORYCLIENT OCC TESTS
 // ============================================================================
 
-describe.skip("MemoryClient.saveStateWithOCC()", () => {
-  // NOTE: These tests require proper MemoryClient integration with the OCC mock.
-  // The current mock doesn't implement updateStateAtomically which MemoryClient uses.
-  // TODO: Implement MemoryClient-compatible OCC mock that supports CAS operations.
+describe("MemoryClient.saveStateWithOCC()", () => {
   let redis: Redis;
   let memory: ReturnType<typeof getMemoryClient>;
   let executionId: string;

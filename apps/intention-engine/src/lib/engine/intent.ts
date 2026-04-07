@@ -429,7 +429,7 @@ export async function parseIntentBatch(
  * Returns a match score (0-1) and whether it's considered valid.
  */
 export async function validateOutputAgainstConstraints(
-  output: any,
+  output: unknown,
   constraints: string[]
 ): Promise<{ score: number; valid: boolean; reason?: string }> {
   if (!constraints || constraints.length === 0) return { score: 1, valid: true };

@@ -246,52 +246,62 @@ export class OutboxRelayService {
         });
       });
     } catch (error) {
-      // Fallback to setTimeout if after() is not available (non-Next.js environment)
-      console.warn("[OutboxRelay:Fallback] after() not available, using setTimeout (dev only)");
-      setTimeout(async () => {
-        try {
-          // SECURITY: Generate short-lived JWT for internal service-to-service communication
-          const authToken = await signServiceToken(
-            {
-              service: 'outbox-relay',
-              executionId,
-              action: 'trigger-relay',
-            },
-            '5m'
+      // after() is not available - execute synchronously to prevent silent failures in serverless
+      console.warn("[OutboxRelay:Fallback] after() not available, executing synchronously");
+      
+      // SECURITY: Generate short-lived JWT for internal service-to-service communication
+      const authToken = await signServiceToken(
+        {
+          service: 'outbox-relay',
+          executionId,
+          action: 'trigger-relay',
+        },
+        '5m'
+      );
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      };
+
+      if (config.traceId) {
+        headers['x-trace-id'] = config.traceId;
+      }
+      if (config.correlationId) {
+        headers['x-correlation-id'] = config.correlationId;
+      }
+
+      // Execute synchronously with timeout to prevent hanging in serverless
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            executionId,
+            timestamp: new Date().toISOString(),
+          }),
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          throw new Error(
+            `[OutboxRelay:Fallback] Failed to trigger relay: ${response.status} ${response.statusText}`
           );
-
-          const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authToken}`,
-          };
-
-          if (config.traceId) {
-            headers['x-trace-id'] = config.traceId;
-          }
-          if (config.correlationId) {
-            headers['x-correlation-id'] = config.correlationId;
-          }
-
-          const response = await fetch(url, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              executionId,
-              timestamp: new Date().toISOString(),
-            }),
-          });
-
-          if (!response.ok) {
-            console.error(
-              `[OutboxRelay:Fallback] Failed to trigger relay: ${response.status} ${response.statusText}`
-            );
-          } else {
-            console.log(`[OutboxRelay:Fallback] Relay triggered successfully`);
-          }
-        } catch (error) {
-          console.error(`[OutboxRelay:Fallback] Error triggering relay:`, error);
         }
-      }, 100); // 100ms delay to allow response to complete
+        
+        console.log(`[OutboxRelay:Fallback] Relay triggered successfully`);
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        // Re-throw to prevent silent failures
+        throw new Error(
+          `[OutboxRelay:Fallback] Error triggering relay: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`
+        );
+      }
     }
   }
 

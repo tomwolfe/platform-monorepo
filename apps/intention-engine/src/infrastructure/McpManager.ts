@@ -1,12 +1,12 @@
 import {
   ToolDefinition as EngineToolDefinition,
-  ToolParameter
+  ToolParameter,
 } from "../lib/engine/types";
 import { ToolDefinition as RegistryToolDefinition } from "../lib/tools/types";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
-  CallToolResult
+  CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import * as zod from "zod";
 import { AllToolsMap, ToolInput, validateToolParams } from "@repo/mcp-protocol";
@@ -31,22 +31,32 @@ export class McpAdapter {
    * Converts a legacy ToolParameter array to an MCP-compliant JSON Schema inputSchema.
    * Supports nested objects and recursion for complex schemas.
    */
-  static parametersToInputSchema(parameters: RecursiveToolParameter[]): JSONSchema7 {
+  static parametersToInputSchema(
+    parameters: RecursiveToolParameter[],
+  ): JSONSchema7 {
     const properties: Record<string, JSONSchema7Definition> = {};
     const required: string[] = [];
 
     const mapType = (type: string): JSONSchema7["type"] => {
       switch (type) {
-        case "string": return "string";
-        case "number": return "number";
-        case "boolean": return "boolean";
-        case "object": return "object";
-        case "array": return "array";
-        default: return "string" as const;
+        case "string":
+          return "string";
+        case "number":
+          return "number";
+        case "boolean":
+          return "boolean";
+        case "object":
+          return "object";
+        case "array":
+          return "array";
+        default:
+          return "string" as const;
       }
     };
 
-    const processParam = (param: RecursiveToolParameter): JSONSchema7Definition => {
+    const processParam = (
+      param: RecursiveToolParameter,
+    ): JSONSchema7Definition => {
       const schema: JSONSchema7 = {
         type: mapType(param.type),
         description: param.description,
@@ -105,7 +115,8 @@ export class McpAdapter {
     return {
       name: tool.name,
       description: tool.description,
-      inputSchema: tool.inputSchema || this.parametersToInputSchema(tool.parameters || []),
+      inputSchema:
+        tool.inputSchema || this.parametersToInputSchema(tool.parameters || []),
     };
   }
 }
@@ -128,7 +139,9 @@ export class McpManager {
    */
   async listTools() {
     return {
-      tools: Array.from(this.tools.values()).map(tool => McpAdapter.toMcpTool(tool)),
+      tools: Array.from(this.tools.values()).map((tool) =>
+        McpAdapter.toMcpTool(tool),
+      ),
     };
   }
 
@@ -136,7 +149,10 @@ export class McpManager {
    * Handles an MCP CallTool request.
    * Enhanced with strict type validation using Zod schemas
    */
-  async callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<CallToolResult> {
     const tool = this.tools.get(name);
     if (!tool) {
       throw new Error(`Tool not found: ${name}`);
@@ -149,12 +165,17 @@ export class McpManager {
 
       // Check if tool name matches a known tool in AllToolsMap
       if (this.isKnownTool(name)) {
-        validatedArgs = validateToolParams(name as keyof AllToolsMap, args) as Record<string, unknown>;
+        validatedArgs = validateToolParams(
+          name as keyof AllToolsMap,
+          args,
+        ) as Record<string, unknown>;
       } else {
         // For dynamic/unknown tools, use JSON Schema to Zod conversion
-        const schema = tool.inputSchema || McpAdapter.parametersToInputSchema(tool.parameters || []);
+        const schema =
+          tool.inputSchema ||
+          McpAdapter.parametersToInputSchema(tool.parameters || []);
         const zodSchema = mapJsonSchemaToZod(schema);
-        validatedArgs = zodSchema.parse(args) as Record<string, unknown>;
+        validatedArgs = zodSchema.parse(args);
       }
 
       const result = await tool.execute(validatedArgs);
@@ -168,7 +189,10 @@ export class McpManager {
         isError: !result.success,
       };
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error during tool execution";
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Unknown error during tool execution";
       return {
         content: [
           {
@@ -188,27 +212,43 @@ export class McpManager {
     // Check against known tool names from the protocol
     const knownTools = [
       // TableStack
-      'getAvailability', 'bookTable', 'getLiveOperationalState',
+      "getAvailability",
+      "bookTable",
+      "getLiveOperationalState",
       // Table Management
-      'get_table_availability', 'get_table_layout', 'get_reservation',
-      'list_reservations', 'check_table_conflicts', 'create_reservation',
-      'update_reservation', 'cancel_reservation', 'add_to_waitlist',
-      'update_waitlist_status', 'validate_reservation',
+      "get_table_availability",
+      "get_table_layout",
+      "get_reservation",
+      "list_reservations",
+      "check_table_conflicts",
+      "create_reservation",
+      "update_reservation",
+      "cancel_reservation",
+      "add_to_waitlist",
+      "update_waitlist_status",
+      "validate_reservation",
       // OpenDelivery
-      'calculateQuote', 'getDriverLocation',
+      "calculateQuote",
+      "getDriverLocation",
       // Delivery Fulfillment
-      'calculate_delivery_quote', 'fulfill_intent', 'get_fulfillment_status',
-      'cancel_fulfillment', 'update_fulfillment', 'validate_fulfillment',
+      "calculate_delivery_quote",
+      "fulfill_intent",
+      "get_fulfillment_status",
+      "cancel_fulfillment",
+      "update_fulfillment",
+      "validate_fulfillment",
       // Mobility
-      'request_ride', 'get_route_estimate',
+      "request_ride",
+      "get_route_estimate",
       // Booking
-      'reserve_restaurant',
+      "reserve_restaurant",
       // Communication
-      'send_comm',
+      "send_comm",
       // Context
-      'get_weather_data',
+      "get_weather_data",
       // Parallel Execution
-      'resolve_dependencies', 'execute_parallel',
+      "resolve_dependencies",
+      "execute_parallel",
     ];
     return knownTools.includes(name);
   }

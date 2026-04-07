@@ -5,7 +5,13 @@ import { format, addMinutes } from "date-fns";
 import { fromZonedTime, toZonedTime } from "date-fns-tz";
 import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
-import { Users, Clock, CheckCircle, ChevronRight, AlertCircle } from "lucide-react";
+import {
+  Users,
+  Clock,
+  CheckCircle,
+  ChevronRight,
+  AlertCircle,
+} from "lucide-react";
 import { createReservation } from "../actions";
 import Link from "next/link";
 import ReservationForm from "@/components/ReservationForm";
@@ -35,7 +41,11 @@ interface Restaurant {
   timezone: string | null;
 }
 
-export default function BookingPage({ params }: { params: Promise<{ slug: string }> }) {
+export default function BookingPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,37 +53,42 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
 
   useEffect(() => {
     fetch(`/api/v1/restaurant?slug=${slug}`)
-      .then(res => {
+      .then((res) => {
         if (!res.ok) throw new Error("Restaurant not found");
         return res.json();
       })
-      .then(data => {
+      .then((data) => {
         setRestaurant(data);
       })
-      .catch(err => {
+      .catch((err) => {
         setError(err.message);
         setRestaurant(null);
       });
   }, [slug]);
 
-  const handleBook = async (data: { date: Date; partySize: number; time: string; guestInfo: { name: string; email: string } }) => {
+  const handleBook = async (data: {
+    date: Date;
+    partySize: number;
+    time: string;
+    guestInfo: { name: string; email: string };
+  }) => {
     if (!restaurant) throw new Error("Restaurant not loaded");
-    
-    const timezone = restaurant.timezone || 'UTC';
-    const datePart = format(data.date, 'yyyy-MM-dd');
+
+    const timezone = restaurant.timezone || "UTC";
+    const datePart = format(data.date, "yyyy-MM-dd");
     const checkTime = fromZonedTime(`${datePart} ${data.time}`, timezone);
 
     // 1. Check availability
     const availRes = await fetch(
-      `/api/v1/availability?restaurantId=${restaurant.id}&date=${checkTime.toISOString()}&partySize=${data.partySize}`
+      `/api/v1/availability?restaurantId=${restaurant.id}&date=${checkTime.toISOString()}&partySize=${data.partySize}`,
     );
-    
+
     if (!availRes.ok) {
       const errorData = await availRes.json();
       throw new Error(errorData.message || "No tables available for this time");
     }
-    
-    const availData = await availRes.json() as AvailabilityResponse;
+
+    const availData = (await availRes.json()) as AvailabilityResponse;
     if (availData.availableTables.length === 0) {
       throw new Error("Fully booked for this time. Please try another slot.");
     }
@@ -89,8 +104,9 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
       startTime: checkTime.toISOString(),
       endTime: addMinutes(checkTime, duration).toISOString(),
     });
-    
-    return res.id;
+
+    if (!res.success) throw new Error(res.error);
+    return res.data.id;
   };
 
   if (!restaurant) {
@@ -123,7 +139,7 @@ export default function BookingPage({ params }: { params: Promise<{ slug: string
         </div>
 
         <div className="p-8 md:p-12">
-           <ReservationForm restaurant={restaurant} onBook={handleBook} />
+          <ReservationForm restaurant={restaurant} onBook={handleBook} />
         </div>
       </div>
     </div>

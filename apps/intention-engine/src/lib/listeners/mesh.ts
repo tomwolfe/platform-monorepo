@@ -4,7 +4,7 @@ import {
   ServiceNamespace,
 } from "@repo/shared";
 import { handleTableStackRejection } from "./tablestack";
-import { verifyServiceToken } from "@repo/auth";
+import { verifyAsymmetricJWT } from "@repo/auth";
 import { inferIntent } from "@/lib/engine/intent";
 import { generatePlan } from "@/lib/engine/unified-planner";
 import { createAuditLog } from "@/lib/audit";
@@ -313,7 +313,11 @@ export class MeshListener {
       return;
     }
 
-    const verified = await verifyServiceToken(payloadObj.token as string);
+    const verified = await verifyAsymmetricJWT(
+      payloadObj.token as string,
+      "intention-engine",
+      "mesh-listener",
+    );
     if (!verified) {
       console.warn(
         `[MeshListener] Event ${eventName} rejected: Invalid service token`,

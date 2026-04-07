@@ -1,20 +1,32 @@
-'use server';
+"use server";
 
-import { getDb, restaurantTables, restaurants, restaurantReservations, restaurantWaitlist, restaurantProducts, inventoryLevels } from '@repo/database';
-import { signBridgeToken } from '@repo/auth';
-import { redirect } from 'next/navigation';
-import { currentUser } from '@clerk/nextjs/server';
-import { revalidatePath } from 'next/cache';
-import { eq, and } from '@repo/database';
-import { z } from 'zod';
-import Ably from 'ably';
-import { NotifyService } from '@tablestack/lib/notifications';
-import { generateApiKey } from '@tablestack/lib/auth';
-import { withServerActionHandler, type ServerActionResponse, Logger } from '@repo/shared';
-import { after } from 'next/server';
-import { ABLY_TABLE_EVENTS, WEBHOOK_EVENTS } from '@repo/mcp-protocol';
+import {
+  getDb,
+  restaurantTables,
+  restaurants,
+  restaurantReservations,
+  restaurantWaitlist,
+  restaurantProducts,
+  inventoryLevels,
+} from "@repo/database";
+import { signBridgeToken, signAsymmetricJWT } from "@repo/auth";
+import { redirect } from "next/navigation";
+import { currentUser } from "@clerk/nextjs/server";
+import { revalidatePath } from "next/cache";
+import { eq, and } from "@repo/database";
+import { z } from "zod";
+import Ably from "ably";
+import { NotifyService } from "@tablestack/lib/notifications";
+import { generateApiKey } from "@tablestack/lib/auth";
+import {
+  withServerActionHandler,
+  type ServerActionResponse,
+  Logger,
+} from "@repo/shared";
+import { after } from "next/server";
+import { ABLY_TABLE_EVENTS, WEBHOOK_EVENTS } from "@repo/mcp-protocol";
 
-const logger = new Logger({ serviceName: 'table-stack' });
+const logger = new Logger({ serviceName: "table-stack" });
 
 const SettingsSchema = z.object({
   openingTime: z.string().nullable(),
@@ -26,23 +38,21 @@ const SettingsSchema = z.object({
 
 async function verifyOwnership(restaurantId: string) {
   const user = await currentUser();
-  if (!user) throw new Error('Unauthorized');
+  if (!user) throw new Error("Unauthorized");
 
   const restaurant = await getDb().query.restaurants.findFirst({
     where: and(
       eq(restaurants.id, restaurantId),
-      eq(restaurants.ownerId, user.id)
+      eq(restaurants.ownerId, user.id),
     ),
   });
 
-  if (!restaurant) throw new Error('Forbidden');
+  if (!restaurant) throw new Error("Forbidden");
   return restaurant;
 }
 
 // Wrapper for ownership-verified actions
-function withOwnership<T extends (...args: any[]) => Promise<any>>(
-  fn: T
-): T {
+function withOwnership<T extends (...args: any[]) => Promise<any>>(fn: T): T {
   return (async (restaurantId: string, ...rest: any[]) => {
     await verifyOwnership(restaurantId);
     return fn(restaurantId, ...rest);
@@ -51,270 +61,315 @@ function withOwnership<T extends (...args: any[]) => Promise<any>>(
 
 export async function redirectToStoreFront(restaurantId?: string) {
   const user = await currentUser();
-  if (!user) throw new Error('Unauthorized');
+  if (!user) throw new Error("Unauthorized");
 
   const token = await signBridgeToken({
     clerkUserId: user.id,
-    role: 'merchant', // Default role for dashboard users
+    role: "merchant", // Default role for dashboard users
     restaurantId,
   });
 
-  const { AppConfig } = await import('@repo/shared');
+  const { AppConfig } = await import("@repo/shared");
   const storesUrl = AppConfig.getStoresUrl();
   redirect(`${storesUrl}/api/auth/bridge?bridge_token=${token}`);
 }
 
 export async function goToDelivery() {
   const user = await currentUser();
-  if (!user) throw new Error('Unauthorized');
+  if (!user) throw new Error("Unauthorized");
 
   const token = await signBridgeToken({
     clerkUserId: user.id,
   });
 
-  const { AppConfig } = await import('@repo/shared');
+  const { AppConfig } = await import("@repo/shared");
   const satelliteUrl = AppConfig.getOpenDeliveryUrl();
   redirect(`${satelliteUrl}/api/auth/bridge?token=${token}`);
 }
 
 export const deleteReservation = withServerActionHandler(
   withOwnership(async (reservationId: string, restaurantId: string) => {
-    await getDb().delete(restaurantReservations)
-      .where(and(
-        eq(restaurantReservations.id, reservationId),
-        eq(restaurantReservations.restaurantId, restaurantId)
-      ));
+    await getDb()
+      .delete(restaurantReservations)
+      .where(
+        and(
+          eq(restaurantReservations.id, reservationId),
+          eq(restaurantReservations.restaurantId, restaurantId),
+        ),
+      );
     revalidatePath(`/dashboard/${restaurantId}`);
-    return { message: 'Reservation deleted successfully' };
+    return { message: "Reservation deleted successfully" };
   }),
-  { errorCode: 'DELETE_RESERVATION_FAILED' }
+  { errorCode: "DELETE_RESERVATION_FAILED" },
 );
 
 export const updateReservation = withServerActionHandler(
-  withOwnership(async (
-    reservationId: string,
-    restaurantId: string,
-    updates: { guestName?: string, partySize?: number, startTime?: Date }
-  ) => {
-    await getDb().update(restaurantReservations)
-      .set({
-        ...updates,
-        ...(updates.startTime ? { endTime: new Date(updates.startTime.getTime() + 90 * 60000) } : {}), // Default to 90 min if updated
-      })
-      .where(and(
-        eq(restaurantReservations.id, reservationId),
-        eq(restaurantReservations.restaurantId, restaurantId)
-      ));
-    revalidatePath(`/dashboard/${restaurantId}`);
-    return { message: 'Reservation updated successfully' };
-  }),
-  { errorCode: 'UPDATE_RESERVATION_FAILED' }
+  withOwnership(
+    async (
+      reservationId: string,
+      restaurantId: string,
+      updates: { guestName?: string; partySize?: number; startTime?: Date },
+    ) => {
+      await getDb()
+        .update(restaurantReservations)
+        .set({
+          ...updates,
+          ...(updates.startTime
+            ? { endTime: new Date(updates.startTime.getTime() + 90 * 60000) }
+            : {}), // Default to 90 min if updated
+        })
+        .where(
+          and(
+            eq(restaurantReservations.id, reservationId),
+            eq(restaurantReservations.restaurantId, restaurantId),
+          ),
+        );
+      revalidatePath(`/dashboard/${restaurantId}`);
+      return { message: "Reservation updated successfully" };
+    },
+  ),
+  { errorCode: "UPDATE_RESERVATION_FAILED" },
 );
 
 export const updateRestaurantSettings = withServerActionHandler(
   withOwnership(async (restaurantId: string, formData: FormData) => {
     const rawData = {
-      openingTime: formData.get('openingTime'),
-      closingTime: formData.get('closingTime'),
-      daysOpen: formData.get('daysOpen'),
-      timezone: formData.get('timezone'),
-      defaultDurationMinutes: parseInt(formData.get('defaultDurationMinutes') as string || '90'),
+      openingTime: formData.get("openingTime"),
+      closingTime: formData.get("closingTime"),
+      daysOpen: formData.get("daysOpen"),
+      timezone: formData.get("timezone"),
+      defaultDurationMinutes: parseInt(
+        (formData.get("defaultDurationMinutes") as string) || "90",
+      ),
     };
 
     const validated = SettingsSchema.parse(rawData);
 
-    await getDb().update(restaurants)
+    await getDb()
+      .update(restaurants)
       .set({
         ...validated,
       })
       .where(eq(restaurants.id, restaurantId));
 
     revalidatePath(`/dashboard/${restaurantId}`);
-    return { message: 'Settings updated successfully' };
+    return { message: "Settings updated successfully" };
   }),
-  { errorCode: 'UPDATE_SETTINGS_FAILED' }
+  { errorCode: "UPDATE_SETTINGS_FAILED" },
 );
 
 export const updateTablePositions = withServerActionHandler(
-  withOwnership(async (
-    tables: { id: string, xPos: number | null, yPos: number | null }[],
-    restaurantId: string
-  ) => {
-    for (const table of tables) {
-      await getDb().update(restaurantTables)
-        .set({ xPos: table.xPos, yPos: table.yPos, updatedAt: new Date() })
-        .where(and(
-          eq(restaurantTables.id, table.id),
-          eq(restaurantTables.restaurantId, restaurantId)
-        ));
-    }
-    revalidatePath(`/dashboard/${restaurantId}`);
-    return { message: 'Layout updated successfully' };
-  }),
-  { errorCode: 'UPDATE_LAYOUT_FAILED' }
+  withOwnership(
+    async (
+      tables: { id: string; xPos: number | null; yPos: number | null }[],
+      restaurantId: string,
+    ) => {
+      for (const table of tables) {
+        await getDb()
+          .update(restaurantTables)
+          .set({ xPos: table.xPos, yPos: table.yPos, updatedAt: new Date() })
+          .where(
+            and(
+              eq(restaurantTables.id, table.id),
+              eq(restaurantTables.restaurantId, restaurantId),
+            ),
+          );
+      }
+      revalidatePath(`/dashboard/${restaurantId}`);
+      return { message: "Layout updated successfully" };
+    },
+  ),
+  { errorCode: "UPDATE_LAYOUT_FAILED" },
 );
 
 export const updateTableStatus = withServerActionHandler(
-  withOwnership(async (
-    tableId: string,
-    status: 'vacant' | 'occupied' | 'dirty',
-    restaurantId: string
-  ) => {
-    const [table] = await getDb().update(restaurantTables)
-      .set({ status, updatedAt: new Date() })
-      .where(and(
-        eq(restaurantTables.id, tableId),
-        eq(restaurantTables.restaurantId, restaurantId)
-      ))
-      .returning();
+  withOwnership(
+    async (
+      tableId: string,
+      status: "vacant" | "occupied" | "dirty",
+      restaurantId: string,
+    ) => {
+      const [table] = await getDb()
+        .update(restaurantTables)
+        .set({ status, updatedAt: new Date() })
+        .where(
+          and(
+            eq(restaurantTables.id, tableId),
+            eq(restaurantTables.restaurantId, restaurantId),
+          ),
+        )
+        .returning();
 
-    // 1. Real-time update via Ably
-    if (process.env.ABLY_API_KEY) {
-      const ably = new Ably.Rest(process.env.ABLY_API_KEY);
-      const channel = ably.channels.get(`restaurant:${restaurantId}`);
-      await channel.publish(ABLY_TABLE_EVENTS.TableStatusUpdate, {
-        restaurantId,
-        tableId: table.id,
-        status: table.status,
-        updatedAt: table.updatedAt?.toISOString() || new Date().toISOString(),
-      });
-    }
-
-    // 2. Delivery Hotspot Hook: Notify OpenDeliver when a table is vacant
-    const openDeliverWebhookUrl = process.env.OPEN_DELIVER_WEBHOOK_URL;
-    const webhookSecret = process.env.INTERNAL_SYSTEM_KEY;
-
-    // CRITICAL: Fail fast if INTERNAL_SYSTEM_KEY is not configured
-    if (!webhookSecret) {
-      throw new Error(
-        'CRITICAL: INTERNAL_SYSTEM_KEY environment variable is not configured. ' +
-        'Cannot sign webhook payloads without this key. ' +
-        'Please set INTERNAL_SYSTEM_KEY in your environment.'
-      );
-    }
-
-    if (status === 'vacant' && openDeliverWebhookUrl) {
-      const restaurant = await getDb().query.restaurants.findFirst({
-        where: eq(restaurants.id, restaurantId),
-      });
-
-      if (restaurant) {
-        const payload = JSON.stringify({
-          event: WEBHOOK_EVENTS.DeliveryHotspotAvailable,
-          venue: {
-            id: restaurant.id,
-            name: restaurant.name,
-            location: restaurant.timezone
-          },
-          table: {
-            id: table.id,
-            number: table.tableNumber
-          }
-        });
-
-        const { signPayload } = await import('@tablestack/lib/auth');
-        const { signature, timestamp } = await signPayload(payload, webhookSecret);
-
-        // Use after() to ensure the fetch completes even after the response is returned
-        after(async () => {
-          try {
-            await fetch(openDeliverWebhookUrl, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'x-signature': signature,
-                'x-timestamp': timestamp.toString()
-              },
-              body: payload
-            });
-          } catch (err) {
-            logger.error('Hotspot webhook failed', { error: err instanceof Error ? err.message : String(err) });
-          }
+      // 1. Real-time update via Ably
+      if (process.env.ABLY_API_KEY) {
+        const ably = new Ably.Rest(process.env.ABLY_API_KEY);
+        const channel = ably.channels.get(`restaurant:${restaurantId}`);
+        await channel.publish(ABLY_TABLE_EVENTS.TableStatusUpdate, {
+          restaurantId,
+          tableId: table.id,
+          status: table.status,
+          updatedAt: table.updatedAt?.toISOString() || new Date().toISOString(),
         });
       }
-    }
 
-    // 3. Intention Engine: Notify when table is vacated
-    const intentionEngineUrl = process.env.INTENTION_ENGINE_API_URL;
-    const internalSystemKey = process.env.INTERNAL_SYSTEM_KEY;
+      // 2. Delivery Hotspot Hook: Notify OpenDeliver when a table is vacant
+      const openDeliverWebhookUrl = process.env.OPEN_DELIVER_WEBHOOK_URL;
+      const webhookSecret = process.env.INTERNAL_SYSTEM_KEY;
 
-    if (status === 'vacant' && intentionEngineUrl) {
-      if (!internalSystemKey) {
-        logger.error('CRITICAL: INTERNAL_SYSTEM_KEY is not configured.');
+      // CRITICAL: Fail fast if INTERNAL_SYSTEM_KEY is not configured
+      if (!webhookSecret) {
+        throw new Error(
+          "CRITICAL: INTERNAL_SYSTEM_KEY environment variable is not configured. " +
+            "Cannot sign webhook payloads without this key. " +
+            "Please set INTERNAL_SYSTEM_KEY in your environment.",
+        );
       }
 
-      const restaurant = await getDb().query.restaurants.findFirst({
-        where: eq(restaurants.id, restaurantId),
-      });
-
-      if (restaurant) {
-        const { signServiceToken } = await import('@repo/auth');
-        const token = await signServiceToken({
-          purpose: 'table_vacated',
-          tableId: table.id,
-          restaurantId
+      if (status === "vacant" && openDeliverWebhookUrl) {
+        const restaurant = await getDb().query.restaurants.findFirst({
+          where: eq(restaurants.id, restaurantId),
         });
 
-        const tableVacatedPayload = {
-          event: WEBHOOK_EVENTS.TableVacated,
-          tableId: table.id,
-          restaurantId: restaurant.id,
-          restaurantName: restaurant.name,
-          restaurantSlug: restaurant.slug,
-          capacity: table.maxCapacity,
-          timestamp: new Date().toISOString(),
-        };
+        if (restaurant) {
+          const payload = JSON.stringify({
+            event: WEBHOOK_EVENTS.DeliveryHotspotAvailable,
+            venue: {
+              id: restaurant.id,
+              name: restaurant.name,
+              location: restaurant.timezone,
+            },
+            table: {
+              id: table.id,
+              number: table.tableNumber,
+            },
+          });
 
-        const webhookHeaders: Record<string, string> = {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        };
+          const { signPayload } = await import("@tablestack/lib/auth");
+          const { signature, timestamp } = await signPayload(
+            payload,
+            webhookSecret,
+          );
 
-        if (internalSystemKey) {
-          webhookHeaders['x-internal-system-key'] = internalSystemKey;
-        }
-
-        const maxRetries = 3;
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-          try {
-            const response = await fetch(`${intentionEngineUrl}/api/webhooks`, {
-              method: 'POST',
-              headers: webhookHeaders,
-              body: JSON.stringify(tableVacatedPayload),
-            });
-
-            if (!response.ok) {
-              const errorText = await response.text();
-              throw new Error(`HTTP ${response.status}: ${errorText}`);
+          // Use after() to ensure the fetch completes even after the response is returned
+          after(async () => {
+            try {
+              await fetch(openDeliverWebhookUrl, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-signature": signature,
+                  "x-timestamp": timestamp.toString(),
+                },
+                body: payload,
+              });
+            } catch (err) {
+              logger.error("Hotspot webhook failed", {
+                error: err instanceof Error ? err.message : String(err),
+              });
             }
-
-            logger.info(`Webhook delivered successfully`, { attempt });
-            break;
-          } catch (err) {
-            const lastError = err instanceof Error ? err : new Error(String(err));
-
-            if (attempt < maxRetries) {
-              const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-              logger.warn(
-                `Webhook delivery failed (attempt ${attempt}/${maxRetries})`,
-                { retryDelayMs: backoffMs, error: lastError.message }
-              );
-              await new Promise(resolve => setTimeout(resolve, backoffMs));
-            } else {
-              logger.error(
-                `CRITICAL: Webhook delivery failed after ${maxRetries} attempts`,
-                { error: lastError instanceof Error ? lastError.message : String(lastError) }
-              );
-            }
-          }
+          });
         }
       }
-    }
 
-    revalidatePath(`/dashboard/${restaurantId}`);
-    return { message: 'Table status updated successfully' };
-  }),
-  { errorCode: 'UPDATE_TABLE_STATUS_FAILED' }
+      // 3. Intention Engine: Notify when table is vacated
+      const intentionEngineUrl = process.env.INTENTION_ENGINE_API_URL;
+      const internalSystemKey = process.env.INTERNAL_SYSTEM_KEY;
+
+      if (status === "vacant" && intentionEngineUrl) {
+        if (!internalSystemKey) {
+          logger.error("CRITICAL: INTERNAL_SYSTEM_KEY is not configured.");
+        }
+
+        const restaurant = await getDb().query.restaurants.findFirst({
+          where: eq(restaurants.id, restaurantId),
+        });
+
+        if (restaurant) {
+          const token = await signAsymmetricJWT(
+            {
+              purpose: "table_vacated",
+              tableId: table.id,
+              restaurantId,
+            },
+            {
+              issuer: "table-stack",
+              audience: "intention-engine",
+            },
+          );
+
+          const tableVacatedPayload = {
+            event: WEBHOOK_EVENTS.TableVacated,
+            tableId: table.id,
+            restaurantId: restaurant.id,
+            restaurantName: restaurant.name,
+            restaurantSlug: restaurant.slug,
+            capacity: table.maxCapacity,
+            timestamp: new Date().toISOString(),
+          };
+
+          const webhookHeaders: Record<string, string> = {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          };
+
+          if (internalSystemKey) {
+            webhookHeaders["x-internal-system-key"] = internalSystemKey;
+          }
+
+          const maxRetries = 3;
+          for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+              const response = await fetch(
+                `${intentionEngineUrl}/api/webhooks`,
+                {
+                  method: "POST",
+                  headers: webhookHeaders,
+                  body: JSON.stringify(tableVacatedPayload),
+                },
+              );
+
+              if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`HTTP ${response.status}: ${errorText}`);
+              }
+
+              logger.info(`Webhook delivered successfully`, { attempt });
+              break;
+            } catch (err) {
+              const lastError =
+                err instanceof Error ? err : new Error(String(err));
+
+              if (attempt < maxRetries) {
+                const backoffMs = Math.min(
+                  1000 * Math.pow(2, attempt - 1),
+                  5000,
+                );
+                logger.warn(
+                  `Webhook delivery failed (attempt ${attempt}/${maxRetries})`,
+                  { retryDelayMs: backoffMs, error: lastError.message },
+                );
+                await new Promise((resolve) => setTimeout(resolve, backoffMs));
+              } else {
+                logger.error(
+                  `CRITICAL: Webhook delivery failed after ${maxRetries} attempts`,
+                  {
+                    error:
+                      lastError instanceof Error
+                        ? lastError.message
+                        : String(lastError),
+                  },
+                );
+              }
+            }
+          }
+        }
+      }
+
+      revalidatePath(`/dashboard/${restaurantId}`);
+      return { message: "Table status updated successfully" };
+    },
+  ),
+  { errorCode: "UPDATE_TABLE_STATUS_FAILED" },
 );
 
 export const addTable = withServerActionHandler(
@@ -323,9 +378,14 @@ export const addTable = withServerActionHandler(
       where: eq(restaurantTables.restaurantId, restaurantId),
     });
 
-    const nextNumber = existingTables.length > 0
-      ? (Math.max(...existingTables.map((t: any) => parseInt(t.tableNumber) || 0)) + 1).toString()
-      : "1";
+    const nextNumber =
+      existingTables.length > 0
+        ? (
+            Math.max(
+              ...existingTables.map((t: any) => parseInt(t.tableNumber) || 0),
+            ) + 1
+          ).toString()
+        : "1";
 
     await getDb().insert(restaurantTables).values({
       restaurantId,
@@ -334,100 +394,118 @@ export const addTable = withServerActionHandler(
       maxCapacity: 4,
       xPos: 50,
       yPos: 50,
-      status: 'vacant',
+      status: "vacant",
     });
 
     revalidatePath(`/dashboard/${restaurantId}`);
-    return { message: 'Table added successfully', tableNumber: nextNumber };
+    return { message: "Table added successfully", tableNumber: nextNumber };
   }),
-  { errorCode: 'ADD_TABLE_FAILED' }
+  { errorCode: "ADD_TABLE_FAILED" },
 );
 
 export const deleteTable = withServerActionHandler(
   withOwnership(async (tableId: string, restaurantId: string) => {
-    await getDb().delete(restaurantTables)
-      .where(and(
-        eq(restaurantTables.id, tableId),
-        eq(restaurantTables.restaurantId, restaurantId)
-      ));
+    await getDb()
+      .delete(restaurantTables)
+      .where(
+        and(
+          eq(restaurantTables.id, tableId),
+          eq(restaurantTables.restaurantId, restaurantId),
+        ),
+      );
     revalidatePath(`/dashboard/${restaurantId}`);
-    return { message: 'Table deleted successfully' };
+    return { message: "Table deleted successfully" };
   }),
-  { errorCode: 'DELETE_TABLE_FAILED' }
+  { errorCode: "DELETE_TABLE_FAILED" },
 );
 
 export const updateTableDetails = withServerActionHandler(
-  withOwnership(async (
-    tableId: string,
-    restaurantId: string,
-    details: { tableNumber: string, minCapacity: number, maxCapacity: number }
-  ) => {
-    await getDb().update(restaurantTables)
-      .set({
-        tableNumber: details.tableNumber,
-        minCapacity: details.minCapacity,
-        maxCapacity: details.maxCapacity,
-        updatedAt: new Date(),
-      })
-      .where(and(
-        eq(restaurantTables.id, tableId),
-        eq(restaurantTables.restaurantId, restaurantId)
-      ));
-    revalidatePath(`/dashboard/${restaurantId}`);
-    return { message: 'Table details updated successfully' };
-  }),
-  { errorCode: 'UPDATE_TABLE_DETAILS_FAILED' }
+  withOwnership(
+    async (
+      tableId: string,
+      restaurantId: string,
+      details: {
+        tableNumber: string;
+        minCapacity: number;
+        maxCapacity: number;
+      },
+    ) => {
+      await getDb()
+        .update(restaurantTables)
+        .set({
+          tableNumber: details.tableNumber,
+          minCapacity: details.minCapacity,
+          maxCapacity: details.maxCapacity,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(restaurantTables.id, tableId),
+            eq(restaurantTables.restaurantId, restaurantId),
+          ),
+        );
+      revalidatePath(`/dashboard/${restaurantId}`);
+      return { message: "Table details updated successfully" };
+    },
+  ),
+  { errorCode: "UPDATE_TABLE_DETAILS_FAILED" },
 );
 
 export const updateWaitlistStatus = withServerActionHandler(
-  withOwnership(async (
-    waitlistId: string,
-    restaurantId: string,
-    status: 'waiting' | 'notified' | 'seated'
-  ) => {
-    const [entry] = await getDb().update(restaurantWaitlist)
-      .set({ status, updatedAt: new Date() })
-      .where(and(
-        eq(restaurantWaitlist.id, waitlistId),
-        eq(restaurantWaitlist.restaurantId, restaurantId)
-      ))
-      .returning();
+  withOwnership(
+    async (
+      waitlistId: string,
+      restaurantId: string,
+      status: "waiting" | "notified" | "seated",
+    ) => {
+      const [entry] = await getDb()
+        .update(restaurantWaitlist)
+        .set({ status, updatedAt: new Date() })
+        .where(
+          and(
+            eq(restaurantWaitlist.id, waitlistId),
+            eq(restaurantWaitlist.restaurantId, restaurantId),
+          ),
+        )
+        .returning();
 
-    if (!entry) {
-      throw new Error("Waitlist entry not found");
-    }
+      if (!entry) {
+        throw new Error("Waitlist entry not found");
+      }
 
-    if (status === 'notified') {
-      await NotifyService.notifyGuestNext(entry.guestEmail, entry.guestName);
-    }
+      if (status === "notified") {
+        await NotifyService.notifyGuestNext(entry.guestEmail, entry.guestName);
+      }
 
-    if (process.env.ABLY_API_KEY) {
-      const ably = new Ably.Rest(process.env.ABLY_API_KEY);
-      const channel = ably.channels.get(`restaurant:${restaurantId}`);
-      await channel.publish(ABLY_TABLE_EVENTS.WaitlistUpdated, {
-        id: entry.id,
-        status: entry.status,
-      });
-    }
+      if (process.env.ABLY_API_KEY) {
+        const ably = new Ably.Rest(process.env.ABLY_API_KEY);
+        const channel = ably.channels.get(`restaurant:${restaurantId}`);
+        await channel.publish(ABLY_TABLE_EVENTS.WaitlistUpdated, {
+          id: entry.id,
+          status: entry.status,
+        });
+      }
 
-    revalidatePath(`/dashboard/${restaurantId}`);
-    return entry;
-  }),
-  { errorCode: 'UPDATE_WAITLIST_STATUS_FAILED' }
+      revalidatePath(`/dashboard/${restaurantId}`);
+      return entry;
+    },
+  ),
+  { errorCode: "UPDATE_WAITLIST_STATUS_FAILED" },
 );
 
 export const regenerateApiKey = withServerActionHandler(
   withOwnership(async (restaurantId: string) => {
     const newKey = generateApiKey();
 
-    await getDb().update(restaurants)
+    await getDb()
+      .update(restaurants)
       .set({ apiKey: newKey })
       .where(eq(restaurants.id, restaurantId));
 
     revalidatePath(`/dashboard/${restaurantId}`);
     return { apiKey: newKey };
   }),
-  { errorCode: 'REGENERATE_API_KEY_FAILED' }
+  { errorCode: "REGENERATE_API_KEY_FAILED" },
 );
 
 /**
@@ -436,17 +514,20 @@ export const regenerateApiKey = withServerActionHandler(
 export const linkRestaurantWallet = withServerActionHandler(
   withOwnership(async (restaurantId: string, walletAddress: string) => {
     if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
-      throw new Error('Invalid wallet address format. Must be a valid Ethereum address (0x...)');
+      throw new Error(
+        "Invalid wallet address format. Must be a valid Ethereum address (0x...)",
+      );
     }
 
-    await getDb().update(restaurants)
+    await getDb()
+      .update(restaurants)
       .set({ walletAddress })
       .where(eq(restaurants.id, restaurantId));
 
     revalidatePath(`/dashboard/${restaurantId}`);
-    return { message: 'Wallet linked successfully' };
+    return { message: "Wallet linked successfully" };
   }),
-  { errorCode: 'LINK_WALLET_FAILED' }
+  { errorCode: "LINK_WALLET_FAILED" },
 );
 
 /**
@@ -461,16 +542,16 @@ export const getRestaurantWallet = withServerActionHandler(
 
     return { walletAddress: restaurant?.walletAddress };
   },
-  { errorCode: 'GET_WALLET_FAILED' }
+  { errorCode: "GET_WALLET_FAILED" },
 );
 
 // Menu Management Actions
 
 const MenuItemSchema = z.object({
-  name: z.string().min(1, 'Name is required'),
-  description: z.string().optional().default(''),
-  price: z.coerce.number().positive('Price must be greater than 0'),
-  category: z.string().min(1, 'Category is required'),
+  name: z.string().min(1, "Name is required"),
+  description: z.string().optional().default(""),
+  price: z.coerce.number().positive("Price must be greater than 0"),
+  category: z.string().min(1, "Category is required"),
   quantity: z.coerce.number().int().nonnegative().default(50),
 });
 
@@ -486,25 +567,33 @@ export const getMenuItems = withServerActionHandler(
         availableQuantity: inventoryLevels.availableQuantity,
       })
       .from(restaurantProducts)
-      .leftJoin(inventoryLevels, eq(restaurantProducts.id, inventoryLevels.productId))
+      .leftJoin(
+        inventoryLevels,
+        eq(restaurantProducts.id, inventoryLevels.productId),
+      )
       .where(eq(restaurantProducts.restaurantId, restaurantId));
 
     return products;
   }),
-  { errorCode: 'GET_MENU_ITEMS_FAILED' }
+  { errorCode: "GET_MENU_ITEMS_FAILED" },
 );
 
 export const createMenuItem = withServerActionHandler(
   withOwnership(async (restaurantId: string, formData: FormData) => {
-    const validated = MenuItemSchema.parse(Object.fromEntries(formData.entries()));
+    const validated = MenuItemSchema.parse(
+      Object.fromEntries(formData.entries()),
+    );
 
-    const [product] = await getDb().insert(restaurantProducts).values({
-      restaurantId,
-      name: validated.name,
-      description: validated.description,
-      price: validated.price,
-      category: validated.category,
-    }).returning();
+    const [product] = await getDb()
+      .insert(restaurantProducts)
+      .values({
+        restaurantId,
+        name: validated.name,
+        description: validated.description,
+        price: validated.price,
+        category: validated.category,
+      })
+      .returning();
 
     await getDb().insert(inventoryLevels).values({
       productId: product.id,
@@ -514,54 +603,72 @@ export const createMenuItem = withServerActionHandler(
     revalidatePath(`/dashboard/${restaurantId}`);
     return { productId: product.id };
   }),
-  { errorCode: 'CREATE_MENU_ITEM_FAILED' }
+  { errorCode: "CREATE_MENU_ITEM_FAILED" },
 );
 
 export const updateMenuItem = withServerActionHandler(
-  withOwnership(async (
-    productId: string,
-    restaurantId: string,
-    updates: { name?: string; description?: string; price?: number; category?: string }
-  ) => {
-    await getDb().update(restaurantProducts)
-      .set({
-        ...updates,
-        updatedAt: new Date(),
-      })
-      .where(and(
-        eq(restaurantProducts.id, productId),
-        eq(restaurantProducts.restaurantId, restaurantId)
-      ));
+  withOwnership(
+    async (
+      productId: string,
+      restaurantId: string,
+      updates: {
+        name?: string;
+        description?: string;
+        price?: number;
+        category?: string;
+      },
+    ) => {
+      await getDb()
+        .update(restaurantProducts)
+        .set({
+          ...updates,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(restaurantProducts.id, productId),
+            eq(restaurantProducts.restaurantId, restaurantId),
+          ),
+        );
 
-    revalidatePath(`/dashboard/${restaurantId}`);
-    return { message: 'Menu item updated successfully' };
-  }),
-  { errorCode: 'UPDATE_MENU_ITEM_FAILED' }
+      revalidatePath(`/dashboard/${restaurantId}`);
+      return { message: "Menu item updated successfully" };
+    },
+  ),
+  { errorCode: "UPDATE_MENU_ITEM_FAILED" },
 );
 
 export const updateMenuItemQuantity = withServerActionHandler(
-  withOwnership(async (productId: string, restaurantId: string, quantity: number) => {
-    await getDb().update(inventoryLevels)
-      .set({ availableQuantity: quantity, updatedAt: new Date() })
-      .where(eq(inventoryLevels.productId, productId));
+  withOwnership(
+    async (productId: string, restaurantId: string, quantity: number) => {
+      await getDb()
+        .update(inventoryLevels)
+        .set({ availableQuantity: quantity, updatedAt: new Date() })
+        .where(eq(inventoryLevels.productId, productId));
 
-    revalidatePath(`/dashboard/${restaurantId}`);
-    return { message: 'Quantity updated successfully' };
-  }),
-  { errorCode: 'UPDATE_QUANTITY_FAILED' }
+      revalidatePath(`/dashboard/${restaurantId}`);
+      return { message: "Quantity updated successfully" };
+    },
+  ),
+  { errorCode: "UPDATE_QUANTITY_FAILED" },
 );
 
 export const deleteMenuItem = withServerActionHandler(
   withOwnership(async (productId: string, restaurantId: string) => {
-    await getDb().delete(inventoryLevels).where(eq(inventoryLevels.productId, productId));
-    await getDb().delete(restaurantProducts)
-      .where(and(
-        eq(restaurantProducts.id, productId),
-        eq(restaurantProducts.restaurantId, restaurantId)
-      ));
+    await getDb()
+      .delete(inventoryLevels)
+      .where(eq(inventoryLevels.productId, productId));
+    await getDb()
+      .delete(restaurantProducts)
+      .where(
+        and(
+          eq(restaurantProducts.id, productId),
+          eq(restaurantProducts.restaurantId, restaurantId),
+        ),
+      );
 
     revalidatePath(`/dashboard/${restaurantId}`);
-    return { message: 'Menu item deleted successfully' };
+    return { message: "Menu item deleted successfully" };
   }),
-  { errorCode: 'DELETE_MENU_ITEM_FAILED' }
+  { errorCode: "DELETE_MENU_ITEM_FAILED" },
 );

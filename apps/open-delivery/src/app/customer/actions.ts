@@ -307,7 +307,7 @@ export async function placeRealOrder(
     // CRITICAL FIX: Wrap order creation in a database transaction
     // This prevents race conditions where the same paymentTxHash could be
     // submitted to multiple orders before the UNIQUE constraint locks it down
-    const result = await getDb().transaction(async (tx: typeof db) => {
+    const result = await getDb().transaction(async (tx) => {
       let userRecord = await tx
         .select()
         .from(users)

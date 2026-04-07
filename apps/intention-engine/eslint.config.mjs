@@ -1,4 +1,4 @@
-// ESLint 9 Flat Config for open-delivery
+// ESLint 9 Flat Config for intention-engine
 // Standalone config without eslint-config-next to avoid @rushstack/eslint-patch issues
 
 import { createRequire } from "module";
@@ -22,9 +22,10 @@ export default [
       "@next/next": require("@next/eslint-plugin-next"),
     },
     rules: {
+      // Custom rules from original .eslintrc.json
+      "@next/next/no-img-element": "off",
+      "@next/next/no-html-link-for-pages": "warn",
       // Core Web Vitals and Next.js recommended rules
-      "@next/next/no-html-link-for-pages": "error",
-      "@next/next/no-img-element": "error",
       "@next/next/no-css-tags": "error",
       "@next/next/no-duplicate-head": "error",
       "@next/next/no-typos": "error",

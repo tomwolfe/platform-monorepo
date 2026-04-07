@@ -13,25 +13,25 @@
  * @since 1.0.0
  */
 
-import { getDb, outbox, outboxStatusEnum } from '@repo/database';
-import { sql, type PgTransaction, or, and, lt, eq } from 'drizzle-orm';
-import { neon } from '@neondatabase/serverless';
-import { Redis } from '@upstash/redis';
-import { getRedisClient, ServiceNamespace } from './redis';
-import { Logger } from './logger';
+import { getDb, outbox, outboxDlq, outboxStatusEnum } from "@repo/database";
+import { sql, type PgTransaction, or, and, lt, eq } from "drizzle-orm";
+import { neon } from "@neondatabase/serverless";
+import { Redis } from "@upstash/redis";
+import { getRedisClient, ServiceNamespace } from "./redis";
+import { Logger } from "./logger";
 
 // ============================================================================
 // TYPE DEFINITIONS
 // ============================================================================
 
 export type OutboxEventType =
-  | 'SAGA_STEP_COMPLETED'
-  | 'SAGA_STEP_FAILED'
-  | 'SAGA_COMPENSATION_TRIGGERED'
-  | 'SAGA_COMPENSATION_COMPLETED'
-  | 'SAGA_COMPLETED'
-  | 'SAGA_FAILED'
-  | 'WORKFLOW_STATE_CHANGED';
+  | "SAGA_STEP_COMPLETED"
+  | "SAGA_STEP_FAILED"
+  | "SAGA_COMPENSATION_TRIGGERED"
+  | "SAGA_COMPENSATION_COMPLETED"
+  | "SAGA_COMPLETED"
+  | "SAGA_FAILED"
+  | "WORKFLOW_STATE_CHANGED";
 
 export interface OutboxPayload {
   executionId: string;
@@ -50,7 +50,7 @@ export interface OutboxEvent {
   id: string;
   eventType: OutboxEventType;
   payload: OutboxPayload;
-  status: 'pending' | 'processing' | 'processed' | 'failed';
+  status: "pending" | "processing" | "processed" | "failed";
   attempts: number;
   errorMessage?: string;
   createdAt: Date;
@@ -62,7 +62,7 @@ export interface OutboxEvent {
 // OUTBOX SERVICE
 // ============================================================================
 
-const logger = new Logger({ serviceName: 'outbox-service' });
+const logger = new Logger({ serviceName: "outbox-service" });
 
 export class OutboxService {
   private redis: Redis;
@@ -93,7 +93,7 @@ export class OutboxService {
       eventType: OutboxEventType;
       payload: OutboxPayload;
       expiresInSeconds?: number;
-    }
+    },
   ): Promise<string> {
     const eventId = crypto.randomUUID();
     const now = new Date();
@@ -106,14 +106,14 @@ export class OutboxService {
       id: eventId,
       eventType: event.eventType,
       payload: event.payload,
-      status: 'pending',
+      status: "pending",
       attempts: 0,
       createdAt: now,
       expiresAt,
     });
 
     logger.info({
-      message: 'Published outbox event',
+      message: "Published outbox event",
       eventId,
       eventType: event.eventType,
       executionId: event.payload.executionId,
@@ -142,13 +142,13 @@ export class OutboxService {
         and(
           sql`${outbox.expiresAt} > ${now} OR ${outbox.expiresAt} IS NULL`,
           or(
-            eq(outbox.status, 'pending'),
+            eq(outbox.status, "pending"),
             and(
-              eq(outbox.status, 'processing'),
-              lt(outbox.createdAt, fiveMinutesAgo)
-            )
-          )
-        )
+              eq(outbox.status, "processing"),
+              lt(outbox.createdAt, fiveMinutesAgo),
+            ),
+          ),
+        ),
       )
       .orderBy(outbox.createdAt)
       .limit(limit);
@@ -165,7 +165,7 @@ export class OutboxService {
         await db
           .update(outbox)
           .set({
-            status: 'processing',
+            status: "processing",
             attempts: event.attempts + 1,
             updatedAt: new Date(),
           })
@@ -178,7 +178,7 @@ export class OutboxService {
         await db
           .update(outbox)
           .set({
-            status: 'processed',
+            status: "processed",
             processedAt: new Date(),
             updatedAt: new Date(),
           })
@@ -187,26 +187,42 @@ export class OutboxService {
         processedCount++;
       } catch (error: unknown) {
         logger.error({
-          message: 'Failed to process outbox event',
+          message: "Failed to process outbox event",
           eventId: event.id,
           error: error instanceof Error ? error.message : String(error),
         });
 
-        // Mark as failed if max attempts exceeded (3 attempts)
+        // Move to DLQ if max attempts exceeded (3 attempts)
         if (event.attempts >= 3) {
-          await db
-            .update(outbox)
-            .set({
-              status: 'failed',
-              errorMessage: error instanceof Error ? error.message : String(error),
-              updatedAt: new Date(),
-            })
-            .where(sql`${outbox.id} = ${event.id}`);
+          // Insert into dead-letter queue table
+          await db.insert(outboxDlq).values({
+            id: crypto.randomUUID(),
+            originalEventId: event.id,
+            eventType: event.eventType,
+            payload: event.payload,
+            status: "failed",
+            attempts: event.attempts,
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
+            createdAt: event.createdAt,
+            dlqCreatedAt: new Date(),
+            expiresAt: event.expiresAt,
+          });
+
+          // Delete from main outbox table to prevent bloat
+          await db.delete(outbox).where(eq(outbox.id, event.id));
+
+          logger.error({
+            message: "Outbox event moved to DLQ after max retries",
+            eventId: event.id,
+            dlqEventId: event.id,
+            attempts: event.attempts,
+          });
         } else {
           // Revert to pending for retry
           await db
             .update(outbox)
-            .set({ status: 'pending', updatedAt: new Date() })
+            .set({ status: "pending", updatedAt: new Date() })
             .where(sql`${outbox.id} = ${event.id}`);
         }
       }
@@ -219,12 +235,14 @@ export class OutboxService {
    * Process a single outbox event
    * Updates Redis cache based on event type
    */
-  private async processEvent(event: Omit<OutboxEvent, 'id'> & { id: string }): Promise<void> {
+  private async processEvent(
+    event: Omit<OutboxEvent, "id"> & { id: string },
+  ): Promise<void> {
     const { eventType, payload } = event;
 
     switch (eventType) {
-      case 'SAGA_STEP_COMPLETED':
-      case 'SAGA_STEP_FAILED': {
+      case "SAGA_STEP_COMPLETED":
+      case "SAGA_STEP_FAILED": {
         // Update Redis cache for saga state
         const stateKey = `saga:state:${payload.executionId}`;
         const stateData = {
@@ -243,7 +261,7 @@ export class OutboxService {
         await this.redis.expire(stateKey, 86400); // 24 hour TTL
 
         logger.info({
-          message: 'Updated Redis cache for saga step',
+          message: "Updated Redis cache for saga step",
           executionId: payload.executionId,
           stepIndex: payload.stepIndex,
           status: payload.status,
@@ -251,23 +269,23 @@ export class OutboxService {
         break;
       }
 
-      case 'SAGA_COMPLETED':
-      case 'SAGA_FAILED': {
+      case "SAGA_COMPLETED":
+      case "SAGA_FAILED": {
         // Update saga completion status in Redis
         const completionKey = `saga:completion:${payload.executionId}`;
         await this.redis.setex(
           completionKey,
           86400,
           JSON.stringify({
-            status: eventType === 'SAGA_COMPLETED' ? 'completed' : 'failed',
+            status: eventType === "SAGA_COMPLETED" ? "completed" : "failed",
             timestamp: payload.timestamp,
             traceId: payload.traceId,
-          })
+          }),
         );
         break;
       }
 
-      case 'WORKFLOW_STATE_CHANGED': {
+      case "WORKFLOW_STATE_CHANGED": {
         // Update workflow state cache
         const workflowKey = `workflow:state:${payload.executionId}`;
         await this.redis.setex(
@@ -276,7 +294,7 @@ export class OutboxService {
           JSON.stringify({
             status: payload.status,
             timestamp: payload.timestamp,
-          })
+          }),
         );
         break;
       }
@@ -286,7 +304,10 @@ export class OutboxService {
   /**
    * Get outbox events by execution ID
    */
-  async getEventsByExecutionId(executionId: string, limit: number = 10): Promise<OutboxEvent[]> {
+  async getEventsByExecutionId(
+    executionId: string,
+    limit: number = 10,
+  ): Promise<OutboxEvent[]> {
     const db = getDb();
     // Note: This requires querying JSONB payload - in production, consider adding execution_id column
     const events = await db
@@ -300,12 +321,71 @@ export class OutboxService {
   }
 
   /**
+   * Get dead-letter queue events for inspection
+   */
+  async getDlqEvents(
+    limit: number = 50,
+  ): Promise<Array<OutboxEvent & { dlqCreatedAt: Date }>> {
+    const db = getDb();
+    const events = await db
+      .select()
+      .from(outboxDlq)
+      .orderBy(outboxDlq.dlqCreatedAt)
+      .limit(limit);
+
+    return events;
+  }
+
+  /**
+   * Retry a DLQ event by moving it back to the main outbox table
+   */
+  async retryDlqEvent(dlqEventId: string): Promise<boolean> {
+    const db = getDb();
+
+    // Get the DLQ event
+    const dlqEvent = await db
+      .select()
+      .from(outboxDlq)
+      .where(eq(outboxDlq.id, dlqEventId))
+      .limit(1);
+
+    if (dlqEvent.length === 0) {
+      return false;
+    }
+
+    const event = dlqEvent[0];
+
+    // Insert back into main outbox with reset attempts
+    await db.insert(outbox).values({
+      id: crypto.randomUUID(),
+      eventType: event.eventType,
+      payload: event.payload,
+      status: "pending",
+      attempts: 0,
+      createdAt: new Date(),
+      expiresAt: event.expiresAt,
+    });
+
+    // Remove from DLQ
+    await db.delete(outboxDlq).where(eq(outboxDlq.id, dlqEventId));
+
+    logger.info({
+      message: "DLQ event retried",
+      dlqEventId,
+    });
+
+    return true;
+  }
+
+  /**
    * Clean up expired outbox events
    * Should be run periodically (e.g., daily cron job)
    */
   async cleanupExpiredEvents(): Promise<number> {
     const now = new Date();
-    const result = await getDb().delete(outbox).where(sql`${outbox.expiresAt} < ${now}`);
+    const result = await getDb()
+      .delete(outbox)
+      .where(sql`${outbox.expiresAt} < ${now}`);
     return result.rowCount || 0;
   }
 

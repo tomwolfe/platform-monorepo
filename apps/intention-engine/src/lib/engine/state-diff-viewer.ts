@@ -27,11 +27,11 @@
  * @package apps/intention-engine
  */
 
-import { getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
-import { ExecutionState, StepExecutionState } from './types';
+import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
+import { ExecutionState, StepExecutionState } from "./types";
 
 const redis = getRedisClient(ServiceNamespace.IE);
-const logger = new Logger({ serviceName: 'intention-engine' });
+const logger = new Logger({ serviceName: "intention-engine" });
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -80,6 +80,34 @@ export interface ExecutionTimeline {
 }
 
 // ============================================================================
+// TYPE GUARDS
+// ============================================================================
+
+/**
+ * Type guard to validate StateDiff structure
+ */
+function isStateDiff(value: unknown): value is StateDiff {
+  if (!value || typeof value !== "object") return false;
+  const obj = value as Record<string, unknown>;
+  return (
+    typeof obj.executionId === "string" &&
+    typeof obj.timestamp === "string" &&
+    typeof obj.previousStatus === "string" &&
+    typeof obj.currentStatus === "string" &&
+    typeof obj.budgetDelta === "object" &&
+    obj.budgetDelta !== null &&
+    typeof (obj.budgetDelta as Record<string, unknown>).tokenDelta ===
+      "number" &&
+    typeof (obj.budgetDelta as Record<string, unknown>).costDelta ===
+      "number" &&
+    Array.isArray(obj.stepChanges) &&
+    typeof obj.completedSteps === "number" &&
+    typeof obj.totalSteps === "number" &&
+    typeof obj.isCheckpoint === "boolean"
+  );
+}
+
+// ============================================================================
 // STATE DIFF VIEWER
 // ============================================================================
 
@@ -92,25 +120,30 @@ export class StateDiffViewer {
   static generateDiff(
     oldState: ExecutionState,
     newState: ExecutionState,
-    isCheckpoint: boolean = false
+    isCheckpoint: boolean = false,
   ): StateDiff {
     const now = new Date().toISOString();
 
     // Calculate budget delta
     const budgetDelta = {
-      tokenDelta: newState.token_usage.total_tokens - oldState.token_usage.total_tokens,
-      costDelta: newState.budget.current_cost_usd - oldState.budget.current_cost_usd,
+      tokenDelta:
+        newState.token_usage.total_tokens - oldState.token_usage.total_tokens,
+      costDelta:
+        newState.budget.current_cost_usd - oldState.budget.current_cost_usd,
     };
 
     // Compare step states
-    const stepChanges: StateDiff['stepChanges'] = [];
-    const oldStepMap = new Map(oldState.step_states.map(s => [s.step_id, s]));
-    const newStepMap = new Map(newState.step_states.map(s => [s.step_id, s]));
+    const stepChanges: StateDiff["stepChanges"] = [];
+    const oldStepMap = new Map(oldState.step_states.map((s) => [s.step_id, s]));
+    const newStepMap = new Map(newState.step_states.map((s) => [s.step_id, s]));
 
     // Check all steps in new state
     for (const [stepId, newStep] of newStepMap) {
       const oldStep = oldStepMap.get(stepId);
-      const changed = !oldStep || oldStep.status !== newStep.status || oldStep.result !== newStep.result;
+      const changed =
+        !oldStep ||
+        oldStep.status !== newStep.status ||
+        oldStep.result !== newStep.result;
 
       stepChanges.push({
         stepId,
@@ -123,8 +156,18 @@ export class StateDiffViewer {
     }
 
     // Count completed steps
-    const completedSteps = newState.step_states.filter(s => s.status === 'completed').length;
+    const completedSteps = newState.step_states.filter(
+      (s) => s.status === "completed",
+    ).length;
     const totalSteps = newState.step_states.length;
+
+    // Type-safe segmentNumber extraction
+    const segmentNumber =
+      "segmentNumber" in newState
+        ? ((newState as Record<string, unknown>).segmentNumber as
+            | number
+            | undefined)
+        : undefined;
 
     return {
       executionId: newState.execution_id,
@@ -133,7 +176,7 @@ export class StateDiffViewer {
       currentStatus: newState.status,
       budgetDelta,
       stepChanges,
-      segmentNumber: (newState as any).segmentNumber,
+      segmentNumber,
       completedSteps,
       totalSteps,
       isCheckpoint,
@@ -146,7 +189,7 @@ export class StateDiffViewer {
   static async saveDiff(diff: StateDiff): Promise<void> {
     if (!redis) {
       logger.warn({
-        message: '[StateDiffViewer] Redis not available, skipping diff storage',
+        message: "[StateDiffViewer] Redis not available, skipping diff storage",
       });
       return;
     }
@@ -168,16 +211,16 @@ export class StateDiffViewer {
         const toRemove = await redis.zrange(timelineKey, 0, currentCount - 101);
         await Promise.all([
           redis.zremrangebyrank(timelineKey, 0, currentCount - 101),
-          ...toRemove.map(key => redis.del(key)),
+          ...toRemove.map((key) => redis.del(key)),
         ]);
       }
 
       logger.info({
-        message: `[StateDiffViewer] Saved diff for ${diff.executionId}: ${diff.previousStatus} -> ${diff.currentStatus} (${diff.stepChanges.filter(s => s.changed).length} step changes)`,
+        message: `[StateDiffViewer] Saved diff for ${diff.executionId}: ${diff.previousStatus} -> ${diff.currentStatus} (${diff.stepChanges.filter((s) => s.changed).length} step changes)`,
       });
     } catch (error) {
       logger.error({
-        message: '[StateDiffViewer] Failed to save diff',
+        message: "[StateDiffViewer] Failed to save diff",
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -201,16 +244,21 @@ export class StateDiffViewer {
 
       const diffs = await Promise.all(
         diffKeys.map(async (key) => {
-          const data = await redis.get<any>(key);
+          const data = await redis.get<string>(key);
           if (!data) return null;
-          return typeof data === 'string' ? JSON.parse(data) : data;
-        })
+          try {
+            const parsed = JSON.parse(data) as unknown;
+            return isStateDiff(parsed) ? parsed : null;
+          } catch {
+            return null;
+          }
+        }),
       );
 
       return diffs.filter((d): d is StateDiff => d !== null);
     } catch (error) {
       logger.error({
-        message: '[StateDiffViewer] Failed to get diffs',
+        message: "[StateDiffViewer] Failed to get diffs",
         error: error instanceof Error ? error.message : String(error),
       });
       return [];
@@ -220,7 +268,9 @@ export class StateDiffViewer {
   /**
    * Generate execution timeline with Gantt chart data
    */
-  static async generateTimeline(executionId: string): Promise<ExecutionTimeline | null> {
+  static async generateTimeline(
+    executionId: string,
+  ): Promise<ExecutionTimeline | null> {
     const diffs = await this.getExecutionDiffs(executionId);
 
     if (diffs.length === 0) {
@@ -229,16 +279,20 @@ export class StateDiffViewer {
 
     const startTime = diffs[0].timestamp;
     const endTime = diffs[diffs.length - 1].timestamp;
-    const totalDurationMs = new Date(endTime).getTime() - new Date(startTime).getTime();
+    const totalDurationMs =
+      new Date(endTime).getTime() - new Date(startTime).getTime();
 
     // Build Gantt chart from step changes
-    const stepTimings = new Map<string, {
-      stepId: string;
-      toolName: string;
-      startTime: string;
-      endTime?: string;
-      status: string;
-    }>();
+    const stepTimings = new Map<
+      string,
+      {
+        stepId: string;
+        toolName: string;
+        startTime: string;
+        endTime?: string;
+        status: string;
+      }
+    >();
 
     for (const diff of diffs) {
       for (const stepChange of diff.stepChanges) {
@@ -251,7 +305,10 @@ export class StateDiffViewer {
           });
         } else {
           const timing = stepTimings.get(stepChange.stepId)!;
-          if (stepChange.currentStatus === 'completed' || stepChange.currentStatus === 'failed') {
+          if (
+            stepChange.currentStatus === "completed" ||
+            stepChange.currentStatus === "failed"
+          ) {
             timing.endTime = diff.timestamp;
           }
           timing.status = stepChange.currentStatus;
@@ -259,10 +316,11 @@ export class StateDiffViewer {
       }
     }
 
-    const stepGantt = Array.from(stepTimings.values()).map(timing => ({
+    const stepGantt = Array.from(stepTimings.values()).map((timing) => ({
       ...timing,
       durationMs: timing.endTime
-        ? new Date(timing.endTime).getTime() - new Date(timing.startTime).getTime()
+        ? new Date(timing.endTime).getTime() -
+          new Date(timing.startTime).getTime()
         : totalDurationMs,
     }));
 
@@ -299,7 +357,7 @@ export class StateDiffViewer {
       if (diffKeys && diffKeys.length > 0) {
         await Promise.all([
           redis.del(timelineKey),
-          ...diffKeys.map(key => redis.del(key)),
+          ...diffKeys.map((key) => redis.del(key)),
         ]);
       }
 
@@ -308,7 +366,7 @@ export class StateDiffViewer {
       });
     } catch (error) {
       logger.error({
-        message: '[StateDiffViewer] Failed to clear diffs',
+        message: "[StateDiffViewer] Failed to clear diffs",
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -332,22 +390,30 @@ export class StateDiffViewer {
     }
 
     const totalDiffs = timeline.diffs.length;
-    const totalCheckpoints = timeline.diffs.filter(d => d.isCheckpoint).length;
+    const totalCheckpoints = timeline.diffs.filter(
+      (d) => d.isCheckpoint,
+    ).length;
     const totalStepChanges = timeline.diffs.reduce(
-      (sum, d) => sum + d.stepChanges.filter(s => s.changed).length,
-      0
+      (sum, d) => sum + d.stepChanges.filter((s) => s.changed).length,
+      0,
     );
 
     const lastDiff = timeline.diffs[timeline.diffs.length - 1];
-    const totalTokenUsage = lastDiff ? 
-      timeline.diffs.reduce((sum, d) => sum + d.budgetDelta.tokenDelta, 0) : 0;
-    const totalCostUsd = lastDiff ?
-      timeline.diffs.reduce((sum, d) => sum + d.budgetDelta.costDelta, 0) : 0;
-
-    const completedSteps = timeline.stepGantt.filter(s => s.status === 'completed');
-    const averageStepDurationMs = completedSteps.length > 0
-      ? completedSteps.reduce((sum, s) => sum + s.durationMs, 0) / completedSteps.length
+    const totalTokenUsage = lastDiff
+      ? timeline.diffs.reduce((sum, d) => sum + d.budgetDelta.tokenDelta, 0)
       : 0;
+    const totalCostUsd = lastDiff
+      ? timeline.diffs.reduce((sum, d) => sum + d.budgetDelta.costDelta, 0)
+      : 0;
+
+    const completedSteps = timeline.stepGantt.filter(
+      (s) => s.status === "completed",
+    );
+    const averageStepDurationMs =
+      completedSteps.length > 0
+        ? completedSteps.reduce((sum, s) => sum + s.durationMs, 0) /
+          completedSteps.length
+        : 0;
 
     return {
       totalDiffs,
@@ -375,7 +441,7 @@ let previousStateCache: Map<string, ExecutionState> = new Map();
  */
 export async function captureStateDiffOnSave(
   newState: ExecutionState,
-  isCheckpoint: boolean = false
+  isCheckpoint: boolean = false,
 ): Promise<void> {
   const oldState = previousStateCache.get(newState.execution_id);
 

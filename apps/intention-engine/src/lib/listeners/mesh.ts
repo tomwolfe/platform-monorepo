@@ -1,4 +1,8 @@
-import { RealtimeService, getRedisClient, ServiceNamespace } from "@repo/shared";
+import {
+  RealtimeService,
+  getRedisClient,
+  ServiceNamespace,
+} from "@repo/shared";
 import { handleTableStackRejection } from "./tablestack";
 import { verifyServiceToken } from "@repo/auth";
 import { inferIntent } from "@/lib/engine/intent";
@@ -29,7 +33,7 @@ async function sendEventToDLQ(
   context?: {
     userId?: string;
     traceId?: string;
-  }
+  },
 ) {
   const dlqKey = `dlq:unparseable_events:${Date.now()}:${eventName}`;
   const dlqEntry = {
@@ -39,48 +43,46 @@ async function sendEventToDLQ(
       message: validationError.message,
       name: validationError.name,
       errors: validationError.errors.map((e) => ({
-        path: e.path.join('.'),
+        path: e.path.join("."),
         message: e.message,
         code: e.code,
       })),
     }),
-    userId: context?.userId || 'unknown',
-    traceId: context?.traceId || 'unknown',
+    userId: context?.userId || "unknown",
+    traceId: context?.traceId || "unknown",
     timestamp: new Date().toISOString(),
-    source: 'mesh_listener',
+    source: "mesh_listener",
   };
 
   try {
     // Store in Redis hash for easy retrieval and inspection
     await redis.hset(dlqKey, dlqEntry);
-    
+
     // Also add to sorted set for time-based querying
-    await redis.zadd('dlq:unparseable_events:index', {
+    await redis.zadd("dlq:unparseable_events:index", {
       score: Date.now(),
       member: dlqKey,
     });
 
     // Publish alert to nervous system for monitoring
     await RealtimeService.publish(
-      'nervous-system:updates',
-      'dlq.event_dropped',
+      "nervous-system:updates",
+      "dlq.event_dropped",
       {
-        type: 'validation_failure',
+        type: "validation_failure",
         eventName,
         dlqKey,
         userId: context?.userId,
         traceId: context?.traceId,
         timestamp: dlqEntry.timestamp,
-      }
+      },
     );
 
-    console.error(
-      `[MeshListener] Event ${eventName} sent to DLQ: ${dlqKey}`
-    );
+    console.error(`[MeshListener] Event ${eventName} sent to DLQ: ${dlqKey}`);
   } catch (error) {
     console.error(
       `[MeshListener] Failed to store event in DLQ:`,
-      error instanceof Error ? error.message : error
+      error instanceof Error ? error.message : error,
     );
   }
 }
@@ -112,8 +114,8 @@ interface ProactiveEventContext {
 }
 
 interface ProactivePlan {
-  intent: any;
-  plan: any;
+  intent: Record<string, unknown>;
+  plan: Record<string, unknown>;
   confidence: number;
   reasoning: string;
 }
@@ -122,13 +124,21 @@ export class ProactiveIntentGenerator {
   /**
    * Event triggers for proactive intent generation
    */
-  private static PROACTIVE_TRIGGERS: Record<string, (data: Record<string, unknown>) => string> = {
+  private static PROACTIVE_TRIGGERS: Record<
+    string,
+    (data: Record<string, unknown>) => string
+  > = {
     ReservationRejected: (data: Record<string, unknown>) => {
-      const { restaurantName, dateTime, partySize, alternativeSuggestions } = data;
+      const { restaurantName, dateTime, partySize, alternativeSuggestions } =
+        data;
       let prompt = `The reservation at ${restaurantName} for ${partySize} people at ${dateTime} was rejected.`;
 
-      if (alternativeSuggestions && Array.isArray(alternativeSuggestions) && alternativeSuggestions.length > 0) {
-        prompt += ` Available alternatives: ${alternativeSuggestions.join(', ')}.`;
+      if (
+        alternativeSuggestions &&
+        Array.isArray(alternativeSuggestions) &&
+        alternativeSuggestions.length > 0
+      ) {
+        prompt += ` Available alternatives: ${alternativeSuggestions.join(", ")}.`;
       }
 
       prompt += ` Find similar restaurants and book a reservation.`;
@@ -155,8 +165,10 @@ export class ProactiveIntentGenerator {
 
     HighValueGuestReservation: (data: Record<string, unknown>) => {
       const guest = data.guest as Record<string, unknown> | undefined;
-      const reservation = data.reservation as Record<string, unknown> | undefined;
-      let prompt = `VIP guest ${guest?.name || 'unknown'} (${guest?.visitCount || 0} visits) booked at ${reservation?.restaurantName || 'unknown'}.`;
+      const reservation = data.reservation as
+        | Record<string, unknown>
+        | undefined;
+      let prompt = `VIP guest ${guest?.name || "unknown"} (${guest?.visitCount || 0} visits) booked at ${reservation?.restaurantName || "unknown"}.`;
 
       if (guest?.defaultDeliveryAddress) {
         prompt += ` Suggest arranging delivery from ${reservation?.restaurantName} to ${guest.defaultDeliveryAddress} post-reservation.`;
@@ -175,10 +187,10 @@ export class ProactiveIntentGenerator {
    * Generate proactive intent and plan from a system event
    */
   static async generateProactivePlan(
-    context: ProactiveEventContext
+    context: ProactiveEventContext,
   ): Promise<ProactivePlan | null> {
     const { eventName, data } = context;
-    
+
     // Check if this event type has a proactive trigger
     const triggerFn = this.PROACTIVE_TRIGGERS[eventName];
     if (!triggerFn) {
@@ -189,7 +201,9 @@ export class ProactiveIntentGenerator {
     try {
       // Generate natural language prompt from event
       const proactivePrompt = triggerFn(data);
-      console.log(`[ProactiveIntent] Generating plan for ${eventName}: ${proactivePrompt}`);
+      console.log(
+        `[ProactiveIntent] Generating plan for ${eventName}: ${proactivePrompt}`,
+      );
 
       // Infer intent from the prompt
       const { hypotheses } = await inferIntent(proactivePrompt, []);
@@ -198,7 +212,7 @@ export class ProactiveIntentGenerator {
       // Only proceed if confidence is above threshold
       if (intent.confidence < 0.5) {
         console.log(
-          `[ProactiveIntent] Skipping low-confidence intent (${intent.confidence}) for ${eventName}`
+          `[ProactiveIntent] Skipping low-confidence intent (${intent.confidence}) for ${eventName}`,
         );
         return null;
       }
@@ -220,7 +234,7 @@ export class ProactiveIntentGenerator {
     } catch (error) {
       console.error(
         `[ProactiveIntent] Failed to generate plan for ${eventName}:`,
-        error instanceof Error ? error.message : error
+        error instanceof Error ? error.message : error,
       );
       return null;
     }
@@ -232,30 +246,33 @@ export class ProactiveIntentGenerator {
   private static buildReasoning(
     eventName: string,
     data: Record<string, unknown>,
-    intent: any,
-    plan: any
+    intent: Record<string, unknown>,
+    plan: Record<string, unknown>,
   ): string {
     const eventSummary = this.summarizeEvent(eventName, data);
-    return `Detected ${eventSummary}. Suggested action: ${plan.summary || intent.type}`;
+    return `Detected ${eventSummary}. Suggested action: ${(plan.summary as string) || (intent.type as string) || "unknown"}`;
   }
 
   /**
    * Summarize event for audit/UX purposes
    */
-  private static summarizeEvent(eventName: string, data: Record<string, unknown>): string {
+  private static summarizeEvent(
+    eventName: string,
+    data: Record<string, unknown>,
+  ): string {
     switch (eventName) {
-      case 'ReservationRejected':
-        return `reservation rejection at ${data.restaurantName || 'unknown restaurant'}`;
-      case 'TableVacated':
-        return `table availability at ${data.restaurantName || 'unknown restaurant'}`;
-      case 'DeliveryDelayed':
-        return `delivery delay for order ${data.orderId || 'unknown'}`;
-      case 'ReservationCancelled':
-        return `reservation cancellation at ${data.restaurantName || 'unknown restaurant'}`;
-      case 'HighValueGuestReservation':
-        return `VIP guest ${(data.guest as Record<string, unknown>)?.name || 'unknown'} reservation`;
-      case 'ServiceDegraded':
-        return `service degradation: ${data.serviceName || 'unknown'}`;
+      case "ReservationRejected":
+        return `reservation rejection at ${data.restaurantName || "unknown restaurant"}`;
+      case "TableVacated":
+        return `table availability at ${data.restaurantName || "unknown restaurant"}`;
+      case "DeliveryDelayed":
+        return `delivery delay for order ${data.orderId || "unknown"}`;
+      case "ReservationCancelled":
+        return `reservation cancellation at ${data.restaurantName || "unknown restaurant"}`;
+      case "HighValueGuestReservation":
+        return `VIP guest ${(data.guest as Record<string, unknown>)?.name || "unknown"} reservation`;
+      case "ServiceDegraded":
+        return `service degradation: ${data.serviceName || "unknown"}`;
       default:
         return eventName;
     }
@@ -280,31 +297,42 @@ export class MeshListener {
     console.log(`[MeshListener] Received event: ${eventName}`);
 
     // Standardized Security Check
-    if (!payload || typeof payload !== 'object' || !('token' in payload)) {
-      console.warn(`[MeshListener] Event ${eventName} rejected: Missing service token`);
+    if (!payload || typeof payload !== "object" || !("token" in payload)) {
+      console.warn(
+        `[MeshListener] Event ${eventName} rejected: Missing service token`,
+      );
       return;
     }
 
     const payloadObj = payload as Record<string, unknown>;
 
     if (!payloadObj.token) {
-      console.warn(`[MeshListener] Event ${eventName} rejected: Missing service token`);
+      console.warn(
+        `[MeshListener] Event ${eventName} rejected: Missing service token`,
+      );
       return;
     }
 
     const verified = await verifyServiceToken(payloadObj.token as string);
     if (!verified) {
-      console.warn(`[MeshListener] Event ${eventName} rejected: Invalid service token`);
+      console.warn(
+        `[MeshListener] Event ${eventName} rejected: Invalid service token`,
+      );
       return;
     }
 
     const verifiedData = verified as Record<string, unknown>;
-    const data = verifiedData.data as Record<string, unknown> || {};
-    const traceId = (verifiedData.extras as Record<string, unknown> | undefined)?.traceId as string | undefined;
+    const data = (verifiedData.data as Record<string, unknown>) || {};
+    const traceId = (verifiedData.extras as Record<string, unknown> | undefined)
+      ?.traceId as string | undefined;
 
     // Extract user context if available
-    const userId = (data.userId || data.guestId || data.customerId) as string | undefined;
-    const userChannel = (data.userChannel || `user:${userId}`) as string | undefined;
+    const userId = (data.userId || data.guestId || data.customerId) as
+      | string
+      | undefined;
+    const userChannel = (data.userChannel || `user:${userId}`) as
+      | string
+      | undefined;
 
     // TYPE SAFETY: Validate event against schema registry BEFORE processing
     // ALL events MUST pass validation (fail-closed)
@@ -312,12 +340,13 @@ export class MeshListener {
 
     // Map legacy event names to registry event types
     const eventTypeMap: Record<string, string> = {
-      'reservation_rejected': 'RESERVATION_CANCELLED',
-      'high_value_guest_reservation': 'RESERVATION_CREATED',
-      'delivery_logged': 'DELIVERY_COMPLETED',
+      reservation_rejected: "RESERVATION_CANCELLED",
+      high_value_guest_reservation: "RESERVATION_CREATED",
+      delivery_logged: "DELIVERY_COMPLETED",
     };
 
-    const registryEventType = eventTypeMap[eventName] || eventName.toUpperCase();
+    const registryEventType =
+      eventTypeMap[eventName] || eventName.toUpperCase();
 
     // Validate against registry schemas if registered - FAIL-CLOSED
     if (registry.isRegistered(registryEventType)) {
@@ -326,7 +355,7 @@ export class MeshListener {
         // FAIL-CLOSED: Drop event if it fails schema validation
         console.error(
           `[MeshListener] Event ${eventName} FAILED schema validation, DROPPING:`,
-          validation.error
+          validation.error,
         );
         return;
       }
@@ -335,22 +364,24 @@ export class MeshListener {
 
     // Handle proactive events with strict Zod validation
     const proactiveEvents = [
-      'ReservationRejected',
-      'TableVacated',
-      'DeliveryDelayed',
-      'ReservationCancelled',
-      'HighValueGuestReservation',
-      'ServiceDegraded',
+      "ReservationRejected",
+      "TableVacated",
+      "DeliveryDelayed",
+      "ReservationCancelled",
+      "HighValueGuestReservation",
+      "ServiceDegraded",
     ];
 
     if (proactiveEvents.includes(eventName)) {
       // Validate data structure using Zod
       const dataValidation = z.object({}).passthrough().safeParse(data);
       if (!dataValidation.success) {
-        console.error(`[MeshListener] Invalid data structure for proactive event ${eventName}`);
+        console.error(
+          `[MeshListener] Invalid data structure for proactive event ${eventName}`,
+        );
         return;
       }
-      
+
       return await this.handleProactiveEvent({
         eventName,
         data: dataValidation.data,
@@ -362,49 +393,61 @@ export class MeshListener {
 
     // Handle legacy events with strict Zod validation (FAIL-CLOSED)
     switch (eventName) {
-      case 'reservation_rejected': {
+      case "reservation_rejected": {
         // STRICT VALIDATION: Use full schema validation (not partial)
         // Events that fail validation are dropped and sent to DLQ
         const validated = ReservationEventPayloadSchema.safeParse(data);
         if (!validated.success) {
           console.error(
             `[MeshListener] Event ${eventName} FAILED validation, DROPPING:`,
-            validated.error
+            validated.error,
           );
           // Send to DLQ for manual inspection
-          await sendEventToDLQ(eventName, data, validated.error, { userId, traceId });
+          await sendEventToDLQ(eventName, data, validated.error, {
+            userId,
+            traceId,
+          });
           return;
         }
         return await handleTableStackRejection(validated.data);
       }
 
-      case 'high_value_guest_reservation': {
+      case "high_value_guest_reservation": {
         const validated = HighValueGuestEventPayloadSchema.safeParse(data);
         if (!validated.success) {
           console.error(
             `[MeshListener] Event ${eventName} FAILED validation, DROPPING:`,
-            validated.error
+            validated.error,
           );
           // Send to DLQ for manual inspection
-          await sendEventToDLQ(eventName, data, validated.error, { userId, traceId });
+          await sendEventToDLQ(eventName, data, validated.error, {
+            userId,
+            traceId,
+          });
           return;
         }
         return await this.handleHighValueGuest(validated.data);
       }
 
-      case 'delivery_logged': {
+      case "delivery_logged": {
         // STRICT VALIDATION: Use full schema validation (not partial)
         const validated = DeliveryEventPayloadSchema.safeParse(data);
         if (!validated.success) {
           console.error(
             `[MeshListener] Event ${eventName} FAILED validation, DROPPING:`,
-            validated.error
+            validated.error,
           );
           // Send to DLQ for manual inspection
-          await sendEventToDLQ(eventName, data, validated.error, { userId, traceId });
+          await sendEventToDLQ(eventName, data, validated.error, {
+            userId,
+            traceId,
+          });
           return;
         }
-        console.log(`[MeshListener] Delivery logged on mesh:`, validated.data.orderId);
+        console.log(
+          `[MeshListener] Delivery logged on mesh:`,
+          validated.data.orderId,
+        );
         break;
       }
 
@@ -421,21 +464,26 @@ export class MeshListener {
 
     console.log(
       `[MeshListener] Processing proactive event ${eventName}` +
-      (userId ? ` for user ${userId}` : '')
+        (userId ? ` for user ${userId}` : ""),
     );
 
     try {
       // TYPE SAFETY: Validate proactive event payload structure
-      if (!data || typeof data !== 'object') {
-        console.error(`[MeshListener] Invalid data for proactive event ${eventName}`);
+      if (!data || typeof data !== "object") {
+        console.error(
+          `[MeshListener] Invalid data for proactive event ${eventName}`,
+        );
         return;
       }
 
       // Generate proactive plan
-      const proactivePlan = await ProactiveIntentGenerator.generateProactivePlan(context);
+      const proactivePlan =
+        await ProactiveIntentGenerator.generateProactivePlan(context);
 
       if (!proactivePlan) {
-        console.log(`[MeshListener] No proactive plan generated for ${eventName}`);
+        console.log(
+          `[MeshListener] No proactive plan generated for ${eventName}`,
+        );
         return;
       }
 
@@ -444,16 +492,16 @@ export class MeshListener {
         proactivePlan.intent,
         proactivePlan.plan,
         undefined,
-        userId ? `mesh:${userId}` : 'mesh:system'
+        userId ? `mesh:${userId}` : "mesh:system",
       );
 
       // Push to user's Ably channel
       if (userChannel) {
         await RealtimeService.publish(
-          'nervous-system:updates',
-          'ProactiveSuggestion',
+          "nervous-system:updates",
+          "ProactiveSuggestion",
           {
-            type: 'proactive_plan',
+            type: "proactive_plan",
             eventName,
             intent: proactivePlan.intent,
             plan: proactivePlan.plan,
@@ -462,12 +510,12 @@ export class MeshListener {
             auditLogId: auditLog.id,
             timestamp: new Date().toISOString(),
           },
-          { traceId }
+          { traceId },
         );
 
         console.log(
           `[MeshListener] Pushed proactive plan to ${userChannel}: ` +
-          `${proactivePlan.reasoning}`
+            `${proactivePlan.reasoning}`,
         );
       }
 
@@ -480,7 +528,7 @@ export class MeshListener {
     } catch (error) {
       console.error(
         `[MeshListener] Error handling proactive event ${eventName}:`,
-        error instanceof Error ? error.message : error
+        error instanceof Error ? error.message : error,
       );
       return {
         success: false,
@@ -492,7 +540,9 @@ export class MeshListener {
   /**
    * Legacy handler for high-value guest events
    */
-  private static async handleHighValueGuest(data: z.infer<typeof HighValueGuestEventPayloadSchema>) {
+  private static async handleHighValueGuest(
+    data: z.infer<typeof HighValueGuestEventPayloadSchema>,
+  ) {
     const { guest, reservation } = data;
 
     let proactiveText = `Guest ${guest.name} (High Value, ${guest.visitCount} visits) just booked at ${reservation.restaurantName}.`;
@@ -518,7 +568,7 @@ export class MeshListener {
     const ably = getAblyClient();
     if (!ably) return;
 
-    const channel = ably.channels.get('nervous-system:updates');
+    const channel = ably.channels.get("nervous-system:updates");
     const historyPage = await channel.history({ limit: 10 });
 
     for (const message of historyPage.items) {

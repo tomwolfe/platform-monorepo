@@ -1,13 +1,15 @@
-import { Resend } from 'resend';
-import Ably from 'ably';
+import { Resend } from "resend";
+import Ably from "ably";
 
 // Resend Singleton
 let resendInstance: Resend | null = null;
 export const getResendClient = () => {
   if (!resendInstance) {
-    const apiKey = process.env.RESEND_API_KEY || 're_dummy_key';
-    if (!process.env.RESEND_API_KEY) {
-      console.warn('Resend API key missing, using dummy key');
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        "RESEND_API_KEY is not configured. Set it in your environment before using email services.",
+      );
     }
     resendInstance = new Resend(apiKey);
   }
@@ -21,12 +23,14 @@ export const getAblyClient = () => {
     const apiKey = process.env.ABLY_API_KEY;
     if (!apiKey) {
       // CRITICAL: Fail fast in production if Ably is not configured
-      if (process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV === "production") {
         throw new Error(
-          'CRITICAL: Ably API key missing. Set ABLY_API_KEY environment variable for production.'
+          "CRITICAL: Ably API key missing. Set ABLY_API_KEY environment variable for production.",
         );
       }
-      console.warn('Ably API key missing - real-time events disabled in development');
+      console.warn(
+        "Ably API key missing - real-time events disabled in development",
+      );
       return null;
     }
     ablyInstance = new Ably.Rest(apiKey);

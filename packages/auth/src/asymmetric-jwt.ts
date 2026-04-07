@@ -14,14 +14,22 @@
  * @since 1.0.0
  */
 
-import { SignJWT, jwtVerify, importPKCS8, importSPKI, exportPKCS8, exportSPKI, generateKeyPair } from 'jose';
+import {
+  SignJWT,
+  jwtVerify,
+  importPKCS8,
+  importSPKI,
+  exportPKCS8,
+  exportSPKI,
+  generateKeyPair,
+} from "jose";
 
 // ============================================================================
 // KEY MANAGEMENT
 // ============================================================================
 
 export interface KeyPair {
-  publicKey: string;  // SPKI format (for verification)
+  publicKey: string; // SPKI format (for verification)
   privateKey: string; // PKCS#8 format (for signing)
 }
 
@@ -36,9 +44,9 @@ export interface KeyPair {
  * @returns Key pair in SPKI/PKCS#8 format
  */
 export async function generateServiceKeyPair(
-  modulusLength: number = 2048
+  modulusLength: number = 2048,
 ): Promise<KeyPair> {
-  const { publicKey, privateKey } = await generateKeyPair('RS256', {
+  const { publicKey, privateKey } = await generateKeyPair("RS256", {
     modulusLength,
     extractable: true,
   });
@@ -53,7 +61,7 @@ export async function generateServiceKeyPair(
 
 /**
  * Get the private key for signing (Intention Engine only)
- * 
+ *
  * In production, this should be stored securely:
  * - AWS Secrets Manager
  * - Vercel Environment Variables (encrypted at rest)
@@ -61,74 +69,66 @@ export async function generateServiceKeyPair(
  */
 export function getSigningPrivateKey(): string {
   const privateKey = process.env.INTENTION_ENGINE_PRIVATE_KEY;
-  
+
   if (!privateKey) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error(
-        'INTENTION_ENGINE_PRIVATE_KEY is not defined. ' +
-        'Generate with: await generateServiceKeyPair() and store securely.'
-      );
-    }
-    // Development fallback - generate ephemeral key
-    console.warn('[AsymmetricJWT] Using ephemeral key for development. DO NOT use in production.');
-    return (globalThis as any).__ephemeralPrivateKey || (() => {
-      const keyPair = generateServiceKeyPair(2048);
-      (globalThis as any).__ephemeralPrivateKey = keyPair.then(k => k.privateKey);
-      return keyPair.then(k => k.privateKey);
-    })();
+    throw new Error(
+      "INTENTION_ENGINE_PRIVATE_KEY is not defined. " +
+        "Generate with: await generateServiceKeyPair() and store securely.",
+    );
   }
-  
+
   return privateKey;
 }
 
 /**
  * Get the public key for verification (Satellite Apps)
- * 
+ *
  * Each satellite app should have its own public key environment variable:
  * - TABLESTACK_PUBLIC_KEY
  * - OPENDELIVERY_PUBLIC_KEY
- * 
+ *
  * @param serviceName - Name of the service verifying the token
  */
 export function getVerificationPublicKey(serviceName: string): string {
-  const envVarName = `${serviceName.toUpperCase().replace('-', '_')}_PUBLIC_KEY`;
+  const envVarName = `${serviceName.toUpperCase().replace("-", "_")}_PUBLIC_KEY`;
   const publicKey = process.env[envVarName];
-  
+
   if (!publicKey) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error(
-        `${envVarName} is not defined. ` +
-        `Export the public key from Intention Engine and set it in ${serviceName}'s environment.`
-      );
-    }
-    // Development fallback - use ephemeral key
-    console.warn(`[AsymmetricJWT] Using ephemeral public key for ${serviceName} development.`);
-    return (globalThis as any)[`__ephemeralPublicKey_${serviceName}`] || '';
+    throw new Error(
+      `${envVarName} is not defined. ` +
+        `Export the public key from Intention Engine and set it in ${serviceName}'s environment.`,
+    );
   }
-  
+
   return publicKey;
 }
 
 /**
  * Register a public key for a satellite service (runtime key distribution)
- * 
+ *
  * Use this for dynamic key rotation or multi-tenant scenarios.
- * 
+ *
  * @param serviceName - Name of the satellite service
  * @param publicKey - SPKI-formatted public key
  */
-export function registerPublicKey(serviceName: string, publicKey: string): void {
-  const registry = (globalThis as any).__publicKeyRegistry || {};
-  registry[serviceName] = publicKey;
-  (globalThis as any).__publicKeyRegistry = registry;
+export function registerPublicKey(
+  serviceName: string,
+  publicKey: string,
+): void {
+  const registry = (globalThis as Record<string, unknown>)
+    .__publicKeyRegistry as Record<string, string> | undefined;
+  const updatedRegistry = registry || {};
+  updatedRegistry[serviceName] = publicKey;
+  (globalThis as Record<string, unknown>).__publicKeyRegistry = updatedRegistry;
 }
 
 /**
  * Get a registered public key (supports runtime registration)
  */
 export function getRegisteredPublicKey(serviceName: string): string | null {
-  const registry = (globalThis as any).__publicKeyRegistry || {};
-  return registry[serviceName] || null;
+  const registry = (globalThis as Record<string, unknown>)
+    .__publicKeyRegistry as Record<string, string> | undefined;
+  return registry?.[serviceName] || null;
 }
 
 // ============================================================================
@@ -159,13 +159,13 @@ export interface AsymmetricJWTOptions {
 
 /**
  * Sign a JWT using RS256 (asymmetric)
- * 
+ *
  * Use this in the Intention Engine to sign tokens for satellite services.
- * 
+ *
  * @param payload - Token payload
  * @param options - JWT options
  * @returns Signed JWT
- * 
+ *
  * @example
  * const token = await signAsymmetricJWT(
  *   { userId: 'user_123', executionId: 'exec_456' },
@@ -174,15 +174,10 @@ export interface AsymmetricJWTOptions {
  */
 export async function signAsymmetricJWT(
   payload: AsymmetricJWTPayload = {},
-  options: AsymmetricJWTOptions
+  options: AsymmetricJWTOptions,
 ): Promise<string> {
-  const privateKey = await getSigningPrivateKey();
-  const { issuer, audience, expiresIn = '5m', additionalClaims = {} } = options;
-
-  // Resolve promise if privateKey is a promise (development fallback)
-  const resolvedPrivateKey = typeof privateKey === 'string' 
-    ? privateKey 
-    : await privateKey;
+  const privateKey = getSigningPrivateKey();
+  const { issuer, audience, expiresIn = "5m", additionalClaims = {} } = options;
 
   const jwtPayload: AsymmetricJWTPayload = {
     ...payload,
@@ -192,10 +187,10 @@ export async function signAsymmetricJWT(
   };
 
   // Import private key from PKCS#8
-  const key = await importPKCS8(resolvedPrivateKey, 'RS256');
+  const key = await importPKCS8(privateKey, "RS256");
 
   return await new SignJWT(jwtPayload)
-    .setProtectedHeader({ alg: 'RS256' })
+    .setProtectedHeader({ alg: "RS256" })
     .setIssuedAt()
     .setExpirationTime(expiresIn)
     .setJti(crypto.randomUUID()) // Unique token ID for replay prevention
@@ -204,21 +199,21 @@ export async function signAsymmetricJWT(
 
 /**
  * Verify a JWT using RS256 (asymmetric)
- * 
+ *
  * Use this in satellite services (TableStack, OpenDeliver) to verify tokens.
- * 
+ *
  * @param token - JWT to verify
  * @param expectedIssuer - Expected issuer claim
  * @param expectedAudience - Expected audience claim (this service)
  * @returns Decoded payload if valid, null if invalid
- * 
+ *
  * @example
  * const payload = await verifyAsymmetricJWT(
  *   token,
  *   'intention-engine',
  *   'table-stack'
  * );
- * 
+ *
  * if (payload) {
  *   // Token is valid, proceed with request
  * } else {
@@ -228,42 +223,35 @@ export async function signAsymmetricJWT(
 export async function verifyAsymmetricJWT(
   token: string,
   expectedIssuer: string,
-  expectedAudience: string
+  expectedAudience: string,
 ): Promise<AsymmetricJWTPayload | null> {
   // Try runtime-registered key first, then environment variable
-  let publicKey = getRegisteredPublicKey(expectedIssuer) || 
-                  getVerificationPublicKey(expectedIssuer);
-  
-  // Development fallback - try ephemeral key
-  if (!publicKey && process.env.NODE_ENV !== 'production') {
-    publicKey = (globalThis as any)[`__ephemeralPublicKey_${expectedIssuer}`] || '';
-  }
-  
+  let publicKey =
+    getRegisteredPublicKey(expectedIssuer) ||
+    getVerificationPublicKey(expectedIssuer);
+
   if (!publicKey) {
-    console.warn(`[AsymmetricJWT] No public key found for issuer: ${expectedIssuer}`);
+    console.warn(
+      `[AsymmetricJWT] No public key found for issuer: ${expectedIssuer}`,
+    );
     return null;
   }
 
-  // Resolve promise if publicKey is a promise (development fallback)
-  const resolvedPublicKey = typeof publicKey === 'string' 
-    ? publicKey 
-    : await publicKey;
-
   try {
     // Import public key from SPKI
-    const key = await importSPKI(resolvedPublicKey, 'RS256');
+    const key = await importSPKI(publicKey, "RS256");
 
     const { payload } = await jwtVerify(token, key, {
       issuer: expectedIssuer,
       audience: expectedAudience,
-      algorithms: ['RS256'],
+      algorithms: ["RS256"],
     });
 
     return payload as AsymmetricJWTPayload;
   } catch (error) {
     console.warn(
       `[AsymmetricJWT] Verification failed for issuer=${expectedIssuer}, audience=${expectedAudience}:`,
-      error instanceof Error ? error.message : error
+      error instanceof Error ? error.message : error,
     );
     return null;
   }
@@ -294,7 +282,7 @@ export async function exportKeyPairForDistribution(keyPair: KeyPair): Promise<{
   return {
     publicKey: keyPair.publicKey,
     publicKeyFingerprint: fingerprint,
-    privateKeyInfo: '[PRIVATE KEY - DO NOT SHARE]',
+    privateKeyInfo: "[PRIVATE KEY - DO NOT SHARE]",
   };
 }
 
@@ -304,14 +292,21 @@ export async function exportKeyPairForDistribution(keyPair: KeyPair): Promise<{
  * This creates a short, human-readable hash that can be used to verify
  * key integrity during distribution.
  */
-export async function generateKeyFingerprint(publicKey: string): Promise<string> {
+export async function generateKeyFingerprint(
+  publicKey: string,
+): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(publicKey);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const digest = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  const digest = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
   // Return first 16 chars as fingerprint
-  return digest.substring(0, 16).match(/.{1,4}/g)?.join(':') || digest.substring(0, 16);
+  return (
+    digest
+      .substring(0, 16)
+      .match(/.{1,4}/g)
+      ?.join(":") || digest.substring(0, 16)
+  );
 }
 
 /**
@@ -322,7 +317,7 @@ export async function generateKeyFingerprint(publicKey: string): Promise<string>
  */
 export async function generateSatelliteSetupInstructions(
   keyPair: KeyPair,
-  satelliteServices: string[]
+  satelliteServices: string[],
 ): Promise<string> {
   const fingerprint = await generateKeyFingerprint(keyPair.publicKey);
 
@@ -350,7 +345,7 @@ SATELLITE SERVICES (Verification):
 `;
 
   for (const service of satelliteServices) {
-    const envVarName = `${service.toUpperCase().replace('-', '_')}_PUBLIC_KEY`;
+    const envVarName = `${service.toUpperCase().replace("-", "_")}_PUBLIC_KEY`;
     instructions += `
 ${service.toUpperCase()}:
   ${envVarName}="${keyPair.publicKey}"

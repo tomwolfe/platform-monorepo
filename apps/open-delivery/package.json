@@ -36,6 +36,7 @@
     "zod-to-json-schema": "^3.25.1"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@tailwindcss/postcss": "^4.1.18",

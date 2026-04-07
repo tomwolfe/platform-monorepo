@@ -31,12 +31,23 @@
  * @package apps/intention-engine
  */
 
-import { getRedisClient, ServiceNamespace, AppConfig, Logger } from '@repo/shared';
-import { ExecutionState, PlanStep } from './types';
-import { getCompletedSteps, getPendingSteps } from './state-machine';
+import {
+  getRedisClient,
+  ServiceNamespace,
+  AppConfig,
+  Logger,
+} from "@repo/shared";
+import { ExecutionState, PlanStep } from "./types";
+import { getCompletedSteps, getPendingSteps } from "./state-machine";
 
 const redis = getRedisClient(ServiceNamespace.IE);
-const logger = new Logger({ serviceName: 'intention-engine' });
+const logger = new Logger({ serviceName: "intention-engine" });
+
+// Simple in-memory metrics counter for pre-warm aborts
+let preWarmAbortCount = 0;
+export function getPreWarmAbortCount(): number {
+  return preWarmAbortCount;
+}
 
 // ============================================================================
 // CONFIGURATION
@@ -61,13 +72,13 @@ const PRE_WARM_CONFIG = {
 // TYPES
 // ============================================================================
 
-export type PreWarmHint = 
-  | 'DB_RESERVATION_LOAD'
-  | 'DB_USER_LOAD'
-  | 'DB_PAYMENT_LOAD'
-  | 'DB_SEARCH_LOAD'
-  | 'DB_CANCELLATION_LOAD'
-  | 'GENERIC';
+export type PreWarmHint =
+  | "DB_RESERVATION_LOAD"
+  | "DB_USER_LOAD"
+  | "DB_PAYMENT_LOAD"
+  | "DB_SEARCH_LOAD"
+  | "DB_CANCELLATION_LOAD"
+  | "GENERIC";
 
 export interface PreWarmState {
   executionId: string;
@@ -122,18 +133,18 @@ export class PreWarmService {
     options?: {
       hint?: PreWarmHint;
       nextToolName?: string;
-    }
+    },
   ): Promise<PreWarmResult> {
     const completedSteps = getCompletedSteps(currentState);
     const pendingSteps = getPendingSteps(currentState);
 
     const currentStepIndex = completedSteps.length;
-    const completionPercentage = totalSteps > 0
-      ? currentStepIndex / totalSteps
-      : 0;
-    const nextStepIndex = pendingSteps.length > 0
-      ? currentState.step_states.findIndex(s => s.status === "pending")
-      : totalSteps;
+    const completionPercentage =
+      totalSteps > 0 ? currentStepIndex / totalSteps : 0;
+    const nextStepIndex =
+      pendingSteps.length > 0
+        ? currentState.step_states.findIndex((s) => s.status === "pending")
+        : totalSteps;
 
     // Update state
     this.state = {
@@ -180,7 +191,10 @@ export class PreWarmService {
   /**
    * Trigger pre-warm request to warm up lambda for next step
    */
-  private async triggerPreWarm(hint?: PreWarmHint, nextToolName?: string): Promise<PreWarmResult> {
+  private async triggerPreWarm(
+    hint?: PreWarmHint,
+    nextToolName?: string,
+  ): Promise<PreWarmResult> {
     const startTime = Date.now();
 
     try {
@@ -193,16 +207,16 @@ export class PreWarmService {
 
       // Fire-and-forget pre-warm request WITH HINT
       // We don't await this - it's best-effort
-      this.sendPreWarmRequest(hint, nextToolName).catch(error => {
+      this.sendPreWarmRequest(hint, nextToolName).catch((error) => {
         logger.warn({
-          message: '[PreWarm] Pre-warm request failed (non-blocking)',
+          message: "[PreWarm] Pre-warm request failed (non-blocking)",
           error: error instanceof Error ? error.message : String(error),
         });
       });
 
       if (PRE_WARM_CONFIG.debug) {
         logger.info({
-          message: `[PreWarm] Triggered for ${this.executionId} (completion: ${(this.state.completionPercentage * 100).toFixed(1)}%, hint: ${hint || 'GENERIC'})`,
+          message: `[PreWarm] Triggered for ${this.executionId} (completion: ${(this.state.completionPercentage * 100).toFixed(1)}%, hint: ${hint || "GENERIC"})`,
         });
       }
 
@@ -213,7 +227,7 @@ export class PreWarmService {
       };
     } catch (error) {
       logger.error({
-        message: '[PreWarm] Failed to trigger pre-warm',
+        message: "[PreWarm] Failed to trigger pre-warm",
         error: error instanceof Error ? error.message : String(error),
       });
       return {
@@ -228,12 +242,15 @@ export class PreWarmService {
    * Send pre-warm request to lambda endpoint
    * Fire-and-forget - uses Next.js after() to ensure execution continues after response
    */
-  private async sendPreWarmRequest(hint?: PreWarmHint, nextToolName?: string): Promise<void> {
+  private async sendPreWarmRequest(
+    hint?: PreWarmHint,
+    nextToolName?: string,
+  ): Promise<void> {
     const warmUrl = `${PRE_WARM_CONFIG.baseUrl}/api/engine/pre-warm`;
 
     try {
       // Use Next.js after() to ensure the request completes even after response
-      const { after } = await import('next/server');
+      const { after } = await import("next/server");
 
       after(async () => {
         // Use AbortController with short timeout to prevent hanging in serverless
@@ -245,13 +262,13 @@ export class PreWarmService {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "x-pre-warm-hint": hint || 'GENERIC',
+              "x-pre-warm-hint": hint || "GENERIC",
             },
             body: JSON.stringify({
               executionId: this.executionId,
               nextStepIndex: this.state.nextStepIndex,
               triggeredAt: this.state.preWarmTriggeredAt,
-              hint: hint || 'GENERIC',
+              hint: hint || "GENERIC",
               nextToolName,
             }),
             signal: controller.signal,
@@ -262,17 +279,28 @@ export class PreWarmService {
           // Log failures for observability
           if (!response.ok && PRE_WARM_CONFIG.debug) {
             logger.warn({
-              message: '[PreWarm] Pre-warm request failed',
+              message: "[PreWarm] Pre-warm request failed",
               error: `Status: ${response.status}`,
             });
           }
         } catch (error) {
           clearTimeout(timeoutId);
-          // Log errors for observability but don't throw - pre-warm is best-effort
-          if (PRE_WARM_CONFIG.debug) {
+          // Increment abort counter for monitoring
+          preWarmAbortCount++;
+
+          // Log errors for observability with specific error type
+          if (
+            PRE_WARM_CONFIG.debug ||
+            (error instanceof DOMException && error.name === "AbortError")
+          ) {
             logger.warn({
-              message: '[PreWarm] Request error (ignored)',
+              message: "[PreWarm] Request aborted or failed",
+              errorType:
+                error instanceof DOMException && error.name === "AbortError"
+                  ? "timeout"
+                  : "network",
               error: error instanceof Error ? error.message : String(error),
+              metric: "pre_warm_abort",
             });
           }
         }
@@ -290,7 +318,7 @@ export class PreWarmService {
       // Ignore errors - pre-warm is best-effort
       if (PRE_WARM_CONFIG.debug) {
         logger.warn({
-          message: '[PreWarm] sendPreWarmRequest error (ignored)',
+          message: "[PreWarm] sendPreWarmRequest error (ignored)",
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -306,11 +334,11 @@ export class PreWarmService {
       await redis?.setex(
         key,
         PRE_WARM_CONFIG.preWarmStateTTL,
-        JSON.stringify(this.state)
+        JSON.stringify(this.state),
       );
     } catch (error) {
       logger.warn({
-        message: '[PreWarm] Failed to store state',
+        message: "[PreWarm] Failed to store state",
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -319,7 +347,9 @@ export class PreWarmService {
   /**
    * Load pre-warm state from Redis
    */
-  static async loadPreWarmState(executionId: string): Promise<PreWarmState | null> {
+  static async loadPreWarmState(
+    executionId: string,
+  ): Promise<PreWarmState | null> {
     try {
       const key = `prewarm:${executionId}`;
       const data = await redis?.get<string>(key);
@@ -328,7 +358,7 @@ export class PreWarmService {
       }
     } catch (error) {
       logger.warn({
-        message: '[PreWarm] Failed to load state',
+        message: "[PreWarm] Failed to load state",
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -398,16 +428,16 @@ export async function handlePreWarmRequest(
   options?: {
     hint?: PreWarmHint;
     nextToolName?: string;
-  }
+  },
 ): Promise<{ success: boolean; warmed: boolean }> {
   const startTime = Date.now();
-  const hint = options?.hint || 'GENERIC';
+  const hint = options?.hint || "GENERIC";
   const nextToolName = options?.nextToolName;
 
   try {
     // Log pre-warm event with hint
     logger.info({
-      message: `[PreWarm] Lambda warming for ${executionId} (next step: ${nextStepIndex}, hint: ${hint}, tool: ${nextToolName || 'unknown'})`,
+      message: `[PreWarm] Lambda warming for ${executionId} (next step: ${nextStepIndex}, hint: ${hint}, tool: ${nextToolName || "unknown"})`,
     });
 
     // Warm database connection (lazy initialization)
@@ -420,7 +450,7 @@ export async function handlePreWarmRequest(
       // Ignore DB errors - this is just warming
       if (PRE_WARM_CONFIG.debug) {
         logger.warn({
-          message: '[PreWarm] DB warm failed',
+          message: "[PreWarm] DB warm failed",
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -433,7 +463,7 @@ export async function handlePreWarmRequest(
       // Ignore Redis errors
       if (PRE_WARM_CONFIG.debug) {
         logger.warn({
-          message: '[PreWarm] Redis warm failed',
+          message: "[PreWarm] Redis warm failed",
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -447,7 +477,7 @@ export async function handlePreWarmRequest(
       // Ignore state load errors
       if (PRE_WARM_CONFIG.debug) {
         logger.warn({
-          message: '[PreWarm] State load failed',
+          message: "[PreWarm] State load failed",
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -464,7 +494,7 @@ export async function handlePreWarmRequest(
     return { success: true, warmed: true };
   } catch (error) {
     logger.error({
-      message: '[PreWarm] Warming failed',
+      message: "[PreWarm] Warming failed",
       error: error instanceof Error ? error.message : String(error),
     });
     return { success: false, warmed: false };
@@ -480,56 +510,56 @@ export async function handlePreWarmRequest(
 async function preFetchDataForHint(
   hint: PreWarmHint,
   executionId: string,
-  nextStepIndex: number
+  nextStepIndex: number,
 ): Promise<void> {
   try {
     switch (hint) {
-      case 'DB_RESERVATION_LOAD':
+      case "DB_RESERVATION_LOAD":
         // Pre-fetch reservation-related tables
         await getDb().execute("SELECT 1 FROM restaurant_tables LIMIT 1");
         await getDb().execute("SELECT 1 FROM reservations LIMIT 1");
         if (PRE_WARM_CONFIG.debug) {
-          logger.info({ message: '[PreWarm] Pre-fetched reservation data' });
+          logger.info({ message: "[PreWarm] Pre-fetched reservation data" });
         }
         break;
 
-      case 'DB_USER_LOAD':
+      case "DB_USER_LOAD":
         // Pre-fetch user-related tables
         await getDb().execute("SELECT 1 FROM users LIMIT 1");
         await getDb().execute("SELECT 1 FROM user_preferences LIMIT 1");
         if (PRE_WARM_CONFIG.debug) {
-          logger.info({ message: '[PreWarm] Pre-fetched user data' });
+          logger.info({ message: "[PreWarm] Pre-fetched user data" });
         }
         break;
 
-      case 'DB_PAYMENT_LOAD':
+      case "DB_PAYMENT_LOAD":
         // Pre-fetch payment-related tables
         await getDb().execute("SELECT 1 FROM payment_methods LIMIT 1");
         await getDb().execute("SELECT 1 FROM crypto_payments LIMIT 1");
         if (PRE_WARM_CONFIG.debug) {
-          logger.info({ message: '[PreWarm] Pre-fetched payment data' });
+          logger.info({ message: "[PreWarm] Pre-fetched payment data" });
         }
         break;
 
-      case 'DB_SEARCH_LOAD':
+      case "DB_SEARCH_LOAD":
         // Pre-fetch search-related tables
         await getDb().execute("SELECT 1 FROM restaurants LIMIT 1");
         await getDb().execute("SELECT 1 FROM cuisines LIMIT 1");
         if (PRE_WARM_CONFIG.debug) {
-          logger.info({ message: '[PreWarm] Pre-fetched search data' });
+          logger.info({ message: "[PreWarm] Pre-fetched search data" });
         }
         break;
 
-      case 'DB_CANCELLATION_LOAD':
+      case "DB_CANCELLATION_LOAD":
         // Pre-fetch cancellation-related tables
         await getDb().execute("SELECT 1 FROM cancellation_policies LIMIT 1");
         await getDb().execute("SELECT 1 FROM refunds LIMIT 1");
         if (PRE_WARM_CONFIG.debug) {
-          logger.info({ message: '[PreWarm] Pre-fetched cancellation data' });
+          logger.info({ message: "[PreWarm] Pre-fetched cancellation data" });
         }
         break;
 
-      case 'GENERIC':
+      case "GENERIC":
       default:
         // Generic warm-up - just ping the database
         await getDb().execute("SELECT 1");
@@ -539,8 +569,11 @@ async function preFetchDataForHint(
     // Ignore pre-fetch errors - this is best-effort optimization
     if (PRE_WARM_CONFIG.debug) {
       logger.warn({
-        message: '[PreWarm] Pre-fetch failed for hint',
-        error: { hint, details: error instanceof Error ? error.message : String(error) },
+        message: "[PreWarm] Pre-fetch failed for hint",
+        error: {
+          hint,
+          details: error instanceof Error ? error.message : String(error),
+        },
       });
     }
   }

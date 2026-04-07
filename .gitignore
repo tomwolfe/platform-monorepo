@@ -39,5 +39,14 @@ yarn-error.log*
 k6-results.json
 *.k6.log
 
+# Backup files
+*.bak
+*.bak2
+*.bak3
+*.bak4
+*.bak5
+*.bak6
+*.disabled
+
 # Docker
 docker-data/

@@ -213,7 +213,7 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
   }
 
   // If no individual table fits, try joining two tables
-  // For simplicity, we only try joining TWO adjacent tables
+  // OPTIMIZATION: Only attempt combinations when individual tables are insufficient
   const vacantTables = allTables.filter((t: typeof restaurantTables.$inferSelect) => !occupiedTableIds.includes(t.id));
   const suggestedCombos: Array<{
     id: string;
@@ -229,20 +229,20 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
   const MAX_COMBOS = 5; // Return top 5 combinations max
   let comboCount = 0;
 
+  comboSearch:
   for (let i = 0; i < vacantTables.length; i++) {
-    if (comboCount >= MAX_COMBOS) break;
     for (let j = i + 1; j < vacantTables.length; j++) {
-      if (comboCount >= MAX_COMBOS) break;
+      if (comboCount >= MAX_COMBOS) break comboSearch;
       const t1 = vacantTables[i];
       const t2 = vacantTables[j];
 
       // Join capacity (e.g., two 2-tops = 4-top)
       const combinedCapacity = t1.maxCapacity + t2.maxCapacity;
-      
+
       if (combinedCapacity >= partySize) {
         // Check adjacency (distance formula with threshold)
         const distance = Math.sqrt(
-          Math.pow((t1.xPos || 0) - (t2.xPos || 0), 2) + 
+          Math.pow((t1.xPos || 0) - (t2.xPos || 0), 2) +
           Math.pow((t1.yPos || 0) - (t2.yPos || 0), 2)
         );
 

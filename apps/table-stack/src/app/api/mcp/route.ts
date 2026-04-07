@@ -88,18 +88,25 @@ async function getAvailableTables(
     return availableIndividualTables.map((t: any) => ({ ...t, isCombined: false }));
   }
 
+  // OPTIMIZATION: Only attempt combinations when individual tables are insufficient
   const vacantTables = allTables.filter((t: any) => !occupiedTableIds.includes(t.id));
   const suggestedCombos: any[] = [];
 
+  // Circuit breaker: limit combinations to prevent O(N^2) event-loop blocking
+  const MAX_COMBOS = 5;
+  let comboCount = 0;
+
+  comboSearch:
   for (let i = 0; i < vacantTables.length; i++) {
     for (let j = i + 1; j < vacantTables.length; j++) {
+      if (comboCount >= MAX_COMBOS) break comboSearch;
       const t1 = vacantTables[i];
       const t2 = vacantTables[j];
       const combinedCapacity = t1.maxCapacity + t2.maxCapacity;
-      
+
       if (combinedCapacity >= partySize) {
         const distance = Math.sqrt(
-          Math.pow((t1.xPos || 0) - (t2.xPos || 0), 2) + 
+          Math.pow((t1.xPos || 0) - (t2.xPos || 0), 2) +
           Math.pow((t1.yPos || 0) - (t2.yPos || 0), 2)
         );
 
@@ -113,6 +120,7 @@ async function getAvailableTables(
             table1: t1,
             table2: t2,
           });
+          comboCount++;
         }
       }
     }

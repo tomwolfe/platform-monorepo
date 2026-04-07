@@ -7,6 +7,7 @@ import { base } from 'viem/chains';
 import { isValidTxHash } from '@repo/shared/utils/web3-verification';
 import { getCryptoPrices, usdToCryptoBigIntWithSlippage } from '@repo/shared/utils/crypto-price';
 import { CheckoutRequestSchema, validateRequest as validateZodRequest, formatApiError, withApiErrorHandler, Logger } from '@repo/shared';
+import { isReplayAllowed, rollbackReplayGuard } from '@repo/shared/middleware/web3-replay-guard';
 
 export const runtime = 'nodejs';
 
@@ -119,6 +120,20 @@ async function postHandler(req: NextRequest) {
     expectedValue = parseUnits(depositUsd.toFixed(6), 6);
   }
 
+  // REPLAY GUARD: Check if this transaction hash has already been used
+  const replayCheck = await isReplayAllowed({
+    txHash: txHash as `0x${string}`,
+    appSource: 'table-stack',
+    entityId: targetReservationId,
+  });
+
+  if (!replayCheck) {
+    return NextResponse.json(
+      { message: `Payment transaction already used or blocked.` },
+      { status: 409 }
+    );
+  }
+
   // Zero-Trust On-Chain Verification using shared utility
   // isEscrowPayment=false because TableStack uses direct P2P to restaurant
   const { verifyTransaction } = await import('@repo/shared/utils/web3-verification');
@@ -133,6 +148,8 @@ async function postHandler(req: NextRequest) {
   });
 
   if (!verificationResult.success) {
+    // Rollback the replay guard to allow future attempts with this hash
+    await rollbackReplayGuard(txHash as `0x${string}`);
     return NextResponse.json(
       { message: verificationResult.error || 'Transaction verification failed' },
       { status: 400 }

@@ -196,11 +196,11 @@ const databaseUrl = process.env.DATABASE_URL;
 // This allows the package to be imported during build time for type checking/metadata
 const neonClient = databaseUrl ? neon(databaseUrl) : null;
 
-// Lazy-initialized database instance
-let _dbInstance: ReturnType<typeof drizzle> | null = null;
+// Standard Next.js global caching to prevent connection bloat during HMR
+const globalForDb = globalThis as unknown as { _dbInstance: ReturnType<typeof drizzle> | null };
 
 /**
- * Get the database instance with lazy initialization.
+ * Get the database instance with lazy initialization and HMR-safe global caching.
  * Throws a descriptive error at runtime if DATABASE_URL is not configured.
  *
  * This is the ONLY supported way to access the database. The db proxy export
@@ -217,9 +217,7 @@ let _dbInstance: ReturnType<typeof drizzle> | null = null;
  * @throws Error if DATABASE_URL is not configured
  */
 export function getDb() {
-  if (_dbInstance) {
-    return _dbInstance;
-  }
+  if (globalForDb._dbInstance) return globalForDb._dbInstance;
 
   if (!neonClient) {
     throw new Error(
@@ -228,15 +226,15 @@ export function getDb() {
     );
   }
 
-  _dbInstance = drizzle(neonClient, { schema });
-  
+  globalForDb._dbInstance = drizzle(neonClient, { schema });
+
   // Log configuration on first initialization
   console.log(
     `[Database] Initialized with poolSize=${neonConfig.poolSize || 10}, ` +
     `connectionTimeout=${neonConfig.connectionTimeoutMillis || 30000}ms`
   );
-  
-  return _dbInstance;
+
+  return globalForDb._dbInstance;
 }
 
 export type { InferSelectModel, InferInsertModel } from 'drizzle-orm';

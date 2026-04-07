@@ -138,11 +138,7 @@ function createDeliveryMockToolExecutor() {
 // E2E DELIVERY FLOW TEST
 // ============================================================================
 
-// NOTE: This test is temporarily skipped due to complex WorkflowMachine execution infrastructure
-// that requires proper tool registry and state machine setup. The test structure and assertions
-// are correct - it needs a proper integration test environment with mocked tool execution.
-// TODO: Set up proper WorkflowMachine integration test environment with delivery tool mocks
-describe.skip("E2E - OpenDelivery Flow", () => {
+describe("E2E - OpenDelivery Flow", () => {
   beforeEach(async () => {
     const keys = await redis.keys("execution:*");
     if (keys.length > 0) {

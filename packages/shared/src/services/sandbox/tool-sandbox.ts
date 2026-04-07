@@ -242,9 +242,8 @@ export class ToolSandbox extends EventEmitter {
    * Create a new worker thread
    */
   private createWorker(config: Pick<SandboxConfig, 'timeoutMs' | 'maxMemoryMb' | 'allowedEnvVars'>): Worker {
-    const workerScriptPath = this.config.workerScriptPath || __dirname + '/sandbox-worker.js';
-    
-    const worker = new Worker(workerScriptPath, {
+    const worker = new Worker(workerScript, {
+      eval: true,
       env: this.sanitizeEnvironment(config.allowedEnvVars),
       resourceLimits: {
         maxOldGenerationSizeMb: config.maxMemoryMb,
@@ -450,17 +449,4 @@ parentPort.postMessage({ type: 'ready' });
 
 export function createToolSandbox(config?: Partial<SandboxConfig>): ToolSandbox {
   return new ToolSandbox(config);
-}
-
-// ============================================================================
-// EXPORT WORKER SCRIPT
-// Helper to write worker script to file
-// ============================================================================
-
-import { writeFileSync } from 'fs';
-import { join } from 'path';
-
-export function writeWorkerScript(outputPath?: string): void {
-  const path = outputPath || join(__dirname, 'sandbox-worker.js');
-  writeFileSync(path, workerScript, 'utf-8');
 }

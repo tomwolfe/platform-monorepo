@@ -128,11 +128,7 @@ function createMockToolExecutor() {
 // Canonical flow: User wants to book a restaurant table
 // ============================================================================
 
-// NOTE: This test is temporarily skipped due to complex WorkflowMachine execution infrastructure
-// that requires proper tool registry and state machine setup. The test structure and assertions
-// are correct - it needs a proper integration test environment with mocked tool execution.
-// TODO: Set up proper WorkflowMachine integration test environment
-describe.skip("Golden Path - Restaurant Booking", () => {
+describe("Golden Path - Restaurant Booking", () => {
   beforeEach(async () => {
     // Clean up Redis before each test
     const keys = await redis.keys("execution:*");

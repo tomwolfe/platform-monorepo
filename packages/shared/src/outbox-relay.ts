@@ -193,7 +193,11 @@ export class OutboxRelayService {
     executionId: string,
     config: OutboxRelayConfig
   ): Promise<void> {
-    const url = `${config.baseUrl || 'http://localhost:3000'}/api/engine/outbox-relay`;
+    const baseUrl = config.baseUrl || (process.env.NODE_ENV === 'production' ? undefined : 'http://localhost:3000');
+    if (!baseUrl) {
+      throw new Error("CRITICAL: Outbox relay baseUrl is undefined in production environment.");
+    }
+    const url = `${baseUrl}/api/engine/outbox-relay`;
 
     try {
       // Use dynamic import to avoid breaking non-Next.js environments

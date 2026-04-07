@@ -466,53 +466,6 @@ export async function cryptoToUsdBigInt(
 }
 
 /**
- * Convert USD amount to crypto token amount
- *
- * @deprecated Use usdToCryptoBigInt for crypto transactions to avoid floating point errors.
- * This function is kept for backward compatibility with UI display purposes.
- */
-export async function usdToCrypto(
-  usdAmount: number,
-  token: "ETH" | "MATIC"
-): Promise<number> {
-  const price = await getTokenPrice(token);
-  if (price === 0) {
-    throw new Error("Invalid price data");
-  }
-  return usdAmount / price;
-}
-
-/**
- * Convert crypto token amount to USD
- *
- * @deprecated Use cryptoToUsdBigInt for crypto transactions to avoid floating point errors.
- * This function is kept for backward compatibility with UI display purposes.
- */
-export async function cryptoToUsd(
-  cryptoAmount: number,
-  token: "ETH" | "MATIC"
-): Promise<number> {
-  const price = await getTokenPrice(token);
-  return cryptoAmount * price;
-}
-
-/**
- * Calculate expected crypto amount with slippage buffer
- *
- * @deprecated Use usdToCryptoBigIntWithSlippage for crypto transactions.
- * This function is kept for backward compatibility with UI display purposes.
- */
-export async function usdToCryptoWithSlippage(
-  usdAmount: number,
-  token: "ETH" | "MATIC",
-  slippageBps: number = 100 // 1% = 100 basis points
-): Promise<number> {
-  const cryptoAmount = await usdToCrypto(usdAmount, token);
-  // Add slippage buffer (increase amount to ensure payment is sufficient)
-  return cryptoAmount * (1 + slippageBps / 10000);
-}
-
-/**
  * Calculate expected crypto amount with slippage buffer using bigint arithmetic.
  * Safe for crypto transaction calculations.
  *

@@ -11,7 +11,16 @@ import {
 import * as zod from "zod";
 import { AllToolsMap, ToolInput, validateToolParams } from "@repo/mcp-protocol";
 import { mapJsonSchemaToZod } from "../lib/engine/schema-utils";
-import { JSONSchema7, JSONSchema7Definition } from "json-schema";
+import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
+
+/**
+ * Recursive ToolParameter type that supports nested properties and items.
+ * Extends the base ToolParameter with recursive structure support.
+ */
+interface RecursiveToolParameter extends ToolParameter {
+  properties?: Record<string, RecursiveToolParameter>;
+  items?: RecursiveToolParameter;
+}
 
 /**
  * McpAdapter provides bi-directional compatibility between
@@ -22,7 +31,7 @@ export class McpAdapter {
    * Converts a legacy ToolParameter array to an MCP-compliant JSON Schema inputSchema.
    * Supports nested objects and recursion for complex schemas.
    */
-  static parametersToInputSchema(parameters: ToolParameter[]): JSONSchema7 {
+  static parametersToInputSchema(parameters: RecursiveToolParameter[]): JSONSchema7 {
     const properties: Record<string, JSONSchema7Definition> = {};
     const required: string[] = [];
 
@@ -33,11 +42,11 @@ export class McpAdapter {
         case "boolean": return "boolean";
         case "object": return "object";
         case "array": return "array";
-        default: return "string";
+        default: return "string" as const;
       }
     };
 
-    const processParam = (param: ToolParameter): JSONSchema7Definition => {
+    const processParam = (param: RecursiveToolParameter): JSONSchema7Definition => {
       const schema: JSONSchema7 = {
         type: mapType(param.type),
         description: param.description,
@@ -46,16 +55,14 @@ export class McpAdapter {
       if (param.type === "object" && param.properties) {
         const objProperties: Record<string, JSONSchema7Definition> = {};
         const objRequired: string[] = [];
-        
+
         for (const [propName, propValue] of Object.entries(param.properties)) {
-          if (typeof propValue === 'object' && propValue !== null && 'name' in propValue) {
-            objProperties[propName] = processParam(propValue as ToolParameter);
-            if ((propValue as ToolParameter).required) {
-              objRequired.push(propName);
-            }
+          objProperties[propName] = processParam(propValue);
+          if (propValue.required) {
+            objRequired.push(propName);
           }
         }
-        
+
         schema.properties = objProperties;
         if (objRequired.length > 0) {
           schema.required = objRequired;
@@ -92,7 +99,7 @@ export class McpAdapter {
   }
 
   /**
-   * Wraps an IntentionEngine tool to be exposed as an MCP tool.
+   * Wraps a legacy IntentionEngine tool to be exposed as an MCP tool.
    */
   static toMcpTool(tool: RegistryToolDefinition) {
     return {
@@ -155,12 +162,12 @@ export class McpManager {
         content: [
           {
             type: "text",
-            text: JSON.stringify(result.result || result.error || {}),
+            text: JSON.stringify(result.result ?? result.error ?? {}),
           },
         ],
         isError: !result.success,
       };
-    } catch (error) {
+    } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error during tool execution";
       return {
         content: [

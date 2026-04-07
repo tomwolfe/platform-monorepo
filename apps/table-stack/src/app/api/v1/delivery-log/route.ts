@@ -2,9 +2,12 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { validateRequest, verifySignature } from '@tablestack/lib/auth';
 import { NotifyService } from '@tablestack/lib/notifications';
-import { safeParseJson, formatApiError } from '@repo/shared';
+import { safeParseJson, formatApiError, IdempotencyService, getRedisClient, ServiceNamespace } from '@repo/shared';
+import { createHash } from 'crypto';
 
 export const runtime = 'nodejs';
+
+const idempotencyService = new IdempotencyService(getRedisClient(ServiceNamespace.TABLESTACK));
 
 export async function POST(req: NextRequest) {
   const bodyText = await req.text();
@@ -24,6 +27,13 @@ export async function POST(req: NextRequest) {
   const isValid = await verifySignature(bodyText, signature || '', timestamp, secret);
   if (!isValid) {
     return NextResponse.json({ message: 'Invalid signature or expired request' }, { status: 401 });
+  }
+
+  // Idempotency check: hash the payload to detect replay attacks
+  const bodyHash = createHash('sha256').update(bodyText).digest('hex');
+  const isDuplicate = await idempotencyService.isDuplicate(bodyHash, 'delivery_log');
+  if (isDuplicate) {
+    return NextResponse.json({ message: 'Event already processed' }, { status: 200 });
   }
 
   const { error, status, context } = await validateRequest(req);

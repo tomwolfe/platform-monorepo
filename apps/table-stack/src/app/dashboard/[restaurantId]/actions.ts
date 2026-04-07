@@ -466,6 +466,14 @@ export const getRestaurantWallet = withServerActionHandler(
 
 // Menu Management Actions
 
+const MenuItemSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  description: z.string().optional().default(''),
+  price: z.coerce.number().positive('Price must be greater than 0'),
+  category: z.string().min(1, 'Category is required'),
+  quantity: z.coerce.number().int().nonnegative().default(50),
+});
+
 export const getMenuItems = withServerActionHandler(
   withOwnership(async (restaurantId: string) => {
     const products = await db
@@ -488,27 +496,19 @@ export const getMenuItems = withServerActionHandler(
 
 export const createMenuItem = withServerActionHandler(
   withOwnership(async (restaurantId: string, formData: FormData) => {
-    const name = formData.get('name') as string;
-    const description = formData.get('description') as string;
-    const price = parseFloat(formData.get('price') as string);
-    const category = formData.get('category') as string;
-    const quantity = parseInt(formData.get('quantity') as string) || 50;
-
-    if (!name || !price || !category) {
-      throw new Error('Name, price, and category are required');
-    }
+    const validated = MenuItemSchema.parse(Object.fromEntries(formData.entries()));
 
     const [product] = await getDb().insert(restaurantProducts).values({
       restaurantId,
-      name,
-      description,
-      price,
-      category,
+      name: validated.name,
+      description: validated.description,
+      price: validated.price,
+      category: validated.category,
     }).returning();
 
     await getDb().insert(inventoryLevels).values({
       productId: product.id,
-      availableQuantity: quantity,
+      availableQuantity: validated.quantity,
     });
 
     revalidatePath(`/dashboard/${restaurantId}`);

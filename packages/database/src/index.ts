@@ -190,12 +190,6 @@ export function resetQueryStats(): void {
   totalQueryTimeMs = 0;
 }
 
-const databaseUrl = process.env.DATABASE_URL;
-
-// We avoid calling neon() if databaseUrl is missing, which can happen during build
-// This allows the package to be imported during build time for type checking/metadata
-const neonClient = databaseUrl ? neon(databaseUrl) : null;
-
 // Standard Next.js global caching to prevent connection bloat during HMR
 const globalForDb = globalThis as unknown as { _dbInstance: ReturnType<typeof drizzle> | null };
 
@@ -219,14 +213,16 @@ const globalForDb = globalThis as unknown as { _dbInstance: ReturnType<typeof dr
 export function getDb() {
   if (globalForDb._dbInstance) return globalForDb._dbInstance;
 
-  if (!neonClient) {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
     throw new Error(
       'DATABASE_URL is not configured. ' +
       'Please set the DATABASE_URL environment variable to connect to the database.'
     );
   }
 
-  globalForDb._dbInstance = drizzle(neonClient, { schema });
+  const client = neon(databaseUrl);
+  globalForDb._dbInstance = drizzle(client, { schema });
 
   // Log configuration on first initialization
   console.log(

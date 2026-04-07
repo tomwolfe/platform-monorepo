@@ -51,14 +51,14 @@ const ChatRequestSchema = z.object({
  */
 async function getTools(auditLogId: string, userLocation?: { lat: number, lng: number }) {
   const { manager } = await getMcpClients();
-  const tools: Record<string, any> = {};
+  const tools: Record<string, ReturnType<typeof tool>> = {};
 
   // Helper to get schema from McpToolRegistry
-  const getSchemaForTool = (toolName: string): z.ZodType<any> | undefined => {
+  const getSchemaForTool = (toolName: string): z.ZodType | undefined => {
     // Flatten the TOOLS registry to find matching schema
     const allTools = Object.values(TOOLS).flatMap(service => Object.values(service));
-    const toolDef = allTools.find(t => (t as any).name === toolName);
-    return (toolDef as any)?.schema;
+    const toolDef = allTools.find(t => 'name' in t && t.name === toolName);
+    return toolDef && 'schema' in toolDef ? toolDef.schema as z.ZodType : undefined;
   };
 
   // Get discovered tools from the dynamic manager
@@ -66,12 +66,17 @@ async function getTools(auditLogId: string, userLocation?: { lat: number, lng: n
 
   for (const [toolName, toolDef] of toolRegistry.entries()) {
     try {
-      // Use schema from registry if available, fallback to generic
+      // Use schema from registry if available, fallback to safe unknown-record schema
       const registrySchema = getSchemaForTool(toolName);
+      const inputSchema = registrySchema ?? z.record(z.unknown());
+
+      const description = 'description' in toolDef
+        ? (toolDef.description as string) ?? toolDef.name
+        : toolDef.name;
 
       tools[toolName] = tool({
-        description: (toolDef as any).description || toolDef.name,
-        inputSchema: registrySchema || z.record(z.any()),
+        description,
+        inputSchema,
         execute: async (params) => {
           console.log(`Executing MCP tool ${toolName}`, params);
 
@@ -82,12 +87,13 @@ async function getTools(auditLogId: string, userLocation?: { lat: number, lng: n
           if (result.success) {
             return result.output;
           } else {
-            throw new Error(result.error || 'Tool execution failed');
+            throw new Error(result.error ?? 'Tool execution failed');
           }
         },
       });
-    } catch (error) {
-      console.error(`Error registering tool ${toolName}:`, error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`Error registering tool ${toolName}:`, errorMessage);
     }
   }
 

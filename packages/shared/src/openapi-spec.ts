@@ -593,30 +593,109 @@ Verify and process a Web3 payment (ETH or USDC).
       },
       get: {
         tags: ['Waitlist'],
-        summary: 'Get waitlist position',
-        description: 'Check current position in waitlist.',
-        operationId: 'getWaitlistPosition',
+        summary: 'Get waitlist entries',
+        description: `
+Retrieve the waitlist entries for a restaurant.
+
+## Authentication
+
+Requires Bearer JWT token (service-to-service) or API key.
+
+## Pagination
+
+Supports pagination with \`limit\` and \`offset\` query parameters.
+        `,
+        operationId: 'getWaitlist',
+        security: [
+          { apiKey: [] },
+          { bearerAuth: [] },
+        ],
         parameters: [
           {
-            name: 'email',
+            name: 'restaurantId',
             in: 'query',
+            description: 'Restaurant UUID',
             required: true,
             schema: {
               type: 'string',
-              format: 'email',
+              format: 'uuid',
+            },
+          },
+          {
+            name: 'limit',
+            in: 'query',
+            description: 'Number of entries to return (max 100)',
+            required: false,
+            schema: {
+              type: 'integer',
+              default: 50,
+              maximum: 100,
+            },
+          },
+          {
+            name: 'offset',
+            in: 'query',
+            description: 'Number of entries to skip',
+            required: false,
+            schema: {
+              type: 'integer',
+              default: 0,
             },
           },
         ],
         responses: {
           '200': {
-            description: 'Waitlist position',
+            description: 'Waitlist entries retrieved successfully',
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/WaitlistPositionResponse',
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean' },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        restaurantId: { type: 'string', format: 'uuid' },
+                        waitlistCount: { type: 'integer' },
+                        totalCount: { type: 'integer' },
+                        pagination: {
+                          type: 'object',
+                          properties: {
+                            limit: { type: 'integer' },
+                            offset: { type: 'integer' },
+                            hasMore: { type: 'boolean' },
+                          },
+                        },
+                        entries: {
+                          type: 'array',
+                          items: {
+                            type: 'object',
+                            properties: {
+                              id: { type: 'string', format: 'uuid' },
+                              guestName: { type: 'string' },
+                              guestEmail: { type: 'string', format: 'email' },
+                              partySize: { type: 'integer' },
+                              status: { type: 'string', enum: ['waiting', 'notified', 'seated'] },
+                              createdAt: { type: 'string', format: 'date-time' },
+                            },
+                          },
+                        },
+                      },
+                    },
+                    timestamp: { type: 'string', format: 'date-time' },
+                  },
                 },
               },
             },
+          },
+          '400': {
+            description: 'Invalid parameters',
+          },
+          '401': {
+            description: 'Unauthorized',
+          },
+          '403': {
+            description: 'Forbidden',
           },
         },
       },

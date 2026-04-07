@@ -1,7 +1,8 @@
-export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
+export const dynamic = 'force-dynamic';
 import { getDb } from "@repo/database";
 import { restaurantTables, restaurantReservations, restaurants } from "@repo/database";
+import type { InferSelectModel } from 'drizzle-orm';
 import { and, eq, gte, or, sql } from '@repo/database';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
@@ -9,6 +10,10 @@ import { validateRequest } from '@tablestack/lib/auth';
 import { formatApiError, formatApiSuccess, withApiErrorHandler, type EngineErrorCode, withCache, getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
 
 export const runtime = 'nodejs';
+
+// Type aliases for Drizzle query results
+type RestaurantTable = typeof restaurantTables.$inferSelect;
+type RestaurantReservation = typeof restaurantReservations.$inferSelect;
 
 const redis = getRedisClient(ServiceNamespace.TS);
 const logger = new Logger({ serviceName: 'table-stack' });
@@ -131,23 +136,21 @@ export const GET = withCache(
     ttl: 30, // 30 second cache for availability
     tags: ['availability'],
     keyPrefix: 'availability',
-    generateKey: (req) => {
+    generateKey: (req: NextRequest) => {
       const { searchParams } = new URL(req.url);
       const restaurantId = searchParams.get('restaurantId');
       const date = searchParams.get('date');
       const partySize = searchParams.get('partySize');
       return `availability:${restaurantId}:${date}:${partySize}`;
     },
-    skip: (req) => {
-      // Skip cache for authenticated requests (they might need real-time data)
-      const apiKey = req.headers.get('x-api-key');
-      return !!apiKey;
-    },
+    // Note: skip cache for authenticated requests (they might need real-time data)
+    // This is handled by the handler itself
   }
 );
 
 async function getAvailableTables(restaurantId: string, startTime: Date, partySize: number, duration: number) {
   const endTime = addMinutes(startTime, duration);
+  const db = getDb();
 
   const occupiedTableIdsQuery = db
     .select({ tableId: restaurantReservations.tableId })
@@ -167,7 +170,9 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
     );
 
   const occupiedTableIdsResult = await occupiedTableIdsQuery;
-  const occupiedTableIds = occupiedTableIdsResult.map((r: { tableId: string | null }) => r.tableId).filter(Boolean) as string[];
+  const occupiedTableIds = occupiedTableIdsResult
+    .map((r: { tableId: string | null }) => r.tableId)
+    .filter((id): id is string => Boolean(id));
 
   // Also check combinedTableIds from restaurantReservations
   const occupiedCombinedTableIdsQuery = await db
@@ -187,7 +192,7 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
       )
     );
 
-  occupiedCombinedTableIdsQuery.forEach((r: { combinedTableIds: string[] | null }) => {
+  occupiedCombinedTableIdsQuery.forEach((r: { combinedTableIds: RestaurantReservation['combinedTableIds'] }) => {
     if (r.combinedTableIds) {
       occupiedTableIds.push(...r.combinedTableIds);
     }
@@ -204,25 +209,25 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
       )
     );
 
-  const availableIndividualTables = allTables.filter((t: typeof restaurantTables.$inferSelect) =>
+  const availableIndividualTables = allTables.filter((t: RestaurantTable) =>
     !occupiedTableIds.includes(t.id) && t.maxCapacity >= partySize
   );
 
   if (availableIndividualTables.length > 0) {
-    return availableIndividualTables.map((t: typeof restaurantTables.$inferSelect) => ({ ...t, isCombined: false }));
+    return availableIndividualTables.map((t: RestaurantTable) => ({ ...t, isCombined: false }));
   }
 
   // If no individual table fits, try joining two tables
   // OPTIMIZATION: Only attempt combinations when individual tables are insufficient
-  const vacantTables = allTables.filter((t: typeof restaurantTables.$inferSelect) => !occupiedTableIds.includes(t.id));
+  const vacantTables = allTables.filter((t: RestaurantTable) => !occupiedTableIds.includes(t.id));
   const suggestedCombos: Array<{
     id: string;
     tableNumber: string;
     combinedTableIds: string[];
     maxCapacity: number;
     isCombined: boolean;
-    table1: typeof restaurantTables.$inferSelect;
-    table2: typeof restaurantTables.$inferSelect;
+    table1: RestaurantTable;
+    table2: RestaurantTable;
   }> = [];
 
   // Circuit breaker: limit combinations to prevent O(N^2) event-loop blocking
@@ -235,6 +240,8 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
       if (comboCount >= MAX_COMBOS) break comboSearch;
       const t1 = vacantTables[i];
       const t2 = vacantTables[j];
+      
+      if (!t1 || !t2) continue;
 
       // Join capacity (e.g., two 2-tops = 4-top)
       const combinedCapacity = t1.maxCapacity + t2.maxCapacity;

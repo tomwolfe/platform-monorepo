@@ -523,6 +523,88 @@ jobs:
         run: pnpm validate:schema-sync
 
   # ============================================================================
+  # CHECK DATABASE MIGRATIONS
+  # ============================================================================
+  check-migrations:
+    name: Check Database Migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: apps
+          POSTGRES_PASSWORD: apps
+          POSTGRES_DB: apps_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.15.9
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Setup environment
+        run: |
+          cp .env.local.example .env.local
+          cat >> .env.local << EOF
+          DATABASE_URL=postgresql://apps:apps@localhost:5432/apps_test
+          TEST_DATABASE_URL=postgresql://apps:apps@localhost:5432/apps_test
+          EOF
+
+      - name: Generate migrations
+        run: pnpm db:generate
+
+      - name: Check for uncommitted migration files
+        run: |
+          echo "Checking for uncommitted migration files..."
+          MIGRATION_FILES=$(git status --porcelain -- packages/database/src/drizzle/migrations/*.sql 2>/dev/null | wc -l)
+          if [ "$MIGRATION_FILES" -gt 0 ]; then
+            echo "❌ Found $MIGRATION_FILES uncommitted migration file(s):"
+            git status --porcelain -- packages/database/src/drizzle/migrations/*.sql
+            echo ""
+            echo "Please commit these migration files before merging."
+            exit 1
+          fi
+          echo "✅ No uncommitted migration files found"
+
+      - name: Validate migration safety
+        run: |
+          echo "Validating migration safety..."
+          # Check for dangerous operations in recent migrations
+          LATEST_MIGRATION=$(ls -t packages/database/src/drizzle/migrations/*.sql 2>/dev/null | head -1)
+          if [ -n "$LATEST_MIGRATION" ]; then
+            echo "Latest migration file: $LATEST_MIGRATION"
+            if grep -qi "DROP TABLE\|DROP COLUMN" "$LATEST_MIGRATION"; then
+              echo "⚠️  WARNING: Latest migration contains DROP operation"
+              echo "Please ensure this is a backward-compatible change or has been reviewed manually"
+              # Don't fail the build, but warn
+            else
+              echo "✅ Latest migration appears safe (no DROP operations)"
+            fi
+          else
+            echo "ℹ️  No migration files found"
+          fi
+
+  # ============================================================================
   # SUMMARY
   # ============================================================================
   ci-summary:
@@ -537,6 +619,7 @@ jobs:
       - coverage-check
       - build-verification
       - validate-environment
+      - check-migrations
     if: always()
 
     steps:
@@ -550,6 +633,7 @@ jobs:
           echo "Coverage Check: ${{ needs.coverage-check.result }}"
           echo "Build Verification: ${{ needs.build-verification.result }}"
           echo "Validate Environment: ${{ needs.validate-environment.result }}"
+          echo "Check Migrations: ${{ needs.check-migrations.result }}"
 
           # Fail if any critical jobs failed
           if [[ "${{ needs.unit-tests.result }}" == "failure" ]] || \

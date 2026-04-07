@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resend } from '@tablestack/lib/resend';
-import { getRedisClient, ServiceNamespace, IdempotencyService, Logger, withApiErrorHandler } from '@repo/shared';
+import { getRedisClient, ServiceNamespace, IdempotencyService, Logger, withApiErrorHandler, formatApiSuccess } from '@repo/shared';
 import { createHash } from 'crypto';
 
 const logger = new Logger({ serviceName: 'reservation-webhook' });
@@ -25,19 +25,16 @@ async function postHandler(req: NextRequest) {
   );
 
   if (isDuplicate) {
-    logger.info({
-      message: 'Duplicate webhook detected, skipping',
+    logger.info('Duplicate webhook detected, skipping', {
       idempotencyKey,
     });
-    return NextResponse.json({ success: true, duplicate: true });
+    return NextResponse.json(formatApiSuccess({ duplicate: true }));
   }
 
   // Check if the reservation is marked as "Fulfilled"
   if (status === 'Fulfilled' || status === 'fulfilled') {
     if (!process.env.RESEND_API_KEY) {
-      logger.warn({
-        message: 'RESEND_API_KEY is missing, skipping email notification',
-      });
+      logger.warn('RESEND_API_KEY is missing, skipping email notification');
     } else {
       try {
         await resend.emails.send({
@@ -47,15 +44,14 @@ async function postHandler(req: NextRequest) {
           html: `<p>Hi ${guestName},</p><p>Thank you for dining with us! We hope to see you again soon.</p>`,
         });
       } catch (emailError: unknown) {
-        logger.error({
-          message: 'Failed to send thank you email',
+        logger.error('Failed to send thank you email', {
           error: emailError instanceof Error ? emailError.message : String(emailError),
         });
       }
     }
   }
 
-  return NextResponse.json({ success: true, duplicate: false });
+  return NextResponse.json(formatApiSuccess({ duplicate: false }));
 }
 
 export const POST = withApiErrorHandler(postHandler, {

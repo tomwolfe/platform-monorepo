@@ -4,12 +4,7 @@ import React, { useEffect, useState } from 'react';
 import Ably from 'ably';
 import { IconAfterMount } from '@/components/ui/IconWrapper';
 import { Bell, X } from 'lucide-react';
-
-// Type-safe event payload for delivery dispatched events
-interface DeliveryDispatchedPayload {
-  order_id: string;
-  [key: string]: unknown;
-}
+import { DeliveryDispatchedPayload, isDeliveryDispatchedPayload } from '@repo/shared/types/events';
 
 export default function LiveView({ restaurantId }: { restaurantId: string }) {
   const [notification, setNotification] = useState<{ id: string; message: string } | null>(null);
@@ -22,6 +17,11 @@ export default function LiveView({ restaurantId }: { restaurantId: string }) {
 
     const deliveryListener = (message: Ably.InboundMessage) => {
       const data = message.data as DeliveryDispatchedPayload;
+      
+      if (!isDeliveryDispatchedPayload(data)) {
+        return;
+      }
+      
       setNotification({
         id: data.order_id,
         message: `Delivery Out: Order ${data.order_id} has been dispatched!`,

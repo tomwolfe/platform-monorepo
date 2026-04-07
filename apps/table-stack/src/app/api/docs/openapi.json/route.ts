@@ -32,4 +32,7 @@ async function openApiHandler(req: NextRequest) {
   });
 }
 
-export const GET = withApiErrorHandler(openApiHandler, 'EXECUTION_FAILED');
+export const GET = withApiErrorHandler(openApiHandler, {
+  serviceName: 'openapi-docs',
+  includeStackTrace: process.env.NODE_ENV !== 'production',
+});

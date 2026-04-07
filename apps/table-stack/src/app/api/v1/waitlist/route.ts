@@ -63,4 +63,7 @@ async function getHandler(req: NextRequest) {
   }));
 }
 
-export const GET = withApiErrorHandler(getHandler, 'EXECUTION_FAILED');
+export const GET = withApiErrorHandler(getHandler, {
+  serviceName: 'table-stack-waitlist',
+  includeStackTrace: process.env.NODE_ENV !== 'production',
+});

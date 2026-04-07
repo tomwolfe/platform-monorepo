@@ -46,16 +46,21 @@ export const restaurants = pgTable('restaurants', {
   slug: text('slug').unique().notNull(),
   ownerEmail: text('owner_email').notNull(),
   ownerId: text('owner_id').notNull(),
+  /** Timezone for restaurant operations. Nullable to allow legacy data migration. */
   timezone: text('timezone').default('UTC'),
+  /** Latitude coordinate for restaurant location. Nullable - not all restaurants have GPS coordinates. */
   lat: text('lat'),
+  /** Longitude coordinate for restaurant location. Nullable - not all restaurants have GPS coordinates. */
   lng: text('lng'),
+  /** Physical address of the restaurant. Nullable for shadow restaurants. */
   address: text('address'),
   apiKey: text('api_key').unique().notNull(),
   openingTime: text('opening_time').default('09:00'),
   closingTime: text('closing_time').default('22:00'),
   daysOpen: text('days_open').default('monday,tuesday,wednesday,thursday,friday,saturday,sunday'),
   defaultDurationMinutes: integer('default_duration_minutes').default(90),
-  walletAddress: text('wallet_address'), // Crypto wallet for receiving payments
+  /** Crypto wallet address for receiving payments. Nullable until restaurant connects wallet. */
+  walletAddress: text('wallet_address'),
   isShadow: boolean('is_shadow').default(false),
   isClaimed: boolean('is_claimed').default(false),
   claimToken: uuid('claim_token').defaultRandom(),
@@ -74,10 +79,14 @@ export const restaurantTables = pgTable('restaurant_tables', {
   minCapacity: integer('min_capacity').notNull(),
   maxCapacity: integer('max_capacity').notNull(),
   isActive: boolean('is_active').default(true),
-  status: text('status').default('vacant'), // 'vacant', 'occupied', 'dirty'
+  /** Table status: 'vacant', 'occupied', or 'dirty'. Nullable to allow legacy data. */
+  status: text('status').default('vacant'),
+  /** X position on floor plan. Nullable - defaults to 0. */
   xPos: integer('x_pos').default(0),
+  /** Y position on floor plan. Nullable - defaults to 0. */
   yPos: integer('y_pos').default(0),
-  tableType: text('table_type').default('square'), // 'square', 'round', 'booth'
+  /** Table shape type for rendering. Nullable - defaults to 'square'. */
+  tableType: text('table_type').default('square'),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => {
   return {
@@ -88,18 +97,23 @@ export const restaurantTables = pgTable('restaurant_tables', {
 export const restaurantReservations = pgTable('restaurant_reservations', {
   id: uuid('id').primaryKey().defaultRandom(),
   restaurantId: uuid('restaurant_id').references(() => restaurants.id, { onDelete: 'cascade' }).notNull(),
+  /** Table ID for the reservation. Nullable until table is assigned. */
   tableId: uuid('table_id').references(() => restaurantTables.id),
   guestName: text('guest_name').notNull(),
   guestEmail: text('guest_email').notNull(),
   partySize: integer('party_size').notNull(),
   startTime: timestamp('start_time', { withTimezone: true }).notNull(),
   endTime: timestamp('end_time', { withTimezone: true }).notNull(),
-  status: text('status').default('confirmed'), // 'confirmed', 'cancelled', 'noshow'
+  /** Reservation status: 'confirmed', 'cancelled', or 'noshow'. Nullable to allow legacy data. */
+  status: text('status').default('confirmed'),
   isVerified: boolean('is_verified').default(false),
   verificationToken: uuid('verification_token').defaultRandom(),
   depositAmount: integer('deposit_amount').default(0),
-  paymentTxHash: text('payment_tx_hash').unique(), // On-chain transaction hash for crypto payment
+  /** On-chain transaction hash for crypto payment. Nullable until payment is made. */
+  paymentTxHash: text('payment_tx_hash').unique(),
+  /** Array of table IDs when tables are combined. Nullable for single-table reservations. */
   combinedTableIds: jsonb('combined_table_ids').$type<string[]>(),
+  /** Additional metadata for the reservation. Nullable for optional extensibility. */
   metadata: jsonb('metadata'),
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => {
@@ -172,8 +186,10 @@ export const guestProfiles = pgTable('guest_profiles', {
   restaurantId: uuid('restaurant_id').references(() => restaurants.id, { onDelete: 'cascade' }).notNull(),
   email: text('email').notNull(),
   name: text('name').notNull(),
+  /** Default delivery address for the guest. Nullable for pickup orders. */
   defaultDeliveryAddress: text('default_delivery_address'),
   visitCount: integer('visit_count').default(0),
+  /** Guest preferences (dietary restrictions, allergies, etc.). Nullable for optional tracking. */
   preferences: text('preferences'),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
@@ -359,16 +375,20 @@ export const crypto_transaction_speedups = pgTable('crypto_transaction_speedups'
 // OpenDeliver: Drivers table for delivery network
 export const drivers = pgTable('drivers', {
   id: uuid('id').primaryKey().defaultRandom(),
-  clerkId: text('clerk_id').unique(), // Link to Clerk authentication
+  /** Link to Clerk authentication. Nullable for drivers not yet authenticated. */
+  clerkId: text('clerk_id').unique(),
   fullName: text('full_name').notNull(),
   email: text('email').unique().notNull(),
-  walletAddress: text('wallet_address'), // Crypto wallet for payouts
+  /** Crypto wallet address for payouts. Nullable until driver connects wallet. */
+  walletAddress: text('wallet_address'),
   trustScore: integer('trust_score').default(80),
   isActive: boolean('is_active').default(true),
-  // GPS location for proximity-based driver matching
+  /** GPS latitude coordinate. Nullable when driver is offline. */
   currentLat: numeric('current_lat', { precision: 10, scale: 7 }),
+  /** GPS longitude coordinate. Nullable when driver is offline. */
   currentLng: numeric('current_lng', { precision: 10, scale: 7 }),
   createdAt: timestamp('created_at').defaultNow(),
+  /** Last time driver was online. Nullable for new drivers. */
   lastOnline: timestamp('last_online'),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => {
@@ -387,29 +407,37 @@ export const orders = pgTable('orders', {
   userId: uuid('user_id').references(() => users.id),
   driverId: uuid('driver_id').references(() => drivers.id),
   storeId: uuid('store_id').references(() => restaurants.id),
-  status: text('status').notNull().default('pending'), // pending, matched, preparing, pickup, transit, delivered, cancelled
-  // Crypto-safe numeric fields: stores raw token amounts as strings (Wei for ETH, smallest unit for other tokens)
-  // numeric(78, 0) supports up to 78 digits - sufficient for any token's smallest unit (e.g., 10^77 Wei)
-  subtotal: numeric('subtotal', { precision: 78, scale: 0 }).notNull().default('0'), // Price of food/items in token smallest unit
-  tip: numeric('tip', { precision: 78, scale: 0 }).notNull().default('0'), // Driver incentive in token smallest unit
-  total: numeric('total', { precision: 78, scale: 0 }).notNull().default('0'), // subtotal + tip in token smallest unit
+  /** Order status lifecycle. Nullable to allow draft orders. */
+  status: text('status').notNull().default('pending'),
+  subtotal: numeric('subtotal', { precision: 78, scale: 0 }).notNull().default('0'),
+  tip: numeric('tip', { precision: 78, scale: 0 }).notNull().default('0'),
+  total: numeric('total', { precision: 78, scale: 0 }).notNull().default('0'),
   deliveryAddress: text('delivery_address').notNull(),
+  /** Pickup address for the order. Nullable for delivery-only orders. */
   pickupAddress: text('pickup_address'),
+  /** Special instructions from customer. Nullable for standard orders. */
   specialInstructions: text('special_instructions'),
-  priority: text('priority').default('standard'), // standard, express, urgent
-  // Web3 payment tracking
-  paymentTxHash: text('payment_tx_hash').unique(), // On-chain transaction hash
-  walletAddress: text('wallet_address'), // User's wallet address
-  paymentCurrency: text('payment_currency').default('USDC'), // Token symbol (USDC, ETH, etc.)
+  priority: text('priority').default('standard'),
+  /** On-chain transaction hash for payment. Nullable until payment is confirmed. */
+  paymentTxHash: text('payment_tx_hash').unique(),
+  /** User's wallet address. Nullable for non-crypto payments. */
+  walletAddress: text('wallet_address'),
+  paymentCurrency: text('payment_currency').default('USDC'),
+  /** When order was matched to a driver. Nullable until driver accepts. */
   matchedAt: timestamp('matched_at'),
+  /** When order was picked up. Nullable until driver arrives. */
   pickedUpAt: timestamp('picked_up_at'),
+  /** When order was delivered. Nullable until delivery complete. */
   deliveredAt: timestamp('delivered_at'),
+  /** When order was cancelled. Nullable for active orders. */
   cancelledAt: timestamp('cancelled_at'),
+  /** Reason for cancellation. Nullable for non-cancelled orders. */
   cancellationReason: text('cancellation_reason'),
-  // Non-custodial escrow tracking (replaces legacy payoutStatus)
-  escrowStatus: text('escrow_status').default('locked'), // locked, releasing, released, refunded, completed, failed
-  payoutProcessedAt: timestamp('payout_processed_at'), // When escrow action was processed
-  payoutTxHash: text('payout_tx_hash'), // On-chain tx hash for escrow release (tip to driver)
+  escrowStatus: text('escrow_status').default('locked'),
+  /** When escrow payout was processed. Nullable until escrow release. */
+  payoutProcessedAt: timestamp('payout_processed_at'),
+  /** On-chain tx hash for escrow release. Nullable until payout complete. */
+  payoutTxHash: text('payout_tx_hash'),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => {

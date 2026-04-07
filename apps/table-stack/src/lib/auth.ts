@@ -77,9 +77,12 @@ export async function validateRequest(req: NextRequest): Promise<{
     }
 
     // Fallback: HS256 service token (migration period only)
+    // @deprecated HS256 verification is deprecated and will be removed in a future release.
+    // Please migrate to RS256 asymmetric JWTs (verifyAsymmetricJWT) for all new services.
+    // See README.md for migration instructions.
     const payload = await verifyServiceToken(token);
     if (payload) {
-      logger.info(`Service token (HS256 migration fallback) verified for service=${(payload as any).service}`);
+      logger.warn(`[DEPRECATED] HS256 service token verified for service=${(payload as any).service}. Please migrate to RS256.`);
       return {
         context: {
           isInternal: true,

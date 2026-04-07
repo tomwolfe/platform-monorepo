@@ -122,7 +122,7 @@ function createMockToolExecutor() {
 // Canonical flow: User wants to book a restaurant table
 // ============================================================================
 
-describe.skip("Golden Path - Restaurant Booking", () => {
+describe("Golden Path - Restaurant Booking", () => {
   beforeEach(async () => {
     // Clean up Redis before each test
     const keys = await redis.keys("execution:*");

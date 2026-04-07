@@ -116,7 +116,7 @@ const mockProps = {
   onCancel: vi.fn(),
 };
 
-describe.skip("CryptoCheckout Integration", () => {
+describe("CryptoCheckout Integration", () => {
   beforeEach(() => {
     // Don't clear all mocks - we need to preserve Web3Provider
     vi.restoreAllMocks();
@@ -127,10 +127,10 @@ describe.skip("CryptoCheckout Integration", () => {
       wrapper: createTestWrapper(),
     });
 
-    expect(() => screen.getByText("Crypto Payment")).not.toThrow();
-    expect(() => screen.getByText("$25.00")).not.toThrow(); // Subtotal
-    expect(() => screen.getByText("$5.00")).not.toThrow(); // Tip
-    expect(() => screen.getByText("$30.00")).not.toThrow(); // Total
+    expect(screen.getByText("Crypto Payment")).toBeInTheDocument();
+    expect(screen.getByText("$25.00")).toBeInTheDocument(); // Subtotal
+    expect(screen.getByText("$5.00")).toBeInTheDocument(); // Tip
+    expect(screen.getByText("$30.00")).toBeInTheDocument(); // Total
   });
 
   it("should show USDC equivalent amounts", () => {
@@ -138,9 +138,9 @@ describe.skip("CryptoCheckout Integration", () => {
       wrapper: createTestWrapper(),
     });
 
-    expect(() => screen.getByText("25000000 USDC")).not.toThrow();
-    expect(() => screen.getByText("5000000 USDC")).not.toThrow();
-    expect(() => screen.getByText("≈ 30000000 USDC")).not.toThrow();
+    expect(screen.getByText("25000000 USDC")).toBeInTheDocument();
+    expect(screen.getByText("5000000 USDC")).toBeInTheDocument();
+    expect(screen.getByText("≈ 30000000 USDC")).toBeInTheDocument();
   });
 
   it("should display wallet balance", () => {
@@ -148,8 +148,8 @@ describe.skip("CryptoCheckout Integration", () => {
       wrapper: createTestWrapper(),
     });
 
-    expect(() => screen.getByText("Wallet Balance")).not.toThrow();
-    expect(() => screen.getByText("1.0000 ETH")).not.toThrow();
+    expect(screen.getByText("Wallet Balance")).toBeInTheDocument();
+    expect(screen.getByText("1.0000 ETH")).toBeInTheDocument();
   });
 
   it("should show sufficient balance indicator when balance > total", () => {
@@ -247,7 +247,7 @@ describe.skip("CryptoCheckout Integration", () => {
       wrapper: createTestWrapper(),
     });
 
-    expect(() => screen.getByText("Secure On-Chain Payment")).not.toThrow();
+    expect(screen.getByText("Secure On-Chain Payment")).toBeInTheDocument();
   });
 
   it("should display payment flow steps", () => {
@@ -256,7 +256,7 @@ describe.skip("CryptoCheckout Integration", () => {
     });
 
     // Initial state should show review step
-    expect(() => screen.getByText("Pay with Crypto")).not.toThrow();
+    expect(screen.getByText("Pay with Crypto")).toBeInTheDocument();
   });
 
   it("should call onCancel when user cancels", () => {
@@ -271,7 +271,7 @@ describe.skip("CryptoCheckout Integration", () => {
   });
 });
 
-describe.skip("CryptoCheckout Edge Cases", () => {
+describe("CryptoCheckout Edge Cases", () => {
   it("should handle empty cart gracefully", () => {
     const emptyCartProps = {
       cart: [],
@@ -300,7 +300,7 @@ describe.skip("CryptoCheckout Edge Cases", () => {
       wrapper: createTestWrapper(),
     });
 
-    expect(() => screen.getByText("$0.00")).not.toThrow();
+    expect(screen.getByText("$0.00")).toBeInTheDocument();
   });
 
   it("should handle very large amounts", () => {
@@ -315,6 +315,6 @@ describe.skip("CryptoCheckout Edge Cases", () => {
     });
 
     // Should not crash with large numbers
-    expect(() => screen.getByText("Crypto Payment")).not.toThrow();
+    expect(screen.getByText("Crypto Payment")).toBeInTheDocument();
   });
 });

@@ -192,7 +192,7 @@ export class MCPClient {
               );
 
               // Trigger circuit breaker to open if reconnection fails
-              this.circuitBreaker.recordFailure();
+              await this.circuitBreaker.recordFailure();
               throw new CircuitBreakerError(
                 `Service Degraded: ${name} connection lost and reconnection failed`,
                 CircuitState.OPEN
@@ -218,7 +218,7 @@ export class MCPClient {
             }).catch(err => console.error('Failed to publish ServiceDegraded event:', err));
 
             // Trigger circuit breaker to open
-            this.circuitBreaker.recordFailure();
+            await this.circuitBreaker.recordFailure();
 
             throw new CircuitBreakerError(`Service Degraded: ${name} timed out`, CircuitState.CLOSED);
           }

@@ -1,4 +1,4 @@
-import { RealtimeService } from "@repo/shared";
+import { RealtimeService, getRedisClient, ServiceNamespace } from "@repo/shared";
 import { createTypedSystemEvent, type CircuitBreakerEventPayload } from "@repo/mcp-protocol";
 import { LRUCache } from "lru-cache";
 
@@ -70,16 +70,21 @@ export class CircuitBreaker {
   private state: CircuitState = CircuitState.CLOSED;
   private failureCount = 0;
   private successCount = 0;
-  private failureTimestamps: number[] = [];
+  private failureTimestamps: number[] = []; // In-memory mirror for fast reads
   private lastFailureTime?: number;
   private lastStateChangeTime: number = Date.now();
   private stateChangeListeners: ((event: CircuitBreakerEvent) => void)[] = [];
-  
+
   private config: CircuitBreakerConfig;
   private traceId?: string;
 
+  // Redis-backed sliding window (serverless-safe)
+  private redisKey?: string;
+  private redis = getRedisClient(ServiceNamespace.SHARED);
+
   constructor(config: Partial<CircuitBreakerConfig> = {}) {
     this.config = { ...DEFAULT_CIRCUIT_BREAKER_CONFIG, ...config };
+    this.redisKey = `circuitbreaker:failures:${this.config.serviceName}:${this.config.serverUrl}`;
   }
 
   /**
@@ -92,7 +97,7 @@ export class CircuitBreaker {
   /**
    * Get current circuit state
    */
-  getState(): CircuitState {
+  async getState(): Promise<CircuitState> {
     // Check if we should transition from OPEN to HALF_OPEN
     if (this.state === CircuitState.OPEN) {
       const timeSinceLastFailure = Date.now() - (this.lastFailureTime || 0);
@@ -113,8 +118,8 @@ export class CircuitBreaker {
   /**
    * Manually record a failure (for external timeout handling)
    */
-  recordFailure(): void {
-    this.onFailure(new Error("External failure recorded"));
+  async recordFailure(): Promise<void> {
+    await this.onFailure(new Error("External failure recorded"));
   }
 
   /**
@@ -122,7 +127,7 @@ export class CircuitBreaker {
    */
   getStatus() {
     return {
-      state: this.getState(),
+      state: this.state,
       failureCount: this.failureCount,
       successCount: this.successCount,
       failureWindowMs: this.config.failureWindowMs,
@@ -140,7 +145,7 @@ export class CircuitBreaker {
    * Supports AbortSignal for cancellation propagation.
    */
   async execute<T>(fn: (signal?: AbortSignal) => Promise<T>): Promise<T> {
-    const currentState = this.getState();
+    const currentState = await this.getState();
 
     if (currentState === CircuitState.OPEN) {
       const retryAfter = this.config.recoveryTimeoutMs - (Date.now() - (this.lastFailureTime || 0));
@@ -159,10 +164,10 @@ export class CircuitBreaker {
 
     try {
       const result = await fn();
-      this.onSuccess();
+      await this.onSuccess();
       return result;
     } catch (error) {
-      this.onFailure(error);
+      await this.onFailure(error);
       throw error;
     }
   }
@@ -170,9 +175,9 @@ export class CircuitBreaker {
   /**
    * Record a successful execution
    */
-  private onSuccess(): void {
+  private async onSuccess(): Promise<void> {
     const previousState = this.state;
-    
+
     if (this.state === CircuitState.HALF_OPEN) {
       this.successCount++;
       if (this.successCount >= this.config.successThreshold) {
@@ -182,29 +187,54 @@ export class CircuitBreaker {
       // Reset failure count on success in CLOSED state
       this.failureCount = 0;
       this.failureTimestamps = [];
+      // Also clear Redis sorted set
+      if (this.redisKey) {
+        await this.redis.del(this.redisKey).catch(() => {});
+      }
     }
   }
 
   /**
-   * Record a failed execution
+   * Record a failed execution using Redis Sorted Sets for serverless-safe sliding window
    */
-  private onFailure(error: unknown): void {
+  private async onFailure(error: unknown): Promise<void> {
     const now = Date.now();
     this.lastFailureTime = now;
-    
-    // Add to sliding window
+
+    // Add to in-memory mirror
     this.failureTimestamps.push(now);
-    
-    // Remove failures outside the window
+
+    // Add to Redis sorted set with timestamp as score
+    if (this.redisKey) {
+      try {
+        await this.redis.zadd(this.redisKey, { score: now, value: `${now}:${Math.random()}` });
+      } catch (err) {
+        console.warn("[CircuitBreaker] Failed to add failure to Redis:", err);
+      }
+    }
+
+    // Remove failures outside the window from Redis
     const windowStart = now - this.config.failureWindowMs;
-    this.failureTimestamps = this.failureTimestamps.filter(
-      (ts) => ts > windowStart
-    );
-    
-    this.failureCount = this.failureTimestamps.length;
+    if (this.redisKey) {
+      try {
+        await this.redis.zremrangebyscore(this.redisKey, 0, windowStart);
+        // Get accurate count from Redis
+        const redisCount = await this.redis.zcard(this.redisKey);
+        this.failureCount = redisCount;
+      } catch (err) {
+        console.warn("[CircuitBreaker] Failed to update Redis sorted set:", err);
+        // Fallback to in-memory count
+        this.failureTimestamps = this.failureTimestamps.filter(ts => ts > windowStart);
+        this.failureCount = this.failureTimestamps.length;
+      }
+    } else {
+      // Fallback if no redisKey
+      this.failureTimestamps = this.failureTimestamps.filter(ts => ts > windowStart);
+      this.failureCount = this.failureTimestamps.length;
+    }
 
     // Check if we should open the circuit
-    if (this.state === CircuitState.CLOSED && 
+    if (this.state === CircuitState.CLOSED &&
         this.failureCount >= this.config.failureThreshold) {
       this.transitionState(
         CircuitState.OPEN,
@@ -216,12 +246,16 @@ export class CircuitBreaker {
   /**
    * Manually reset the circuit breaker
    */
-  reset(): void {
+  async reset(): Promise<void> {
     this.transitionState(CircuitState.CLOSED, "Manual reset");
     this.failureCount = 0;
     this.successCount = 0;
     this.failureTimestamps = [];
     this.lastFailureTime = undefined;
+    // Clear Redis sorted set
+    if (this.redisKey) {
+      await this.redis.del(this.redisKey).catch(() => {});
+    }
   }
 
   /**
@@ -235,7 +269,7 @@ export class CircuitBreaker {
    * Force circuit to close (for testing or manual intervention)
    */
   forceClose(): void {
-    this.reset();
+    this.reset().catch(() => {});
   }
 
   /**
@@ -260,13 +294,17 @@ export class CircuitBreaker {
     const previousState = this.state;
     this.state = newState;
     this.lastStateChangeTime = Date.now();
-    
+
     if (newState === CircuitState.HALF_OPEN) {
       this.successCount = 0;
     } else if (newState === CircuitState.CLOSED) {
       this.successCount = 0;
       this.failureCount = 0;
       this.failureTimestamps = [];
+      // Clear Redis sorted set on close
+      if (this.redisKey) {
+        this.redis.del(this.redisKey).catch(() => {});
+      }
     }
 
     const event: CircuitBreakerEvent = {
@@ -391,10 +429,9 @@ export class CircuitBreakerRegistry {
   /**
    * Reset all circuit breakers
    */
-  resetAll(): void {
-    for (const breaker of this.breakers.values()) {
-      breaker.reset();
-    }
+  async resetAll(): Promise<void> {
+    const promises = Array.from(this.breakers.values()).map(breaker => breaker.reset());
+    await Promise.all(promises);
   }
 }
 

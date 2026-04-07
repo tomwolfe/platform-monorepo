@@ -231,7 +231,7 @@ function setupMockClient() {
 // UNIT TESTS
 // ============================================================================
 
-describe.skip('Web3 Verification', () => {
+describe('Web3 Verification', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     lastMockClient = null;

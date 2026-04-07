@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb, orders, orderItems, restaurants, drivers, eq, sql, and } from "@repo/database";
-import { parseEther, type Address } from 'viem';
+import { parseEther, formatEther, type Address } from 'viem';
 import { base } from 'viem/chains';
 import { ESCROW_ABI } from '@repo/shared/utils/escrow-abi';
 import { withCronAuth, Logger } from '@repo/shared';
 import { getEscrowResolverWalletClient, getPublicClient, getEscrowResolverAddress } from '@repo/shared/utils/wallet-provider';
+import { usdToCryptoBigInt } from '@repo/shared/utils/crypto-price';
 
 const logger = new Logger({ serviceName: 'payout-cron' });
 
@@ -202,12 +203,16 @@ async function getCronHandler(req: NextRequest) {
         // ============================================================================
         // GAS MONITORING: Check resolver wallet has sufficient gas before executing
         // Prevents silent failures from depleted resolver wallet
+        // Dynamically calculate minimum balance based on current ETH price ($15 USD equivalent)
         // ============================================================================
-        const MIN_RESOLVER_BALANCE_ETH = 0.005; // Minimum 0.005 ETH (~$15 at $3k/ETH)
 
         const publicClient = await getPublicClient(base.id);
 
         try {
+          // Calculate $15.00 USD in ETH (as wei)
+          const minBalanceWei = await usdToCryptoBigInt(1500n, "ETH");
+          const minBalanceEth = parseFloat(formatEther(minBalanceWei));
+
           const resolverBalance = await publicClient.getBalance({ address: resolverAccount.address });
           const balanceInEth = Number(resolverBalance) / Number(parseEther('1'));
 
@@ -215,14 +220,15 @@ async function getCronHandler(req: NextRequest) {
             message: 'Resolver wallet balance check',
             address: resolverAccount.address,
             balanceEth: balanceInEth,
+            minBalanceEth: minBalanceEth,
           });
 
-          if (balanceInEth < MIN_RESOLVER_BALANCE_ETH) {
+          if (balanceInEth < minBalanceEth) {
             logger.error({
               message: 'CRITICAL: Resolver wallet balance below minimum, aborting tip releases',
               address: resolverAccount.address,
               currentBalance: balanceInEth,
-              minimumBalance: MIN_RESOLVER_BALANCE_ETH,
+              minimumBalance: minBalanceEth,
               pendingPayouts: driverPayouts.length,
             });
 
@@ -235,7 +241,7 @@ async function getCronHandler(req: NextRequest) {
                 details: {
                   address: resolverAccount.address,
                   currentBalance: `${balanceInEth.toFixed(6)} ETH`,
-                  minimumBalance: `${MIN_RESOLVER_BALANCE_ETH} ETH`,
+                  minimumBalance: `${minBalanceEth.toFixed(6)} ETH`,
                   pendingPayouts: driverPayouts.length,
                   action: 'Fund resolver wallet immediately to resume tip releases',
                 },
@@ -250,10 +256,10 @@ async function getCronHandler(req: NextRequest) {
             return NextResponse.json({
               success: false,
               error: 'Resolver wallet insufficient gas',
-              message: `Resolver wallet has ${balanceInEth.toFixed(6)} ETH (minimum: ${MIN_RESOLVER_BALANCE_ETH} ETH). Fund wallet before retrying.`,
+              message: `Resolver wallet has ${balanceInEth.toFixed(6)} ETH (minimum: ${minBalanceEth.toFixed(6)} ETH). Fund wallet before retrying.`,
               resolverAddress: resolverAccount.address,
               currentBalance: `${balanceInEth.toFixed(6)} ETH`,
-              minimumBalance: `${MIN_RESOLVER_BALANCE_ETH} ETH`,
+              minimumBalance: `${minBalanceEth.toFixed(6)} ETH`,
               pendingPayouts: driverPayouts.length,
               timestamp: new Date().toISOString(),
             }, { status: 503 });

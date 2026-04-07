@@ -12,26 +12,19 @@ import { getMcpClients } from "@/lib/mcp-client";
 import { ToolDefinition } from "@/lib/engine/types";
 import { TOOLS, listTools } from "@/lib/tools/registry";
 import { ToolDefinitionSchema } from "@repo/shared/types/tool";
-import { Logger } from "@repo/shared";
+import { Logger, getRedisClient, ServiceNamespace } from "@repo/shared";
 
 const logger = new Logger({ serviceName: "intention-engine" });
 
 // ============================================================================
-// DISCOVERED TOOL CACHE
-// Cache MCP tools to avoid repeated discovery calls
+// DISCOVERED TOOL CACHE (Redis-backed for serverless compatibility)
+// Cache MCP tools in Redis to survive cold starts across the fleet
 // ============================================================================
 
-interface DiscoveredToolCache {
-  tools: Map<string, ToolDefinition>;
-  discoveredAt: number;
-  ttlMs: number;
-}
+const DISCOVERY_CACHE_KEY = "mcp:discovery:cache";
+const DISCOVERY_CACHE_TTL_SECONDS = 86400; // 24 hours
 
-const DISCOVERY_CACHE: DiscoveredToolCache = {
-  tools: new Map(),
-  discoveredAt: 0,
-  ttlMs: 24 * 60 * 60 * 1000, // 24 hours cache - tools don't change unless code is deployed
-};
+const redis = getRedisClient(ServiceNamespace.SHARED);
 
 // ============================================================================
 // DISCOVERY RESULT
@@ -60,19 +53,29 @@ export async function discoverMcpTools(
   const startTime = Date.now();
   const { useCache = true, timeoutMs = 5000 } = options;
 
-  // Check cache
-  if (useCache && !isCacheExpired()) {
-    logger.info({
-      message: "[MCP Discovery] Using cached tools",
-    });
-    const cachedTools = Array.from(DISCOVERY_CACHE.tools.values());
-    return {
-      localTools: listTools(),
-      discoveredTools: cachedTools,
-      allTools: [...listTools(), ...cachedTools],
-      discoveryLatencyMs: 0,
-      fromCache: true,
-    };
+  // Check Redis cache first
+  if (useCache) {
+    try {
+      const cachedJson = await redis.get(DISCOVERY_CACHE_KEY);
+      if (cachedJson) {
+        const cachedTools = JSON.parse(cachedJson) as ToolDefinition[];
+        logger.info({
+          message: "[MCP Discovery] Using cached tools from Redis",
+        });
+        return {
+          localTools: listTools(),
+          discoveredTools: cachedTools,
+          allTools: [...listTools(), ...cachedTools],
+          discoveryLatencyMs: 0,
+          fromCache: true,
+        };
+      }
+    } catch (error) {
+      logger.warn({
+        message: "[MCP Discovery] Redis cache read failed, falling through to discovery",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   const { manager } = await getMcpClients();
@@ -130,9 +133,16 @@ export async function discoverMcpTools(
     }
   }
 
-  // Update cache
-  DISCOVERY_CACHE.tools = new Map(discoveredTools.map(t => [t.name, t]));
-  DISCOVERY_CACHE.discoveredAt = Date.now();
+  // Update Redis cache
+  try {
+    const cachePayload = JSON.stringify(discoveredTools);
+    await redis.set(DISCOVERY_CACHE_KEY, cachePayload, { ex: DISCOVERY_CACHE_TTL_SECONDS });
+  } catch (error) {
+    logger.warn({
+      message: "[MCP Discovery] Redis cache write failed",
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 
   const allTools = [...listTools(), ...discoveredTools];
 
@@ -268,10 +278,21 @@ export async function getToolByName(name: string): Promise<ToolDefinition | unde
     return localTool;
   }
 
-  // Check discovered tools cache
-  const discoveredTool = DISCOVERY_CACHE.tools.get(name);
-  if (discoveredTool) {
-    return discoveredTool;
+  // Check Redis cache for discovered tools
+  try {
+    const cachedJson = await redis.get(DISCOVERY_CACHE_KEY);
+    if (cachedJson) {
+      const cachedTools = JSON.parse(cachedJson) as ToolDefinition[];
+      const discoveredTool = cachedTools.find(t => t.name === name);
+      if (discoveredTool) {
+        return discoveredTool;
+      }
+    }
+  } catch (error) {
+    logger.warn({
+      message: "[MCP Discovery] Redis cache read failed in getToolByName",
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   // Force discovery if not in cache
@@ -283,27 +304,26 @@ export async function getToolByName(name: string): Promise<ToolDefinition | unde
 // HELPER FUNCTIONS
 // ============================================================================
 
-function isCacheExpired(): boolean {
-  return Date.now() - DISCOVERY_CACHE.discoveredAt > DISCOVERY_CACHE.ttlMs;
-}
-
-export function clearDiscoveryCache(): void {
-  DISCOVERY_CACHE.tools.clear();
-  DISCOVERY_CACHE.discoveredAt = 0;
+export async function clearDiscoveryCache(): Promise<void> {
+  await redis.del(DISCOVERY_CACHE_KEY);
   logger.info({
-    message: "[MCP Discovery] Cache cleared",
+    message: "[MCP Discovery] Cache cleared in Redis",
   });
 }
 
-export function getDiscoveryCacheStatus(): {
+export async function getDiscoveryCacheStatus(): Promise<{
   toolCount: number;
-  ageMs: number;
-  isExpired: boolean;
-} {
-  const age = Date.now() - DISCOVERY_CACHE.discoveredAt;
-  return {
-    toolCount: DISCOVERY_CACHE.tools.size,
-    ageMs: age,
-    isExpired: age > DISCOVERY_CACHE.ttlMs,
-  };
+  ageSeconds: number | null;
+  exists: boolean;
+}> {
+  try {
+    const cachedJson = await redis.get(DISCOVERY_CACHE_KEY);
+    if (!cachedJson) {
+      return { toolCount: 0, ageSeconds: null, exists: false };
+    }
+    const cachedTools = JSON.parse(cachedJson) as ToolDefinition[];
+    return { toolCount: cachedTools.length, ageSeconds: DISCOVERY_CACHE_TTL_SECONDS, exists: true };
+  } catch {
+    return { toolCount: 0, ageSeconds: null, exists: false };
+  }
 }

@@ -188,6 +188,8 @@ export class AtomicStateRebaser<T extends { version?: number }> {
   private async loadState(): Promise<T | null> {
     const data = await this.redis.get<string>(this.key);
     if (!data) return null;
+    // Handle both raw string (production Redis) and pre-parsed objects (test mocks)
+    if (typeof data === 'object') return data as T;
     return JSON.parse(data) as T;
   }
 

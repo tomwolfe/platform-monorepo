@@ -46,17 +46,10 @@ vi.mock('@repo/shared', async () => {
     QStashService: {
       triggerNextStep: vi.fn().mockResolvedValue('qstash-msg-id'),
     },
-    createFailoverPolicyEngine: vi.fn().mockReturnValue({
-      shouldFailover: vi.fn().mockReturnValue(false),
-      getFailoverAction: vi.fn().mockReturnValue(null),
-    }),
-    getLLMFailureTriageService: vi.fn().mockReturnValue({
-      analyzeFailure: vi.fn().mockResolvedValue({ recoverable: false }),
-    }),
   };
 });
 
-describe.skip('Chaos Engineering - Failure Modes', () => {
+describe('Chaos Engineering - Failure Modes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -136,7 +129,7 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       const initialState = createInitialState(executionId);
       const plan: Plan = {
         id: randomUUID(),
-        intent_id: randomUUID(),
+        intent_id: `intent-${Date.now()}`,
         summary: 'Chaos test plan',
         constraints: {
           max_steps: 100,
@@ -152,7 +145,7 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
         },
         steps: [
           {
-            id: randomUUID(),
+            id: 'step-1',
             step_number: 0,
             tool_name: 'flaky_tool',
             description: 'Tool that throws',
@@ -193,7 +186,7 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       const initialState = createInitialState(executionId);
       const plan: Plan = {
         id: randomUUID(),
-        intent_id: randomUUID(),
+        intent_id: `intent-${Date.now()}`,
         summary: 'Chaos test plan',
         constraints: {
           max_steps: 100,
@@ -209,7 +202,7 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
         },
         steps: [
           {
-            id: randomUUID(),
+            id: 'step-1',
             step_number: 0,
             tool_name: 'book_restaurant_table',
             description: 'Tool with invalid output',
@@ -279,7 +272,7 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       const initialState = createInitialState(executionId);
       const plan: Plan = {
         id: randomUUID(),
-        intent_id: randomUUID(),
+        intent_id: `intent-${Date.now()}`,
         summary: 'Chaos test plan',
         constraints: {
           max_steps: 100,
@@ -295,7 +288,7 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
         },
         steps: [
           {
-            id: randomUUID(),
+            id: 'step-1',
             step_number: 0,
             tool_name: 'book_ride',
             description: 'Book ride',
@@ -305,12 +298,12 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
             timeout_ms: 8500,
           },
           {
-            id: randomUUID(),
+            id: 'step-2',
             step_number: 1,
             tool_name: 'book_restaurant_table',
             description: 'Book table',
             parameters: { restaurantId: 'test' },
-            dependencies: [],
+            dependencies: ['step-1'],
             requires_confirmation: false,
             timeout_ms: 8500,
           },
@@ -375,7 +368,7 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       const initialState = createInitialState(executionId);
       const plan: Plan = {
         id: randomUUID(),
-        intent_id: randomUUID(),
+        intent_id: `intent-${Date.now()}`,
         summary: 'Chaos test plan',
         constraints: {
           max_steps: 100,
@@ -390,9 +383,9 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
           estimated_latency_ms: 5000,
         },
         steps: [
-          { id: randomUUID(), step_number: 0, tool_name: 'book_ride', description: 'Book ride', parameters: {}, dependencies: [], requires_confirmation: false, timeout_ms: 8500 },
-          { id: randomUUID(), step_number: 1, tool_name: 'book_hotel', description: 'Book hotel', parameters: {}, dependencies: [], requires_confirmation: false, timeout_ms: 8500 },
-          { id: randomUUID(), step_number: 2, tool_name: 'book_restaurant', description: 'Book restaurant', parameters: {}, dependencies: [], requires_confirmation: false, timeout_ms: 8500 },
+          { id: 'step-1', step_number: 0, tool_name: 'book_ride', description: 'Book ride', parameters: {}, dependencies: [], requires_confirmation: false, timeout_ms: 8500 },
+          { id: 'step-2', step_number: 1, tool_name: 'book_hotel', description: 'Book hotel', parameters: {}, dependencies: [], requires_confirmation: false, timeout_ms: 8500 },
+          { id: 'step-3', step_number: 2, tool_name: 'book_restaurant', description: 'Book restaurant', parameters: {}, dependencies: ['step-1', 'step-2'], requires_confirmation: false, timeout_ms: 8500 },
         ],
       };
 
@@ -438,7 +431,7 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       const initialState = createInitialState(executionId);
       const plan: Plan = {
         id: randomUUID(),
-        intent_id: randomUUID(),
+        intent_id: `intent-${Date.now()}`,
         summary: 'Chaos test plan',
         constraints: {
           max_steps: 100,
@@ -454,7 +447,7 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
         },
         steps: [
           {
-            id: randomUUID(),
+            id: 'step-1',
             step_number: 0,
             tool_name: 'test_tool',
             description: 'Test tool',
@@ -517,15 +510,11 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       };
 
       const initialState = createInitialState(executionId);
-
-      // Create plan with CIRCULAR dependencies (A depends on B, B depends on A)
-      // Note: With UUID validation, this will fail at the schema level
-      const stepAId = randomUUID();
-      const stepBId = randomUUID();
       
+      // Create plan with CIRCULAR dependencies (A depends on B, B depends on A)
       const plan: Plan = {
         id: randomUUID(),
-        intent_id: randomUUID(),
+        intent_id: `intent-${Date.now()}`,
         summary: 'Circular dependency test',
         constraints: {
           max_steps: 100,
@@ -541,48 +530,41 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
         },
         steps: [
           {
-            id: stepAId,
+            id: 'step-a',
             step_number: 0,
             tool_name: 'tool_a',
             description: 'Tool A',
             parameters: {},
-            dependencies: [stepBId], // A depends on B (circular - B has higher step_number)
+            dependencies: ['step-b'], // A depends on B
             requires_confirmation: false,
             timeout_ms: 8500,
           },
           {
-            id: stepBId,
+            id: 'step-b',
             step_number: 1,
             tool_name: 'tool_b',
             description: 'Tool B',
             parameters: {},
-            dependencies: [stepAId], // B depends on A (circular!)
+            dependencies: ['step-a'], // B depends on A (circular!)
             requires_confirmation: false,
             timeout_ms: 8500,
           },
         ],
       };
 
-      let state: ExecutionState;
-      try {
-        state = setPlan(initialState, plan);
-        // If we get here, the plan passed validation (shouldn't happen with circular deps)
-        await saveExecutionState(state);
-        
-        const machine = new WorkflowMachine(executionId, executor, {
-          initialState: state,
-        });
+      let state = setPlan(initialState, plan);
+      await saveExecutionState(state);
 
-        const result = await machine.execute();
-        
-        // If plan somehow passed validation, it should fail during execution
-        expect(result.success).toBe(false);
-        expect(result.error).toBeDefined();
-      } catch (error: any) {
-        // Should fail at schema level due to circular dependency
-        expect(error).toBeDefined();
-        expect(error.message).toContain('circular') || expect(error.message).toContain('DAG');
-      }
+      const machine = new WorkflowMachine(executionId, executor, {
+        initialState: state,
+      });
+
+      const result = await machine.execute();
+
+      // Should detect deadlock and fail gracefully
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+      expect(result.error?.code).toBe('PLAN_CIRCULAR_DEPENDENCY');
     });
   });
 
@@ -603,7 +585,7 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       // Create plan with 100 steps
       const plan: Plan = {
         id: randomUUID(),
-        intent_id: randomUUID(),
+        intent_id: `intent-${Date.now()}`,
         summary: '100 step plan',
         constraints: {
           max_steps: 100,
@@ -618,12 +600,12 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
           estimated_latency_ms: 5000,
         },
         steps: Array(100).fill(null).map((_, i) => ({
-          id: randomUUID(),
+          id: `step-${i + 1}`,
           step_number: i,
           tool_name: 'test_tool',
           description: `Step ${i + 1}`,
           parameters: { index: i },
-          dependencies: [], // No dependencies to avoid UUID reference issues
+          dependencies: i > 0 ? [`step-${i}`] : [],
           requires_confirmation: false,
           timeout_ms: 8500,
         })),
@@ -647,7 +629,7 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
   });
 });
 
-describe.skip('Chaos Engineering - Recovery Patterns', () => {
+describe('Chaos Engineering - Recovery Patterns', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -676,7 +658,7 @@ describe.skip('Chaos Engineering - Recovery Patterns', () => {
     const initialState = createInitialState(executionId);
     const plan: Plan = {
       id: randomUUID(),
-      intent_id: randomUUID(),
+      intent_id: `intent-${Date.now()}`,
       summary: 'Flaky retry test',
       constraints: {
         max_steps: 100,
@@ -692,7 +674,7 @@ describe.skip('Chaos Engineering - Recovery Patterns', () => {
       },
       steps: [
         {
-          id: randomUUID(),
+          id: 'step-1',
           step_number: 0,
           tool_name: 'flaky_tool',
           description: 'Tool that fails transiently',
@@ -728,7 +710,7 @@ describe.skip('Chaos Engineering - Recovery Patterns', () => {
     const initialState = createInitialState(executionId);
     const plan: Plan = {
       id: randomUUID(),
-      intent_id: randomUUID(),
+      intent_id: `intent-${Date.now()}`,
       summary: 'Non-recoverable error test',
       constraints: {
         max_steps: 100,
@@ -744,7 +726,7 @@ describe.skip('Chaos Engineering - Recovery Patterns', () => {
       },
       steps: [
         {
-          id: randomUUID(),
+          id: 'step-1',
           step_number: 0,
           tool_name: 'authenticated_tool',
           description: 'Tool requiring auth',

@@ -16,6 +16,7 @@ import {
   ExecutionStateSchema,
   ExecutionTraceSchema
 } from '../types/execution';
+import { getRedisClient, ServiceNamespace } from '../redis';
 
 // ============================================================================
 // MEMORY CONFIGURATION
@@ -1439,7 +1440,6 @@ let defaultMemoryClient: MemoryClient | null = null;
 
 export function getMemoryClient(namespace: string = MEMORY_CONFIG.default_namespace): MemoryClient {
   if (!defaultMemoryClient) {
-    const { getRedisClient, ServiceNamespace } = require('../redis');
     const redis = getRedisClient(ServiceNamespace.SHARED);
     defaultMemoryClient = new MemoryClient(redis, namespace);
   }

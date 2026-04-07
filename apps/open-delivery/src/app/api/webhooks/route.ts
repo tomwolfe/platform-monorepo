@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { verifySignature } from "@repo/auth";
-import { Logger } from "@repo/shared";
+import { Logger, IdempotencyService, getRedisClient, ServiceNamespace } from "@repo/shared";
+import crypto from "crypto";
 
 export const runtime = "nodejs";
 
 const logger = new Logger({ serviceName: "open-delivery-webhook" });
+const redis = getRedisClient(ServiceNamespace.SHARED);
+const idempotencyService = new IdempotencyService(redis);
 
 const HotspotEventSchema = z.object({
   event: z.string(),
@@ -30,6 +33,14 @@ export async function POST(req: NextRequest) {
     if (!signature || !timestamp || !(await verifySignature(rawBody, signature, timestamp))) {
       logger.warn({ message: "Unauthorized request blocked" });
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // IDEMPOTENCY: Generate SHA-256 hash of rawBody to prevent duplicate processing
+    const bodyHash = crypto.createHash("sha256").update(rawBody).digest("hex");
+    const isDuplicate = await idempotencyService.isDuplicate(bodyHash, "od-webhook");
+    if (isDuplicate) {
+      logger.info({ message: "Duplicate webhook detected, returning early", hash: bodyHash });
+      return NextResponse.json({ message: "Event already processed" }, { status: 200 });
     }
 
     const body = JSON.parse(rawBody);

@@ -166,7 +166,11 @@ async function postHandler(req: NextRequest) {
         // Rollback will happen automatically
         throw new ConflictError('No suitable tables available for this time and party size');
       }
-      assignedTableId = availableTable[0].id;
+      const lockedTableId = availableTable[0]?.id;
+      if (!lockedTableId) {
+        throw new ConflictError('No tables locked successfully');
+      }
+      assignedTableId = lockedTableId;
     }
 
     if (!isShadow) {

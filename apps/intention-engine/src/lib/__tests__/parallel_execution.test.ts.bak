@@ -3,7 +3,7 @@ import { executePlan, type ToolExecutor } from "../engine/unified-planner";
 import type { Plan } from "../engine/types";
 import { randomUUID } from "crypto";
 
-describe.skip("Parallel Execution", () => {
+describe("Parallel Execution", () => {
   it("should execute independent steps in parallel", async () => {
     const mockToolExecutor: ToolExecutor = {
       execute: async (name, params, timeout) => {

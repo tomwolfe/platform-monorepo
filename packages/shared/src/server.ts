@@ -19,6 +19,11 @@
  */
 
 // ============================================================================
+// RE-EXPORT ISOMORPHIC MODULES (from cleaned index.ts)
+// ============================================================================
+export * from './index';
+
+// ============================================================================
 // SANDBOXES - Node.js Worker Threads & WASM
 // ============================================================================
 export {
@@ -133,18 +138,145 @@ export function captureSentryException(error: Error, context?: Record<string, un
 }
 
 // ============================================================================
-// RE-EXPORT ALL OTHER SERVER-SIDE MODULES
-// These are safe for Node.js but may not work in Edge/Client
+// SERVER-ONLY MODULES (Node.js APIs, Redis, External Services)
 // ============================================================================
 
-// Re-export everything from main index for convenience
-// Users can import server-only modules from this single entry point
-export * from './index';
+// Phase 1: Golden Path (System Spine)
+export { openApiSpecification } from './openapi-spec';
 
-// ============================================================================
-// SERVER-ONLY MODULES
-// These modules use server-only imports and are NOT compatible with client components
-// ============================================================================
+// Phase 2: Architecture Simplification
+export * from './infrastructure/cache'; // Standardized Redis cache layer
 
-// Ably Authentication (uses @clerk/nextjs/server which imports server-only)
+// Phase 2.2: Request Caching
+export {
+  withCache,
+  generateCacheKey,
+  invalidateCache,
+  invalidateCacheByTag,
+  invalidateCacheByPattern,
+  getCacheMetrics,
+  type CacheConfig,
+  type CacheOptions,
+  type CacheMiddlewareResult,
+} from './middleware/cache-middleware';
+
+// Phase 2.3: Health Checks
+export * from './middleware/health-check';
+
+// Phase 1.2: Cron Authentication
+export {
+  withCronAuth,
+  verifyCronAuth,
+  isCronAuthenticated,
+  type CronAuthOptions,
+  type CronAuthResult,
+} from './middleware/cron-auth';
+
+// Legacy server-side exports
+export * from './redis';
+export * from './redis/memory';
+export * from './clients';
+export * from './idempotency';
+export * from './outbox';
+export * from './services';
+export * from './realtime';
+export { AppConfig } from './config';
+
+// Phase 2: Security & Hardening
+export * from './services/migration-generator';
+export * from './services/mcp-security-scanner';
+
+// Phase 3: Advanced Autonomy
+export * from './services/anomaly-detector';
+export * from './services/security-correlator';
+export * from './services/dlq-monitoring';
+export * from './services/monitoring';
+export {
+  getLLMFailureTriageService,
+  createLLMFailureTriageService,
+  LLMFailureTriageService,
+  FailureReasonSchema,
+  TriageResultSchema,
+  type FailureReason,
+  type TriageResult,
+  type TriageContext,
+  type FailureTriageService,
+} from './services/llm-failure-triage';
+export * from './services/dry-run-simulator';
+export * from './services/shadow-dry-run';
+
+// Phase 4: Perfect Grade Enhancements
+export * from './services/sequence-id';
+export type { SequenceIdEvent, OrderedEventBufferConfig } from './services/sequence-id';
+
+export * from './services/occ-rebase';
+export type { AtomicUpdateResult, AtomicUpdateOptions } from './services/occ-rebase';
+
+export * from './policies/failover-policy';
+
+export * from './services/semantic-versioning';
+
+export * from './services/repair-agent';
+export type {
+  ZombieSaga,
+  RepairAnalysis,
+  FailureType,
+  SuggestedFix,
+  RepairResult,
+} from './services/repair-agent';
+
+export * from './services/redlock';
+export type {
+  RedlockResource,
+  RedlockConfig,
+  RedlockLock,
+  ReleaseResult,
+  ExtendResult,
+  AcquireResult,
+} from './services/redlock';
+
+export * from './services/contract-testing';
+export type {
+  ToolExecutionTrace,
+  ToolContract,
+  ContractTestResult,
+} from './services/contract-testing';
+
+// Web3 / Crypto (server-side only)
+export * from './utils/crypto';
+export * from './utils/api-error';
+export * from './middleware/web3-replay-guard';
+
+// Phase 4.1: Provider Abstractions
+export * from './services/mobility-provider';
+export * from './services/communication-provider';
+
+// Schema evolution
+export { SchemaEvolutionService, getSchemaEvolutionService, createSchemaEvolutionService } from './services/schema-evolution';
+export type { AliasUsageRecord, MismatchEvent, SchemaEvolutionConfig } from './services/schema-evolution';
+export * from './services/schema-versioning';
+export * from './services/heartbeat';
+export * from './services/parameter-aliaser';
+export * from './services/autonomous-schema-evolution';
+export * from './services/qstash';
+export * from './services/qstash-webhook';
+export * from './services/vector-store';
+export * from './services/pgvector-store';
+export * from './services/semantic-vector-store-pg';
+export * from './services/outbox-listener';
+export * from './services/state-diff-viewer';
+export * from './services/serverless-pubsub-bridge';
+export * from './outbox-relay';
+
+// Circuit breaker (full server-side exports including classes)
+export {
+  CircuitBreaker,
+  CircuitBreakerRegistry,
+  CostCircuitBreaker,
+  createCircuitBreaker,
+  createCircuitBreakerRegistry,
+  createCostCircuitBreaker,
+} from './services/circuit-breaker';
+
+// Ably Authentication (uses @clerk/nextjs/server)
 export * from './realtime/ably-auth';

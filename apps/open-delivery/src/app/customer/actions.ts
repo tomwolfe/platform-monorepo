@@ -44,23 +44,22 @@ export async function getRealVendors(userLat?: number, userLng?: number): Promis
 
     // Use PostgreSQL to calculate distance and sort by proximity
     // Distance = sqrt( (lat2-lat1)^2 + (lng2-lng1)^2 )
-    // Use NULLIF to handle empty TEXT coordinates safely
-    // Filter by radius to only show nearby restaurants
+    // lat/lng are now numeric columns (precision 10, scale 7) - no casting needed
     const data = await getDb().execute(sql`
       SELECT id, name, address, slug, lat, lng,
         sqrt(
-          pow(cast(NULLIF(lat, '') as double precision) - ${userLat}, 2) +
-          pow(cast(NULLIF(lng, '') as double precision) - ${userLng}, 2)
+          pow(lat::double precision - ${userLat}::double precision, 2) +
+          pow(lng::double precision - ${userLng}::double precision, 2)
         ) as distance
       FROM restaurants
-      WHERE is_shadow = false 
+      WHERE is_shadow = false
         AND is_claimed = true
         -- Filter out restaurants with invalid coordinates
-        AND NULLIF(lat, '') IS NOT NULL
-        AND NULLIF(lng, '') IS NOT NULL
+        AND lat IS NOT NULL
+        AND lng IS NOT NULL
         -- Hard radius limit: only show restaurants within ~50 miles
-        AND cast(NULLIF(lat, '') as double precision) BETWEEN ${userLat - RADIUS_LIMIT} AND ${userLat + RADIUS_LIMIT}
-        AND cast(NULLIF(lng, '') as double precision) BETWEEN ${userLng - RADIUS_LIMIT} AND ${userLng + RADIUS_LIMIT}
+        AND lat::double precision BETWEEN ${userLat - RADIUS_LIMIT}::double precision AND ${userLat + RADIUS_LIMIT}::double precision
+        AND lng::double precision BETWEEN ${userLng - RADIUS_LIMIT}::double precision AND ${userLng + RADIUS_LIMIT}::double precision
       ORDER BY distance ASC
       LIMIT 20
     `);

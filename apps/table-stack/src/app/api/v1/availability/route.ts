@@ -7,7 +7,7 @@ import { and, eq, gte, or, sql } from '@repo/database';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
 import { validateRequest } from '@tablestack/lib/auth';
-import { formatApiError, formatApiSuccess, withApiErrorHandler, type EngineErrorCode, withCache, getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
+import { formatApiError, formatApiSuccess, withApiErrorHandler, withCache, getRedisClient, ServiceNamespace } from '@repo/shared';
 
 export const runtime = 'nodejs';
 
@@ -16,59 +16,58 @@ type RestaurantTable = typeof restaurantTables.$inferSelect;
 type RestaurantReservation = typeof restaurantReservations.$inferSelect;
 
 const redis = getRedisClient(ServiceNamespace.TS);
-const logger = new Logger({ serviceName: 'table-stack' });
 
 /**
  * GET /api/v1/availability
- * 
+ *
  * Check table availability for a given date/time and party size.
  * Results are cached for 30 seconds to reduce database load.
- * 
+ *
  * Query Parameters:
  * - restaurantId: UUID (required)
  * - date: ISO 8601 datetime (required)
  * - partySize: number (required)
- * 
+ *
  * Response:
  * - availableTables: Array of available tables
  * - suggestedSlots: Alternative time slots if unavailable
- * 
+ *
  * Caching:
  * - TTL: 30 seconds
  * - Cache Key: availability:{restaurantId}:{date}:{partySize}
  * - Tags: ['availability', 'restaurant:{id}']
  */
-export const GET = withCache(
-  async (req: NextRequest) => {
-    const { searchParams } = new URL(req.url);
-    const restaurantId = searchParams.get('restaurantId');
-    const date = searchParams.get('date');
-    const partySize = parseInt(searchParams.get('partySize') || '0');
+export const GET = withApiErrorHandler(
+  withCache(
+    async (req: NextRequest) => {
+      const { searchParams } = new URL(req.url);
+      const restaurantId = searchParams.get('restaurantId');
+      const date = searchParams.get('date');
+      const partySize = parseInt(searchParams.get('partySize') || '0');
 
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-    if (!restaurantId || restaurantId === 'undefined' || !uuidRegex.test(restaurantId) || !date || isNaN(partySize)) {
-      return NextResponse.json(formatApiError(new Error('Missing or invalid parameters'), 'VALIDATION_ERROR'), { status: 400 });
-    }
-
-    // Determine target restaurant ID
-    let targetRestaurantId: string;
-
-    const apiKey = req.headers.get('x-api-key');
-    if (apiKey) {
-      const { error, status, context } = await validateRequest(req);
-      if (error) return NextResponse.json(formatApiError(new Error(error), 'UNAUTHORIZED'), { status });
-
-      if (restaurantId !== context!.restaurantId) {
-        return NextResponse.json(formatApiError(new Error('Unauthorized access to this restaurant data'), 'FORBIDDEN'), { status: 403 });
+      if (!restaurantId || restaurantId === 'undefined' || !uuidRegex.test(restaurantId) || !date || isNaN(partySize)) {
+        return NextResponse.json(formatApiError(new Error('Missing or invalid parameters'), 'VALIDATION_ERROR'), { status: 400 });
       }
-      targetRestaurantId = context!.restaurantId;
-    } else {
-      // If no API key, we allow public availability checks for a specific restaurant
-      targetRestaurantId = restaurantId;
-    }
 
-    try {
+      // Determine target restaurant ID
+      let targetRestaurantId: string;
+
+      const apiKey = req.headers.get('x-api-key');
+      if (apiKey) {
+        const { error, status, context } = await validateRequest(req);
+        if (error) return NextResponse.json(formatApiError(new Error(error), 'UNAUTHORIZED'), { status });
+
+        if (restaurantId !== context!.restaurantId) {
+          return NextResponse.json(formatApiError(new Error('Unauthorized access to this restaurant data'), 'FORBIDDEN'), { status: 403 });
+        }
+        targetRestaurantId = context!.restaurantId;
+      } else {
+        // If no API key, we allow public availability checks for a specific restaurant
+        targetRestaurantId = restaurantId;
+      }
+
       const restaurant = await getDb().query.restaurants.findFirst({
         where: eq(restaurants.id, targetRestaurantId),
       });
@@ -126,26 +125,21 @@ export const GET = withCache(
         availableTables,
         suggestedSlots: suggestedSlots.length > 0 ? suggestedSlots : undefined,
       }));
-    } catch (error) {
-      logger.error('Availability check failed', { error: error instanceof Error ? error.message : String(error) });
-      const errorCode: EngineErrorCode = 'DATABASE_ERROR';
-      return NextResponse.json(formatApiError(error, errorCode), { status: 500 });
-    }
-  },
-  {
-    ttl: 30, // 30 second cache for availability
-    tags: ['availability'],
-    keyPrefix: 'availability',
-    generateKey: (req: NextRequest) => {
-      const { searchParams } = new URL(req.url);
-      const restaurantId = searchParams.get('restaurantId');
-      const date = searchParams.get('date');
-      const partySize = searchParams.get('partySize');
-      return `availability:${restaurantId}:${date}:${partySize}`;
     },
-    // Note: skip cache for authenticated requests (they might need real-time data)
-    // This is handled by the handler itself
-  }
+    {
+      ttl: 30, // 30 second cache for availability
+      tags: ['availability'],
+      keyPrefix: 'availability',
+      generateKey: (req: NextRequest) => {
+        const { searchParams } = new URL(req.url);
+        const restaurantId = searchParams.get('restaurantId');
+        const date = searchParams.get('date');
+        const partySize = searchParams.get('partySize');
+        return `availability:${restaurantId}:${date}:${partySize}`;
+      },
+    }
+  ),
+  'EXECUTION_FAILED'
 );
 
 async function getAvailableTables(restaurantId: string, startTime: Date, partySize: number, duration: number) {

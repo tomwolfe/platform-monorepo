@@ -49,9 +49,9 @@ export const restaurants = pgTable('restaurants', {
   /** Timezone for restaurant operations. Nullable to allow legacy data migration. */
   timezone: text('timezone').default('UTC'),
   /** Latitude coordinate for restaurant location. Nullable - not all restaurants have GPS coordinates. */
-  lat: text('lat'),
+  lat: numeric('lat', { precision: 10, scale: 7 }),
   /** Longitude coordinate for restaurant location. Nullable - not all restaurants have GPS coordinates. */
-  lng: text('lng'),
+  lng: numeric('lng', { precision: 10, scale: 7 }),
   /** Physical address of the restaurant. Nullable for shadow restaurants. */
   address: text('address'),
   apiKey: text('api_key').unique().notNull(),

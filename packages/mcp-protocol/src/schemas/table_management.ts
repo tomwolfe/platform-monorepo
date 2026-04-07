@@ -1,9 +1,22 @@
 /**
  * Table Management Schemas for MCP Protocol
+ *
+ * Unified Schema Authority: These schemas are derived from the Drizzle ORM
+ * database definitions via the bridge layer. If the database schema changes,
+ * these MCP tool schemas update automatically.
+ *
  * Based on TableStack database models (packages/database/src/schema/tablestack.ts)
  */
 
 import { z } from "zod";
+import {
+  CreateReservationDBSchema,
+  UpdateReservationDBSchema,
+  createMcpToolInputSchema,
+  ReservationSchema,
+  TableSchema,
+  WaitlistSchema,
+} from "../bridge";
 
 // ============================================================================
 // TABLE MANAGEMENT - READ OPERATIONS
@@ -29,6 +42,7 @@ export const GetTableLayoutSchema = z.object({
 
 /**
  * GetReservationSchema - Retrieve a specific reservation
+ * Derived from the auto-generated ReservationSchema (Drizzle select schema)
  */
 export const GetReservationSchema = z.object({
   reservationId: z.string().uuid().describe("The unique identifier of the reservation"),
@@ -41,7 +55,7 @@ export const ListReservationsSchema = z.object({
   restaurantId: z.string().uuid().describe("The internal ID of the restaurant"),
   startDate: z.string().datetime().optional().describe("Filter reservations from this date"),
   endDate: z.string().datetime().optional().describe("Filter reservations until this date"),
-  status: z.enum(["confirmed", "cancelled", "noshow"]).optional().describe("Filter by reservation status"),
+  status: ReservationSchema.shape.status.optional().describe("Filter by reservation status"),
   limit: z.number().int().positive().max(100).default(20).describe("Maximum number of results"),
   offset: z.number().int().nonnegative().default(0).describe("Pagination offset"),
 });
@@ -64,17 +78,16 @@ export const CheckTableConflictsSchema = z.object({
 /**
  * CreateReservationSchema - Create a new table reservation
  * REQUIRES CONFIRMATION
+ *
+ * Derived from CreateReservationDBSchema (Drizzle insert schema) with
+ * MCP-specific field descriptions and validation constraints.
  */
-export const CreateReservationSchema = z.object({
-  restaurantId: z.string().uuid().describe("The internal ID of the restaurant"),
-  tableId: z.string().uuid().describe("The ID of the table to reserve"),
+export const CreateReservationSchema = createMcpToolInputSchema(CreateReservationDBSchema, {
+  required: ['restaurantId', 'tableId', 'guestName', 'guestEmail', 'partySize', 'startTime'],
+}).extend({
   guestName: z.string().min(1).max(100).describe("Name for the reservation"),
   guestEmail: z.string().email().describe("Email for the reservation"),
-  partySize: z.number().int().positive().max(100).describe("Number of guests"),
-  startTime: z.string().datetime().describe("ISO 8601 start time for the reservation"),
-  endTime: z.string().datetime().optional().describe("ISO 8601 end time (calculated if not provided)"),
   specialRequests: z.string().max(500).optional().describe("Any special requests"),
-  combinedTableIds: z.array(z.string().uuid()).optional().describe("IDs of combined tables if using multiple tables"),
   depositAmount: z.number().int().nonnegative().optional().describe("Deposit amount in cents"),
   metadata: z.record(z.string(), z.unknown()).optional().describe("Additional metadata"),
 });
@@ -82,16 +95,15 @@ export const CreateReservationSchema = z.object({
 /**
  * UpdateReservationSchema - Update an existing reservation
  * REQUIRES CONFIRMATION
+ *
+ * Derived from UpdateReservationDBSchema (Drizzle partial insert schema)
  */
-export const UpdateReservationSchema = z.object({
+export const UpdateReservationSchema = createMcpToolInputSchema(UpdateReservationDBSchema, {
+  required: ['reservationId'],
+}).extend({
   reservationId: z.string().uuid().describe("The unique identifier of the reservation"),
-  tableId: z.string().uuid().optional().describe("New table ID (if changing tables)"),
   guestName: z.string().min(1).max(100).optional().describe("Updated guest name"),
   guestEmail: z.string().email().optional().describe("Updated guest email"),
-  partySize: z.number().int().positive().max(100).optional().describe("Updated party size"),
-  startTime: z.string().datetime().optional().describe("Updated start time"),
-  endTime: z.string().datetime().optional().describe("Updated end time"),
-  status: z.enum(["confirmed", "cancelled", "noshow"]).optional().describe("Updated status"),
   specialRequests: z.string().max(500).optional().describe("Updated special requests"),
 });
 
@@ -122,10 +134,11 @@ export const AddToWaitlistSchema = z.object({
 
 /**
  * UpdateWaitlistStatusSchema - Update waitlist entry status
+ * Uses the status enum from the auto-generated WaitlistSchema
  */
 export const UpdateWaitlistStatusSchema = z.object({
   waitlistId: z.string().uuid().describe("The unique identifier of the waitlist entry"),
-  status: z.enum(["waiting", "notified", "seated"]).describe("New status"),
+  status: WaitlistSchema.shape.status.describe("New status"),
 });
 
 // ============================================================================

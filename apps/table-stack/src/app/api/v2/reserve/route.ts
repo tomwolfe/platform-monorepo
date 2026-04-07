@@ -11,7 +11,6 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   ReserveRequestSchema,
-  formatValidationError,
   validateRequest,
 } from '@repo/shared';
 import {
@@ -23,8 +22,9 @@ import {
 } from '@repo/shared';
 import { Logger } from '@repo/shared';
 import { validateRequest as validateAuth } from '@tablestack/lib/auth';
-import { getDb, restaurants, restaurantReservations } from '@repo/database';
-import { eq } from '@repo/database';
+import { getDb, restaurants, restaurantReservations, restaurantTables, eq, and, or, gte, sql } from '@repo/database';
+import { addMinutes, parseISO } from 'date-fns';
+import { ConflictError } from '@repo/shared/errors';
 
 // Initialize logger
 const logger = new Logger({ serviceName: 'reserve-api-v2' });
@@ -121,31 +121,48 @@ export const POST = withApiErrorHandler(async (req: NextRequest) => {
     );
   }
 
-  // Step 5: Check for conflicting reservations
-  const reservationStart = new Date(reservationTime);
-  const reservationEnd = new Date(reservationStart.getTime() + 90 * 60000);
+  // Step 5: Check for conflicting reservations and create reservation atomically
+  const reservationStart = parseISO(reservationTime);
+  const reservationEnd = addMinutes(reservationStart, 90);
 
-  const conflictingReservation = await getDb().query.restaurantReservations.findFirst({
-    where: eq(restaurantReservations.restaurantId, targetRestaurantId),
-    columns: { id: true },
+  // Wrap conflict detection + insertion in an atomic transaction to prevent race conditions
+  const { newReservation } = await getDb().transaction(async (tx: any) => {
+    // Check for overlapping reservations with confirmed status or recent unverified ones
+    const conflictingReservation = await tx.query.restaurantReservations.findFirst({
+      where: and(
+        eq(restaurantReservations.restaurantId, targetRestaurantId),
+        or(
+          eq(restaurantReservations.status, 'confirmed'),
+          and(
+            eq(restaurantReservations.isVerified, false),
+            gte(restaurantReservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
+          )
+        ),
+        // Time overlap check using PostgreSQL OVERLAPS operator
+        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${reservationStart.toISOString()}, ${reservationEnd.toISOString()})`
+      ),
+    });
+
+    if (conflictingReservation) {
+      throw new ConflictError('One or more tables are no longer available for this time slot');
+    }
+
+    // Insert reservation within the same transaction
+    const [insertedReservation] = await tx.insert(restaurantReservations).values({
+      restaurantId: targetRestaurantId,
+      guestName,
+      guestEmail,
+      partySize,
+      startTime: reservationStart,
+      endTime: reservationEnd,
+      status: 'pending',
+      isVerified: false,
+      specialRequests,
+      metadata: occasion ? { occasion } : undefined,
+    }).returning();
+
+    return { newReservation: insertedReservation };
   });
-
-  // Note: Add actual conflict detection logic here
-  // This is a simplified example
-
-  // Step 6: Create reservation (placeholder)
-  const [newReservation] = await getDb().insert(restaurantReservations).values({
-    restaurantId: targetRestaurantId,
-    guestName,
-    guestEmail,
-    partySize,
-    startTime: reservationStart,
-    endTime: reservationEnd,
-    status: 'pending',
-    isVerified: false,
-    specialRequests,
-    metadata: occasion ? { occasion } : undefined,
-  }).returning();
 
   const duration = Date.now() - startTime;
   logger.info('Reservation created successfully', {

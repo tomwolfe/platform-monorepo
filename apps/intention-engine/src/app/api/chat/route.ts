@@ -3,12 +3,15 @@ import { streamText, tool, stepCountIs, convertToModelMessages, type CoreMessage
 import { z } from "zod";
 import { getToolCapabilitiesPrompt } from "@/lib/tools/registry";
 import { getUserPreferences } from "@/lib/preferences";
-import { getRedisClient, ServiceNamespace, AppConfig } from "@repo/shared";
+import { getRedisClient, ServiceNamespace, AppConfig, withApiErrorHandler, formatApiError, formatApiSuccess, getErrorStatusCode, Logger } from "@repo/shared";
 import { getMcpClients } from "@/lib/mcp-client";
 import { TOOLS } from "@repo/mcp-protocol";
 import { rateLimitMiddleware } from "@/lib/middleware/rate-limiter";
 import { fetchLiveOperationalState } from "@/lib/engine/live-state";
 import { createChatOrchestrator, type ChatOrchestrationResult } from "@/lib/engine/chat-orchestrator";
+import { NextResponse } from "next/server";
+
+const logger = new Logger({ serviceName: "intention-engine-chat" });
 
 // Use AppConfig directly - no local wrapper needed
 const INTERNAL_SYSTEM_KEY = AppConfig.getInternalSystemKey();
@@ -196,191 +199,178 @@ function getRelevantFailures(text: string, logs: any[]): string[] {
   return Array.from(new Set(failures)).slice(0, 3);
 }
 
-export async function POST(req: Request) {
-  try {
-    const rawBody = await req.json();
-    const validatedBody = ChatRequestSchema.safeParse(rawBody);
+export const POST = withApiErrorHandler(async (req: Request) => {
+  const rawBody = await req.json();
+  const validatedBody = ChatRequestSchema.safeParse(rawBody);
 
-    if (!validatedBody.success) {
-      return new Response(JSON.stringify({ error: "Invalid request parameters", details: validatedBody.error.format() }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
+  if (!validatedBody.success) {
+    return NextResponse.json(
+      formatApiError(new Error("Invalid request parameters"), "VALIDATION_ERROR", validatedBody.error.format()),
+      { status: 400 }
+    );
+  }
 
-    const { messages, userLocation } = validatedBody.data;
+  const { messages, userLocation } = validatedBody.data;
 
-    if (messages.length === 0) {
-      return new Response("No messages provided", { status: 400 });
-    }
+  if (messages.length === 0) {
+    return NextResponse.json(
+      formatApiError(new Error("No messages provided"), "VALIDATION_ERROR"),
+      { status: 400 }
+    );
+  }
 
-    const startTime = Date.now();
+  const startTime = Date.now();
 
-    // Stateful Memory: Retrieve user preferences from Redis
-    const userIp = req.headers.get("x-forwarded-for") || "anonymous";
-    const clerkId = req.headers.get("x-clerk-id") || undefined;
-    const userId = clerkId || userIp; // Prefer clerkId, fallback to IP for anonymous
+  // Stateful Memory: Retrieve user preferences from Redis
+  const userIp = req.headers.get("x-forwarded-for") || "anonymous";
+  const clerkId = req.headers.get("x-clerk-id") || undefined;
+  const userId = clerkId || userIp; // Prefer clerkId, fallback to IP for anonymous
 
-    // RATE LIMITING: User-level rate limiting to prevent quota drain
-    const rateLimitResult = await rateLimitMiddleware(userId, "chat");
+  // RATE LIMITING: User-level rate limiting to prevent quota drain
+  const rateLimitResult = await rateLimitMiddleware(userId, "chat");
 
-    if (!rateLimitResult.allowed) {
-      console.warn(`[RateLimiter] Rate limit exceeded for user ${userId}`);
+  if (!rateLimitResult.allowed) {
+    logger.warn(`Rate limit exceeded for user ${userId}`);
 
-      return new Response(
-        JSON.stringify({
-          error: "Rate limit exceeded",
-          message: "Too many requests. Please wait a moment before trying again.",
-          retryAfter: rateLimitResult.result.retryAfter,
-          limit: rateLimitResult.result.headers["X-RateLimit-Limit"],
-          remaining: rateLimitResult.result.headers["X-RateLimit-Remaining"],
-        }),
-        {
-          status: 429,
-          headers: {
-            "Content-Type": "application/json",
-            ...rateLimitResult.result.headers,
-          },
-        }
-      );
-    }
+    return NextResponse.json(
+      formatApiError(new Error("Rate limit exceeded"), "RATE_LIMIT_EXCEEDED", {
+        retryAfter: rateLimitResult.result.retryAfter,
+        limit: rateLimitResult.result.headers["X-RateLimit-Limit"],
+        remaining: rateLimitResult.result.headers["X-RateLimit-Remaining"],
+      }),
+      { status: getErrorStatusCode("RATE_LIMIT_EXCEEDED"), headers: rateLimitResult.result.headers }
+    );
+  }
 
-    let recentLogs: any[] = [];
-    const { createAuditLog, updateAuditLog, getUserAuditLogs } = await import("@/lib/audit");
-    const { getPlanWithAvoidance, getProvider } = await import("@/app/actions");
+  let recentLogs: any[] = [];
+  const { createAuditLog, updateAuditLog, getUserAuditLogs } = await import("@/lib/audit");
+  const { getPlanWithAvoidance, getProvider } = await import("@/app/actions");
 
-    if (redis) {
-      try {
-        [, recentLogs] = await Promise.all([
-          getUserPreferences(userId),
-          getUserAuditLogs(userId, 10)
-        ]);
-      } catch (err) {
-        console.warn("Failed to retrieve user data from Redis:", err);
-      }
-    }
-
-    const coreMessages = await convertToModelMessages(messages);
-    const userText = extractUserText(coreMessages);
-
-    // Initialize Chat Orchestrator Service
-    const orchestrator = createChatOrchestrator(INTERNAL_SYSTEM_KEY, {
-      userId,
-      clerkId,
-      userIp,
-    });
-
-    // Get contextual memory for intent inference
-    const lastInteractionContext = await (async () => {
-      if (clerkId) {
-        try {
-          const { getLastInteractionContextByClerkId } = await import("@/lib/intent");
-          return await getLastInteractionContextByClerkId(clerkId);
-        } catch (err) {
-          console.warn("Failed to retrieve last interaction context by clerkId:", err);
-        }
-      } else if (userIp !== "anonymous") {
-        try {
-          const { getLastInteractionContext } = await import("@/lib/intent");
-          return await getLastInteractionContext(userIp);
-        } catch (err) {
-          console.warn("Failed to retrieve last interaction context:", err);
-        }
-      }
-      return null;
-    })();
-
-    // Orchestrate the chat request (security, intent inference, live state, async execution)
-    const { avoidTools } = await getPlanWithAvoidance(userText, userIp);
-    const history = recentLogs
-      .filter(log => log.final_outcome && !log.steps?.some(s => s.status === "failed"))
-      .map(log => ({
-        intentType: log.intent.type,
-        rawText: log.intent.rawText,
-        parameters: log.intent.parameters || {},
-        timestamp: log.timestamp,
-      }));
-
-    let orchestrationResult: ChatOrchestrationResult;
-
+  if (redis) {
     try {
-      orchestrationResult = await orchestrator.orchestrate(
-        {
-          messages,
-          userLocation: userLocation || undefined,
-          userContext: { userId, clerkId, userIp, userEmail: undefined },
-        },
-        userText,
-        coreMessages,
-        avoidTools,
-        history,
-        lastInteractionContext
-      );
-    } catch (securityError: any) {
-      // Handle security check failures (prompt injection)
-      if (securityError.message.includes("Input blocked for security reasons")) {
-        const detectionResult = securityError.message.split(": ")[1] || "Security check failed";
-        return new Response(
-          JSON.stringify({
-            error: "Input blocked for security reasons",
-            message: "Your input contains patterns that may attempt to manipulate the AI system. Please rephrase your request.",
-            riskLevel: "high",
-            ...(process.env.NODE_ENV === "development" && {
-              debug: {
-                attackTypes: ["PROMPT_INJECTION"],
-                explanation: detectionResult,
-              },
-            }),
-          }),
-          {
-            status: 400,
-            headers: { "Content-Type": "application/json" },
-          }
-        );
+      [, recentLogs] = await Promise.all([
+        getUserPreferences(userId),
+        getUserAuditLogs(userId, 10)
+      ]);
+    } catch (err) {
+      logger.warn("Failed to retrieve user data from Redis", { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  const coreMessages = await convertToModelMessages(messages);
+  const userText = extractUserText(coreMessages);
+
+  // Initialize Chat Orchestrator Service
+  const orchestrator = createChatOrchestrator(INTERNAL_SYSTEM_KEY, {
+    userId,
+    clerkId,
+    userIp,
+  });
+
+  // Get contextual memory for intent inference
+  const lastInteractionContext = await (async () => {
+    if (clerkId) {
+      try {
+        const { getLastInteractionContextByClerkId } = await import("@/lib/intent");
+        return await getLastInteractionContextByClerkId(clerkId);
+      } catch (err) {
+        logger.warn("Failed to retrieve last interaction context by clerkId", { error: err instanceof Error ? err.message : String(err) });
       }
-      throw securityError;
+    } else if (userIp !== "anonymous") {
+      try {
+        const { getLastInteractionContext } = await import("@/lib/intent");
+        return await getLastInteractionContext(userIp);
+      } catch (err) {
+        logger.warn("Failed to retrieve last interaction context", { error: err instanceof Error ? err.message : String(err) });
+      }
     }
+    return null;
+  })();
 
-    const { intent, auditLogId, executionId, requiresAsyncExecution, liveOperationalState } = orchestrationResult;
+  // Orchestrate the chat request (security, intent inference, live state, async execution)
+  const { avoidTools } = await getPlanWithAvoidance(userText, userIp);
+  const history = recentLogs
+    .filter(log => log.final_outcome && !log.steps?.some(s => s.status === "failed"))
+    .map(log => ({
+      intentType: log.intent.type,
+      rawText: log.intent.rawText,
+      parameters: log.intent.parameters || {},
+      timestamp: log.timestamp,
+    }));
 
-    // Handle saga-style async execution
-    if (requiresAsyncExecution && executionId) {
-      return new Response(JSON.stringify({
-        success: true,
-        executionId,
-        message: "I've started working on that. Track progress in real-time.",
-        status: "STARTED",
-        intentType: intent.type,
-      }), {
-        headers: { "Content-Type": "application/json" },
-      });
+  let orchestrationResult: ChatOrchestrationResult;
+
+  try {
+    orchestrationResult = await orchestrator.orchestrate(
+      {
+        messages,
+        userLocation: userLocation || undefined,
+        userContext: { userId, clerkId, userIp, userEmail: undefined },
+      },
+      userText,
+      coreMessages,
+      avoidTools,
+      history,
+      lastInteractionContext
+    );
+  } catch (securityError: any) {
+    // Handle security check failures (prompt injection)
+    if (securityError.message.includes("Input blocked for security reasons")) {
+      const detectionResult = securityError.message.split(": ")[1] || "Security check failed";
+      return NextResponse.json(
+        formatApiError(new Error("Input blocked for security reasons"), "VALIDATION_ERROR", {
+          message: "Your input contains patterns that may attempt to manipulate the AI system. Please rephrase your request.",
+          riskLevel: "high",
+          ...(process.env.NODE_ENV === "development" && {
+            debug: {
+              attackTypes: ["PROMPT_INJECTION"],
+              explanation: detectionResult,
+            },
+          }),
+        }),
+        { status: 400 }
+      );
     }
+    throw securityError;
+  }
 
-    // Build failure warnings from recent logs
-    const relevantFailures = getRelevantFailures(userText, recentLogs);
-    const failureWarnings = relevantFailures.length > 0
-      ? `\n### DO NOT REPEAT THESE MISTAKES:\n${relevantFailures.map(f => `- ${f}`).join('\n')}`
-      : "";
+  const { intent, auditLogId, executionId, requiresAsyncExecution, liveOperationalState } = orchestrationResult;
 
-    // Build live state context (for non-saga requests)
-    const liveStateContext = liveOperationalState
-      ? buildLiveStateContext(liveOperationalState)
-      : "\n### LIVE STATE: No live state available\n";
+  // Handle saga-style async execution
+  if (requiresAsyncExecution && executionId) {
+    return NextResponse.json(formatApiSuccess({
+      executionId,
+      message: "I've started working on that. Track progress in real-time.",
+      status: "STARTED",
+      intentType: intent.type,
+    }));
+  }
 
-    // Fetch dynamic tools from MCP servers
-    const allTools = await getTools(auditLogId, userLocation || undefined);
+  // Build failure warnings from recent logs
+  const relevantFailures = getRelevantFailures(userText, recentLogs);
+  const failureWarnings = relevantFailures.length > 0
+    ? `\n### DO NOT REPEAT THESE MISTAKES:\n${relevantFailures.map(f => `- ${f}`).join('\n')}`
+    : "";
 
-    const locationContext = userLocation
-      ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}.`
-      : "The user's location is unknown.";
+  // Build live state context (for non-saga requests)
+  const liveStateContext = liveOperationalState
+    ? buildLiveStateContext(liveOperationalState)
+    : "\n### LIVE STATE: No live state available\n";
 
-    const memoryContext = recentLogs.length > 0
-      ? `Recent interaction history:\n${recentLogs.map(l => `- Intent: ${l.intent}, Outcome: ${l.final_outcome || 'N/A'}`).join('\n')}`
-      : "";
+  // Fetch dynamic tools from MCP servers
+  const allTools = await getTools(auditLogId, userLocation || undefined);
 
-    const toolCapabilitiesPrompt = getToolCapabilitiesPrompt();
+  const locationContext = userLocation
+    ? `The user is currently at latitude ${userLocation.lat}, longitude ${userLocation.lng}.`
+    : "The user's location is unknown.";
 
-    const systemPrompt = `You are an Intention Engine.
+  const memoryContext = recentLogs.length > 0
+    ? `Recent interaction history:\n${recentLogs.map(l => `- Intent: ${l.intent}, Outcome: ${l.final_outcome || 'N/A'}`).join('\n')}`
+    : "";
+
+  const toolCapabilitiesPrompt = getToolCapabilitiesPrompt();
+
+  const systemPrompt = `You are an Intention Engine.
     Today's date is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.
     The user's inferred intent is: ${intent.type} (Confidence: ${intent.confidence})
 
@@ -394,52 +384,44 @@ export async function POST(req: Request) {
     ${toolCapabilitiesPrompt}
     `;
 
-    const providerConfig = await getProvider(intent.type);
-    const customProvider = createOpenAI({
-      apiKey: providerConfig.apiKey,
-      baseURL: providerConfig.baseUrl,
-    });
+  const providerConfig = await getProvider(intent.type);
+  const customProvider = createOpenAI({
+    apiKey: providerConfig.apiKey,
+    baseURL: providerConfig.baseUrl,
+  });
 
-    const result = streamText({
-      model: customProvider.chat(providerConfig.model),
-      messages: coreMessages,
-      system: systemPrompt,
-      tools: allTools,
-      stopWhen: stepCountIs(5),
-      onFinish: async (event) => {
-        const totalLatency = Date.now() - startTime;
-        try {
-          await updateAuditLog(auditLogId, {
-            final_outcome: event.text,
-            inferenceLatencies: {
-              total: totalLatency,
-            }
-          });
-
-          // Contextual Memory: Save the interaction context for future pronoun resolution
-          if (userId) {
-            const { saveInteractionContextByClerkId, saveInteractionContext } = await import("@/lib/intent");
-            if (clerkId) {
-              await saveInteractionContextByClerkId(clerkId, intent, auditLogId);
-            } else if (userIp !== "anonymous") {
-              await saveInteractionContext(userIp, intent, auditLogId);
-            }
+  const result = streamText({
+    model: customProvider.chat(providerConfig.model),
+    messages: coreMessages,
+    system: systemPrompt,
+    tools: allTools,
+    stopWhen: stepCountIs(5),
+    onFinish: async (event) => {
+      const totalLatency = Date.now() - startTime;
+      try {
+        await updateAuditLog(auditLogId, {
+          final_outcome: event.text,
+          inferenceLatencies: {
+            total: totalLatency,
           }
-        } catch (err) {
-          console.error("Failed to update final audit log:", err);
-        }
-      }
-    });
+        });
 
-    return result.toUIMessageStreamResponse({
-      originalMessages: messages,
-    });
-  } catch (error) {
-    console.error("Error in chat route:", error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return new Response(JSON.stringify({ error: errorMessage }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
-  }
-}
+        // Contextual Memory: Save the interaction context for future pronoun resolution
+        if (userId) {
+          const { saveInteractionContextByClerkId, saveInteractionContext } = await import("@/lib/intent");
+          if (clerkId) {
+            await saveInteractionContextByClerkId(clerkId, intent, auditLogId);
+          } else if (userIp !== "anonymous") {
+            await saveInteractionContext(userIp, intent, auditLogId);
+          }
+        }
+      } catch (err) {
+        logger.error("Failed to update final audit log", { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+  });
+
+  return result.toUIMessageStreamResponse({
+    originalMessages: messages,
+  });
+}, "EXECUTION_FAILED");

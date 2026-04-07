@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { getDb, restaurants, eq } from "@repo/database";
 import { getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
-import { verifyServiceToken, verifyScopedJWT, verifyAsymmetricJWT, SecurityProvider, type ScopedJWTPayload, type AsymmetricJWTPayload } from '@repo/auth';
+import { verifyScopedJWT, verifyAsymmetricJWT, SecurityProvider, type ScopedJWTPayload } from '@repo/auth';
 import { generateSecureRandom } from '@repo/shared/utils/crypto';
 
 const logger = new Logger({ serviceName: 'table-stack' });
@@ -25,8 +25,7 @@ export interface AuthContext {
  * Authentication Priority:
  * 1. RS256 Asymmetric JWT (Zero-Trust Standard - public key verification)
  * 2. Scoped JWT (tool-level permissions)
- * 3. HS256 Service Token (migration fallback only)
- * 4. API Key (legacy external clients only, rate-limited)
+ * 3. API Key (legacy external clients only, rate-limited)
  *
  * @param req - Next.js request
  * @returns Auth context or error response
@@ -72,22 +71,6 @@ export async function validateRequest(req: NextRequest): Promise<{
           restaurantId: scopedPayload.restaurantId as string | undefined,
           scopedPermissions: scopedPayload.permissions,
           traceId: scopedPayload.traceId as string | undefined,
-        },
-      };
-    }
-
-    // Fallback: HS256 service token (migration period only)
-    // @deprecated HS256 verification is deprecated and will be removed in a future release.
-    // Please migrate to RS256 asymmetric JWTs (verifyAsymmetricJWT) for all new services.
-    // See README.md for migration instructions.
-    const payload = await verifyServiceToken(token);
-    if (payload) {
-      logger.warn(`[DEPRECATED] HS256 service token verified for service=${(payload as any).service}. Please migrate to RS256.`);
-      return {
-        context: {
-          isInternal: true,
-          restaurantId: payload.restaurantId as string | undefined,
-          traceId: payload.traceId as string | undefined,
         },
       };
     }

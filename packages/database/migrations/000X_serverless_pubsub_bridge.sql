@@ -1,163 +1,92 @@
 -- ============================================================================
--- SERVERLESS PUB/SUB BRIDGE MIGRATION
--- Postgres Trigger to QStash HTTP
+-- SERVERLESS OUTBOX TABLE MIGRATION
+-- Application-Layer QStash Triggers (OutboxRelayService)
 -- ============================================================================
--- 
+--
 -- Problem Solved: LISTEN/NOTIFY in Serverless Environments
 -- - Traditional LISTEN/NOTIFY requires persistent PostgreSQL connections
 -- - Vercel serverless functions are short-lived (10s timeout on Hobby tier)
 -- - Cannot maintain persistent LISTEN connections
 --
--- Solution: Postgres Trigger + http_request Extension
--- - Uses PostgreSQL trigger to fire HTTP call on INSERT to outbox table
--- - Converts database event directly into QStash execution trigger
--- - No persistent listener or cron-job delay required
+-- Solution: Application-Layer QStash Triggers via OutboxRelayService
+-- - After DB transaction commits in API route, fire-and-forget QStash trigger
+-- - QStash provides near-instant state sync (like persistent worker) with serverless cost model
+-- - No Postgres extensions required (Neon Serverless compatible)
 --
 -- Architecture:
--- 1. Enable http extension (available in Neon/Supabase)
--- 2. Create function that calls http_post() to QStash
--- 3. Create trigger on outbox table (AFTER INSERT)
--- 4. Trigger sends HTTP POST to QStash webhook
--- 5. QStash reliably delivers to /api/engine/outbox-relay endpoint
+-- 1. API route commits transaction with outbox event
+-- 2. API route calls OutboxRelayService.triggerRelay(executionId) after commit
+-- 3. QStash delivers POST to /api/engine/outbox-relay endpoint
+-- 4. Outbox relay processes pending events and updates Redis cache
 --
--- Benefits:
--- - Zero-latency notification (fires immediately on commit)
--- - No polling overhead or consistency lag
--- - Reliable delivery via QStash retries
--- - Serverless-native (no persistent workers needed)
+-- NOTE: Serverless outbox relies on application-layer QStash triggers
+-- (OutboxRelayService), bypassing Postgres pg_notify/http extensions.
+-- The previous version of this migration attempted to use the PostgreSQL
+-- http extension with an AFTER INSERT trigger (notify_outbox_via_http),
+-- but the http extension is incompatible with Neon Serverless.
 --
 -- Usage:
--- 1. Set QSTASH_TOKEN environment variable
--- 2. Run this migration
--- 3. Outbox events will automatically trigger QStash delivery
+-- 1. Run this migration to create the outbox table and index
+-- 2. Set QSTASH_TOKEN and INTERNAL_SYSTEM_KEY environment variables
+-- 3. OutboxRelayService handles triggering automatically after transactions
 --
 -- Rollback:
---   DROP TRIGGER IF EXISTS outbox_http_notify ON outbox;
---   DROP FUNCTION IF EXISTS notify_outbox_via_http();
+--   DROP TABLE IF EXISTS outbox;
+--   DROP INDEX IF EXISTS outbox_status_pending_idx;
 -- ============================================================================
 
--- Step 1: Enable http extension (if not already enabled)
--- Note: Requires superuser or appropriate permissions
--- On Neon/Supabase, this extension is typically pre-installed
-CREATE EXTENSION IF NOT EXISTS http;
+-- Step 1: Create outbox_status enum type
+DO $$ BEGIN
+  CREATE TYPE outbox_status AS ENUM ('pending', 'processing', 'processed', 'failed');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
 
--- Step 2: Create function to send HTTP request via http extension
--- This function is called by the trigger on every INSERT to outbox
-CREATE OR REPLACE FUNCTION notify_outbox_via_http()
-RETURNS trigger AS $$
-DECLARE
-  -- QStash configuration
-  -- qstash_url: QStash topic endpoint for outbox events
-  -- qstash_token: Authentication token (set via current_setting)
-  qstash_url TEXT := 'https://qstash.upstash.io/v2/topics/outbox_events';
-  qstash_token TEXT := current_setting('app.qstash_token', TRUE);
-  payload_json TEXT;
-  http_response RECORD;
-BEGIN
-  -- Build JSON payload for QStash
-  -- Includes outbox event metadata for processing
-  payload_json := json_build_object(
-    'outboxId', NEW.id,
-    'executionId', (NEW.payload->>'executionId'),
-    'eventType', NEW.eventType,
-    'timestamp', NOW()
-  )::text;
+-- Step 2: Create outbox table
+CREATE TABLE IF NOT EXISTS outbox (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_type text NOT NULL,
+  payload jsonb NOT NULL,
+  status outbox_status DEFAULT 'pending' NOT NULL,
+  attempts integer DEFAULT 0 NOT NULL,
+  error_message text,
+  created_at timestamp DEFAULT now() NOT NULL,
+  processed_at timestamp,
+  expires_at timestamp
+);
 
-  -- Send HTTP POST to QStash
-  -- Uses http_post from http extension
-  -- Includes authentication and content-type headers
-  SELECT * INTO http_response FROM http_post(
-    qstash_url,
-    payload_json,
-    'application/json',
-    ARRAY[
-      http_header('Authorization', 'Bearer ' || qstash_token),
-      http_header('Content-Type', 'application/json'),
-      http_header('x-outbox-bridge', 'true'),
-      http_header('x-serverless-bridge', 'postgres-trigger')
-    ]
-  );
-
-  -- Log result if status code indicates failure
-  -- Note: Success (200-299) is silently accepted
-  IF http_response.status_code IS DISTINCT FROM 200 THEN
-    RAISE WARNING 'QStash notification failed for outbox %: status=%, content=%',
-      NEW.id,
-      http_response.status_code,
-      http_response.content;
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Grant execute permission to appropriate roles
--- Adjust role name based on your database configuration
-GRANT EXECUTE ON FUNCTION notify_outbox_via_http() TO postgres;
-
--- Step 3: Create trigger on outbox table
--- Fires AFTER INSERT for each row
--- Calls notify_outbox_via_http() function
-DROP TRIGGER IF EXISTS outbox_http_notify ON outbox;
-CREATE TRIGGER outbox_http_notify
-  AFTER INSERT ON outbox
-  FOR EACH ROW
-  EXECUTE FUNCTION notify_outbox_via_http();
-
--- Step 4: Create index for efficient outbox event lookup
--- Improves performance of fallback polling mechanism
+-- Step 3: Create index for efficient polling (used by OutboxRelayService fallback)
 CREATE INDEX IF NOT EXISTS outbox_status_pending_idx
   ON outbox (status, created_at)
   WHERE status = 'pending';
-
--- Step 5: Set up QStash token configuration
--- This setting is used by the PL/pgSQL function
--- In production, set via application or migration script:
--- SELECT set_config('app.qstash_token', 'your_qstash_token_here', FALSE);
 
 -- ============================================================================
 -- VERIFICATION QUERIES
 -- ============================================================================
 
--- Check if http extension is installed
+-- Check if outbox table exists
 -- SELECT EXISTS (
---   SELECT 1 FROM pg_extension WHERE extname = 'http'
--- ) as http_extension_installed;
+--   SELECT 1 FROM information_schema.tables
+--   WHERE table_schema = 'public' AND table_name = 'outbox'
+-- ) as outbox_exists;
 
--- Check if trigger exists
+-- Check if polling index exists
 -- SELECT EXISTS (
---   SELECT 1 FROM pg_trigger WHERE tgname = 'outbox_http_notify'
--- ) as trigger_installed;
-
--- Check if function exists
--- SELECT EXISTS (
---   SELECT 1 FROM pg_proc WHERE proname = 'notify_outbox_via_http'
--- ) as function_installed;
-
--- Test the trigger (uncomment to test)
--- INSERT INTO outbox (id, event_type, payload, status, created_at)
--- VALUES (
---   gen_random_uuid(),
---   'TEST_EVENT',
---   '{"executionId": "test-123", "timestamp": "2024-01-01T00:00:00Z"}'::jsonb,
---   'pending',
---   NOW()
--- );
+--   SELECT 1 FROM pg_indexes
+--   WHERE indexname = 'outbox_status_pending_idx'
+-- ) as index_exists;
 
 -- ============================================================================
 -- ROLLBACK INSTRUCTIONS
 -- ============================================================================
 -- To rollback this migration:
 --
--- 1. Drop the trigger:
---    DROP TRIGGER IF EXISTS outbox_http_notify ON outbox;
---
--- 2. Drop the function:
---    DROP FUNCTION IF EXISTS notify_outbox_via_http();
---
--- 3. (Optional) Drop the index:
+-- 1. Drop the index:
 --    DROP INDEX IF EXISTS outbox_status_pending_idx;
 --
--- 4. (Optional) Disable http extension:
---    DROP EXTENSION IF EXISTS http;
+-- 2. Drop the table:
+--    DROP TABLE IF EXISTS outbox;
+--
+-- 3. Drop the enum type:
+--    DROP TYPE IF EXISTS outbox_status;
 -- ============================================================================

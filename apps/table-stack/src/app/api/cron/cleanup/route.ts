@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb, eq, lt, and } from "@repo/database";
 import { restaurantReservations, restaurantTables } from "@repo/database";
-import { withCronAuth, Logger } from '@repo/shared';
+import { withCronAuth, Logger, getRedisClient, ServiceNamespace } from '@repo/shared';
 
 export const runtime = 'nodejs';
 
@@ -12,7 +12,7 @@ async function getCronHandler(req: NextRequest) {
     const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
     const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000);
 
-    // 1. Remove expired unverified restaurantReservations
+    // 1. Remove expired unverified reservations
     const deletedReservations = await getDb().delete(restaurantReservations)
       .where(
         and(
@@ -31,11 +31,43 @@ async function getCronHandler(req: NextRequest) {
         )
       );
 
+    // 3. Clean up orphaned confirmation token index keys in Redis
+    // When a primary confirmation:{token} key expires via TTL, the
+    // confirmation:exec:{executionId} index key becomes orphaned.
+    // This scans and removes those orphaned entries.
+    let orphanedConfirmationsRemoved = 0;
+    try {
+      const ieRedis = getRedisClient(ServiceNamespace.IE);
+      const execKeys = await ieRedis.keys('confirmation:exec:*');
+
+      for (const execKey of execKeys) {
+        const token = await ieRedis.get(execKey);
+        if (token) {
+          const primaryKey = `confirmation:${token}`;
+          const exists = await ieRedis.exists(primaryKey);
+          if (!exists) {
+            // Primary key is gone — this index entry is orphaned
+            await ieRedis.del(execKey);
+            orphanedConfirmationsRemoved++;
+          }
+        } else {
+          // Index key points to nothing — definitely orphaned
+          await ieRedis.del(execKey);
+          orphanedConfirmationsRemoved++;
+        }
+      }
+    } catch (error) {
+      logger.warn('Redis confirmation cleanup failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     return NextResponse.json({
       message: 'Cleanup successful',
       timestamp: new Date().toISOString(),
       expiredReservationsRemoved: deletedReservations.rowCount,
       dirtyTablesCleaned: cleanedTables.rowCount,
+      orphanedConfirmationsRemoved,
     });
   } catch (error) {
     logger.error('Cleanup failed', { error: error instanceof Error ? error.message : String(error) });

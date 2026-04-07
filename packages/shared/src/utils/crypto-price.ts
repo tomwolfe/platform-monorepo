@@ -388,6 +388,10 @@ export async function getCryptoPrices(options?: {
           "This is a safety measure to prevent transactions without price verification."
         );
         (error as any).code = "PRICE_ORACLE_UNAVAILABLE";
+        (error as any).details = {
+          coingeckoError: coingeckoError instanceof Error ? coingeckoError.message : String(coingeckoError),
+          binanceError: binanceError instanceof Error ? binanceError.message : String(binanceError),
+        };
         throw error;
       }
     }

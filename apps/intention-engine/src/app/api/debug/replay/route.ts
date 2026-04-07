@@ -49,6 +49,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createReplayEngine, type ReplayOptions } from "@/lib/engine/time-travel-debugger";
+import { withApiErrorHandler, Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "debug-replay" });
 
 // ============================================================================
 // REQUEST SCHEMA
@@ -64,81 +67,71 @@ interface ReplayRequest {
 // POST HANDLER
 // ============================================================================
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
-  try {
-    // Parse request body
-    const body = await request.json().catch(() => null);
+async function postHandler(request: NextRequest): Promise<NextResponse> {
+  // Parse request body
+  const body = await request.json().catch(() => null);
 
-    if (!body) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid request body",
-        },
-        { status: 400 }
-      );
-    }
-
-    // Validate required fields
-    const { traceId, stepIndex, options } = body as ReplayRequest;
-
-    if (!traceId || typeof traceId !== "string") {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Missing or invalid traceId",
-        },
-        { status: 400 }
-      );
-    }
-
-    if (stepIndex === undefined || typeof stepIndex !== "number" || stepIndex < 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Missing or invalid stepIndex",
-        },
-        { status: 400 }
-      );
-    }
-
-    // Create replay engine
-    const replayEngine = createReplayEngine(traceId, stepIndex, {
-      mockLLM: options?.mockLLM ?? true,
-      mockTools: options?.mockTools ?? [],
-      parameterOverrides: options?.parameterOverrides,
-      skipSteps: options?.skipSteps,
-      stopAfterStep: options?.stopAfterStep,
-      verbose: options?.verbose ?? false,
-    });
-
-    // Execute replay
-    const result = await replayEngine.replayFromStep();
-
-    // Return result
-    return NextResponse.json({
-      success: result.success,
-      replayedFrom: result.replayedFrom,
-      replayedTo: result.replayedTo,
-      stepsReplayed: result.stepsReplayed,
-      stepsSkipped: result.stepsSkipped,
-      differences: result.differences,
-      error: result.error,
-      replayId: result.replayId,
-      durationMs: result.durationMs,
-    });
-  } catch (error) {
-    console.error("[TimeTravel Replay] Error:", error);
-
+  if (!body) {
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Replay failed",
+        error: "Invalid request body",
       },
-      { status: 500 }
+      { status: 400 }
     );
   }
+
+  // Validate required fields
+  const { traceId, stepIndex, options } = body as ReplayRequest;
+
+  if (!traceId || typeof traceId !== "string") {
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Missing or invalid traceId",
+      },
+      { status: 400 }
+    );
+  }
+
+  if (stepIndex === undefined || typeof stepIndex !== "number" || stepIndex < 0) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Missing or invalid stepIndex",
+      },
+      { status: 400 }
+    );
+  }
+
+  // Create replay engine
+  const replayEngine = createReplayEngine(traceId, stepIndex, {
+    mockLLM: options?.mockLLM ?? true,
+    mockTools: options?.mockTools ?? [],
+    parameterOverrides: options?.parameterOverrides,
+    skipSteps: options?.skipSteps,
+    stopAfterStep: options?.stopAfterStep,
+    verbose: options?.verbose ?? false,
+  });
+
+  // Execute replay
+  const result = await replayEngine.replayFromStep();
+
+  // Return result
+  return NextResponse.json({
+    success: result.success,
+    replayedFrom: result.replayedFrom,
+    replayedTo: result.replayedTo,
+    stepsReplayed: result.stepsReplayed,
+    stepsSkipped: result.stepsSkipped,
+    differences: result.differences,
+    error: result.error,
+    replayId: result.replayId,
+    durationMs: result.durationMs,
+  });
 }
+
+export const POST = withApiErrorHandler(postHandler, { serviceName: 'debug-replay' });
 
 // ============================================================================
 // OPTIONS HANDLER (CORS)

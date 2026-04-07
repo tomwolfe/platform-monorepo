@@ -25,6 +25,7 @@
 import { Worker, isMainThread, parentPort, MessagePort } from 'worker_threads';
 import { z } from 'zod';
 import { EventEmitter } from 'events';
+import { Logger } from '../../logger';
 
 // ============================================================================
 // WORKER MESSAGES
@@ -109,10 +110,12 @@ export class ToolSandbox extends EventEmitter {
     avgMemoryUsedMb: 0,
   };
   private activeWorkers: Set<Worker> = new Set();
+  private logger: Logger;
 
   constructor(config: Partial<SandboxConfig> = {}) {
     super();
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.logger = new Logger({ serviceName: 'tool-sandbox' });
   }
 
   /**
@@ -253,8 +256,8 @@ export class ToolSandbox extends EventEmitter {
     });
 
     if (this.config.debug) {
-      worker.on('message', (msg) => console.log('[Sandbox] Worker message:', msg));
-      worker.on('error', (err) => console.error('[Sandbox] Worker error:', err));
+      worker.on('message', (msg) => this.logger.debug('Worker message', { msg }));
+      worker.on('error', (err) => this.logger.error('Worker error', { error: err.message }));
     }
 
     return worker;

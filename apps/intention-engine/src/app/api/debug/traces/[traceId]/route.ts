@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadExecutionTrace, getMemoryClient } from "@/lib/engine/memory";
+import { withApiErrorHandler, Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "debug-traces" });
 
 /**
  * GET /api/debug/traces/[traceId]
@@ -12,52 +15,45 @@ import { loadExecutionTrace, getMemoryClient } from "@/lib/engine/memory";
  * - Computes diff between consecutive states
  * - Shows exactly which keys changed during each step (Redux DevTools style)
  */
-export async function GET(
+async function getHandler(
   request: NextRequest,
   { params }: { params: Promise<{ traceId: string }> }
 ) {
-  try {
-    const { traceId } = await params;
-    const includeStateDiffs = request.nextUrl.searchParams.get("includeStateDiffs") === "true";
+  const { traceId } = await params;
+  const includeStateDiffs = request.nextUrl.searchParams.get("includeStateDiffs") === "true";
 
-    if (!traceId) {
-      return NextResponse.json(
-        { error: "Trace ID is required" },
-        { status: 400 }
-      );
-    }
-
-    const trace = await loadExecutionTrace(traceId);
-
-    if (!trace) {
-      return NextResponse.json(
-        {
-          error: "Trace not found",
-          traceId,
-          hint: "Traces may be expired or not yet persisted. Check if the execution is still in progress.",
-        },
-        { status: 404 }
-      );
-    }
-
-    // Enrich trace with computed metrics
-    const enrichedTrace = enrichTrace(trace);
-
-    // ENHANCEMENT: Add state diffs if requested
-    if (includeStateDiffs) {
-      enrichedTrace.stateDiffs = await computeStateDiffs(traceId);
-    }
-
-    return NextResponse.json(enrichedTrace);
-  } catch (error) {
-    console.error("[DebugTraceById] Error:", error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
+  if (!traceId) {
     return NextResponse.json(
-      { error: "Failed to fetch trace", message: errorMessage },
-      { status: 500 }
+      { error: "Trace ID is required" },
+      { status: 400 }
     );
   }
+
+  const trace = await loadExecutionTrace(traceId);
+
+  if (!trace) {
+    return NextResponse.json(
+      {
+        error: "Trace not found",
+        traceId,
+        hint: "Traces may be expired or not yet persisted. Check if the execution is still in progress.",
+      },
+      { status: 404 }
+    );
+  }
+
+  // Enrich trace with computed metrics
+  const enrichedTrace = enrichTrace(trace);
+
+  // ENHANCEMENT: Add state diffs if requested
+  if (includeStateDiffs) {
+    enrichedTrace.stateDiffs = await computeStateDiffs(traceId);
+  }
+
+  return NextResponse.json(enrichedTrace);
 }
+
+export const GET = withApiErrorHandler(getHandler, { serviceName: 'debug-traces' });
 
 /**
  * Enrich trace with computed metrics for visualization
@@ -185,14 +181,14 @@ async function computeStateDiffs(traceId: string): Promise<Array<{
   try {
     const memoryClient = getMemoryClient();
     if (!memoryClient) {
-      console.warn("[computeStateDiffs] Memory client not available");
+      logger.warn("Memory client not available", { traceId });
       return [];
     }
 
     // Load execution state from Redis
     const taskState = await memoryClient.getTaskState(traceId);
     if (!taskState) {
-      console.warn(`[computeStateDiffs] No task state found for ${traceId}`);
+      logger.warn("No task state found", { traceId });
       return [];
     }
 
@@ -257,7 +253,7 @@ async function computeStateDiffs(traceId: string): Promise<Array<{
 
     return stateDiffs;
   } catch (error) {
-    console.error("[computeStateDiffs] Error computing state diffs:", error);
+    logger.error("Error computing state diffs", { traceId, error: error instanceof Error ? error.message : String(error) });
     return [];
   }
 }

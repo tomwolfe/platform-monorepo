@@ -10,6 +10,7 @@
 
 import { EventEmitter } from 'events';
 import { getQuickJS, QuickJSWASMModule, QuickJSContext } from 'quickjs-emscripten';
+import { Logger } from '../../logger';
 
 // ============================================================================
 // WASM SANDBOX CONFIGURATION
@@ -77,11 +78,13 @@ export class WasmSandbox extends EventEmitter {
   private isInitialized = false;
   private quickJSModule: QuickJSWASMModule | null = null;
   private context: QuickJSContext | null = null;
+  private logger: Logger;
 
   constructor(config: Partial<WasmSandboxConfig> = {}) {
     super();
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.stats = this.createInitialStats();
+    this.logger = new Logger({ serviceName: 'wasm-sandbox' });
   }
 
   private createInitialStats(): WasmSandboxStats {
@@ -111,10 +114,10 @@ export class WasmSandbox extends EventEmitter {
       this.isInitialized = true;
 
       if (this.config.debug) {
-        console.log('[WasmSandbox] QuickJS initialized successfully');
+        this.logger.debug('QuickJS initialized successfully');
       }
     } catch (error) {
-      console.error('[WasmSandbox] Failed to initialize QuickJS:', error);
+      this.logger.error('Failed to initialize QuickJS', { error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   }
@@ -276,7 +279,7 @@ export class WasmSandbox extends EventEmitter {
     this.isInitialized = false;
 
     if (this.config.debug) {
-      console.log('[WasmSandbox] Reset complete');
+      this.logger.debug('Reset complete');
     }
   }
 
@@ -299,7 +302,7 @@ export class WasmSandbox extends EventEmitter {
     this.removeAllListeners();
 
     if (this.config.debug) {
-      console.log('[WasmSandbox] Disposed');
+      this.logger.debug('Disposed');
     }
   }
 }

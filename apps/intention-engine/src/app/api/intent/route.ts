@@ -7,9 +7,11 @@ import { getMemoryClient } from "@/lib/engine/memory";
 import { z } from "zod";
 import { withNervousSystemTracing } from "@repo/shared/tracing";
 import { startTrace } from "@/lib/observability";
-import { withApiErrorHandler, formatApiError, formatApiSuccess, type EngineErrorCode } from "@repo/shared";
+import { withApiErrorHandler, formatApiError, formatApiSuccess, type EngineErrorCode, Logger } from "@repo/shared";
 
 export const runtime = "nodejs"; // AsyncLocalStorage needs nodejs runtime
+
+const logger = new Logger({ serviceName: "intent-engine" });
 
 const IntentRequestSchema = z.object({
   text: z.string().min(1),
@@ -56,10 +58,10 @@ export const POST = withApiErrorHandler(
         auditLogId = auditLog.id;
 
         // Phase 3: Debuggability & Inspection
-        console.log("[Intent Engine] Input:", text);
-        console.log("[Intent Engine] Inferred Intent:", JSON.stringify(intent, null, 2));
+        logger.debug("Intent inference input", { text });
+        logger.debug("Inferred intent", { intent: JSON.stringify(intent, null, 2) });
         if (plan) {
-          console.log("[Intent Engine] Generated Plan:", JSON.stringify(plan, null, 2));
+          logger.debug("Generated plan", { plan: JSON.stringify(plan, null, 2) });
         }
 
         span.end();
@@ -77,7 +79,7 @@ export const POST = withApiErrorHandler(
         }));
       } catch (error) {
         span.end();
-        console.error("[Intent Engine] Inference Error:", error);
+        logger.error("Intent inference failed", { error: error instanceof Error ? error.message : String(error) });
 
         // RESILIENCE FIX: Return 503 instead of 500 for dependency failures
         // to satisfy chaos test requirements for graceful degradation.

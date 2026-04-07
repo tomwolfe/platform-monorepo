@@ -13,12 +13,14 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getRedisClient, ServiceNamespace, withApiErrorHandler, formatApiSuccess } from "@repo/shared";
+import { getRedisClient, ServiceNamespace, withApiErrorHandler, formatApiSuccess, Logger } from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.IE);
 import { IDEMPOTENCY_KEY_HEADER } from "@repo/shared";
 import { WebhookDispatcherService, createWebhookDispatcherService } from "@/lib/engine/webhook-dispatcher-service";
 
 export const runtime = "nodejs";
+
+const logger = new Logger({ serviceName: "webhooks" });
 
 // ============================================================================
 // SERVICE INSTANCE
@@ -38,7 +40,7 @@ async function webhooksHandler(req: NextRequest) {
 
   // Fail-Fast: Security Check
   if (!signature || !timestamp || !(await webhookDispatcherService.verifySignature(rawBody, signature, timestamp))) {
-    console.warn("[Webhooks] Unauthorized request blocked");
+    logger.warn("Unauthorized request blocked");
     return NextResponse.json(
       formatApiSuccess({ error: "Unauthorized" }),
       { status: 401 }

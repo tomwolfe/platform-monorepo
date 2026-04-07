@@ -7,7 +7,9 @@ import { mapJsonSchemaToZod } from "../../lib/engine/schema-utils";
 import { mcpConfig } from "../../lib/mcp-config";
 import { PARAMETER_ALIASES as shared_aliases, ToolInput, ToolOutput } from "@repo/mcp-protocol";
 import { CircuitBreaker, CircuitBreakerError, CircuitState } from "./CircuitBreaker";
-import { RealtimeService } from "@repo/shared";
+import { RealtimeService, Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: 'mcp-client' });
 
 /**
  * MCPClient connects to remote MCP servers and maps their tools
@@ -64,7 +66,7 @@ export class MCPClient {
    * Used when connection drops due to Vercel's aggressive connection culling.
    */
   async reconnect(): Promise<void> {
-    console.log(`[MCPClient] Reconnecting to ${this.serverUrl}`);
+    logger.info('Reconnecting to MCP server', { serverUrl: this.serverUrl });
 
     try {
       // Close existing connection
@@ -76,12 +78,12 @@ export class MCPClient {
       // Re-connect client
       await this.client.connect(this.transport);
 
-      console.log(`[MCPClient] Reconnection to ${this.serverUrl} successful`);
+      logger.info('MCP server reconnection successful', { serverUrl: this.serverUrl });
     } catch (error) {
-      console.error(
-        `[MCPClient] Reconnection failed:`,
-        error instanceof Error ? error.message : String(error)
-      );
+      logger.error('Reconnection failed', {
+        serverUrl: this.serverUrl,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
@@ -168,9 +170,10 @@ export class MCPClient {
             (errorName === 'TypeError' && errorMessage.includes('fetch'));
 
           if (isConnectionError) {
-            console.warn(
-              `[MCPClient] SSE connection drop detected for ${name} - Attempting auto-reconnect`
-            );
+            logger.warn('SSE connection drop detected, attempting auto-reconnect', {
+              toolName: name,
+              error: errorMessage,
+            });
 
             // Publish "Service Degraded" event to Ably for observability
             await RealtimeService.publishNervousSystemEvent('ServiceDegraded', {
@@ -179,17 +182,17 @@ export class MCPClient {
               reason: 'connection_drop',
               error: errorMessage,
               timestamp: new Date().toISOString(),
-            }).catch(err => console.error('Failed to publish ServiceDegraded event:', err));
+            }).catch(err => logger.error('Failed to publish ServiceDegraded event', { error: err instanceof Error ? err.message : String(err) }));
 
             // Auto-reconnect: Re-instantiate transport and reconnect
             try {
               await this.reconnect();
-              console.log(`[MCPClient] Reconnection successful, retrying ${name}`);
+              logger.info('Reconnection successful, retrying', { toolName: name });
             } catch (reconnectError) {
-              console.error(
-                `[MCPClient] Reconnection failed for ${name}:`,
-                reconnectError instanceof Error ? reconnectError.message : String(reconnectError)
-              );
+              logger.error('Reconnection failed', {
+                toolName: name,
+                error: reconnectError instanceof Error ? reconnectError.message : String(reconnectError),
+              });
 
               // Trigger circuit breaker to open if reconnection fails
               await this.circuitBreaker.recordFailure();
@@ -206,7 +209,10 @@ export class MCPClient {
 
           // Handle timeout/abort as "Service Degraded"
           if (error.message.includes('AbortError') || error.message.includes('cancelled') || this.abortController?.signal.aborted) {
-            console.warn(`[MCPClient] Tool ${name} timed out after ${this.toolTimeoutMs}ms - Service Degraded`);
+            logger.warn('Tool timed out - Service Degraded', {
+              toolName: name,
+              timeoutMs: this.toolTimeoutMs,
+            });
 
             // Publish "Service Degraded" event to Ably for observability
             await RealtimeService.publishNervousSystemEvent('ServiceDegraded', {
@@ -215,7 +221,7 @@ export class MCPClient {
               reason: 'timeout',
               timeoutMs: this.toolTimeoutMs,
               timestamp: new Date().toISOString(),
-            }).catch(err => console.error('Failed to publish ServiceDegraded event:', err));
+            }).catch(err => logger.error('Failed to publish ServiceDegraded event', { error: err instanceof Error ? err.message : String(err) }));
 
             // Trigger circuit breaker to open
             await this.circuitBreaker.recordFailure();
@@ -267,7 +273,7 @@ export class MCPClient {
     for (const [alias, primary] of Object.entries(allAliases)) {
       if (mappedArgs[alias] !== undefined && mappedArgs[primary] === undefined) {
         mappedArgs[primary] = mappedArgs[alias];
-        console.log(`[MCPClient] Mapped parameter '${alias}' -> '${primary}' for tool ${name}`);
+        logger.debug('Mapped parameter alias', { alias, primary, toolName: name });
       }
     }
 
@@ -314,9 +320,11 @@ export class MCPClient {
       } catch (error: unknown) {
         // Special handling for reconnection-triggered retry
         if (error.message?.includes('RECONNECT_AND_RETRY')) {
-          console.log(
-            `[MCPClient] Reconnection triggered, retrying ${error.message.split(':')[1]?.trim() || 'tool call'} (attempt ${attempt + 1}/${maxAttempts})`
-          );
+          logger.info('Reconnection triggered retry', {
+            attempt: attempt + 1,
+            maxAttempts,
+            toolName: error.message.split(':')[1]?.trim() || 'unknown',
+          });
           lastError = error;
           // Short delay before retry after reconnection
           const delay = 500 + Math.random() * 500;

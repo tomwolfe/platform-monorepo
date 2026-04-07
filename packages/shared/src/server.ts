@@ -278,5 +278,17 @@ export {
   createCostCircuitBreaker,
 } from './services/circuit-breaker';
 
+// Webhook Dispatcher
+export {
+  WebhookDispatcherService,
+  createWebhookDispatcherService,
+  createWebhookHandler,
+  type WebhookEvent,
+  type WebhookHandler,
+  type WebhookHandlerResult,
+  type WebhookContext,
+  type WebhookDispatcherConfig,
+} from './services/webhook-dispatcher';
+
 // Ably Authentication (uses @clerk/nextjs/server)
 export * from './realtime/ably-auth';

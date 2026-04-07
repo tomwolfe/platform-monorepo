@@ -6,7 +6,7 @@ import { createPublicClient, http, parseUnits } from 'viem';
 import { base } from 'viem/chains';
 import { isValidTxHash } from '@repo/shared/utils/web3-verification';
 import { getCryptoPrices, usdToCryptoBigIntWithSlippage } from '@repo/shared/utils/crypto-price';
-import { CheckoutRequestSchema, validateRequest as validateZodRequest, formatApiError, withApiErrorHandler, Logger } from '@repo/shared';
+import { CheckoutRequestSchema, validateRequest as validateZodRequest, errorResponse, successResponse, withApiErrorHandler, Logger } from '@repo/shared';
 import { isReplayAllowed, rollbackReplayGuard } from '@repo/shared/middleware/web3-replay-guard';
 
 export const runtime = 'nodejs';
@@ -53,7 +53,7 @@ async function postHandler(req: NextRequest) {
 
   if (!targetReservationId) {
     return NextResponse.json(
-      formatApiError(new Error('reservationId is required'), 'VALIDATION_ERROR'),
+      errorResponse('VALIDATION_ERROR', 'reservationId is required'),
       { status: 400 }
     );
   }
@@ -62,7 +62,7 @@ async function postHandler(req: NextRequest) {
   // Note: txHash is already validated by CheckoutRequestSchema, but extra validation doesn't hurt
   if (!isValidTxHash(txHash)) {
     return NextResponse.json(
-      { message: 'Invalid transaction hash format' },
+      errorResponse('VALIDATION_ERROR', 'Invalid transaction hash format'),
       { status: 400 }
     );
   }
@@ -77,7 +77,7 @@ async function postHandler(req: NextRequest) {
 
   if (!reservation) {
     return NextResponse.json(
-      { message: 'Reservation not found' },
+      errorResponse('NOT_FOUND', 'Reservation not found'),
       { status: 404 }
     );
   }
@@ -85,7 +85,7 @@ async function postHandler(req: NextRequest) {
   // Already verified?
   if (reservation.isVerified) {
     return NextResponse.json(
-      { message: 'Reservation already verified', success: true },
+      successResponse({ isVerified: true }, { message: 'Reservation already verified' }),
       { status: 200 }
     );
   }
@@ -97,7 +97,7 @@ async function postHandler(req: NextRequest) {
   // Enforce restaurant wallet address exists (direct P2P requirement)
   if (!reservation.restaurant?.walletAddress) {
     return NextResponse.json(
-      { message: 'Restaurant wallet address not configured - cannot accept P2P payment' },
+      errorResponse('VALIDATION_ERROR', 'Restaurant wallet address not configured - cannot accept P2P payment'),
       { status: 400 }
     );
   }
@@ -129,7 +129,7 @@ async function postHandler(req: NextRequest) {
 
   if (!replayCheck) {
     return NextResponse.json(
-      { message: `Payment transaction already used or blocked.` },
+      errorResponse('CONFLICT', `Payment transaction already used or blocked.`),
       { status: 409 }
     );
   }
@@ -151,7 +151,7 @@ async function postHandler(req: NextRequest) {
     // Rollback the replay guard to allow future attempts with this hash
     await rollbackReplayGuard(txHash as `0x${string}`);
     return NextResponse.json(
-      { message: verificationResult.error || 'Transaction verification failed' },
+      errorResponse('VALIDATION_ERROR', verificationResult.error || 'Transaction verification failed'),
       { status: 400 }
     );
   }
@@ -170,11 +170,9 @@ async function postHandler(req: NextRequest) {
 
         if (decodedData !== targetReservationId) {
           return NextResponse.json(
-            {
-              message: 'Transaction data mismatch. Reservation ID not found in transaction data.',
-              expected: targetReservationId,
-              received: decodedData,
-            },
+            errorResponse('VALIDATION_ERROR', 'Transaction data mismatch. Reservation ID not found in transaction data.', {
+              details: { expected: targetReservationId, received: decodedData },
+            }),
             { status: 400 }
           );
         }
@@ -188,7 +186,9 @@ async function postHandler(req: NextRequest) {
   const confirmations = verificationResult.receipt?.confirmations || 0;
   if (confirmations < 1) {
     return NextResponse.json(
-      { message: 'Waiting for more confirmations', confirmations },
+      errorResponse('VALIDATION_ERROR', 'Waiting for more confirmations', {
+        details: { confirmations },
+      }),
       { status: 400 }
     );
   }
@@ -216,12 +216,10 @@ async function postHandler(req: NextRequest) {
     { reservationId: targetReservationId, txHash }
   );
 
-  return NextResponse.json({
-    success: true,
-    message: 'Crypto payment verified successfully',
+  return NextResponse.json(successResponse({
     txHash,
     confirmations,
-  });
+  }, { message: 'Crypto payment verified successfully' }));
 }
 
 export const POST = withApiErrorHandler(postHandler, 'EXECUTION_FAILED');

@@ -7,9 +7,11 @@ import { and, eq, gte, or, sql } from '@repo/database';
 import { addMinutes, parseISO } from 'date-fns';
 import { toZonedTime, format } from 'date-fns-tz';
 import { validateRequest } from '@tablestack/lib/auth';
-import { formatApiError, formatApiSuccess, withApiErrorHandler, withCache, getRedisClient, ServiceNamespace } from '@repo/shared';
+import { formatApiError, formatApiSuccess, withApiErrorHandler, withCache, getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
 
 export const runtime = 'nodejs';
+
+const logger = new Logger({ serviceName: 'table-stack-availability' });
 
 // Type aliases for Drizzle query results
 type RestaurantTable = typeof restaurantTables.$inferSelect;
@@ -261,6 +263,15 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
         }
       }
     }
+  }
+
+  // Log when circuit breaker limits combinations — ops teams need visibility
+  if (comboCount >= MAX_COMBOS && vacantTables.length * (vacantTables.length - 1) / 2 > MAX_COMBOS) {
+    logger.info('Table combination search capped by circuit breaker', {
+      maxCombos: MAX_COMBOS,
+      vacantTableCount: vacantTables.length,
+      possibleCombos: vacantTables.length * (vacantTables.length - 1) / 2,
+    });
   }
 
   return suggestedCombos;

@@ -1,6 +1,9 @@
 import { RealtimeService, getRedisClient, ServiceNamespace } from "@repo/shared";
 import { createTypedSystemEvent, type CircuitBreakerEventPayload } from "@repo/mcp-protocol";
 import { LRUCache } from "lru-cache";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: 'circuit-breaker' });
 
 /**
  * CircuitBreaker - Phase 4: Harden Resilience
@@ -209,7 +212,7 @@ export class CircuitBreaker {
       try {
         await this.redis.zadd(this.redisKey, { score: now, value: `${now}:${Math.random()}` });
       } catch (err) {
-        console.warn("[CircuitBreaker] Failed to add failure to Redis:", err);
+        logger.warn('Failed to add failure to Redis', { error: err instanceof Error ? err.message : String(err) });
       }
     }
 
@@ -222,7 +225,7 @@ export class CircuitBreaker {
         const redisCount = await this.redis.zcard(this.redisKey);
         this.failureCount = redisCount;
       } catch (err) {
-        console.warn("[CircuitBreaker] Failed to update Redis sorted set:", err);
+        logger.warn('Failed to update Redis sorted set', { error: err instanceof Error ? err.message : String(err) });
         // Fallback to in-memory count
         this.failureTimestamps = this.failureTimestamps.filter(ts => ts > windowStart);
         this.failureCount = this.failureTimestamps.length;
@@ -322,7 +325,7 @@ export class CircuitBreaker {
       try {
         listener(event);
       } catch (err) {
-        console.error("[CircuitBreaker] State change listener error:", err);
+        logger.error('State change listener error', { error: err instanceof Error ? err.message : String(err) });
       }
     }
 
@@ -330,11 +333,14 @@ export class CircuitBreaker {
     this.publishCircuitBreakerEvent(
       newState === CircuitState.OPEN ? "CircuitBreakerOpened" : "CircuitBreakerClosed",
       { reason }
-    ).catch(err => console.error("[CircuitBreaker] Failed to publish event:", err));
+    ).catch(err => logger.error('Failed to publish event', { error: err instanceof Error ? err.message : String(err) }));
 
-    console.log(
-      `[CircuitBreaker:${this.config.serviceName}] ${previousState} -> ${newState}${reason ? `: ${reason}` : ""}`
-    );
+    logger.info('Circuit state transition', {
+      serviceName: this.config.serviceName,
+      previousState,
+      newState,
+      reason,
+    });
   }
 
   /**
@@ -369,7 +375,7 @@ export class CircuitBreaker {
       );
     } catch (error) {
       // Don't throw - circuit breaker events are observability, not critical path
-      console.warn("[CircuitBreaker] Failed to publish event to mesh:", error);
+      logger.warn('Failed to publish event to mesh', { error: error instanceof Error ? error.message : String(error) });
     }
   }
 }

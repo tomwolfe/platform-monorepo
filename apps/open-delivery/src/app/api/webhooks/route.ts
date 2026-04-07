@@ -1,80 +1,55 @@
+/**
+ * Webhooks API Route - Thin Controller Layer
+ *
+ * Delegates all business logic to createWebhookHandler from @repo/shared.
+ * Handles signature verification, idempotency, and event routing automatically.
+ *
+ * @see Phase 4: Consolidate Webhook Dispatching
+ */
+
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import { verifySignature } from "@repo/auth";
-import { Logger, IdempotencyService, getRedisClient, ServiceNamespace } from "@repo/shared";
-import crypto from "crypto";
+import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
+import { createWebhookHandler, WebhookEvent, WebhookContext, WebhookHandlerResult } from "@repo/shared/server";
 
 export const runtime = "nodejs";
 
-const logger = new Logger({ serviceName: "open-delivery-webhook" });
 const redis = getRedisClient(ServiceNamespace.SHARED);
-const idempotencyService = new IdempotencyService(redis);
+const logger = new Logger({ serviceName: "open-delivery-webhook" });
 
-const HotspotEventSchema = z.object({
-  event: z.string(),
-  venue: z.object({
-    id: z.string(),
-    name: z.string(),
-    location: z.string(),
-  }),
-  table: z.object({
-    id: z.string(),
-    number: z.string(),
-  }),
-});
+// ============================================================================
+// EVENT HANDLERS
+// ============================================================================
 
-export async function POST(req: NextRequest) {
-  try {
-    const rawBody = await req.text();
-    const signature = req.headers.get("x-signature");
-    const timestamp = Number(req.headers.get("x-timestamp"));
+async function handleDeliveryHotspotAvailable(
+  event: WebhookEvent,
+  _context: WebhookContext
+): Promise<WebhookHandlerResult> {
+  const venue = event.venue as { name: string };
+  const table = event.table as { number: string };
 
-    // Fail-Fast: Security Check
-    if (!signature || !timestamp || !(await verifySignature(rawBody, signature, timestamp))) {
-      logger.warn({ message: "Unauthorized request blocked" });
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  // Logic to broadcast to nearby drivers would go here
+  logger.info("Hotspot registered - venue table marked as vacant", {
+    venue: venue.name,
+    table: table.number,
+  });
 
-    // IDEMPOTENCY: Generate SHA-256 hash of rawBody to prevent duplicate processing
-    const bodyHash = crypto.createHash("sha256").update(rawBody).digest("hex");
-    const isDuplicate = await idempotencyService.isDuplicate(bodyHash, "od-webhook");
-    if (isDuplicate) {
-      logger.info({ message: "Duplicate webhook detected, returning early", hash: bodyHash });
-      return NextResponse.json({ message: "Event already processed" }, { status: 200 });
-    }
-
-    const body = JSON.parse(rawBody);
-    logger.info({ message: "Webhook received", body });
-
-    const validatedBody = HotspotEventSchema.safeParse(body);
-    if (!validatedBody.success) {
-      return NextResponse.json({ message: "Event received" }, { status: 200 });
-    }
-
-    const { event, venue, table } = validatedBody.data;
-
-    if (event === 'delivery_hotspot_available') {
-      // Logic to broadcast to nearby drivers would go here
-      logger.info({
-        message: "Hotspot registered - venue table marked as vacant",
-        venue: venue.name,
-        table: table.number,
-      });
-      
-      return NextResponse.json({ 
-        message: "Hotspot registered",
-        broadcast: true,
-        venue: venue.name,
-        table: table.number
-      });
-    }
-
-    return NextResponse.json({ message: "Event ignored" });
-  } catch (error: unknown) {
-    logger.error({
-      message: "Webhook error",
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
-  }
+  return {
+    success: true,
+    message: "Hotspot registered",
+    data: {
+      broadcast: true,
+      venue: venue.name,
+      table: table.number,
+    },
+  };
 }
+
+// ============================================================================
+// API HANDLER
+// ============================================================================
+
+export const POST = createWebhookHandler(redis, {
+  handlers: {
+    delivery_hotspot_available: handleDeliveryHotspotAvailable,
+  },
+});

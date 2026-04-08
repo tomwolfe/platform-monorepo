@@ -105,17 +105,54 @@ async function sendEventToDLQ(
 // Automatically generates plans from system events
 // ============================================================================
 
+// Strict type definitions for proactive event data
+interface ProactiveEventData {
+  [key: string]: unknown;
+  restaurantName?: string;
+  dateTime?: string;
+  partySize?: number;
+  alternativeSuggestions?: string[];
+  tableId?: string;
+  capacity?: number;
+  orderId?: string;
+  estimatedDelay?: number;
+  deliveryAddress?: string;
+  reason?: string;
+  guest?: {
+    name?: string;
+    visitCount?: number;
+    defaultDeliveryAddress?: string;
+  };
+  reservation?: {
+    restaurantName?: string;
+  };
+  serviceName?: string;
+  toolName?: string;
+}
+
 interface ProactiveEventContext {
   eventName: string;
-  data: Record<string, unknown>;
+  data: ProactiveEventData;
   userId?: string;
   userChannel?: string;
   traceId?: string;
 }
 
+interface ProactiveIntent {
+  type: string;
+  confidence: number;
+  [key: string]: unknown;
+}
+
+interface ProactivePlanResult {
+  steps: Array<{ [key: string]: unknown }>;
+  summary?: string;
+  [key: string]: unknown;
+}
+
 interface ProactivePlan {
-  intent: Record<string, unknown>;
-  plan: Record<string, unknown>;
+  intent: ProactiveIntent;
+  plan: ProactivePlanResult;
   confidence: number;
   reasoning: string;
 }
@@ -126,9 +163,9 @@ export class ProactiveIntentGenerator {
    */
   private static PROACTIVE_TRIGGERS: Record<
     string,
-    (data: Record<string, unknown>) => string
+    (data: ProactiveEventData) => string
   > = {
-    ReservationRejected: (data: Record<string, unknown>) => {
+    ReservationRejected: (data: ProactiveEventData) => {
       const { restaurantName, dateTime, partySize, alternativeSuggestions } =
         data;
       let prompt = `The reservation at ${restaurantName} for ${partySize} people at ${dateTime} was rejected.`;
@@ -145,17 +182,17 @@ export class ProactiveIntentGenerator {
       return prompt;
     },
 
-    TableVacated: (data: Record<string, unknown>) => {
+    TableVacated: (data: ProactiveEventData) => {
       const { restaurantName, tableId, capacity } = data;
       return `Table ${tableId} (capacity: ${capacity}) just became available at ${restaurantName}. Check if the user wants to book it.`;
     },
 
-    DeliveryDelayed: (data: Record<string, unknown>) => {
+    DeliveryDelayed: (data: ProactiveEventData) => {
       const { orderId, estimatedDelay, restaurantName, deliveryAddress } = data;
       return `Delivery order ${orderId} from ${restaurantName} to ${deliveryAddress} is delayed by ${estimatedDelay} minutes. Suggest alternatives or compensation.`;
     },
 
-    ReservationCancelled: (data: Record<string, unknown>) => {
+    ReservationCancelled: (data: ProactiveEventData) => {
       const { restaurantName, dateTime, partySize, reason } = data;
       let prompt = `Reservation at ${restaurantName} for ${partySize} people at ${dateTime} was cancelled.`;
       if (reason) prompt += ` Reason: ${reason}.`;
@@ -163,11 +200,9 @@ export class ProactiveIntentGenerator {
       return prompt;
     },
 
-    HighValueGuestReservation: (data: Record<string, unknown>) => {
-      const guest = data.guest as Record<string, unknown> | undefined;
-      const reservation = data.reservation as
-        | Record<string, unknown>
-        | undefined;
+    HighValueGuestReservation: (data: ProactiveEventData) => {
+      const guest = data.guest;
+      const reservation = data.reservation;
       let prompt = `VIP guest ${guest?.name || "unknown"} (${guest?.visitCount || 0} visits) booked at ${reservation?.restaurantName || "unknown"}.`;
 
       if (guest?.defaultDeliveryAddress) {
@@ -177,7 +212,7 @@ export class ProactiveIntentGenerator {
       return prompt;
     },
 
-    ServiceDegraded: (data: Record<string, unknown>) => {
+    ServiceDegraded: (data: ProactiveEventData) => {
       const { serviceName, toolName, reason } = data;
       return `Service ${serviceName} is degraded (tool: ${toolName}, reason: ${reason}). Notify affected users and suggest alternatives.`;
     },
@@ -245,9 +280,9 @@ export class ProactiveIntentGenerator {
    */
   private static buildReasoning(
     eventName: string,
-    data: Record<string, unknown>,
-    intent: Record<string, unknown>,
-    plan: Record<string, unknown>,
+    data: ProactiveEventData,
+    intent: ProactiveIntent,
+    plan: ProactivePlanResult,
   ): string {
     const eventSummary = this.summarizeEvent(eventName, data);
     return `Detected ${eventSummary}. Suggested action: ${(plan.summary as string) || (intent.type as string) || "unknown"}`;
@@ -258,7 +293,7 @@ export class ProactiveIntentGenerator {
    */
   private static summarizeEvent(
     eventName: string,
-    data: Record<string, unknown>,
+    data: ProactiveEventData,
   ): string {
     switch (eventName) {
       case "ReservationRejected":
@@ -270,7 +305,7 @@ export class ProactiveIntentGenerator {
       case "ReservationCancelled":
         return `reservation cancellation at ${data.restaurantName || "unknown restaurant"}`;
       case "HighValueGuestReservation":
-        return `VIP guest ${(data.guest as Record<string, unknown>)?.name || "unknown"} reservation`;
+        return `VIP guest ${data.guest?.name || "unknown"} reservation`;
       case "ServiceDegraded":
         return `service degradation: ${data.serviceName || "unknown"}`;
       default:
@@ -304,7 +339,7 @@ export class MeshListener {
       return;
     }
 
-    const payloadObj = payload as Record<string, unknown>;
+    const payloadObj = payload as { token?: string; [key: string]: unknown };
 
     if (!payloadObj.token) {
       console.warn(
@@ -314,7 +349,7 @@ export class MeshListener {
     }
 
     const verified = await verifyAsymmetricJWT(
-      payloadObj.token as string,
+      payloadObj.token,
       "intention-engine",
       "mesh-listener",
     );
@@ -325,10 +360,13 @@ export class MeshListener {
       return;
     }
 
-    const verifiedData = verified as Record<string, unknown>;
-    const data = (verifiedData.data as Record<string, unknown>) || {};
-    const traceId = (verifiedData.extras as Record<string, unknown> | undefined)
-      ?.traceId as string | undefined;
+    const verifiedData = verified as {
+      data?: Record<string, unknown>;
+      extras?: { traceId?: string };
+      [key: string]: unknown;
+    };
+    const data = verifiedData.data || {};
+    const traceId = verifiedData.extras?.traceId;
 
     // Extract user context if available
     const userId = (data.userId || data.guestId || data.customerId) as
@@ -347,7 +385,7 @@ export class MeshListener {
       reservation_rejected: "RESERVATION_CANCELLED",
       high_value_guest_reservation: "RESERVATION_CREATED",
       delivery_logged: "DELIVERY_COMPLETED",
-    };
+    } as const;
 
     const registryEventType =
       eventTypeMap[eventName] || eventName.toUpperCase();

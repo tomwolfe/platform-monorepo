@@ -1,8 +1,8 @@
 /**
  * Tool Definition Types
- * 
+ *
  * Shared tool definition schema used across all apps.
- * 
+ *
  * @see Phase 2.2: Kill Duplicate Registries
  */
 
@@ -46,16 +46,25 @@ export const ToolDefinitionSchema = z.object({
   parameter_aliases: z.record(z.string(), z.string()).optional(),
   timeout_ms: z.number().int().positive().default(30000),
   requires_confirmation: z.boolean().default(false),
-  category: z.enum(["data", "action", "communication", "calculation", "external", "search"]),
+  category: z.enum([
+    "data",
+    "action",
+    "communication",
+    "calculation",
+    "external",
+    "search",
+  ]),
   origin: z.string().optional(),
-  rate_limits: z.object({
-    requests_per_minute: z.number().int().positive().optional(),
-    requests_per_hour: z.number().int().positive().optional(),
-  }).optional(),
+  rate_limits: z
+    .object({
+      requests_per_minute: z.number().int().positive().optional(),
+      requests_per_hour: z.number().int().positive().optional(),
+    })
+    .optional(),
   responseSchema: z.any().optional(),
 });
 
 // Extended type with optional execute function (not serialized)
 export interface ToolDefinition extends z.infer<typeof ToolDefinitionSchema> {
-  execute?: (...args: any[]) => Promise<any>;
+  execute?: (...args: unknown[]) => Promise<unknown>;
 }

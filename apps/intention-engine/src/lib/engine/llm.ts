@@ -1,7 +1,7 @@
 /**
  * IntentionEngine - LLM Abstraction Layer
  * Phase 2: Structured generation, model routing, timeout, retry, tracking
- * 
+ *
  * Constraints:
  * - No UI dependencies
  * - No Redis calls
@@ -21,7 +21,13 @@ import {
   EngineErrorSchema,
   EngineErrorCodeSchema,
 } from "./types";
-import { Logger } from "@repo/shared";
+import { Logger, getRedisClient, ServiceNamespace } from "@repo/shared";
+import {
+  generateCacheKey,
+  getCachedResponse,
+  cacheResponse,
+  DEFAULT_TTL_SECONDS,
+} from "@repo/shared/llm-cache";
 
 const logger = new Logger({ serviceName: "intention-engine" });
 
@@ -104,13 +110,17 @@ class TimeoutError extends Error {
 async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
-  context: string
+  context: string,
 ): Promise<T> {
   const timeoutPromise = new Promise<never>((_, reject) => {
     const timeoutId = setTimeout(() => {
-      reject(new TimeoutError(`LLM request timed out after ${timeoutMs}ms: ${context}`));
+      reject(
+        new TimeoutError(
+          `LLM request timed out after ${timeoutMs}ms: ${context}`,
+        ),
+      );
     }, timeoutMs);
-    
+
     // Cleanup timeout if promise resolves first
     promise.finally(() => clearTimeout(timeoutId)).catch(() => {});
   });
@@ -129,17 +139,24 @@ interface TokenUsage {
   totalTokens: number;
 }
 
+interface TokenUsageRaw {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}
+
 function extractTokenUsage(usage: unknown): TokenUsage {
   // Handle Vercel AI SDK usage format
   if (usage && typeof usage === "object") {
-    const u = usage as Record<string, unknown>;
+    const u = usage as TokenUsageRaw;
     return {
       promptTokens: typeof u.promptTokens === "number" ? u.promptTokens : 0,
-      completionTokens: typeof u.completionTokens === "number" ? u.completionTokens : 0,
+      completionTokens:
+        typeof u.completionTokens === "number" ? u.completionTokens : 0,
       totalTokens: typeof u.totalTokens === "number" ? u.totalTokens : 0,
     };
   }
-  
+
   return {
     promptTokens: 0,
     completionTokens: 0,
@@ -173,23 +190,31 @@ function sanitizeJsonOutput(content: string): string {
 
   // Fallback: Extract JSON object/array from mixed content
   // This handles cases where LLM adds explanatory text before/after JSON
-  if (sanitized.startsWith('{') || sanitized.startsWith('[')) {
+  if (sanitized.startsWith("{") || sanitized.startsWith("[")) {
     return sanitized;
   }
 
   // Try to find JSON object in the content
-  const jsonStartIndex = sanitized.indexOf('{');
-  const jsonEndIndex = sanitized.lastIndexOf('}');
+  const jsonStartIndex = sanitized.indexOf("{");
+  const jsonEndIndex = sanitized.lastIndexOf("}");
 
-  if (jsonStartIndex !== -1 && jsonEndIndex !== -1 && jsonEndIndex > jsonStartIndex) {
+  if (
+    jsonStartIndex !== -1 &&
+    jsonEndIndex !== -1 &&
+    jsonEndIndex > jsonStartIndex
+  ) {
     return sanitized.substring(jsonStartIndex, jsonEndIndex + 1);
   }
 
   // Try to find JSON array
-  const arrayStartIndex = sanitized.indexOf('[');
-  const arrayEndIndex = sanitized.lastIndexOf(']');
+  const arrayStartIndex = sanitized.indexOf("[");
+  const arrayEndIndex = sanitized.lastIndexOf("]");
 
-  if (arrayStartIndex !== -1 && arrayEndIndex !== -1 && arrayEndIndex > arrayStartIndex) {
+  if (
+    arrayStartIndex !== -1 &&
+    arrayEndIndex !== -1 &&
+    arrayEndIndex > arrayStartIndex
+  ) {
     return sanitized.substring(arrayStartIndex, arrayEndIndex + 1);
   }
 
@@ -205,11 +230,11 @@ function sanitizeJsonOutput(content: string): string {
  * @returns Parsed JSON object
  * @throws Error if JSON cannot be parsed
  */
-function parseJsonWithFallback(content: string): any {
+function parseJsonWithFallback(content: string): Record<string, unknown> {
   const sanitized = sanitizeJsonOutput(content);
 
   try {
-    return JSON.parse(sanitized);
+    return JSON.parse(sanitized) as Record<string, unknown>;
   } catch (parseError) {
     // If parsing fails, try to extract JSON using regex
     const jsonRegex = /(\{[\s\S]*\}|\[[\s\S]*\])/;
@@ -217,17 +242,24 @@ function parseJsonWithFallback(content: string): any {
 
     if (match) {
       try {
-        return JSON.parse(match[1]);
+        return JSON.parse(match[1]) as Record<string, unknown>;
       } catch (secondError) {
         // Fall through to original error
       }
     }
 
     // Throw with helpful error message including sanitized content preview
-    const preview = sanitized.substring(0, 200) + (sanitized.length > 200 ? '...' : '');
-    const error = new Error(`Failed to parse JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}\n\nContent preview: ${preview}`);
-    (error as any).originalContent = content;
-    (error as any).sanitizedContent = sanitized;
+    const preview =
+      sanitized.substring(0, 200) + (sanitized.length > 200 ? "..." : "");
+    const error = new Error(
+      `Failed to parse JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}\n\nContent preview: ${preview}`,
+    );
+    (
+      error as Error & { originalContent?: string; sanitizedContent?: string }
+    ).originalContent = content;
+    (
+      error as Error & { originalContent?: string; sanitizedContent?: string }
+    ).sanitizedContent = sanitized;
     throw error;
   }
 }
@@ -254,7 +286,7 @@ export interface GenerateStructuredResult<T> {
 }
 
 export async function generateStructured<T>(
-  options: GenerateStructuredOptions<T>
+  options: GenerateStructuredOptions<T>,
 ): Promise<GenerateStructuredResult<T>> {
   const {
     modelType,
@@ -285,34 +317,40 @@ export async function generateStructured<T>(
         explanation: "Mock intent for CI/test",
         requires_clarification: false,
       };
-      
+
       return {
         data: mockIntentData as T,
         response: {
           content: JSON.stringify(mockIntentData),
           model_id: "ci-mock-classification",
           latency_ms: 1,
-          token_usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+          token_usage: {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+          },
           finish_reason: "stop" as const,
-        }
+        },
       };
     }
-    
+
     // Default mock for planning/other model types
-    const mockData: any = {
-      steps: [{
-        step_number: 0,
-        step_id: "ci-mock-step",
-        tool_name: "log",
-        parameters: { message: "CI Mock Step" },
-        dependencies: [],
-        description: "Mocked for CI",
-        requires_confirmation: false,
-        status: "pending" as const,
-      }],
+    const mockData: Record<string, unknown> = {
+      steps: [
+        {
+          step_number: 0,
+          step_id: "ci-mock-step",
+          tool_name: "log",
+          parameters: { message: "CI Mock Step" },
+          dependencies: [],
+          description: "Mocked for CI",
+          requires_confirmation: false,
+          status: "pending" as const,
+        },
+      ],
       summary: "Mocked plan for CI",
       estimated_total_tokens: 100,
-      estimated_latency_ms: 10
+      estimated_latency_ms: 10,
     };
 
     return {
@@ -321,9 +359,13 @@ export async function generateStructured<T>(
         content: JSON.stringify(mockData),
         model_id: "ci-mock-model",
         latency_ms: 1,
-        token_usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        token_usage: {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+        },
         finish_reason: "stop" as const,
-      }
+      },
     };
   }
 
@@ -332,17 +374,64 @@ export async function generateStructured<T>(
   const effectiveTemperature = temperature ?? config.defaultTemperature;
   const effectiveMaxTokens = maxTokens ?? config.defaultMaxTokens;
 
+  // LLM RESPONSE CACHE CHECK
+  // Check Redis cache before making expensive LLM API call
+  // Only cache when temperature is low (deterministic outputs)
+  const cacheCheckStartTime = performance.now();
+  if (effectiveTemperature <= 0.2) {
+    try {
+      const redis = getRedisClient(ServiceNamespace.IE);
+      const cacheKey = generateCacheKey(
+        systemPrompt,
+        prompt,
+        undefined, // Tools not included in cache key for simplicity
+        modelType,
+      );
+
+      const cached = await getCachedResponse(redis, cacheKey);
+      if (cached) {
+        logger.info({ message: `LLM cache hit for model ${modelType}` });
+        const latencyMs = Math.round(performance.now() - cacheCheckStartTime);
+
+        return {
+          data: JSON.parse(cached.content) as T,
+          response: {
+            content: cached.content,
+            structured_output: JSON.parse(cached.content),
+            model_id: cached.modelId,
+            latency_ms: latencyMs,
+            token_usage: cached.tokenUsage || {
+              prompt_tokens: 0,
+              completion_tokens: 0,
+              total_tokens: 0,
+            },
+            finish_reason: "stop",
+            fromCache: true,
+          },
+        };
+      }
+    } catch (error) {
+      // Cache read failure - continue with normal flow
+      logger.warn({
+        message: `LLM cache read failed, proceeding with API call: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  }
+
   let lastError: Error | null = null;
   let attempts = 0;
 
   while (attempts <= maxRetries) {
-    const startTime = performance.now();
+    const attemptStartTime = performance.now();
     attempts++;
 
     try {
       // Create abort controller for timeout
       const abortController = new AbortController();
-      const timeoutId = setTimeout(() => abortController.abort(), effectiveTimeout);
+      const timeoutId = setTimeout(
+        () => abortController.abort(),
+        effectiveTimeout,
+      );
 
       const result = await generateObject({
         model: openai(config.modelId),
@@ -356,7 +445,7 @@ export async function generateStructured<T>(
 
       clearTimeout(timeoutId);
 
-      const latencyMs = Math.round(performance.now() - startTime);
+      const latencyMs = Math.round(performance.now() - attemptStartTime);
       const tokenUsage = extractTokenUsage(result.usage);
 
       // Build LLMResponse
@@ -376,12 +465,43 @@ export async function generateStructured<T>(
       // Validate response schema
       LLMResponseSchema.parse(response);
 
+      // CACHE THE RESPONSE
+      // Only cache successful responses with low temperature (deterministic)
+      if (effectiveTemperature <= 0.2) {
+        try {
+          const redis = getRedisClient(ServiceNamespace.IE);
+          const cacheKey = generateCacheKey(
+            systemPrompt,
+            prompt,
+            undefined,
+            modelType,
+          );
+
+          await cacheResponse(
+            redis,
+            cacheKey,
+            {
+              content: response.content,
+              createdAt: new Date().toISOString(),
+              modelId: config.modelId,
+              tokenUsage: response.token_usage,
+            },
+            DEFAULT_TTL_SECONDS,
+          );
+        } catch (error) {
+          // Cache write failure - log but don't fail the request
+          logger.warn({
+            message: `LLM cache write failed: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
+      }
+
       return {
         data: result.object as T,
         response,
       };
     } catch (error) {
-      const latencyMs = Math.round(performance.now() - startTime);
+      const latencyMs = Math.round(performance.now() - attemptStartTime);
       lastError = error instanceof Error ? error : new Error(String(error));
 
       // Check if it's a schema validation error and we have retries left
@@ -401,9 +521,10 @@ export async function generateStructured<T>(
       }
 
       // Not a schema error or no retries left - throw deterministic error
-      const errorCode = lastError instanceof TimeoutError || lastError.name === "AbortError"
-        ? "LLM_TIMEOUT"
-        : "LLM_SCHEMA_VALIDATION_FAILED";
+      const errorCode =
+        lastError instanceof TimeoutError || lastError.name === "AbortError"
+          ? "LLM_TIMEOUT"
+          : "LLM_SCHEMA_VALIDATION_FAILED";
 
       const engineError = EngineErrorSchema.parse({
         code: errorCode,
@@ -452,16 +573,10 @@ export interface GenerateTextOptions {
 }
 
 export async function generateText(
-  options: GenerateTextOptions
+  options: GenerateTextOptions,
 ): Promise<LLMResponse> {
-  const {
-    modelType,
-    prompt,
-    systemPrompt,
-    temperature,
-    maxTokens,
-    timeoutMs,
-  } = options;
+  const { modelType, prompt, systemPrompt, temperature, maxTokens, timeoutMs } =
+    options;
 
   // Validate model type
   LLMModelTypeSchema.parse(modelType);
@@ -476,7 +591,10 @@ export async function generateText(
   try {
     // Create abort controller for timeout
     const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), effectiveTimeout);
+    const timeoutId = setTimeout(
+      () => abortController.abort(),
+      effectiveTimeout,
+    );
 
     const result = await aiGenerateText({
       model: openai(config.modelId),
@@ -511,9 +629,10 @@ export async function generateText(
     const latencyMs = Math.round(performance.now() - startTime);
     const err = error instanceof Error ? error : new Error(String(error));
 
-    const errorCode = err instanceof TimeoutError || err.name === "AbortError"
-      ? "LLM_TIMEOUT"
-      : "LLM_REQUEST_FAILED";
+    const errorCode =
+      err instanceof TimeoutError || err.name === "AbortError"
+        ? "LLM_TIMEOUT"
+        : "LLM_REQUEST_FAILED";
 
     const engineError = EngineErrorSchema.parse({
       code: errorCode,
@@ -566,7 +685,9 @@ export function createLatencyTracker() {
       return {
         totalLatencyMs: latencies.reduce((a, b) => a + b, 0),
         callCount: latencies.length,
-        averageLatencyMs: Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length),
+        averageLatencyMs: Math.round(
+          latencies.reduce((a, b) => a + b, 0) / latencies.length,
+        ),
         maxLatencyMs: Math.max(...latencies),
         minLatencyMs: Math.min(...latencies),
       };
@@ -587,11 +708,15 @@ export interface AggregatedTokenUsage {
   callCount: number;
 }
 
-export function aggregateTokenUsage(responses: LLMResponse[]): AggregatedTokenUsage {
+export function aggregateTokenUsage(
+  responses: LLMResponse[],
+): AggregatedTokenUsage {
   return responses.reduce(
     (acc, response) => ({
-      totalPromptTokens: acc.totalPromptTokens + response.token_usage.prompt_tokens,
-      totalCompletionTokens: acc.totalCompletionTokens + response.token_usage.completion_tokens,
+      totalPromptTokens:
+        acc.totalPromptTokens + response.token_usage.prompt_tokens,
+      totalCompletionTokens:
+        acc.totalCompletionTokens + response.token_usage.completion_tokens,
       totalTokens: acc.totalTokens + response.token_usage.total_tokens,
       callCount: acc.callCount + 1,
     }),
@@ -600,7 +725,7 @@ export function aggregateTokenUsage(responses: LLMResponse[]): AggregatedTokenUs
       totalCompletionTokens: 0,
       totalTokens: 0,
       callCount: 0,
-    }
+    },
   );
 }
 
@@ -615,7 +740,7 @@ export function getModelConfig(modelType: LLMModelType): ModelConfig {
 
 export function updateModelConfig(
   modelType: LLMModelType,
-  updates: Partial<ModelConfig>
+  updates: Partial<ModelConfig>,
 ): void {
   MODEL_ROUTING[modelType] = {
     ...MODEL_ROUTING[modelType],

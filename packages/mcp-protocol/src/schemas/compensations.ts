@@ -25,7 +25,29 @@ export interface CompensationDefinition {
   /** Whether the compensation requires confirmation (should be false for auto-compensation) */
   requiresConfirmation: boolean;
   /** Optional: Custom parameter mapping function for complex compensations */
-  customMapper?: (originalParams: Record<string, unknown>, stepResult?: unknown) => Record<string, unknown>;
+  customMapper?: (
+    originalParams: Record<string, unknown>,
+    stepResult?: unknown,
+  ) => Record<string, unknown>;
+}
+
+// Strict type for original parameters with known fields
+interface OriginalParams {
+  reservationId?: string;
+  order_id?: string;
+  pickup_location?: string;
+  destination_location?: string;
+  service?: string;
+  [key: string]: unknown;
+}
+
+// Strict type for step results with known fields
+interface StepResult {
+  booking_id?: string;
+  fulfillmentId?: string;
+  ride_id?: string;
+  order_id?: string;
+  [key: string]: unknown;
 }
 
 /**
@@ -37,37 +59,37 @@ export const COMPENSATIONS: Record<string, CompensationDefinition> = {
   // RESERVATION COMPENSATIONS
   // ============================================================================
 
-  "create_reservation": {
+  create_reservation: {
     toolName: "cancel_reservation",
     parameterMapper: "use_reservation_id",
     requiresConfirmation: false,
   },
 
-  "bookTable": {
+  bookTable: {
     toolName: "cancel_reservation",
     parameterMapper: "use_booking_id",
     requiresConfirmation: false,
   },
 
-  "book_tablestack_reservation": {
+  book_tablestack_reservation: {
     toolName: "cancel_reservation",
     parameterMapper: "use_booking_id",
     requiresConfirmation: false,
   },
 
-  "update_reservation": {
+  update_reservation: {
     toolName: "update_reservation",
     parameterMapper: "use_reservation_id",
     requiresConfirmation: false,
     // Note: This would need to restore previous values, not just cancel
-    customMapper: (originalParams, stepResult) => {
+    customMapper: (originalParams: OriginalParams, stepResult?: StepResult) => {
       // For updates, we would need to store the original state to restore it
       // This is a placeholder - production implementation would need state snapshot
-      return { reservationId: (originalParams as Record<string, unknown>).reservationId };
+      return { reservationId: originalParams.reservationId };
     },
   },
 
-  "reserve_restaurant": {
+  reserve_restaurant: {
     toolName: "cancel_reservation",
     parameterMapper: "use_reservation_id",
     requiresConfirmation: false,
@@ -77,19 +99,19 @@ export const COMPENSATIONS: Record<string, CompensationDefinition> = {
   // DELIVERY COMPENSATIONS
   // ============================================================================
 
-  "fulfill_intent": {
+  fulfill_intent: {
     toolName: "cancel_fulfillment",
     parameterMapper: "use_fulfillment_id",
     requiresConfirmation: false,
   },
 
-  "dispatch_intent": {
+  dispatch_intent: {
     toolName: "cancel_fulfillment",
     parameterMapper: "use_order_id",
     requiresConfirmation: false,
   },
 
-  "calculate_delivery_quote": {
+  calculate_delivery_quote: {
     // No compensation needed - read-only
     toolName: "",
     parameterMapper: "identity",
@@ -100,19 +122,19 @@ export const COMPENSATIONS: Record<string, CompensationDefinition> = {
   // MOBILITY / RIDE COMPENSATIONS
   // ============================================================================
 
-  "request_ride": {
+  request_ride: {
     toolName: "cancel_ride",
     parameterMapper: "use_ride_id",
     requiresConfirmation: false,
   },
 
-  "mobility_request": {
+  mobility_request: {
     toolName: "cancel_ride",
     parameterMapper: "use_ride_id",
     requiresConfirmation: false,
   },
 
-  "get_route_estimate": {
+  get_route_estimate: {
     // No compensation needed - read-only
     toolName: "",
     parameterMapper: "identity",
@@ -123,15 +145,15 @@ export const COMPENSATIONS: Record<string, CompensationDefinition> = {
   // WAITLIST COMPENSATIONS
   // ============================================================================
 
-  "add_to_waitlist": {
+  add_to_waitlist: {
     toolName: "update_waitlist_status",
     parameterMapper: "use_reservation_id",
     requiresConfirmation: false,
     // Would need to set status to 'removed'
-    customMapper: (originalParams) => {
+    customMapper: (originalParams: OriginalParams) => {
       return {
-        reservationId: (originalParams as Record<string, unknown>).reservationId,
-        status: "removed"
+        reservationId: originalParams.reservationId,
+        status: "removed",
       };
     },
   },
@@ -140,7 +162,7 @@ export const COMPENSATIONS: Record<string, CompensationDefinition> = {
   // CALENDAR COMPENSATIONS
   // ============================================================================
 
-  "add_calendar_event": {
+  add_calendar_event: {
     // Calendar events typically don't have a delete API in this system
     // Mark as non-compensable
     toolName: "",
@@ -152,7 +174,7 @@ export const COMPENSATIONS: Record<string, CompensationDefinition> = {
   // COMMUNICATION COMPENSATIONS
   // ============================================================================
 
-  "send_communication": {
+  send_communication: {
     // Communications are typically non-reversible (email/SMS already sent)
     // Mark as non-compensable but log for audit
     toolName: "",
@@ -200,7 +222,9 @@ export function needsCompensation(toolName: string): boolean {
 /**
  * Get the compensation definition for a tool
  */
-export function getCompensation(toolName: string): CompensationDefinition | undefined {
+export function getCompensation(
+  toolName: string,
+): CompensationDefinition | undefined {
   return COMPENSATIONS[toolName];
 }
 
@@ -212,8 +236,8 @@ export function getCompensation(toolName: string): CompensationDefinition | unde
  */
 export function mapCompensationParameters(
   toolName: string,
-  originalParams: Record<string, unknown>,
-  stepResult?: unknown
+  originalParams: OriginalParams,
+  stepResult?: StepResult,
 ): Record<string, unknown> {
   const compensation = COMPENSATIONS[toolName];
   if (!compensation || !compensation.toolName) {
@@ -227,36 +251,34 @@ export function mapCompensationParameters(
 
   switch (compensation.parameterMapper) {
     case "use_booking_id": {
-      const bookingId = (stepResult as Record<string, unknown>)?.booking_id as string | undefined;
+      const bookingId = stepResult?.booking_id;
       return bookingId ? { reservationId: bookingId } : {};
     }
 
     case "use_reservation_id": {
-      const reservationId = (originalParams as Record<string, unknown>).reservationId as string | undefined;
+      const reservationId = originalParams.reservationId;
       return reservationId ? { reservationId } : {};
     }
 
     case "use_order_id": {
-      const orderId = (originalParams as Record<string, unknown>).order_id as string | undefined;
+      const orderId = originalParams.order_id;
       return orderId ? { orderId } : {};
     }
 
     case "use_fulfillment_id": {
-      const fulfillmentId = (stepResult as Record<string, unknown>)?.fulfillmentId as string | undefined;
+      const fulfillmentId = stepResult?.fulfillmentId;
       return fulfillmentId ? { fulfillmentId } : {};
     }
 
     case "use_ride_id": {
       // Extract ride ID from step result (returned by request_ride / mobility_request)
-      const rideId =
-        (stepResult as Record<string, unknown>)?.ride_id as string | undefined ||
-        (stepResult as Record<string, unknown>)?.order_id as string | undefined;
+      const rideId = stepResult?.ride_id || stepResult?.order_id;
 
       // If no ride_id in result, try to construct from original params
       if (!rideId) {
-        const pickup = (originalParams as Record<string, unknown>).pickup_location as string | undefined;
-        const destination = (originalParams as Record<string, unknown>).destination_location as string | undefined;
-        const service = (originalParams as Record<string, unknown>).service as string | undefined;
+        const pickup = originalParams.pickup_location;
+        const destination = originalParams.destination_location;
+        const service = originalParams.service;
 
         // Return original params for manual cancellation
         return {
@@ -271,7 +293,7 @@ export function mapCompensationParameters(
 
     case "identity":
     default:
-      return originalParams;
+      return originalParams as Record<string, unknown>;
   }
 }
 

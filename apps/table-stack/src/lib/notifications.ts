@@ -1,9 +1,12 @@
-import { resend } from './resend';
-import { getAblyClient, Logger } from '@repo/shared';
-import { withNervousSystemTracing, injectTracingHeaders } from '@repo/shared/tracing';
-import { AppConfig } from '@repo/shared';
+import { resend } from "./resend";
+import { getAblyClient, Logger } from "@repo/shared";
+import {
+  withNervousSystemTracing,
+  injectTracingHeaders,
+} from "@repo/shared/tracing";
+import { AppConfig } from "@repo/shared";
 
-const logger = new Logger({ serviceName: 'table-stack' });
+const logger = new Logger({ serviceName: "table-stack" });
 
 export interface NotifyOptions {
   to: string;
@@ -11,85 +14,136 @@ export interface NotifyOptions {
   html: string;
 }
 
+// Strict type for rejection notification data
+interface RejectionNotificationData {
+  guestEmail: string;
+  partySize: number;
+  startTime: string | Date;
+  restaurantName: string;
+  visitCount?: number;
+  preferences?: Record<string, unknown>;
+}
+
 export class NotifyService {
   private static getAbly() {
     return getAblyClient();
   }
 
-  static async broadcast(restaurantId: string, event: string, data: any) {
+  static async broadcast(
+    restaurantId: string,
+    event: string,
+    data: Record<string, unknown>,
+  ) {
     const ably = this.getAbly();
     if (ably) {
       const channel = ably.channels.get(`restaurant:${restaurantId}`);
-      await channel.publish(event, data).catch(err => logger.error('Ably broadcast failed', { error: err instanceof Error ? err.message : String(err) }));
+      await channel
+        .publish(event, data)
+        .catch((err) =>
+          logger.error("Ably broadcast failed", {
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
     }
   }
 
-  static async notifyExternalDelivery(restaurantId: string, deliveryData: any) {
-    await this.broadcast(restaurantId, 'EXTERNAL_DELIVERY_UPDATE', deliveryData);
+  static async notifyExternalDelivery(
+    restaurantId: string,
+    deliveryData: Record<string, unknown>,
+  ) {
+    await this.broadcast(
+      restaurantId,
+      "EXTERNAL_DELIVERY_UPDATE",
+      deliveryData,
+    );
   }
 
-  static async notifyRejection(restaurantId: string, data: { guestEmail: string; partySize: number; startTime: any; restaurantName: string; visitCount?: number; preferences?: any }) {
+  static async notifyRejection(
+    restaurantId: string,
+    data: RejectionNotificationData,
+  ) {
     // 1. Ably Broadcast
-    await this.broadcast(restaurantId, 'reservation_rejected', data);
+    await this.broadcast(restaurantId, "reservation_rejected", data);
 
     // 2. Nervous System Event
-    const { RealtimeService } = await import('@repo/shared');
-    await RealtimeService.publishNervousSystemEvent('ReservationRejected', {
+    const { RealtimeService } = await import("@repo/shared");
+    await RealtimeService.publishNervousSystemEvent("ReservationRejected", {
       ...data,
-      restaurantId
-    }).catch(err => logger.error('Nervous System Event failed', { error: err instanceof Error ? err.message : String(err) }));
+      restaurantId,
+    }).catch((err) =>
+      logger.error("Nervous System Event failed", {
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
 
     // 3. Trigger Failover Webhook to Intention Engine (Saga Pattern)
     // This ensures the system proactively finds alternatives without user intervention
     const intentionEngineUrl = AppConfig.getIntentionEngineApiUrl();
     if (intentionEngineUrl) {
-      const { signServiceToken } = await import('@repo/auth');
-      const token = await signServiceToken({ purpose: 'reservation_failover' });
-      
+      const { signServiceToken } = await import("@repo/auth");
+      const token = await signServiceToken({ purpose: "reservation_failover" });
+
       const webhookPayload = {
-        event: 'reservation_rejected',
+        event: "reservation_rejected",
         guestEmail: data.guestEmail,
         restaurantName: data.restaurantName,
-        startTime: data.startTime instanceof Date ? data.startTime.toISOString() : data.startTime,
+        startTime:
+          data.startTime instanceof Date
+            ? data.startTime.toISOString()
+            : data.startTime,
         partySize: data.partySize,
         visitCount: data.visitCount || 0,
         preferences: data.preferences || {},
       };
 
       try {
-        const { signInternalJWT } = await import('@repo/auth');
+        const { signInternalJWT } = await import("@repo/auth");
         const token = await signInternalJWT(
-          { action: 'webhook_notification', restaurantId: data.restaurantId },
-          { issuer: 'table-stack', audience: 'intention-engine' }
+          { action: "webhook_notification", restaurantId: data.restaurantId },
+          { issuer: "table-stack", audience: "intention-engine" },
         );
 
         await fetch(`${intentionEngineUrl}/api/webhooks`, {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify(webhookPayload),
         });
         logger.info(`Failover webhook triggered for ${data.guestEmail}`);
       } catch (err) {
-        logger.error('Failover webhook failed', { error: err instanceof Error ? err.message : String(err) });
+        logger.error("Failover webhook failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }
 
   static async sendNotification({ to, subject, html }: NotifyOptions) {
     // Email is always sent
-    await resend.emails.send({
-      from: 'TableStack <notifications@tablestack.io>',
-      to,
-      subject,
-      html,
-    }).catch(err => logger.error('Email notification failed', { error: err instanceof Error ? err.message : String(err) }));
+    await resend.emails
+      .send({
+        from: "TableStack <notifications@tablestack.io>",
+        to,
+        subject,
+        html,
+      })
+      .catch((err) =>
+        logger.error("Email notification failed", {
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
   }
 
-  static async sendClaimInvitation(ownerEmail: string, restaurantName: string, claimToken: string) {
-    const appUrl = AppConfig.getAll().NEXT_PUBLIC_APP_URL || 'https://table-stack.vercel.app';
+  static async sendClaimInvitation(
+    ownerEmail: string,
+    restaurantName: string,
+    claimToken: string,
+  ) {
+    const appUrl =
+      AppConfig.getAll().NEXT_PUBLIC_APP_URL ||
+      "https://table-stack.vercel.app";
     const claimUrl = `${appUrl}/onboarding?token=${claimToken}`;
     await this.sendNotification({
       to: ownerEmail,
@@ -105,8 +159,12 @@ export class NotifyService {
     });
   }
 
-  static async notifyOwner(ownerEmail: string, reservation: { guestName: string; partySize: number; startTime: Date }, isShadow = false) {
-    const subject = isShadow 
+  static async notifyOwner(
+    ownerEmail: string,
+    reservation: { guestName: string; partySize: number; startTime: Date },
+    isShadow = false,
+  ) {
+    const subject = isShadow
       ? `Booking Request: ${reservation.partySize} guests - TableStack`
       : `New Verified Reservation: ${reservation.guestName}`;
 

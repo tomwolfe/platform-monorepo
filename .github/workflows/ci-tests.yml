@@ -22,6 +22,12 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      # SECURITY: Harden the GitHub Actions runner
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -37,6 +43,11 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
+
+      # SECURITY: Audit dependencies for known vulnerabilities
+      - name: Security Audit - Dependencies
+        run: pnpm audit --audit-level=high
+        continue-on-error: false
 
       - name: Validate schema sync
         run: pnpm validate:schema-sync:strict

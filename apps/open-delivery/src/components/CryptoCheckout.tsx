@@ -2,10 +2,35 @@
 
 import React from "react";
 import { useState, useEffect } from "react";
-import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useBalance, useWriteContract, useReadContract, useSignMessage, useEstimateGas } from "wagmi";
+import {
+  useAccount,
+  useSendTransaction,
+  useWaitForTransactionReceipt,
+  useBalance,
+  useWriteContract,
+  useReadContract,
+  useSignMessage,
+  useEstimateGas,
+} from "wagmi";
 import { parseUnits, stringToHex, type Address, formatUnits } from "viem";
 import { base } from "viem/chains";
-import { Loader2, CheckCircle, AlertCircle, ArrowRight, Coins, Shield, Wallet } from "lucide-react";
+import {
+  UserRejectedRequestError,
+  InsufficientFundsError,
+  ContractFunctionRevertedError,
+  TransactionExecutionError,
+  BaseError,
+} from "viem";
+import {
+  Loader2,
+  CheckCircle,
+  AlertCircle,
+  ArrowRight,
+  Coins,
+  Shield,
+  Wallet,
+  Settings,
+} from "lucide-react";
 import { useWeb3 } from "./Web3Provider";
 import { ERC20_ABI } from "@repo/shared/utils/erc20-abi";
 import { ESCROW_ABI } from "@repo/shared/utils/escrow-abi";
@@ -23,7 +48,11 @@ interface CryptoCheckoutProps {
   deliveryAddress: string;
   selectedVendor: { id: string; name: string } | null;
   restaurantWalletAddress: string; // REQUIRED: Direct P2P escrow routing needs restaurant address
-  onCheckoutComplete: (result: { orderId: string; txHash?: string; signature?: `0x${string}` }) => void;
+  onCheckoutComplete: (result: {
+    orderId: string;
+    txHash?: string;
+    signature?: `0x${string}`;
+  }) => void;
   onError: (error: string) => void;
   onCancel: () => void;
   orderId?: string; // Order ID to bind to transaction (prevents spoofing)
@@ -53,10 +82,20 @@ export function CryptoCheckout({
   platformFeeBps = 100, // Default 1%
 }: CryptoCheckoutProps) {
   const { address, chain } = useAccount();
-  const { escrowContractAddress, platformFeeWallet, defaultChainId, usdcContractAddress } = useWeb3();
+  const {
+    escrowContractAddress,
+    platformFeeWallet,
+    defaultChainId,
+    usdcContractAddress,
+  } = useWeb3();
 
   // CRITICAL: Signature hook for front-running prevention
-  const { signMessage, data: signature, error: signatureError, isPending: isSigning } = useSignMessage();
+  const {
+    signMessage,
+    data: signature,
+    error: signatureError,
+    isPending: isSigning,
+  } = useSignMessage();
 
   // Get ETH balance
   const { data: balance } = useBalance({
@@ -88,7 +127,10 @@ export function CryptoCheckout({
   }, [estimatedGas, ethPrice]);
 
   // Calculate totals
-  const subtotalFiat = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const subtotalFiat = cart.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0,
+  );
   const totalFiat = subtotalFiat + tip;
 
   // Calculate platform fee (in USD cents)
@@ -109,11 +151,84 @@ export function CryptoCheckout({
   const platformFeeUSDC = platformFeeCents * USDC_CENTS_MULTIPLIER;
 
   // Transaction state - added "signing" step for signature before transaction
-  const [step, setStep] = useState<"review" | "signing" | "sending" | "confirming" | "completed" | "error">("review");
+  const [step, setStep] = useState<
+    "review" | "signing" | "sending" | "confirming" | "completed" | "error"
+  >("review");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [paymentCurrency, setPaymentCurrency] = useState<"USDC" | "ETH">("USDC");
+  const [paymentCurrency, setPaymentCurrency] = useState<"USDC" | "ETH">(
+    "USDC",
+  );
   const [ethPrice, setEthPrice] = useState<number | null>(null); // null until fetched; fail-closed
   const [isPriceStale, setIsPriceStale] = useState(false); // Track if price is stale (financial safety)
+  const [showSlippageSettings, setShowSlippageSettings] = useState(false);
+  const [slippageTolerance, setSlippageTolerance] = useState<number>(1); // Default 1% slippage tolerance
+
+  /**
+   * Map viem errors to user-friendly messages
+   */
+  function getErrorMessage(error: unknown): string {
+    if (!error) return "Transaction failed";
+
+    // User rejected the transaction in their wallet
+    if (error instanceof UserRejectedRequestError) {
+      return "Transaction cancelled: You rejected the request in your wallet";
+    }
+
+    // Insufficient funds for the transaction
+    if (error instanceof InsufficientFundsError) {
+      return `Insufficient ${paymentCurrency} balance for this transaction`;
+    }
+
+    // Smart contract function reverted (e.g., slippage exceeded, validation failed)
+    if (error instanceof ContractFunctionRevertedError) {
+      const errorName = error.data?.errorName || "unknown";
+
+      // Common revert reasons
+      if (errorName === "SlippageToleranceExceeded") {
+        return `Transaction failed: Slippage tolerance exceeded. Try increasing slippage tolerance in settings`;
+      }
+      if (errorName === "InsufficientAllowance") {
+        return `Transaction failed: Insufficient ${paymentCurrency} allowance. Please approve the transaction`;
+      }
+      if (errorName === "InvalidOrder") {
+        return "Transaction failed: Order is no longer valid. Please refresh and try again";
+      }
+
+      return `Transaction failed: Smart contract reverted (${errorName}). Please try again or contact support`;
+    }
+
+    // General transaction execution errors
+    if (error instanceof TransactionExecutionError) {
+      const details = error.details || error.message;
+
+      if (details?.includes("gas")) {
+        return "Transaction failed: Out of gas. Try again with higher gas limit";
+      }
+      if (details?.includes("nonce")) {
+        return "Transaction failed: Nonce error. Please refresh your wallet and try again";
+      }
+      if (details?.includes("replacement")) {
+        return "Transaction failed: Replacement transaction underpriced. Please wait or try again";
+      }
+
+      return `Transaction failed: ${details || "Execution error"}`;
+    }
+
+    // Handle BaseError from viem
+    if (error instanceof BaseError) {
+      const message = error.shortMessage || error.message;
+
+      if (message?.includes("user rejected")) {
+        return "Transaction cancelled: You rejected the request in your wallet";
+      }
+      if (message?.includes("insufficient funds")) {
+        return `Insufficient ${paymentCurrency} balance for this transaction`;
+      }
+    }
+
+    // Fallback to error message or generic message
+    return error instanceof Error ? error.message : "Transaction failed";
+  }
 
   // Fetch ETH price dynamically on mount from server-side oracle
   useEffect(() => {
@@ -139,30 +254,40 @@ export function CryptoCheckout({
   // Convert USD to ETH using basis points (10000 = 1.0) for precision
   // Formula: ETH_Wei = (USD_cents * 10^20) / (ETH_price_USD_scaled)
   const BASIS_POINTS = 10_000n;
-  const ethPriceScaled = ethPrice !== null ? BigInt(Math.round(ethPrice * Number(BASIS_POINTS))) : null;
+  const ethPriceScaled =
+    ethPrice !== null
+      ? BigInt(Math.round(ethPrice * Number(BASIS_POINTS)))
+      : null;
 
   // Convert fiat amounts to cents first (integer), then to Wei
   // Multiplier: 10^20 to convert cents to Wei with price scaling (18 decimals + 2 for cents)
   const CENTS_TO_WEI_MULTIPLIER = 10n ** 20n;
 
   // Calculate ETH amounts in Wei using BigInt division
-  const subtotalEthWei = paymentCurrency === "ETH" && ethPriceScaled !== null
-    ? (subtotalCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
-    : BigInt(0);
-  const tipEthWei = paymentCurrency === "ETH" && ethPriceScaled !== null
-    ? (tipCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
-    : BigInt(0);
-  const platformFeeEthWei = paymentCurrency === "ETH" && ethPriceScaled !== null
-    ? (platformFeeCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
-    : BigInt(0);
-  const totalEthWei = paymentCurrency === "ETH" && ethPriceScaled !== null
-    ? ((subtotalCents + tipCents + platformFeeCents) * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
-    : BigInt(0);
+  const subtotalEthWei =
+    paymentCurrency === "ETH" && ethPriceScaled !== null
+      ? (subtotalCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
+      : BigInt(0);
+  const tipEthWei =
+    paymentCurrency === "ETH" && ethPriceScaled !== null
+      ? (tipCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
+      : BigInt(0);
+  const platformFeeEthWei =
+    paymentCurrency === "ETH" && ethPriceScaled !== null
+      ? (platformFeeCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
+      : BigInt(0);
+  const totalEthWei =
+    paymentCurrency === "ETH" && ethPriceScaled !== null
+      ? ((subtotalCents + tipCents + platformFeeCents) *
+          CENTS_TO_WEI_MULTIPLIER) /
+        ethPriceScaled
+      : BigInt(0);
 
   // Calculate display ETH amounts (for UI only, not for transactions)
-  const totalEth = paymentCurrency === "ETH" && ethPriceScaled !== null
-    ? parseFloat(formatUnits(totalEthWei, 18))
-    : 0;
+  const totalEth =
+    paymentCurrency === "ETH" && ethPriceScaled !== null
+      ? parseFloat(formatUnits(totalEthWei, 18))
+      : 0;
 
   // Send transaction hook (for native ETH)
   const {
@@ -206,13 +331,18 @@ export function CryptoCheckout({
         // Non-custodial escrow: all payments go to the escrow contract
         const escrowAddress = escrowContractAddress as Address;
 
-        if (!escrowAddress || escrowAddress === "0x0000000000000000000000000000000000000000") {
+        if (
+          !escrowAddress ||
+          escrowAddress === "0x0000000000000000000000000000000000000000"
+        ) {
           throw new Error("Escrow contract address not configured");
         }
 
         // Restaurant wallet is required for P2P routing
         if (!restaurantWalletAddress) {
-          throw new Error("Restaurant wallet address is required for P2P escrow routing");
+          throw new Error(
+            "Restaurant wallet address is required for P2P escrow routing",
+          );
         }
 
         if (paymentCurrency === "USDC") {
@@ -247,7 +377,9 @@ export function CryptoCheckout({
           });
         }
       } catch (err) {
-        setErrorMessage(err instanceof Error ? err.message : "Failed to send transaction");
+        setErrorMessage(
+          err instanceof Error ? err.message : "Failed to send transaction",
+        );
         setStep("error");
       }
     }
@@ -285,11 +417,12 @@ export function CryptoCheckout({
   useEffect(() => {
     const error = sendError || receiptError || contractError;
     if (error) {
-      setErrorMessage(error?.message || "Transaction failed");
+      const userFriendlyMessage = getErrorMessage(error);
+      setErrorMessage(userFriendlyMessage);
       setStep("error");
-      onError(error?.message || "Transaction failed");
+      onError(userFriendlyMessage);
     }
-  }, [sendError, receiptError, contractError, onError]);
+  }, [sendError, receiptError, contractError, onError, paymentCurrency]);
 
   // Check if user has sufficient balance based on selected currency
   const hasSufficientBalance = (() => {
@@ -302,10 +435,14 @@ export function CryptoCheckout({
     } else {
       // Fail-closed: if ethPrice is null or stale, cannot safely determine balance
       if (ethPrice === null || isPriceStale) return false;
-      const balanceEth = parseFloat(formatUnits(balance.value, balance.decimals));
+      const balanceEth = parseFloat(
+        formatUnits(balance.value, balance.decimals),
+      );
 
       // Include estimated gas in the total required amount
-      const estimatedGasEth = estimatedGas ? parseFloat(formatUnits(estimatedGas, 18)) : 0;
+      const estimatedGasEth = estimatedGas
+        ? parseFloat(formatUnits(estimatedGas, 18))
+        : 0;
       const totalRequiredWithGas = totalEth + estimatedGasEth;
 
       return balanceEth >= totalRequiredWithGas;
@@ -315,7 +452,9 @@ export function CryptoCheckout({
   // CRITICAL: Handle signature and transaction flow
   const handlePay = () => {
     if (!hasSufficientBalance) {
-      setErrorMessage(`Insufficient ${paymentCurrency} balance for this transaction`);
+      setErrorMessage(
+        `Insufficient ${paymentCurrency} balance for this transaction`,
+      );
       setStep("error");
       return;
     }
@@ -326,7 +465,7 @@ export function CryptoCheckout({
     }
     // First step: Request signature of the orderId (proves wallet ownership)
     setStep("signing");
-    signMessage({ 
+    signMessage({
       message: `OpenDelivery Order: ${orderId}`,
     });
   };
@@ -369,27 +508,64 @@ export function CryptoCheckout({
       <div className="p-6 space-y-4">
         {/* Currency Selector */}
         {step === "review" && (
-          <div className="flex gap-2">
-            <button
-              onClick={() => setPaymentCurrency("USDC")}
-              className={`flex-1 py-2 px-4 rounded-lg font-semibold border-2 transition-all ${
-                paymentCurrency === "USDC"
-                  ? "border-blue-600 bg-blue-50 text-blue-700"
-                  : "border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300"
-              }`}
-            >
-              💵 USDC
-            </button>
-            <button
-              onClick={() => setPaymentCurrency("ETH")}
-              className={`flex-1 py-2 px-4 rounded-lg font-semibold border-2 transition-all ${
-                paymentCurrency === "ETH"
-                  ? "border-blue-600 bg-blue-50 text-blue-700"
-                  : "border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300"
-              }`}
-            >
-              💎 ETH
-            </button>
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPaymentCurrency("USDC")}
+                className={`flex-1 py-2 px-4 rounded-lg font-semibold border-2 transition-all ${
+                  paymentCurrency === "USDC"
+                    ? "border-blue-600 bg-blue-50 text-blue-700"
+                    : "border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300"
+                }`}
+              >
+                💵 USDC
+              </button>
+              <button
+                onClick={() => setPaymentCurrency("ETH")}
+                className={`flex-1 py-2 px-4 rounded-lg font-semibold border-2 transition-all ${
+                  paymentCurrency === "ETH"
+                    ? "border-blue-600 bg-blue-50 text-blue-700"
+                    : "border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300"
+                }`}
+              >
+                💎 ETH
+              </button>
+            </div>
+
+            {/* Slippage Tolerance Settings - Only for ETH */}
+            {paymentCurrency === "ETH" && (
+              <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                <div className="flex items-center justify-between mb-2">
+                  <button
+                    onClick={() =>
+                      setShowSlippageSettings(!showSlippageSettings)
+                    }
+                    className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900"
+                  >
+                    <Settings className="h-4 w-4" />
+                    <span>Slippage Tolerance: {slippageTolerance}%</span>
+                  </button>
+                </div>
+
+                {showSlippageSettings && (
+                  <div className="flex gap-2 mt-2">
+                    {[1, 2, 5].map((value) => (
+                      <button
+                        key={value}
+                        onClick={() => setSlippageTolerance(value)}
+                        className={`flex-1 py-1.5 px-3 rounded-md text-sm font-medium transition-all ${
+                          slippageTolerance === value
+                            ? "bg-blue-600 text-white"
+                            : "bg-white text-gray-700 border border-gray-300 hover:border-blue-400"
+                        }`}
+                      >
+                        {value}%
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -420,7 +596,9 @@ export function CryptoCheckout({
           <div className="flex justify-between text-sm">
             <span className="text-gray-500">Platform Fee</span>
             <div className="text-right">
-              <p className="font-medium text-gray-600">${platformFeeFiat.toFixed(2)}</p>
+              <p className="font-medium text-gray-600">
+                ${platformFeeFiat.toFixed(2)}
+              </p>
               <p className="text-xs text-gray-400">
                 {paymentCurrency === "USDC"
                   ? `${formatUnits(platformFeeUSDC, 6)} USDC`
@@ -431,7 +609,9 @@ export function CryptoCheckout({
           <div className="border-t pt-2 flex justify-between items-center">
             <span className="font-bold text-gray-900">Total</span>
             <div className="text-right">
-              <p className="text-xl font-black text-blue-600">${(totalFiat + platformFeeFiat).toFixed(2)}</p>
+              <p className="text-xl font-black text-blue-600">
+                ${(totalFiat + platformFeeFiat).toFixed(2)}
+              </p>
               <p className="text-xs text-gray-400">
                 {paymentCurrency === "USDC"
                   ? `≈ ${formatUnits(subtotalUSDC + tipUSDC + platformFeeUSDC, 6)} USDC`
@@ -441,16 +621,16 @@ export function CryptoCheckout({
               </p>
             </div>
           </div>
-          
+
           {/* Estimated Gas Fee - Only for ETH payments */}
           {paymentCurrency === "ETH" && ethPrice !== null && (
             <div className="flex justify-between text-xs text-gray-500 pt-1">
               <span className="text-gray-500">Estimated Gas Fee</span>
               <span className="font-medium">
-                {estimatedGasFeeUsd > 0 
-                  ? `$${estimatedGasFeeUsd.toFixed(4)}` 
-                  : isGasEstimationError 
-                    ? "Unable to estimate" 
+                {estimatedGasFeeUsd > 0
+                  ? `$${estimatedGasFeeUsd.toFixed(4)}`
+                  : isGasEstimationError
+                    ? "Unable to estimate"
                     : "Calculating..."}
               </span>
             </div>
@@ -462,11 +642,15 @@ export function CryptoCheckout({
           <div className="flex items-start gap-3">
             <Shield className="h-5 w-5 text-blue-600 mt-0.5" />
             <div className="flex-1">
-              <p className="text-sm font-semibold text-gray-900">Non-Custodial P2P Escrow</p>
+              <p className="text-sm font-semibold text-gray-900">
+                Non-Custodial P2P Escrow
+              </p>
               <p className="text-xs text-gray-600 mt-1">
-                Your payment is sent directly to a smart contract escrow—no central wallet holds your funds.
-                The restaurant receives the food subtotal instantly, the platform fee routes to the protocol,
-                and your tip is locked in escrow until delivery is confirmed.
+                Your payment is sent directly to a smart contract escrow—no
+                central wallet holds your funds. The restaurant receives the
+                food subtotal instantly, the platform fee routes to the
+                protocol, and your tip is locked in escrow until delivery is
+                confirmed.
               </p>
             </div>
           </div>
@@ -474,9 +658,13 @@ export function CryptoCheckout({
 
         {/* Balance Check */}
         {paymentCurrency === "USDC" && usdcBalance ? (
-          <div className={`flex justify-between items-center text-sm p-3 rounded-lg ${
-            hasSufficientBalance ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
-          }`}>
+          <div
+            className={`flex justify-between items-center text-sm p-3 rounded-lg ${
+              hasSufficientBalance
+                ? "bg-green-50 text-green-700"
+                : "bg-red-50 text-red-700"
+            }`}
+          >
             <span className="flex items-center gap-2">
               {hasSufficientBalance ? (
                 <CheckCircle className="h-4 w-4" />
@@ -489,22 +677,31 @@ export function CryptoCheckout({
               {formatUnits(usdcBalance, 6)} USDC
             </span>
           </div>
-        ) : balance && (
-          <div className={`flex justify-between items-center text-sm p-3 rounded-lg ${
-            hasSufficientBalance ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
-          }`}>
-            <span className="flex items-center gap-2">
-              {hasSufficientBalance ? (
-                <CheckCircle className="h-4 w-4" />
-              ) : (
-                <AlertCircle className="h-4 w-4" />
-              )}
-              ETH Balance
-            </span>
-            <span className="font-semibold">
-              {parseFloat(formatUnits(balance.value, balance.decimals)).toFixed(4)} {balance.symbol}
-            </span>
-          </div>
+        ) : (
+          balance && (
+            <div
+              className={`flex justify-between items-center text-sm p-3 rounded-lg ${
+                hasSufficientBalance
+                  ? "bg-green-50 text-green-700"
+                  : "bg-red-50 text-red-700"
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                {hasSufficientBalance ? (
+                  <CheckCircle className="h-4 w-4" />
+                ) : (
+                  <AlertCircle className="h-4 w-4" />
+                )}
+                ETH Balance
+              </span>
+              <span className="font-semibold">
+                {parseFloat(
+                  formatUnits(balance.value, balance.decimals),
+                ).toFixed(4)}{" "}
+                {balance.symbol}
+              </span>
+            </div>
+          )
         )}
 
         {/* Error State */}
@@ -519,23 +716,32 @@ export function CryptoCheckout({
         )}
 
         {/* ETH Price Unavailable Warning */}
-        {step === "review" && paymentCurrency === "ETH" && ethPrice === null && (
-          <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl flex items-start gap-3">
-            <AlertCircle className="h-5 w-5 mt-0.5" />
-            <div>
-              <p className="font-semibold text-sm">Price Unavailable</p>
-              <p className="text-xs mt-1">Unable to fetch live ETH price. Please try again or use USDC.</p>
+        {step === "review" &&
+          paymentCurrency === "ETH" &&
+          ethPrice === null && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 mt-0.5" />
+              <div>
+                <p className="font-semibold text-sm">Price Unavailable</p>
+                <p className="text-xs mt-1">
+                  Unable to fetch live ETH price. Please try again or use USDC.
+                </p>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
         {/* ETH Price Stale Warning - Financial Safety */}
         {step === "review" && paymentCurrency === "ETH" && isPriceStale && (
           <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-xl flex items-start gap-3">
             <AlertCircle className="h-5 w-5 mt-0.5" />
             <div>
-              <p className="font-semibold text-sm">Live ETH Price Unavailable</p>
-              <p className="text-xs mt-1">ETH price data is stale. Please switch to USDC or try again later.</p>
+              <p className="font-semibold text-sm">
+                Live ETH Price Unavailable
+              </p>
+              <p className="text-xs mt-1">
+                ETH price data is stale. Please switch to USDC or try again
+                later.
+              </p>
             </div>
           </div>
         )}
@@ -544,7 +750,11 @@ export function CryptoCheckout({
         {step === "review" && (
           <button
             onClick={handlePay}
-            disabled={!hasSufficientBalance || !address || (paymentCurrency === "ETH" && (ethPrice === null || isPriceStale))}
+            disabled={
+              !hasSufficientBalance ||
+              !address ||
+              (paymentCurrency === "ETH" && (ethPrice === null || isPriceStale))
+            }
             className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3.5 rounded-lg font-bold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
           >
             <Coins className="h-5 w-5" />

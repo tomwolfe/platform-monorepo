@@ -35,6 +35,13 @@ export const ESCROW_ABI = [
     outputs: [],
   },
   {
+    name: "getOrderTip",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "orderId", type: "string" }],
+    outputs: [{ name: "tip", type: "uint256" }],
+  },
+  {
     name: "OrderDeposited",
     type: "event",
     anonymous: false,

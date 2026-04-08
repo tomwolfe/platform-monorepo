@@ -16,19 +16,6 @@ import { and, eq, gte, or, sql } from "@repo/database";
 import { addMinutes, parseISO } from "date-fns";
 import { ConflictError, AppError } from "@repo/shared/errors";
 import crypto from "crypto";
-import { z } from "zod";
-
-// Schema for the row-level lock query result
-// The raw SQL returns restaurant table rows with specific columns
-const LockedTableSchema = z.object({
-  id: z.string(),
-  restaurant_id: z.string(),
-  minCapacity: z.number(),
-  maxCapacity: z.number(),
-  isActive: z.boolean(),
-});
-
-const LockedTableArraySchema = z.array(LockedTableSchema);
 
 export interface CreateReservationInput {
   restaurantId: string;
@@ -176,7 +163,10 @@ export class ReservationService {
 
     // Execute atomic transaction
     const result = await db.transaction(async (tx) => {
-      // Auto-assign logic with row-level locking (FOR UPDATE SKIP LOCKED)
+      // Auto-assign logic using atomic SQL CTE to prevent race conditions
+      // Using a CTE (Common Table Expression) ensures the SELECT ... FOR UPDATE
+      // and the INSERT happen in a single atomic SQL statement, avoiding the
+      // lock-drop issue with Neon's stateless HTTP driver.
       if (
         !isShadow &&
         !assignedTableId &&
@@ -184,37 +174,72 @@ export class ReservationService {
           !Array.isArray(combinedTableIds) ||
           combinedTableIds.length === 0)
       ) {
-        const availableTable = await tx.execute(sql`
-          SELECT id, restaurant_id, min_capacity as "minCapacity", max_capacity as "maxCapacity", is_active as "isActive"
-          FROM ${restaurantTables}
-          WHERE ${restaurantTables.restaurantId} = ${restaurantId}
-            AND ${restaurantTables.isActive} = true
-            AND ${restaurantTables.minCapacity} <= ${partySize}
-            AND ${restaurantTables.maxCapacity} >= ${partySize}
-            AND NOT EXISTS (
-              SELECT 1 FROM ${restaurantReservations} r
-              WHERE r.table_id = ${restaurantTables.id}
-                AND r.status = 'confirmed'
-                AND (r.start_time, r.end_time) OVERLAPS (${start.toISOString()}, ${end.toISOString()})
-            )
-          ORDER BY ${restaurantTables.id}
-          FOR UPDATE SKIP LOCKED
-          LIMIT 1
+        const cteResult = await tx.execute(sql`
+          WITH available_table AS (
+            SELECT id
+            FROM ${restaurantTables}
+            WHERE ${restaurantTables.restaurantId} = ${restaurantId}
+              AND ${restaurantTables.isActive} = true
+              AND ${restaurantTables.minCapacity} <= ${partySize}
+              AND ${restaurantTables.maxCapacity} >= ${partySize}
+              AND NOT EXISTS (
+                SELECT 1 FROM ${restaurantReservations} r
+                WHERE r.table_id = ${restaurantTables.id}
+                  AND r.status = 'confirmed'
+                  AND (r.start_time, r.end_time) OVERLAPS (${start.toISOString()}, ${end.toISOString()})
+              )
+            ORDER BY ${restaurantTables.id}
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+          )
+          INSERT INTO ${restaurantReservations} (
+            restaurant_id, table_id, combined_table_ids, guest_name, guest_email,
+            party_size, start_time, end_time, is_verified, metadata
+          )
+          SELECT
+            ${restaurantId},
+            id,
+            NULL,
+            ${guestName},
+            ${guestEmail},
+            ${partySize},
+            ${start.toISOString()}::timestamptz,
+            ${end.toISOString()}::timestamptz,
+            ${isShadow},
+            ${metadata || null}::jsonb
+          FROM available_table
+          RETURNING *
         `);
 
-        if (!availableTable || availableTable.length === 0) {
+        if (!cteResult || cteResult.length === 0) {
           throw new ConflictError(
             "No suitable tables available for this time and party size",
           );
         }
 
-        // Parse raw SQL result through Zod schema for type safety
-        const parsedTables = LockedTableArraySchema.parse(availableTable.rows);
-        const lockedTableId = parsedTables[0]?.id;
-        if (!lockedTableId) {
-          throw new ConflictError("No tables locked successfully");
-        }
-        assignedTableId = lockedTableId;
+        const insertedReservation = cteResult[0];
+        assignedTableId = insertedReservation.table_id;
+
+        // Upsert guest profile
+        const [profile] = await tx
+          .insert(guestProfiles)
+          .values({
+            restaurantId,
+            email: guestEmail,
+            name: guestName,
+            visitCount: 1,
+          })
+          .onConflictDoUpdate({
+            target: [guestProfiles.restaurantId, guestProfiles.email],
+            set: {
+              name: guestName,
+              visitCount: sql.raw(`${guestProfiles.visitCount} + 1`),
+              updatedAt: new Date(),
+            },
+          })
+          .returning();
+
+        return { newReservation: insertedReservation, profile };
       }
 
       // Conflict detection for non-shadow restaurants

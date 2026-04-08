@@ -303,7 +303,12 @@ export async function estimateTransactionGas(params: {
  * Nonce management helpers integrated with the wallet client.
  */
 export const nonceManager = {
-  getNextNonce,
+  getNextNonce: async (
+    chainId: number,
+    address: string,
+    publicClient: PublicClient,
+    startNonce?: number,
+  ) => getNextNonce(chainId, address, publicClient, startNonce),
   peekNonce,
   resetNonce,
 };

@@ -1,4 +1,4 @@
-import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
+import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import {
   restaurants,
   restaurantReservations,
@@ -7,9 +7,9 @@ import {
   restaurantProducts,
   inventoryLevels,
   guestProfiles,
-} from '@repo/database';
-import { zodToJsonSchema } from 'zod-to-json-schema';
-import { z } from 'zod';
+} from "@repo/database";
+import { zodToJsonSchema } from "zod-to-json-schema";
+import { z } from "zod";
 
 // Narrow type for Drizzle table definitions that works across drizzle-orm versions
 // This avoids the `any` escape hatch while maintaining compatibility
@@ -45,7 +45,7 @@ type DrizzleTable = {
  */
 function safeCreateSelectSchema(
   table: DrizzleTable | undefined,
-  name: string
+  name: string,
 ): z.ZodObject<z.ZodRawShape> {
   if (!table) {
     console.warn(`[Bridge] Table ${name} is not available, using empty schema`);
@@ -71,7 +71,7 @@ function safeCreateSelectSchema(
 function safeCreateInsertSchema(
   table: DrizzleTable | undefined,
   name: string,
-  omitFields?: string[]
+  omitFields?: string[],
 ): z.ZodObject<z.ZodRawShape> {
   if (!table) {
     console.warn(`[Bridge] Table ${name} is not available, using empty schema`);
@@ -94,27 +94,101 @@ function safeCreateInsertSchema(
 }
 
 // Select schemas (for reading from DB)
-export const RestaurantSchema = safeCreateSelectSchema(restaurants, 'restaurants');
-export const ReservationSchema = safeCreateSelectSchema(restaurantReservations, 'restaurantReservations');
-export const TableSchema = safeCreateSelectSchema(restaurantTables, 'restaurantTables');
-export const WaitlistSchema = safeCreateSelectSchema(restaurantWaitlist, 'restaurantWaitlist');
-export const RestaurantProductSchema = safeCreateSelectSchema(restaurantProducts, 'restaurantProducts');
-export const InventoryLevelSchema = safeCreateSelectSchema(inventoryLevels, 'inventoryLevels');
-export const GuestProfileSchema = safeCreateSelectSchema(guestProfiles, 'guestProfiles');
+export const RestaurantSchema = safeCreateSelectSchema(
+  restaurants,
+  "restaurants",
+).extend({
+  // CRITICAL FIX: drizzle-zod converts Postgres numeric columns to z.string(),
+  // but the LLM provides actual numbers. Override to accept both.
+  lat: z.coerce.number().optional().nullable(),
+  lng: z.coerce.number().optional().nullable(),
+});
+export const ReservationSchema = safeCreateSelectSchema(
+  restaurantReservations,
+  "restaurantReservations",
+);
+export const TableSchema = safeCreateSelectSchema(
+  restaurantTables,
+  "restaurantTables",
+);
+export const WaitlistSchema = safeCreateSelectSchema(
+  restaurantWaitlist,
+  "restaurantWaitlist",
+);
+export const RestaurantProductSchema = safeCreateSelectSchema(
+  restaurantProducts,
+  "restaurantProducts",
+);
+export const InventoryLevelSchema = safeCreateSelectSchema(
+  inventoryLevels,
+  "inventoryLevels",
+);
+export const GuestProfileSchema = safeCreateSelectSchema(
+  guestProfiles,
+  "guestProfiles",
+);
 
 // Insert schemas (for creating new records)
-export const CreateRestaurantSchema = safeCreateInsertSchema(restaurants, 'restaurants', ['id', 'createdAt', 'claimToken']);
-export const CreateReservationDBSchema = safeCreateInsertSchema(restaurantReservations, 'restaurantReservations', ['id', 'createdAt', 'verificationToken']);
-export const CreateTableSchema = safeCreateInsertSchema(restaurantTables, 'restaurantTables', ['id', 'updatedAt']);
-export const AddToWaitlistDBSchema = safeCreateInsertSchema(restaurantWaitlist, 'restaurantWaitlist', ['id', 'createdAt', 'updatedAt']);
-export const CreateRestaurantProductSchema = safeCreateInsertSchema(restaurantProducts, 'restaurantProducts', ['id', 'createdAt', 'updatedAt']);
-export const CreateInventoryLevelSchema = safeCreateInsertSchema(inventoryLevels, 'inventoryLevels', ['id', 'updatedAt']);
-export const CreateGuestProfileSchema = safeCreateInsertSchema(guestProfiles, 'guestProfiles', ['id', 'createdAt', 'updatedAt']);
+export const CreateRestaurantSchema = safeCreateInsertSchema(
+  restaurants,
+  "restaurants",
+  ["id", "createdAt", "claimToken"],
+).extend({
+  // CRITICAL FIX: drizzle-zod converts Postgres numeric columns to z.string(),
+  // but the LLM provides actual numbers. Override to accept both.
+  lat: z.coerce.number().optional().nullable(),
+  lng: z.coerce.number().optional().nullable(),
+});
+export const CreateReservationDBSchema = safeCreateInsertSchema(
+  restaurantReservations,
+  "restaurantReservations",
+  ["id", "createdAt", "verificationToken"],
+);
+export const CreateTableSchema = safeCreateInsertSchema(
+  restaurantTables,
+  "restaurantTables",
+  ["id", "updatedAt"],
+);
+export const AddToWaitlistDBSchema = safeCreateInsertSchema(
+  restaurantWaitlist,
+  "restaurantWaitlist",
+  ["id", "createdAt", "updatedAt"],
+);
+export const CreateRestaurantProductSchema = safeCreateInsertSchema(
+  restaurantProducts,
+  "restaurantProducts",
+  ["id", "createdAt", "updatedAt"],
+);
+export const CreateInventoryLevelSchema = safeCreateInsertSchema(
+  inventoryLevels,
+  "inventoryLevels",
+  ["id", "updatedAt"],
+);
+export const CreateGuestProfileSchema = safeCreateInsertSchema(
+  guestProfiles,
+  "guestProfiles",
+  ["id", "createdAt", "updatedAt"],
+);
 
 // Update schemas (partial - all fields optional)
-export const UpdateReservationDBSchema = safeCreateInsertSchema(restaurantReservations, 'restaurantReservations').partial().omit({ id: true, createdAt: true });
-export const UpdateTableDBSchema = safeCreateInsertSchema(restaurantTables, 'restaurantTables').partial().omit({ id: true, restaurantId: true, updatedAt: true });
-export const UpdateWaitlistDBSchema = safeCreateInsertSchema(restaurantWaitlist, 'restaurantWaitlist').partial().omit({ id: true, createdAt: true, updatedAt: true });
+export const UpdateReservationDBSchema = safeCreateInsertSchema(
+  restaurantReservations,
+  "restaurantReservations",
+)
+  .partial()
+  .omit({ id: true, createdAt: true });
+export const UpdateTableDBSchema = safeCreateInsertSchema(
+  restaurantTables,
+  "restaurantTables",
+)
+  .partial()
+  .omit({ id: true, restaurantId: true, updatedAt: true });
+export const UpdateWaitlistDBSchema = safeCreateInsertSchema(
+  restaurantWaitlist,
+  "restaurantWaitlist",
+)
+  .partial()
+  .omit({ id: true, createdAt: true, updatedAt: true });
 
 /**
  * Utility to get JSON Schema for a tool
@@ -156,7 +230,7 @@ export const DB_REFLECTED_SCHEMAS = {
  * Get schema by table name for dynamic reflection
  */
 export function getReflectedSchema<K extends keyof typeof DB_REFLECTED_SCHEMAS>(
-  tableName: K
+  tableName: K,
 ): (typeof DB_REFLECTED_SCHEMAS)[K] {
   return DB_REFLECTED_SCHEMAS[tableName];
 }
@@ -165,15 +239,13 @@ export function getReflectedSchema<K extends keyof typeof DB_REFLECTED_SCHEMAS>(
  * Helper to create MCP tool input schema from Drizzle table
  * Automatically handles field validation based on database constraints
  */
-export function createMcpToolInputSchema<
-  T extends z.ZodObject<z.ZodRawShape>,
->(
+export function createMcpToolInputSchema<T extends z.ZodObject<z.ZodRawShape>>(
   baseSchema: T,
   options?: {
     omit?: (keyof z.infer<T>)[];
     partial?: boolean;
     required?: (keyof z.infer<T>)[];
-  }
+  },
 ): z.ZodType<Partial<z.infer<T>>> {
   // Start with the base schema cast to the target type
   let schema = baseSchema as unknown as z.ZodObject<z.ZodRawShape>;

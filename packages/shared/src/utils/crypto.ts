@@ -10,11 +10,17 @@
  * - Edge runtime and browsers also support Web Crypto API
  */
 
+import { timingSafeEqual } from "node:crypto";
+
 /**
  * Timing-safe secret comparison to prevent timing attacks.
  *
- * Uses a constant-time character comparison loop to prevent
- * timing attacks that could exploit early-exit string comparison.
+ * Uses Node.js crypto.timingSafeEqual with length-padding to prevent
+ * both character-level timing attacks AND length-leak attacks.
+ *
+ * The naive approach of returning false on length mismatch leaks the
+ * exact length of the server's secret to an attacker via timing analysis.
+ * Instead, we pad both inputs to a fixed buffer length and compare them.
  *
  * @param a - The first string to compare
  * @param b - The second string to compare
@@ -26,12 +32,22 @@
  * ```
  */
 export function isTimingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
+  // Convert strings to UTF-8 buffers
+  const aBuffer = Buffer.from(a, "utf-8");
+  const bBuffer = Buffer.from(b, "utf-8");
+
+  // Use the max length of the two inputs, with a minimum of 32 bytes
+  // This ensures we don't leak the server secret's length via timing
+  const maxLen = Math.max(aBuffer.length, bBuffer.length, 32);
+
+  // Pad both buffers to the same length with zeros
+  const aPadded = Buffer.alloc(maxLen, 0);
+  const bPadded = Buffer.alloc(maxLen, 0);
+  aBuffer.copy(aPadded);
+  bBuffer.copy(bPadded);
+
+  // Constant-time comparison of padded buffers
+  return timingSafeEqual(aPadded, bPadded);
 }
 
 /**
@@ -50,8 +66,8 @@ export function generateSecureRandom(length: number = 32): string {
   const array = new Uint8Array(length);
   globalThis.crypto.getRandomValues(array);
   return Array.from(array)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 /**

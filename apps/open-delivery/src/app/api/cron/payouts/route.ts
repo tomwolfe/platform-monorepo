@@ -82,15 +82,71 @@ async function getCronHandler(req: NextRequest) {
         count: orphanedPayouts.length,
       });
 
-      const orphanedIds = orphanedPayouts.map((o) => o.id);
-      await getDb()
-        .update(orders)
-        .set({ escrowStatus: "locked", payoutProcessedAt: null })
-        .where(inArray(orders.id, orphanedIds));
+      // CRITICAL FIX: Do not blindly revert to "locked". Check on-chain first
+      // to avoid double-payout if the RPC timed out after broadcasting.
+      const ESCROW_CONTRACT_ADDRESS = process.env
+        .NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS as Address;
+      const publicClient = await getPublicClient(base.id);
+
+      const stillLocked: string[] = [];
+      const alreadyReleased: string[] = [];
+
+      for (const order of orphanedPayouts) {
+        try {
+          // Check for TipReleased event on-chain
+          const logs = await publicClient.getLogs({
+            address: ESCROW_CONTRACT_ADDRESS,
+            event: {
+              name: "TipReleased",
+              type: "event",
+              anonymous: false,
+              inputs: [
+                { indexed: false, name: "orderId", type: "string" },
+                { indexed: true, name: "driver", type: "address" },
+                { indexed: false, name: "tipAmount", type: "uint256" },
+              ],
+            } as const,
+            args: { orderId: order.id },
+            fromBlock: "earliest",
+          });
+
+          if (logs.length > 0) {
+            // Tip was already released on-chain - mark as released in DB
+            alreadyReleased.push(order.id);
+            await getDb()
+              .update(orders)
+              .set({ escrowStatus: "released" })
+              .where(eq(orders.id, order.id));
+          } else {
+            // No on-chain release - safe to revert to locked
+            stillLocked.push(order.id);
+          }
+        } catch (chainError) {
+          logger.warn({
+            message: "Could not check on-chain tip status for order",
+            orderId: order.id,
+            error:
+              chainError instanceof Error
+                ? chainError.message
+                : String(chainError),
+          });
+          // On chain check failure, conservatively revert to locked
+          stillLocked.push(order.id);
+        }
+      }
+
+      if (stillLocked.length > 0) {
+        await getDb()
+          .update(orders)
+          .set({ escrowStatus: "locked", payoutProcessedAt: null })
+          .where(inArray(orders.id, stillLocked));
+      }
 
       logger.info({
         message: "Successfully recovered orphaned payouts",
-        count: orphanedPayouts.length,
+        totalChecked: orphanedPayouts.length,
+        revertedToLocked: stillLocked.length,
+        alreadyReleasedOnChain: alreadyReleased.length,
       });
     }
 
@@ -367,6 +423,7 @@ async function getCronHandler(req: NextRequest) {
             const nonce = await nonceManager.getNextNonce(
               base.id,
               resolverAccount.address,
+              publicClient,
             );
             const { gasPrice } = await getDynamicGasPrice(publicClient);
 
@@ -414,21 +471,72 @@ async function getCronHandler(req: NextRequest) {
               error instanceof Error ? error.message : String(error);
             if (errorMsg === "RPC_TIMEOUT") {
               logger.warn({
-                message: "RPC call timed out, skipping tip release",
+                message:
+                  "RPC call timed out, checking on-chain status before marking failed",
                 orderId: payout.orderId,
               });
+
+              // CRITICAL FIX: On RPC timeout, check on-chain for TipReleased event
+              // before marking as failed. If the tx was actually broadcast, we don't
+              // want to mark it as failed and risk a duplicate payout on next run.
+              try {
+                const logs = await publicClient.getLogs({
+                  address: ESCROW_CONTRACT_ADDRESS,
+                  event: {
+                    name: "TipReleased",
+                    type: "event",
+                    anonymous: false,
+                    inputs: [
+                      { indexed: false, name: "orderId", type: "string" },
+                      { indexed: true, name: "driver", type: "address" },
+                      { indexed: false, name: "tipAmount", type: "uint256" },
+                    ],
+                  } as const,
+                  args: { orderId: payout.orderId },
+                  fromBlock: "earliest",
+                });
+
+                if (logs.length > 0) {
+                  // Transaction succeeded on-chain despite RPC timeout
+                  logger.info({
+                    message:
+                      "On-chain check shows tip was released despite RPC timeout",
+                    orderId: payout.orderId,
+                  });
+                  await getDb()
+                    .update(orders)
+                    .set({ escrowStatus: "released" })
+                    .where(eq(orders.id, payout.orderId));
+                  return true;
+                }
+              } catch (chainCheckError) {
+                logger.warn({
+                  message: "On-chain tip status check failed after RPC timeout",
+                  orderId: payout.orderId,
+                  error:
+                    chainCheckError instanceof Error
+                      ? chainCheckError.message
+                      : String(chainCheckError),
+                });
+              }
+
+              // No on-chain release found - mark as failed (safe to retry next run)
+              await getDb()
+                .update(orders)
+                .set({ escrowStatus: "failed" })
+                .where(eq(orders.id, payout.orderId));
             } else {
               logger.error({
                 message: "Failed to release tip",
                 orderId: payout.orderId,
                 error: errorMsg,
               });
+              // Mark as failed
+              await getDb()
+                .update(orders)
+                .set({ escrowStatus: "failed" })
+                .where(eq(orders.id, payout.orderId));
             }
-            // Mark as failed
-            await getDb()
-              .update(orders)
-              .set({ escrowStatus: "failed" })
-              .where(eq(orders.id, payout.orderId));
             return false;
           });
         };

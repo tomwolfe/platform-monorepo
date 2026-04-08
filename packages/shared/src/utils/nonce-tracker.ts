@@ -1,5 +1,6 @@
 import { getRedisClient, ServiceNamespace } from "../redis";
 import { Logger } from "../logger";
+import type { PublicClient } from "viem";
 
 const logger = new Logger({ serviceName: "nonce-tracker" });
 
@@ -26,24 +27,47 @@ return tostring(nextNonce)
  * Get the next atomic nonce for a chain + address combination.
  * Uses a Lua script for atomicity to prevent race conditions between concurrent cron runs.
  *
+ * CRITICAL FIX: On cache miss, fetches the true on-chain nonce via publicClient
+ * instead of defaulting to 0, preventing "nonce too low" errors after cache flush.
+ *
  * @param chainId - Blockchain chain ID (e.g., 8453 for Base)
  * @param address - Wallet address
- * @param startNonce - Optional starting nonce if not yet initialized (default: 0)
+ * @param publicClient - Viem PublicClient for on-chain nonce queries
+ * @param startNonce - Optional starting nonce if not yet initialized (fallback only)
  * @returns The next nonce to use for the transaction
  */
 export async function getNextNonce(
   chainId: number,
   address: string,
+  publicClient: PublicClient,
   startNonce: number = 0,
 ): Promise<number> {
   const key = `nonce:${chainId}:${address.toLowerCase()}`;
   const redis = getRedisClient(ServiceNamespace.SHARED);
 
   try {
+    // CRITICAL FIX: Check if the key exists in Redis before calling the Lua script.
+    // If it doesn't exist (cache miss/flush), fetch the true on-chain nonce
+    // to prevent "nonce too low" errors from starting at 0.
+    let effectiveStartNonce = startNonce;
+    const keyExists = await redis.exists(key);
+    if (!keyExists) {
+      const onChainNonce = await publicClient.getTransactionCount({
+        address: address as `0x${string}`,
+        blockTag: "pending",
+      });
+      effectiveStartNonce = onChainNonce;
+      logger.info("NonceTracker cache miss - initialized from on-chain nonce", {
+        chainId,
+        address: address.toLowerCase(),
+        onChainNonce,
+      });
+    }
+
     const result = (await redis.eval(
       GET_NEXT_NONCE_SCRIPT,
       [key],
-      [startNonce.toString(), NONCE_TTL.toString()],
+      [effectiveStartNonce.toString(), NONCE_TTL.toString()],
     )) as string;
 
     const nonce = parseInt(result, 10);

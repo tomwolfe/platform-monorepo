@@ -498,7 +498,9 @@ export async function usdToCryptoBigInt(
 
   // Formula: cryptoAmountWei = (usdAmountCents * 10^decimals * 10^6) / (priceScaled * 10^2)
   // Simplified: (usdAmountCents * 10^(decimals + 4)) / priceScaled
-  const numerator = usdAmountCents * BigInt(10 ** (decimals + 4));
+  // CRITICAL: Use BigInt literals (10n ** BigInt(...)) to avoid Float64 precision loss
+  // for exponents that exceed Number.MAX_SAFE_INTEGER (e.g., 10^22)
+  const numerator = usdAmountCents * 10n ** BigInt(decimals + 4);
   const denominator = priceScaled;
 
   if (denominator === 0n) {
@@ -531,7 +533,8 @@ export async function cryptoToUsdBigInt(
   // Return in cents: usdAmount * 100
 
   const priceScaled = BigInt(Math.round(price * 100)); // Price in cents
-  const usdCents = (cryptoAmountWei * priceScaled) / BigInt(10 ** 18);
+  // CRITICAL: Use 10n ** 18n to avoid Float64 precision loss
+  const usdCents = (cryptoAmountWei * priceScaled) / 10n ** 18n;
   return usdCents;
 }
 

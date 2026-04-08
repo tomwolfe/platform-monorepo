@@ -90,6 +90,7 @@ async function postHandler(req: NextRequest) {
     walletAddress,
     chainId,
     deadline,
+    signedAmount,
   } = validation.data;
 
   // Use reservationId for table-stack (orderId is for open-delivery)
@@ -99,6 +100,21 @@ async function postHandler(req: NextRequest) {
     return NextResponse.json(
       errorResponse("VALIDATION_ERROR", "reservationId is required"),
       { status: 400 },
+    );
+  }
+
+  // Fetch reservation early (needed for signature verification)
+  const reservation = await getDb().query.restaurantReservations.findFirst({
+    where: eq(restaurantReservations.id, targetReservationId),
+    with: {
+      restaurant: true,
+    },
+  });
+
+  if (!reservation) {
+    return NextResponse.json(
+      errorResponse("NOT_FOUND", "Reservation not found"),
+      { status: 404 },
     );
   }
 
@@ -141,11 +157,14 @@ async function postHandler(req: NextRequest) {
     try {
       // Fetch deposit amount for signature verification
       const depositUsdCentsForSig = reservation.depositAmount || 0;
-      const pricesForSig = await getCryptoPrices();
 
-      // Calculate expected crypto amount for signature verification
+      // CRITICAL FIX: Use the signedAmount from the client (the amount they actually signed)
+      // instead of recalculating here, which would cause mismatches due to price volatility.
+      // If signedAmount is not provided, fall back to server-side calculation.
       let amountToVerify: bigint;
-      if (paymentCurrency === "ETH") {
+      if (signedAmount) {
+        amountToVerify = BigInt(signedAmount);
+      } else if (paymentCurrency === "ETH") {
         amountToVerify = await usdToCryptoBigInt(
           BigInt(depositUsdCentsForSig),
           "ETH",
@@ -185,6 +204,37 @@ async function postHandler(req: NextRequest) {
           { status: 400 },
         );
       }
+
+      // SLIPPAGE CHECK: After verifying the signature, ensure the signed amount
+      // is within acceptable slippage bounds of the current market rate.
+      // This prevents stale signatures from being used when prices have moved significantly.
+      if (signedAmount && paymentCurrency === "ETH") {
+        const expectedValue = await usdToCryptoBigInt(
+          BigInt(depositUsdCentsForSig),
+          "ETH",
+        );
+        const { isWithinSlippage } =
+          await import("@repo/shared/utils/crypto-price");
+        const slippageBps = AppConfig.getSlippageBps();
+        if (
+          !isWithinSlippage(BigInt(signedAmount), expectedValue, slippageBps)
+        ) {
+          return NextResponse.json(
+            errorResponse(
+              "VALIDATION_ERROR",
+              "Signed amount is outside acceptable slippage tolerance. Please sign a new checkout with the current price.",
+              {
+                details: {
+                  signedAmount,
+                  expectedValue: expectedValue.toString(),
+                  slippageBps,
+                },
+              },
+            ),
+            { status: 400 },
+          );
+        }
+      }
     } catch (sigError) {
       return NextResponse.json(
         errorResponse("VALIDATION_ERROR", "Signature verification failed", {
@@ -209,21 +259,6 @@ async function postHandler(req: NextRequest) {
     return NextResponse.json(
       errorResponse("VALIDATION_ERROR", "Invalid transaction hash format"),
       { status: 400 },
-    );
-  }
-
-  // Fetch reservation with restaurant details
-  const reservation = await getDb().query.restaurantReservations.findFirst({
-    where: eq(restaurantReservations.id, targetReservationId),
-    with: {
-      restaurant: true,
-    },
-  });
-
-  if (!reservation) {
-    return NextResponse.json(
-      errorResponse("NOT_FOUND", "Reservation not found"),
-      { status: 404 },
     );
   }
 

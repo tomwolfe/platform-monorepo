@@ -289,6 +289,14 @@ export const CheckoutRequestSchema = z
     // Payment metadata
     paymentCurrency: z.enum(["ETH", "USDC", "USDT", "DAI"]).optional(),
     minConfirmations: z.number().int().min(1).max(100).optional().default(3),
+
+    // EIP-712 signed amount (the amount the client actually signed)
+    // This prevents signature verification failures due to price fluctuations
+    // between the time the client calculated and the backend recalculates
+    signedAmount: z
+      .string()
+      .regex(/^\d+$/, "Invalid signedAmount format")
+      .optional(),
   })
   .refine((data) => data.orderId || data.reservationId, {
     message: "Either orderId or reservationId must be provided",

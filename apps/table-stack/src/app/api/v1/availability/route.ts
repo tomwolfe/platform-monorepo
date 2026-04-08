@@ -139,10 +139,17 @@ export const GET = withApiErrorHandler(
       }
 
       const timeStr = format(restaurantTime, "HH:mm", { timeZone: timezone });
-      if (
-        timeStr < (restaurant.openingTime || "00:00") ||
-        timeStr > (restaurant.closingTime || "23:59")
-      ) {
+      const openingTime = restaurant.openingTime || "00:00";
+      const closingTime = restaurant.closingTime || "23:59";
+
+      // CRITICAL FIX: Handle overnight hours (e.g., 18:00 to 02:00)
+      // If closingTime < openingTime, the restaurant spans midnight.
+      const isOvernight = closingTime < openingTime;
+      const isClosed = isOvernight
+        ? timeStr < openingTime && timeStr > closingTime
+        : timeStr < openingTime || timeStr > closingTime;
+
+      if (isClosed) {
         return NextResponse.json(
           formatApiSuccess({
             message: "Restaurant is closed at this time",
@@ -173,10 +180,12 @@ export const GET = withApiErrorHandler(
             timeZone: timezone,
           });
 
-          if (
-            suggestedTimeStr < (restaurant.openingTime || "00:00") ||
-            suggestedTimeStr > (restaurant.closingTime || "23:59")
-          ) {
+          // Apply same overnight-aware check for suggested slots
+          const suggestedIsClosed = isOvernight
+            ? suggestedTimeStr < openingTime && suggestedTimeStr > closingTime
+            : suggestedTimeStr < openingTime || suggestedTimeStr > closingTime;
+
+          if (suggestedIsClosed) {
             continue;
           }
 

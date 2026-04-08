@@ -192,7 +192,9 @@ export class OutboxRelayService {
 
   /**
    * Fallback to direct fetch when QStash is not configured
-   * Executes asynchronously without blocking the response
+   * Uses Next.js after() API to ensure execution continues after response
+   * Without after(), Vercel serverless isolates freeze upon returning the HTTP
+   * response, killing this fetch mid-flight.
    */
   private static async fallbackFetch(
     executionId: string,
@@ -232,28 +234,31 @@ export class OutboxRelayService {
       headers["x-correlation-id"] = config.correlationId;
     }
 
-    // Fire-and-forget: execute asynchronously without awaiting
-    // This avoids blocking the response while still triggering the relay
-    fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        executionId,
-        timestamp: new Date().toISOString(),
-      }),
-    })
-      .then((response) => {
+    // Use Next.js after() API to safely execute in background without Vercel killing the process
+    const { after } = await import("next/server");
+
+    after(async () => {
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            executionId,
+            timestamp: new Date().toISOString(),
+          }),
+        });
+
         if (!response.ok) {
           console.error(
-            `[OutboxRelay:Fallback] Failed to trigger relay: ${response.status} ${response.statusText}`,
+            `[OutboxRelay:Fallback] Failed to trigger relay: ${response.status}`,
           );
         } else {
           console.log(`[OutboxRelay:Fallback] Relay triggered successfully`);
         }
-      })
-      .catch((error) => {
+      } catch (error) {
         console.error(`[OutboxRelay:Fallback] Error triggering relay:`, error);
-      });
+      }
+    });
   }
 
   /**

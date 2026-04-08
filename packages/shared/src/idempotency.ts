@@ -131,13 +131,17 @@ export class IdempotencyService {
 
   /**
    * Checks if a key has already been processed or is currently being processed.
-   * If not, it sets the key with status "processing" and a 24-hour TTL.
+   * If not, it sets the key with status "processing" and a 2-minute TTL.
    *
    * TWO-PHASE COMMIT PATTERN:
    * - Keys are initially set to "processing" instead of "processed"
    * - If execution succeeds, markProcessed() should be called to finalize
    * - If execution fails, removeKey() should be called to allow retries
    * - If key is already "processing", returns duplicate=true (caller should return 409)
+   *
+   * CRITICAL: The "processing" lock uses a short 2-minute TTL (not 24 hours)
+   * to prevent permanent deadlocks if a Lambda crashes or hits a hard timeout.
+   * If the lock expires before completion, the caller can safely retry.
    *
    * ENHANCEMENT: Semantic Checksum Idempotency
    * - Uses SHA-256(toolName + sortedParameters) for stricter idempotency
@@ -182,7 +186,7 @@ export class IdempotencyService {
 
     const set = await this.redis.set(fullKey, "processing", {
       nx: true,
-      ex: this.defaultTtlSeconds,
+      ex: 120, // 2-minute lock to prevent deadlocks on Lambda crash
     });
     return set === null;
   }

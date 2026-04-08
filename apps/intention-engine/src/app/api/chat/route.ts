@@ -423,9 +423,12 @@ export const POST = withApiErrorHandler(async (req: Request) => {
       history,
       lastInteractionContext,
     );
-  } catch (securityError: any) {
+  } catch (securityError: unknown) {
     // Handle security check failures (prompt injection)
-    if (securityError.message.includes("Input blocked for security reasons")) {
+    if (
+      securityError instanceof Error &&
+      securityError.message.includes("Input blocked for security reasons")
+    ) {
       const detectionResult =
         securityError.message.split(": ")[1] || "Security check failed";
       return NextResponse.json(

@@ -1,12 +1,19 @@
 import { trace, context } from "@opentelemetry/api";
 import { NodeSDK } from "@opentelemetry/sdk-node";
-import { ConsoleSpanExporter, SimpleSpanProcessor, BatchSpanProcessor, SpanExporter, ReadableSpan } from "@opentelemetry/sdk-trace-base";
+import {
+  ConsoleSpanExporter,
+  SimpleSpanProcessor,
+  BatchSpanProcessor,
+  SpanExporter,
+  ReadableSpan,
+} from "@opentelemetry/sdk-trace-base";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { Resource } from "@opentelemetry/resources";
 import { SEMRESATTRS_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
+import { registerObservabilityFlush } from "@repo/shared";
 
 // Initialize OpenTelemetry
-let sdk: any = null;
+let sdk: NodeSDK | null = null;
 
 /**
  * DualExporter - exports to both OTLP and Console (for development debugging)
@@ -15,7 +22,10 @@ class DualExporter implements SpanExporter {
   private otlpExporter: OTLPTraceExporter;
   private consoleExporter: ConsoleSpanExporter;
 
-  constructor(otlpExporter: OTLPTraceExporter, consoleExporter: ConsoleSpanExporter) {
+  constructor(
+    otlpExporter: OTLPTraceExporter,
+    consoleExporter: ConsoleSpanExporter,
+  ) {
     this.otlpExporter = otlpExporter;
     this.consoleExporter = consoleExporter;
   }
@@ -34,27 +44,29 @@ class DualExporter implements SpanExporter {
 
 export function initObservability() {
   if (sdk) return;
-  if (process.env.NEXT_PHASE === 'phase-production-build') return;
+  if (process.env.NEXT_PHASE === "phase-production-build") return;
 
-  const isDevelopment = process.env.NODE_ENV === 'development';
+  const isDevelopment = process.env.NODE_ENV === "development";
 
   // Configure OTLP exporter for Grafana Tempo
   // Points to otel-collector in docker-compose.yml (port 4318 for HTTP)
   const otlpExporter = new OTLPTraceExporter({
-    url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318/v1/traces',
+    url:
+      process.env.OTEL_EXPORTER_OTLP_ENDPOINT ||
+      "http://localhost:4318/v1/traces",
     headers: {},
     concurrencyLimit: 10,
   });
 
   // In development, also log to console for debugging
   // In production, only use OTLP exporter
-  const spanExporter: SpanExporter = isDevelopment 
+  const spanExporter: SpanExporter = isDevelopment
     ? new DualExporter(otlpExporter, new ConsoleSpanExporter())
     : otlpExporter;
 
   sdk = new NodeSDK({
     resource: new Resource({
-      [SEMRESATTRS_SERVICE_NAME]: 'intention-engine',
+      [SEMRESATTRS_SERVICE_NAME]: "intention-engine",
     }),
     spanProcessor: new BatchSpanProcessor(spanExporter, {
       maxQueueSize: 100,
@@ -66,12 +78,23 @@ export function initObservability() {
 
   try {
     sdk.start();
-    console.log('[Observability] OpenTelemetry SDK initialized with OTLP exporter');
+    console.log(
+      "[Observability] OpenTelemetry SDK initialized with OTLP exporter",
+    );
     if (isDevelopment) {
-      console.log('[Observability] Console export enabled for development debugging');
+      console.log(
+        "[Observability] Console export enabled for development debugging",
+      );
     }
+
+    // Register the flush function with shared error handler
+    registerObservabilityFlush(async () => {
+      if (sdk) {
+        await sdk.forceFlush();
+      }
+    });
   } catch (e) {
-    console.warn('[Observability] Failed to start OpenTelemetry SDK:', e);
+    console.warn("[Observability] Failed to start OpenTelemetry SDK:", e);
   }
 }
 
@@ -84,4 +107,26 @@ export function startTrace(name: string, traceId: string) {
   return tracer.startSpan(name, {
     attributes: { "x-trace-id": traceId },
   });
+}
+
+/**
+ * Force flush all pending spans to the exporter.
+ *
+ * CRITICAL FOR SERVERLESS: In serverless environments (Vercel, AWS Lambda),
+ * the container is frozen immediately after the HTTP response is sent.
+ * Any spans still in the batch buffer will be dropped and never exported.
+ *
+ * Call this function at the end of request handlers to ensure all spans
+ * are flushed before the response is sent.
+ *
+ * @returns Promise that resolves when all spans have been flushed
+ */
+export async function flushObservability(): Promise<void> {
+  if (sdk) {
+    try {
+      await sdk.forceFlush();
+    } catch (error) {
+      console.warn("[Observability] Failed to flush spans:", error);
+    }
+  }
 }

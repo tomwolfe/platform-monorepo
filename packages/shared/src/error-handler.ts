@@ -191,6 +191,61 @@ export function installGlobalErrorHandler(logger?: Logger) {
  * });
  * ```
  */
+/**
+ * Centralized error handler for API routes
+ *
+ * Wraps async route handlers and provides:
+ * - Consistent error formatting
+ * - Structured error logging
+ * - Sentry error reporting (if configured)
+ * - Stack trace sanitization for production
+ *
+ * IMPORTANT: Re-throws Next.js redirect() and notFound() errors to preserve
+ * their navigation behavior. These errors contain special digest properties.
+ *
+ * @param handler - Async route handler function
+ * @param options - Error handler configuration
+ * @returns Wrapped handler with error handling
+ *
+ * @example
+ * ```typescript
+ * export const POST = withApiErrorHandler(async (req: NextRequest) => {
+ *   const body = await req.json();
+ *   if (!body.email) {
+ *     throw new ValidationError('Email is required');
+ *   }
+ *   return { success: true, data: { message: 'Success' } };
+ * });
+ * ```
+ */
+
+// Type for optional observability flush function
+type FlushObservabilityFn = () => Promise<void>;
+
+// Module-level reference to flush function (set by apps that use observability)
+let _flushObservability: FlushObservabilityFn | null = null;
+
+/**
+ * Register a flush function for OpenTelemetry spans.
+ * Should be called once during app initialization.
+ *
+ * @param flushFn - Function that flushes pending spans to the exporter
+ *
+ * @example
+ * ```typescript
+ * // In apps/intention-engine/src/lib/observability.ts
+ * import { registerObservabilityFlush } from '@repo/shared';
+ * registerObservabilityFlush(async () => {
+ *   if (sdk) await sdk.forceFlush();
+ * });
+ * ```
+ */
+export function registerObservabilityFlush(
+  flushFn: FlushObservabilityFn,
+): void {
+  _flushObservability = flushFn;
+}
+
 export function withApiErrorHandler<T extends (...args: any[]) => Promise<any>>(
   handler: T,
   options: ErrorHandlerOptions = DEFAULT_OPTIONS,
@@ -217,7 +272,9 @@ export function withApiErrorHandler<T extends (...args: any[]) => Promise<any>>(
       // Extract trace ID from error context or args
       const traceId =
         (appError.details?.traceId as string) ||
-        (args[0] as any)?.headers?.get?.("x-trace-id") ||
+        (
+          args[0] as { headers?: { get: (name: string) => string | null } }
+        )?.headers?.get?.("x-trace-id") ||
         undefined;
 
       // Log error with structured context
@@ -250,6 +307,19 @@ export function withApiErrorHandler<T extends (...args: any[]) => Promise<any>>(
       const sanitizedResponse = validateErrorResponse(errorResponse);
 
       return sanitizedResponse as Awaited<ReturnType<T>>;
+    } finally {
+      // SERVERLESS FIX: Flush OpenTelemetry spans before response is sent
+      // In serverless environments (Vercel, AWS Lambda), the container is frozen
+      // immediately after the response, causing batch spans to be lost.
+      // This ensures all telemetry data is exported before the function yields.
+      if (_flushObservability) {
+        try {
+          await _flushObservability();
+        } catch {
+          // Observability flush failed - that's okay
+          // Don't let telemetry failures break request handling
+        }
+      }
     }
   };
 }

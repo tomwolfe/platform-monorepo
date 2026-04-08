@@ -44,12 +44,32 @@ const CACHE_TTL = 30;
 // Stale-while-revalidate threshold (5 minutes max age for stale data)
 const STALE_CACHE_TTL = 300;
 
+interface CoinbaseExchangeRates {
+  data?: {
+    rates?: {
+      USD?: string;
+    };
+  };
+}
+
+interface BinanceTickerData {
+  symbol: string;
+  lastPrice: string;
+  [key: string]: unknown;
+}
+
+interface CachedPriceData {
+  ETH: number;
+  MATIC: number;
+  timestamp: number;
+}
+
 // CI/TEST MODE: Static mock prices for deterministic testing
 const CI_MOCK_PRICES = {
   ETH: 3000,
   MATIC: 0.5,
   timestamp: Date.now(),
-  source: 'mock' as const,
+  source: "mock" as const,
 };
 
 // Lazy redis client (initialized on first use)
@@ -77,7 +97,9 @@ interface PriceResponse {
  * This provides a mathematically safe fallback when all APIs fail
  * Returns null if historical data is not available - NO hardcoded fallbacks
  */
-async function getHistoricalMovingAverage(token: "ETH" | "MATIC"): Promise<number | null> {
+async function getHistoricalMovingAverage(
+  token: "ETH" | "MATIC",
+): Promise<number | null> {
   try {
     // Query last 7 days of price data from crypto_prices table
     const sevenDaysAgo = new Date();
@@ -91,8 +113,8 @@ async function getHistoricalMovingAverage(token: "ETH" | "MATIC"): Promise<numbe
       .where(
         and(
           eq(cryptoPrices.token, token),
-          gt(cryptoPrices.createdAt, sevenDaysAgo)
-        )
+          gt(cryptoPrices.createdAt, sevenDaysAgo),
+        ),
       );
 
     if (result[0]?.avgPrice) {
@@ -122,12 +144,19 @@ export async function getCryptoPrices(options?: {
   ETH: number;
   MATIC: number;
   timestamp: number;
-  source: 'cache' | 'coingecko' | 'coinbase' | 'binance' | 'historical' | 'cache-stale' | 'mock';
+  source:
+    | "cache"
+    | "coingecko"
+    | "coinbase"
+    | "binance"
+    | "historical"
+    | "cache-stale"
+    | "mock";
   isStale?: boolean;
 }> {
   // CI/TEST MODE: Return static mock prices for deterministic, offline-safe testing
-  if (process.env.CI === 'true' || process.env.NODE_ENV === 'test') {
-    console.log('[CryptoPrice] CI/Test mode detected - returning mock prices');
+  if (process.env.CI === "true" || process.env.NODE_ENV === "test") {
+    console.log("[CryptoPrice] CI/Test mode detected - returning mock prices");
     return {
       ...CI_MOCK_PRICES,
       timestamp: Date.now(),
@@ -139,31 +168,34 @@ export async function getCryptoPrices(options?: {
   const failClosed = options?.failClosed ?? true;
 
   // Try to get from cache first (wrapped in try-catch to prevent SPOF)
-  let cached: any = null;
+  let cached: CachedPriceData | null = null;
   let isStale = false;
   try {
     const cachedRaw = await redis.get("@apps:crypto-prices");
     if (cachedRaw) {
-      cached = JSON.parse(cachedRaw as string);
-      const cacheAge = Date.now() - cached.timestamp;
-      
+      cached = JSON.parse(cachedRaw as string) as CachedPriceData;
+      const cacheAge = Date.now() - (cached?.timestamp ?? 0);
+
       // Return cached data if less than 30 seconds old (fresh cache)
-      if (cacheAge < CACHE_TTL * 1000) {
-        return { ...cached, source: 'cache' as const, isStale: false };
+      if (cached && cacheAge < CACHE_TTL * 1000) {
+        return { ...cached, source: "cache" as const, isStale: false };
       }
-      
+
       // Mark as stale if between 30 seconds and 5 minutes old
-      if (cacheAge < STALE_CACHE_TTL * 1000) {
+      if (cached && cacheAge < STALE_CACHE_TTL * 1000) {
         isStale = true;
         console.warn(
           `[CryptoPrice] Using stale cache data (${Math.round(cacheAge / 1000)}s old). ` +
-          `Attempting to refresh in background.`
+            `Attempting to refresh in background.`,
         );
       }
     }
   } catch (error) {
     // Redis failure - log warning and proceed to API fallbacks
-    console.warn("[CryptoPrice] Redis cache read failed, proceeding to API fallbacks:", error);
+    console.warn(
+      "[CryptoPrice] Redis cache read failed, proceeding to API fallbacks:",
+      error,
+    );
   }
 
   // Try CoinGecko (primary)
@@ -199,20 +231,19 @@ export async function getCryptoPrices(options?: {
     }
 
     // Cache the result
-    await redis.setex(
-      "@apps:crypto-prices",
-      CACHE_TTL,
-      JSON.stringify(prices)
-    );
+    await redis.setex("@apps:crypto-prices", CACHE_TTL, JSON.stringify(prices));
 
-    return { ...prices, source: 'coingecko' as const, isStale: false };
+    return { ...prices, source: "coingecko" as const, isStale: false };
   } catch (coingeckoError) {
     console.warn("CoinGecko failed, trying Coinbase:", coingeckoError);
 
     // Try Coinbase (secondary fallback)
     try {
       const coinbaseController = new AbortController();
-      const coinbaseTimeoutId = setTimeout(() => coinbaseController.abort(), 3000);
+      const coinbaseTimeoutId = setTimeout(
+        () => coinbaseController.abort(),
+        3000,
+      );
 
       const response = await fetch(`${COINBASE_API}?currency=ETH`, {
         headers: {
@@ -227,7 +258,7 @@ export async function getCryptoPrices(options?: {
         throw new Error(`Coinbase API error: ${response.status}`);
       }
 
-      const data: any = await response.json();
+      const data: CoinbaseExchangeRates = await response.json();
 
       // Coinbase returns rates in data.data.rates
       const ethPrice = parseFloat(data.data?.rates?.USD || "0");
@@ -248,7 +279,7 @@ export async function getCryptoPrices(options?: {
         clearTimeout(maticTimeoutId);
 
         if (maticResponse.ok) {
-          const maticData: any = await maticResponse.json();
+          const maticData: CoinbaseExchangeRates = await maticResponse.json();
           maticPrice = parseFloat(maticData.data?.rates?.USD || "0");
         }
       } catch (e) {
@@ -270,21 +301,27 @@ export async function getCryptoPrices(options?: {
       await redis.setex(
         "@apps:crypto-prices",
         CACHE_TTL,
-        JSON.stringify(prices)
+        JSON.stringify(prices),
       );
 
-      return { ...prices, source: 'coinbase' as const, isStale: false };
+      return { ...prices, source: "coinbase" as const, isStale: false };
     } catch (coinbaseError) {
       console.warn("Coinbase also failed:", coinbaseError);
 
       // Try Binance Public API (tertiary fallback - no auth required)
       try {
         const binanceController = new AbortController();
-        const binanceTimeoutId = setTimeout(() => binanceController.abort(), 3000);
+        const binanceTimeoutId = setTimeout(
+          () => binanceController.abort(),
+          3000,
+        );
 
-        const response = await fetch(`${BINANCE_API}?symbol=${BINANCE_SYMBOLS.ETH}`, {
-          signal: binanceController.signal,
-        });
+        const response = await fetch(
+          `${BINANCE_API}?symbol=${BINANCE_SYMBOLS.ETH}`,
+          {
+            signal: binanceController.signal,
+          },
+        );
 
         clearTimeout(binanceTimeoutId);
 
@@ -292,7 +329,7 @@ export async function getCryptoPrices(options?: {
           throw new Error(`Binance API error: ${response.status}`);
         }
 
-        const data: any = await response.json();
+        const data: BinanceTickerData = await response.json();
 
         // Binance returns: { symbol: "ETHUSDT", lastPrice: "1234.56", ... }
         const ethPrice = parseFloat(data.lastPrice || "0");
@@ -301,16 +338,22 @@ export async function getCryptoPrices(options?: {
         let maticPrice = 0;
         try {
           const binanceMaticController = new AbortController();
-          const binanceMaticTimeoutId = setTimeout(() => binanceMaticController.abort(), 3000);
+          const binanceMaticTimeoutId = setTimeout(
+            () => binanceMaticController.abort(),
+            3000,
+          );
 
-          const maticResponse = await fetch(`${BINANCE_API}?symbol=${BINANCE_SYMBOLS.MATIC}`, {
-            signal: binanceMaticController.signal,
-          });
+          const maticResponse = await fetch(
+            `${BINANCE_API}?symbol=${BINANCE_SYMBOLS.MATIC}`,
+            {
+              signal: binanceMaticController.signal,
+            },
+          );
 
           clearTimeout(binanceMaticTimeoutId);
 
           if (maticResponse.ok) {
-            const maticData: any = await maticResponse.json();
+            const maticData: BinanceTickerData = await maticResponse.json();
             maticPrice = parseFloat(maticData.lastPrice || "0");
           }
         } catch (e) {
@@ -332,10 +375,10 @@ export async function getCryptoPrices(options?: {
         await redis.setex(
           "@apps:crypto-prices",
           CACHE_TTL,
-          JSON.stringify(prices)
+          JSON.stringify(prices),
         );
 
-        return { ...prices, source: 'binance' as const, isStale: false };
+        return { ...prices, source: "binance" as const, isStale: false };
       } catch (binanceError) {
         console.warn("Binance also failed:", binanceError);
 
@@ -351,7 +394,7 @@ export async function getCryptoPrices(options?: {
               MATIC: maticHistorical,
               timestamp: Date.now(),
             };
-            return { ...prices, source: 'historical' as const, isStale: true };
+            return { ...prices, source: "historical" as const, isStale: true };
           }
         } catch (historicalError) {
           console.warn("Historical average also unavailable:", historicalError);
@@ -360,37 +403,51 @@ export async function getCryptoPrices(options?: {
         // LAST RESORT: Use stale cache data if available
         // This is safer than throwing because it allows the UI to gracefully disable crypto
         // while still providing a reasonable price estimate from the last known good data
-        let staleCached: any = null;
+        let staleCached: CachedPriceData | null = null;
         try {
           const staleCachedRaw = await redis.get("@apps:crypto-prices");
           if (staleCachedRaw) {
-            staleCached = JSON.parse(staleCachedRaw as string);
+            staleCached = JSON.parse(
+              staleCachedRaw as string,
+            ) as CachedPriceData;
           }
         } catch (error) {
-          console.warn("[CryptoPrice] Redis stale cache read also failed:", error);
+          console.warn(
+            "[CryptoPrice] Redis stale cache read also failed:",
+            error,
+          );
         }
 
         if (staleCached) {
           console.error(
             "⚠️ CRITICAL: All crypto price sources (CoinGecko, Coinbase, Binance, historical) failed. " +
-            "Using STALE cached data as last resort. Prices may be significantly outdated. " +
-            "Users should be warned that crypto prices are not current."
+              "Using STALE cached data as last resort. Prices may be significantly outdated. " +
+              "Users should be warned that crypto prices are not current.",
           );
-          const staleData = JSON.parse(staleCached as string);
-          return { ...staleData, source: 'cache-stale' as const, isStale: true };
+          return {
+            ...staleCached,
+            source: "cache-stale" as const,
+            isStale: true,
+          };
         }
 
         // No stale cache available - throw error for financial safety
         const error = new Error(
           "Crypto price oracle unavailable: all external sources (CoinGecko, Coinbase, Binance), " +
-          "historical data, and stale cache are unavailable. " +
-          "Cannot process crypto transactions without any price data. " +
-          "This is a safety measure to prevent transactions without price verification."
+            "historical data, and stale cache are unavailable. " +
+            "Cannot process crypto transactions without any price data. " +
+            "This is a safety measure to prevent transactions without price verification.",
         );
         (error as any).code = "PRICE_ORACLE_UNAVAILABLE";
         (error as any).details = {
-          coingeckoError: coingeckoError instanceof Error ? coingeckoError.message : String(coingeckoError),
-          binanceError: binanceError instanceof Error ? binanceError.message : String(binanceError),
+          coingeckoError:
+            coingeckoError instanceof Error
+              ? coingeckoError.message
+              : String(coingeckoError),
+          binanceError:
+            binanceError instanceof Error
+              ? binanceError.message
+              : String(binanceError),
         };
         throw error;
       }
@@ -417,7 +474,7 @@ export async function getTokenPrice(token: "ETH" | "MATIC"): Promise<number> {
 export async function usdToCryptoBigInt(
   usdAmountCents: bigint,
   token: "ETH" | "MATIC",
-  decimals: number = 18
+  decimals: number = 18,
 ): Promise<bigint> {
   const price = await getTokenPrice(token);
   if (price === 0) {
@@ -430,16 +487,25 @@ export async function usdToCryptoBigInt(
   // cryptoAmount = usdAmountCents / (price * 100) in tokens
   // Then convert to wei: cryptoAmount * 10^decimals
 
-  // Use fixed-point arithmetic with 18 decimal precision
-  const priceInCents = BigInt(Math.round(price * 100));
-  const usdAmountWei = usdAmountCents * BigInt(10 ** 10); // Scale up for precision
-  const priceScaled = priceInCents * BigInt(10 ** 10);
+  // CRITICAL FIX: Use parseUnits to avoid floating-point precision loss
+  // Convert price to a 6-decimal string, then parse to BigInt safely
+  const priceScaled = parseUnits(price.toFixed(6), 6);
 
-  if (priceScaled === 0n) {
+  // Calculate: (usdAmountCents * 10^18) / (priceInCents)
+  // where priceInCents = priceScaled (already has 6 decimals)
+  // We need to normalize: usdAmountCents has 2 decimals (cents)
+  // Result should have 'decimals' places (e.g., 18 for ETH)
+
+  // Formula: cryptoAmountWei = (usdAmountCents * 10^decimals * 10^6) / (priceScaled * 10^2)
+  // Simplified: (usdAmountCents * 10^(decimals + 4)) / priceScaled
+  const numerator = usdAmountCents * BigInt(10 ** (decimals + 4));
+  const denominator = priceScaled;
+
+  if (denominator === 0n) {
     throw new Error("Price scaled to zero");
   }
 
-  const cryptoAmountTokens = (usdAmountWei * BigInt(10 ** decimals)) / priceScaled;
+  const cryptoAmountTokens = numerator / denominator;
   return cryptoAmountTokens;
 }
 
@@ -452,7 +518,7 @@ export async function usdToCryptoBigInt(
  */
 export async function cryptoToUsdBigInt(
   cryptoAmountWei: bigint,
-  token: "ETH" | "MATIC"
+  token: "ETH" | "MATIC",
 ): Promise<bigint> {
   const price = await getTokenPrice(token);
   if (price === 0) {
@@ -483,7 +549,7 @@ export async function usdToCryptoBigIntWithSlippage(
   usdAmountCents: bigint,
   token: "ETH" | "MATIC",
   slippageBps: number = 100,
-  decimals: number = 18
+  decimals: number = 18,
 ): Promise<bigint> {
   const cryptoAmount = await usdToCryptoBigInt(usdAmountCents, token, decimals);
   const BASIS_POINTS = 10_000n;
@@ -505,7 +571,7 @@ export async function usdToCryptoBigIntWithSlippage(
 export function isWithinSlippage(
   actualValue: bigint,
   expectedValue: bigint,
-  slippageBps: number
+  slippageBps: number,
 ): boolean {
   const BASIS_POINTS = 10_000n;
   const slippage = BigInt(slippageBps);

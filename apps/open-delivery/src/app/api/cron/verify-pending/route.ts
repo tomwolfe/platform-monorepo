@@ -122,71 +122,99 @@ async function postHandler(req: NextRequest) {
       let verifiedCount = 0;
       let failedCount = 0;
 
-      for (const order of pendingOrders) {
-        try {
-          // Verify the transaction on-chain
-          const verificationResult = await verifyTransaction({
-            txHash: order.paymentTxHash as `0x${string}`,
-            expectedValue: BigInt(order.total),
-            expectedRecipient: order.restaurant.walletAddress as
-              | Address
-              | undefined,
-            paymentCurrency: order.paymentCurrency || "USDC",
-          });
+      // PERFORMANCE FIX: Process orders in parallel batches to avoid serverless timeout
+      // Vercel serverless functions have a 10-30s timeout limit
+      // Processing 50 orders sequentially with RPC calls would exceed this limit
+      for (let i = 0; i < pendingOrders.length; i += BATCH_SIZE) {
+        const batch = pendingOrders.slice(i, i + BATCH_SIZE);
+        logger.info({
+          message: "Processing verification batch",
+          batchNumber: Math.floor(i / BATCH_SIZE) + 1,
+          batchSize: batch.length,
+        });
 
-          if (!verificationResult.success) {
-            logger.warn({
-              message: "Order verification failed",
-              orderId: order.id,
-              error: verificationResult.error,
+        const batchPromises = batch.map(async (order) => {
+          try {
+            // Verify the transaction on-chain
+            const verificationResult = await verifyTransaction({
+              txHash: order.paymentTxHash as `0x${string}`,
+              expectedValue: BigInt(order.total),
+              expectedRecipient: order.restaurant.walletAddress as
+                | Address
+                | undefined,
+              paymentCurrency: order.paymentCurrency || "USDC",
             });
-            failedCount++;
-            continue;
-          }
 
-          // Transaction verified successfully!
-          // Update order status and dispatch driver
-          await getDb()
-            .update(orders)
-            .set({
-              status: "pending", // Now move to normal pending state
-            })
-            .where(eq(orders.id, order.id));
+            if (!verificationResult.success) {
+              logger.warn({
+                message: "Order verification failed",
+                orderId: order.id,
+                error: verificationResult.error,
+              });
+              return { orderId: order.id, success: false };
+            }
 
-          // Publish Ably event to dispatch driver (same as frontend checkout)
-          await RealtimeService.publish(
-            "nervous-system:updates",
-            "delivery.intent_created",
-            {
-              orderId: order.id,
-              fulfillmentId: order.id,
-              pickupAddress: order.pickupAddress,
-              deliveryAddress: order.deliveryAddress,
-              price: order.total,
-              priority: "standard",
-              items: [], // Items would need to be fetched from orderItems table
-              timestamp: new Date().toISOString(),
-              traceId: `order-${order.id}`,
-              payment: {
-                txHash: order.paymentTxHash,
-                currency: order.paymentCurrency,
-                walletAddress: order.walletAddress,
+            // Transaction verified successfully!
+            // Update order status and dispatch driver
+            await getDb()
+              .update(orders)
+              .set({
+                status: "pending", // Now move to normal pending state
+              })
+              .where(eq(orders.id, order.id));
+
+            // Publish Ably event to dispatch driver (same as frontend checkout)
+            await RealtimeService.publish(
+              "nervous-system:updates",
+              "delivery.intent_created",
+              {
+                orderId: order.id,
+                fulfillmentId: order.id,
+                pickupAddress: order.pickupAddress,
+                deliveryAddress: order.deliveryAddress,
+                price: order.total,
+                priority: "standard",
+                items: [], // Items would need to be fetched from orderItems table
+                timestamp: new Date().toISOString(),
+                traceId: `order-${order.id}`,
+                payment: {
+                  txHash: order.paymentTxHash,
+                  currency: order.paymentCurrency,
+                  walletAddress: order.walletAddress,
+                },
               },
-            },
-          );
+            );
 
-          logger.info({
-            message: "Order verified and driver dispatched",
-            orderId: order.id,
-          });
-          verifiedCount++;
-        } catch (error: unknown) {
-          logger.error({
-            message: "Error verifying order",
-            orderId: order.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          failedCount++;
+            logger.info({
+              message: "Order verified and driver dispatched",
+              orderId: order.id,
+            });
+            return { orderId: order.id, success: true };
+          } catch (error: unknown) {
+            logger.error({
+              message: "Error verifying order",
+              orderId: order.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return { orderId: order.id, success: false };
+          }
+        });
+
+        // Wait for batch to complete
+        const batchResults = await Promise.allSettled(batchPromises);
+
+        // Count results
+        for (const result of batchResults) {
+          if (result.status === "fulfilled" && result.value.success) {
+            verifiedCount++;
+          } else {
+            failedCount++;
+          }
+        }
+
+        // Small delay between batches to avoid RPC rate limiting
+        if (i + BATCH_SIZE < pendingOrders.length) {
+          await new Promise((resolve) => setTimeout(resolve, 200));
         }
       }
 

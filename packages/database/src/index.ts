@@ -272,12 +272,10 @@ function createTimeoutProxy<T extends Record<string, any>>(
       }
 
       // Wrap the function with timeout
-      return function (...args: any[]) {
-        const queryPromise = value.apply(target, args);
-
-        // Create timeout promise
+      return async function (...args: any[]) {
+        let timer: NodeJS.Timeout;
         const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => {
+          timer = setTimeout(() => {
             reject(
               new TimeoutError(
                 `Query timed out after ${timeoutMs}ms`,
@@ -287,8 +285,14 @@ function createTimeoutProxy<T extends Record<string, any>>(
           }, timeoutMs);
         });
 
-        // Race between query and timeout
-        return Promise.race([queryPromise, timeoutPromise]);
+        try {
+          return await Promise.race([
+            value.apply(target, args),
+            timeoutPromise,
+          ]);
+        } finally {
+          clearTimeout(timer!);
+        }
       };
     },
   });

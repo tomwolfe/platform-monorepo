@@ -78,21 +78,12 @@ export function withServerlessTimeout(
     // Extract route path for logging
     const routePath = req.url ? new URL(req.url).pathname : "unknown";
 
-    // Race between the handler and the timeout
+    let timer: NodeJS.Timeout;
     const timeoutPromise = new Promise<NextResponse>((_, reject) => {
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         abortController.abort();
         reject(new TimeoutError(routePath, timeoutMs));
       }, timeoutMs);
-
-      // Clean up timer if handler completes first
-      abortController.signal.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timer);
-        },
-        { once: true },
-      );
     });
 
     try {
@@ -103,6 +94,8 @@ export function withServerlessTimeout(
         return error.toResponse();
       }
       throw error;
+    } finally {
+      clearTimeout(timer!);
     }
   };
 }

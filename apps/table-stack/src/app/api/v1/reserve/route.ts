@@ -1,5 +1,5 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { validateRequest } from "@tablestack/lib/auth";
 import {
   IdempotencyService,
@@ -51,6 +51,19 @@ async function postHandler(req: NextRequest) {
     "reserve_api",
   );
   if (isDuplicate) {
+    const status = await idempotencyService.getStatus(
+      idempotencyKey,
+      "reserve_api",
+    );
+    if (status === "processing") {
+      return NextResponse.json(
+        formatApiError(
+          new Error("Request still processing, please retry"),
+          "CONFLICT",
+        ),
+        { status: 409 },
+      );
+    }
     return NextResponse.json(
       formatApiSuccess({ message: "Reservation already processed" }),
       {
@@ -138,46 +151,47 @@ async function postHandler(req: NextRequest) {
     const restaurant =
       await reservationService.getRestaurant(targetRestaurantId);
 
-    // Send notifications (side effects outside transaction)
-    if (result.isShadow) {
-      await NotifyService.sendClaimInvitation(
-        restaurant.ownerEmail,
-        restaurant.name,
-        restaurant.claimToken!,
-      );
-      await NotifyService.notifyOwner(
-        restaurant.ownerEmail,
-        {
-          guestName: result.reservation.guestName,
-          partySize: result.reservation.partySize,
-          startTime: result.reservation.startTime,
-        },
-        true,
-      );
-
-      return NextResponse.json(
-        formatApiSuccess({
-          message: "Shadow reservation created. Restaurant has been notified.",
-          bookingId: result.reservation.id,
-        }),
-      );
-    }
-
-    // Send verification notification
-    const verifyUrl = `${new URL(req.url).origin}/verify/${result.reservation.verificationToken}`;
-    await NotifyService.sendNotification({
-      to: result.reservation.guestEmail,
-      subject: `Confirm your reservation at ${restaurant.name}`,
-      html: `<h1>Hello ${result.reservation.guestName},</h1><p>Please confirm your reservation for ${result.reservation.partySize} people.</p><p><a href="${verifyUrl}">Click here to confirm</a></p>`,
+    // Decouple external I/O from API critical path using after()
+    after(async () => {
+      if (result.isShadow) {
+        await NotifyService.sendClaimInvitation(
+          restaurant.ownerEmail,
+          restaurant.name,
+          restaurant.claimToken!,
+        );
+        await NotifyService.notifyOwner(
+          restaurant.ownerEmail,
+          {
+            guestName: result.reservation.guestName,
+            partySize: result.reservation.partySize,
+            startTime: result.reservation.startTime,
+          },
+          true,
+        );
+      } else {
+        const verifyUrl = `${new URL(req.url).origin}/verify/${result.reservation.verificationToken}`;
+        await NotifyService.sendNotification({
+          to: result.reservation.guestEmail,
+          subject: `Confirm your reservation at ${restaurant.name}`,
+          html: `<h1>Hello ${result.reservation.guestName},</h1><p>Please confirm your reservation for ${result.reservation.partySize} people.</p><p><a href="${verifyUrl}">Click here to confirm</a></p>`,
+        });
+      }
     });
+
+    // Mark idempotency key as processed
+    await idempotencyService.markProcessed(idempotencyKey, "reserve_api");
 
     return NextResponse.json(
       formatApiSuccess({
-        message: "Reservation created. Please check your email to verify.",
+        message: result.isShadow
+          ? "Shadow reservation created. Restaurant has been notified."
+          : "Reservation created. Please check your email to verify.",
         bookingId: result.reservation.id,
       }),
     );
   } catch (err) {
+    // Remove idempotency key on failure to allow retries
+    await idempotencyService.removeKey(idempotencyKey, "reserve_api");
     if (err instanceof ConflictError) {
       return NextResponse.json(formatApiError(err, "CONFLICT"), {
         status: 409,

@@ -1,11 +1,17 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from "next/server";
 import { getDb, eq, lt, and } from "@repo/database";
 import { restaurantReservations, restaurantTables } from "@repo/database";
-import { withCronAuth, Logger, getRedisClient, ServiceNamespace } from '@repo/shared';
+import {
+  withCronAuth,
+  Logger,
+  getRedisClient,
+  ServiceNamespace,
+  withRedlock,
+} from "@repo/shared";
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 
-const logger = new Logger({ serviceName: 'table-stack' });
+const logger = new Logger({ serviceName: "table-stack" });
 
 async function getCronHandler(req: NextRequest) {
   try {
@@ -13,22 +19,24 @@ async function getCronHandler(req: NextRequest) {
     const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000);
 
     // 1. Remove expired unverified reservations
-    const deletedReservations = await getDb().delete(restaurantReservations)
+    const deletedReservations = await getDb()
+      .delete(restaurantReservations)
       .where(
         and(
           eq(restaurantReservations.isVerified, false),
-          lt(restaurantReservations.createdAt, fifteenMinutesAgo)
-        )
+          lt(restaurantReservations.createdAt, fifteenMinutesAgo),
+        ),
       );
 
     // 2. Auto-archive "dirty" tables to "vacant"
-    const cleanedTables = await getDb().update(restaurantTables)
-      .set({ status: 'vacant', updatedAt: new Date() })
+    const cleanedTables = await getDb()
+      .update(restaurantTables)
+      .set({ status: "vacant", updatedAt: new Date() })
       .where(
         and(
-          eq(restaurantTables.status, 'dirty'),
-          lt(restaurantTables.updatedAt, twentyMinutesAgo)
-        )
+          eq(restaurantTables.status, "dirty"),
+          lt(restaurantTables.updatedAt, twentyMinutesAgo),
+        ),
       );
 
     // 3. Clean up orphaned confirmation token index keys in Redis
@@ -38,7 +46,7 @@ async function getCronHandler(req: NextRequest) {
     let orphanedConfirmationsRemoved = 0;
     try {
       const ieRedis = getRedisClient(ServiceNamespace.IE);
-      const execKeys = await ieRedis.keys('confirmation:exec:*');
+      const execKeys = await ieRedis.keys("confirmation:exec:*");
 
       for (const execKey of execKeys) {
         const token = await ieRedis.get(execKey);
@@ -57,23 +65,50 @@ async function getCronHandler(req: NextRequest) {
         }
       }
     } catch (error) {
-      logger.warn('Redis confirmation cleanup failed', {
+      logger.warn("Redis confirmation cleanup failed", {
         error: error instanceof Error ? error.message : String(error),
       });
     }
 
     return NextResponse.json({
-      message: 'Cleanup successful',
+      message: "Cleanup successful",
       timestamp: new Date().toISOString(),
       expiredReservationsRemoved: deletedReservations.rowCount,
       dirtyTablesCleaned: cleanedTables.rowCount,
       orphanedConfirmationsRemoved,
     });
   } catch (error) {
-    logger.error('Cleanup failed', { error: error instanceof Error ? error.message : String(error) });
-    return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
+    logger.error("Cleanup failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return NextResponse.json(
+      { message: "Internal server error" },
+      { status: 500 },
+    );
   }
 }
 
-// Wrap handler with cron authentication
-export const GET = withCronAuth(getCronHandler);
+// Wrap handler with cron authentication and distributed lock
+export const GET = withCronAuth(async (req: NextRequest) => {
+  const lockKey = "cron:table-stack:cleanup";
+  const lockValidityMs = 60000; // 1 minute should be enough for cleanup
+
+  try {
+    return await withRedlock(lockKey, lockValidityMs, async () =>
+      getCronHandler(req),
+    );
+  } catch (error) {
+    // If lock acquisition fails, return 200 OK to indicate graceful skip
+    if (
+      error instanceof Error &&
+      error.message.includes("Failed to acquire redlock")
+    ) {
+      logger.info("Cleanup cron skipped - another instance is running");
+      return NextResponse.json({
+        skipped: true,
+        message: "Another instance is running",
+      });
+    }
+    throw error;
+  }
+});

@@ -444,3 +444,103 @@ export function withServerActionHandler<TArgs extends unknown[], TReturn>(
     }
   };
 }
+
+// ============================================================================
+// ZOD VALIDATION SCHEMAS FOR API RESPONSES
+// ============================================================================
+
+/**
+ * Zod schema for validating API error responses
+ * Ensures consistent structure and prevents stack trace leaks in production
+ */
+export const ApiErrorResponseSchema = z.object({
+  success: z.literal(false),
+  error: z.object({
+    code: z.string().min(1),
+    message: z.string().min(1),
+    details: z.unknown().optional(),
+    fields: z.record(z.string()).optional(),
+    // SECURITY: Only include stack trace in development environment
+    stack:
+      process.env.NODE_ENV === "development"
+        ? z.string().optional()
+        : z.never().optional(),
+  }),
+  traceId: z.string().optional(),
+});
+
+/**
+ * Zod schema for validating API success responses
+ */
+export const ApiSuccessResponseSchema = <T extends z.ZodType>(dataSchema: T) =>
+  z.object({
+    success: z.literal(true),
+    data: dataSchema,
+    metadata: z
+      .object({
+        traceId: z.string().optional(),
+        durationMs: z.number().optional(),
+      })
+      .passthrough()
+      .optional(),
+  });
+
+/**
+ * Validate and sanitize an API error response
+ *
+ * This ensures the error response conforms to the expected schema
+ * and prevents accidental leakage of stack traces in production.
+ *
+ * @param response - The error response to validate
+ * @returns Sanitized error response that conforms to the schema
+ *
+ * @example
+ * ```typescript
+ * const errorResponse = formatApiError(error, 'VALIDATION_ERROR');
+ * const sanitized = validateErrorResponse(errorResponse);
+ * return NextResponse.json(sanitized, { status: 400 });
+ * ```
+ */
+export function validateErrorResponse(response: unknown): ApiErrorResponse {
+  // In production, strip stack traces even if they were accidentally included
+  if (process.env.NODE_ENV !== "production") {
+    // In development, allow stack traces for debugging
+    const result = ApiErrorResponseSchema.safeParse(response);
+    if (result.success) {
+      return result.data;
+    }
+  } else {
+    // In production, strictly omit stack traces
+    const productionSchema = ApiErrorResponseSchema.omit({
+      error: true,
+    }).extend({
+      error: z
+        .object({
+          code: z.string().min(1),
+          message: z.string().min(1),
+          details: z.unknown().optional(),
+          fields: z.record(z.string()).optional(),
+          // Explicitly exclude stack in production
+        })
+        .passthrough()
+        .transform((val) => {
+          const { stack, ...rest } = val as any;
+          return rest;
+        }),
+    });
+
+    const result = productionSchema.safeParse(response);
+    if (result.success) {
+      return result.data;
+    }
+  }
+
+  // If validation fails, return a safe default error response
+  return {
+    success: false,
+    error: {
+      code: "INTERNAL_ERROR",
+      message: "An unexpected error occurred",
+    },
+  };
+}

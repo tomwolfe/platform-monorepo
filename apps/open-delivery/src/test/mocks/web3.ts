@@ -1,18 +1,18 @@
 /**
  * Mock Web3 Providers for Testing
- * 
+ *
  * Provides mock implementations of viem/wagmi for unit and integration tests.
  * Use these to test Web3 functionality without connecting to real blockchains.
- * 
+ *
  * @example
  * import { mockPublicClient } from '@/test/mocks/web3';
- * 
+ *
  * // In your test
  * mockPublicClient.getTransactionReceipt.mockResolvedValue({...});
  */
 
 import { vi } from "vitest";
-import type { Hash, Address, TransactionReceipt, Transaction } from "viem";
+import type { Hash, Address, TransactionReceipt, Transaction, Log } from "viem";
 
 // ============================================================================
 // MOCK DATA
@@ -30,10 +30,14 @@ export const MOCK_ADDRESSES = {
 };
 
 export const MOCK_TX_HASHES = {
-  SUCCESS: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef" as Hash,
-  FAILED: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890" as Hash,
-  PENDING: "0xpending1234567890abcdef1234567890abcdef1234567890abcdef123456" as Hash,
-  REVERTED: "0xreverted1234567890abcdef1234567890abcdef1234567890abcdef123456" as Hash,
+  SUCCESS:
+    "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef" as Hash,
+  FAILED:
+    "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890" as Hash,
+  PENDING:
+    "0xpending1234567890abcdef1234567890abcdef1234567890abcdef123456" as Hash,
+  REVERTED:
+    "0xreverted1234567890abcdef1234567890abcdef1234567890abcdef123456" as Hash,
 };
 
 export const MOCK_BLOCKS = {
@@ -45,9 +49,12 @@ export const MOCK_BLOCKS = {
 // MOCK TRANSACTION RECEIPTS
 // ============================================================================
 
-export function createMockReceipt(overrides?: Partial<TransactionReceipt>): TransactionReceipt {
-  return {
-    blockHash: "0xblock1234567890abcdef1234567890abcdef1234567890abcdef1234567890" as Hash,
+export function createMockReceipt(
+  overrides?: Partial<TransactionReceipt>,
+): TransactionReceipt {
+  const receipt: TransactionReceipt = {
+    blockHash:
+      "0xblock1234567890abcdef1234567890abcdef1234567890abcdef1234567890" as Hash,
     blockNumber: BigInt(9990),
     transactionHash: MOCK_TX_HASHES.SUCCESS,
     transactionIndex: 0,
@@ -61,15 +68,18 @@ export function createMockReceipt(overrides?: Partial<TransactionReceipt>): Tran
     logs: [],
     logsBloom: "0x" + "00".repeat(256),
     ...overrides,
-  } as TransactionReceipt;
+  };
+  return receipt;
 }
 
 // ============================================================================
 // MOCK TRANSACTIONS
 // ============================================================================
 
-export function createMockTransaction(overrides?: Partial<Transaction>): Transaction {
-  return {
+export function createMockTransaction(
+  overrides?: Partial<Transaction>,
+): Transaction {
+  const tx: Transaction = {
     hash: MOCK_TX_HASHES.SUCCESS,
     from: MOCK_ADDRESSES.USER_1,
     to: MOCK_ADDRESSES.ESCROW_CONTRACT,
@@ -78,13 +88,15 @@ export function createMockTransaction(overrides?: Partial<Transaction>): Transac
     gasPrice: BigInt(1000000000),
     nonce: 1,
     input: "0x",
-    blockHash: "0xblock1234567890abcdef1234567890abcdef1234567890abcdef1234567890" as Hash,
+    blockHash:
+      "0xblock1234567890abcdef1234567890abcdef1234567890abcdef1234567890" as Hash,
     blockNumber: BigInt(9990),
     transactionIndex: 0,
     type: 2,
     chainId: 8453,
     ...overrides,
-  } as Transaction;
+  };
+  return tx;
 }
 
 // ============================================================================
@@ -103,7 +115,7 @@ export function createMockOrderDepositedLog(overrides?: {
   platformFee?: bigint;
 }) {
   const orderId = overrides?.orderId || "order-123";
-  return {
+  const log = {
     address: MOCK_ADDRESSES.ESCROW_CONTRACT,
     eventName: "OrderDeposited" as const,
     args: {
@@ -114,7 +126,8 @@ export function createMockOrderDepositedLog(overrides?: {
       tip: overrides?.tip ?? BigInt("2000000"), // 2 USDC
       platformFee: overrides?.platformFee ?? BigInt("100000"), // 0.1 USDC
     },
-  };
+  } satisfies Partial<Log>;
+  return log;
 }
 
 /**
@@ -125,7 +138,7 @@ export function createMockTipReleasedLog(overrides?: {
   driver?: Address;
   tipAmount?: bigint;
 }) {
-  return {
+  const log = {
     address: MOCK_ADDRESSES.ESCROW_CONTRACT,
     eventName: "TipReleased" as const,
     args: {
@@ -133,7 +146,8 @@ export function createMockTipReleasedLog(overrides?: {
       driver: overrides?.driver || MOCK_ADDRESSES.DRIVER,
       tipAmount: overrides?.tipAmount ?? BigInt("2000000"), // 2 USDC
     },
-  };
+  } satisfies Partial<Log>;
+  return log;
 }
 
 // ============================================================================
@@ -141,28 +155,28 @@ export function createMockTipReleasedLog(overrides?: {
 // ============================================================================
 
 export const mockPublicClient = {
-  getTransactionReceipt: vi.fn<
-    (params: { hash: Hash }) => Promise<TransactionReceipt>
-  >().mockResolvedValue(createMockReceipt()),
+  getTransactionReceipt: vi
+    .fn<(params: { hash: Hash }) => Promise<TransactionReceipt>>()
+    .mockResolvedValue(createMockReceipt()),
 
-  getTransaction: vi.fn<
-    (params: { hash: Hash }) => Promise<Transaction>
-  >().mockResolvedValue(createMockTransaction()),
+  getTransaction: vi
+    .fn<(params: { hash: Hash }) => Promise<Transaction>>()
+    .mockResolvedValue(createMockTransaction()),
 
-  getBlockNumber: vi.fn<
-    () => Promise<bigint>
-  >().mockResolvedValue(MOCK_BLOCKS.CURRENT),
+  getBlockNumber: vi
+    .fn<() => Promise<bigint>>()
+    .mockResolvedValue(MOCK_BLOCKS.CURRENT),
 
-  getBalance: vi.fn<
-    (params: { address: Address }) => Promise<bigint>
-  >().mockResolvedValue(BigInt("1000000000000000000")), // 1 ETH
+  getBalance: vi
+    .fn<(params: { address: Address }) => Promise<bigint>>()
+    .mockResolvedValue(BigInt("1000000000000000000")), // 1 ETH
 
   simulateContract: vi.fn().mockResolvedValue({ request: {} }),
 
   readContract: vi.fn().mockResolvedValue(BigInt("1000000")),
 
   waitForTransactionReceipt: vi.fn().mockResolvedValue(createMockReceipt()),
-};
+} satisfies Record<string, ReturnType<typeof vi.fn>>;
 
 // ============================================================================
 // MOCK SCENARIOS
@@ -175,12 +189,14 @@ export const scenarios = {
   successfulPayment: {
     setup: () => {
       mockPublicClient.getTransactionReceipt.mockResolvedValueOnce(
-        createMockReceipt({ status: "success" })
+        createMockReceipt({ status: "success" }),
       );
       mockPublicClient.getTransaction.mockResolvedValueOnce(
-        createMockTransaction({ value: BigInt("10000000") })
+        createMockTransaction({ value: BigInt("10000000") }),
       );
-      mockPublicClient.getBlockNumber.mockResolvedValueOnce(MOCK_BLOCKS.CURRENT);
+      mockPublicClient.getBlockNumber.mockResolvedValueOnce(
+        MOCK_BLOCKS.CURRENT,
+      );
     },
     expected: {
       success: true,
@@ -207,7 +223,7 @@ export const scenarios = {
   transactionReverted: {
     setup: () => {
       mockPublicClient.getTransactionReceipt.mockResolvedValueOnce(
-        createMockReceipt({ status: "reverted" })
+        createMockReceipt({ status: "reverted" }),
       );
     },
     expected: {
@@ -222,7 +238,7 @@ export const scenarios = {
   rpcTimeout: {
     setup: () => {
       mockPublicClient.getTransactionReceipt.mockRejectedValueOnce(
-        new Error("Request timeout")
+        new Error("Request timeout"),
       );
     },
     expected: {
@@ -237,12 +253,14 @@ export const scenarios = {
   insufficientConfirmations: {
     setup: () => {
       mockPublicClient.getTransactionReceipt.mockResolvedValueOnce(
-        createMockReceipt({ blockNumber: MOCK_BLOCKS.CURRENT - BigInt(1) })
+        createMockReceipt({ blockNumber: MOCK_BLOCKS.CURRENT - BigInt(1) }),
       );
       mockPublicClient.getTransaction.mockResolvedValueOnce(
-        createMockTransaction({ value: BigInt("10000000") })
+        createMockTransaction({ value: BigInt("10000000") }),
       );
-      mockPublicClient.getBlockNumber.mockResolvedValueOnce(MOCK_BLOCKS.CURRENT);
+      mockPublicClient.getBlockNumber.mockResolvedValueOnce(
+        MOCK_BLOCKS.CURRENT,
+      );
     },
     expected: {
       success: false,
@@ -257,10 +275,10 @@ export const scenarios = {
   wrongRecipient: {
     setup: () => {
       mockPublicClient.getTransactionReceipt.mockResolvedValueOnce(
-        createMockReceipt({ to: MOCK_ADDRESSES.USER_2 })
+        createMockReceipt({ to: MOCK_ADDRESSES.USER_2 }),
       );
       mockPublicClient.getTransaction.mockResolvedValueOnce(
-        createMockTransaction({ to: MOCK_ADDRESSES.USER_2 })
+        createMockTransaction({ to: MOCK_ADDRESSES.USER_2 }),
       );
     },
     expected: {
@@ -275,10 +293,10 @@ export const scenarios = {
   wrongAmount: {
     setup: () => {
       mockPublicClient.getTransactionReceipt.mockResolvedValueOnce(
-        createMockReceipt({ status: "success" })
+        createMockReceipt({ status: "success" }),
       );
       mockPublicClient.getTransaction.mockResolvedValueOnce(
-        createMockTransaction({ value: BigInt("5000000") }) // Wrong amount
+        createMockTransaction({ value: BigInt("5000000") }), // Wrong amount
       );
     },
     expected: {
@@ -296,12 +314,14 @@ export const scenarios = {
         createMockReceipt({
           status: "success",
           logs: [createMockOrderDepositedLog()],
-        })
+        }),
       );
       mockPublicClient.getTransaction.mockResolvedValueOnce(
-        createMockTransaction({ to: MOCK_ADDRESSES.ESCROW_CONTRACT })
+        createMockTransaction({ to: MOCK_ADDRESSES.ESCROW_CONTRACT }),
       );
-      mockPublicClient.getBlockNumber.mockResolvedValueOnce(MOCK_BLOCKS.CURRENT);
+      mockPublicClient.getBlockNumber.mockResolvedValueOnce(
+        MOCK_BLOCKS.CURRENT,
+      );
     },
     expected: {
       success: true,
@@ -319,12 +339,14 @@ export const scenarios = {
         createMockReceipt({
           status: "success",
           logs: [createMockTipReleasedLog()],
-        })
+        }),
       );
       mockPublicClient.getTransaction.mockResolvedValueOnce(
-        createMockTransaction({ to: MOCK_ADDRESSES.ESCROW_CONTRACT })
+        createMockTransaction({ to: MOCK_ADDRESSES.ESCROW_CONTRACT }),
       );
-      mockPublicClient.getBlockNumber.mockResolvedValueOnce(MOCK_BLOCKS.CURRENT);
+      mockPublicClient.getBlockNumber.mockResolvedValueOnce(
+        MOCK_BLOCKS.CURRENT,
+      );
     },
     expected: {
       success: true,
@@ -339,10 +361,10 @@ export const scenarios = {
   missingEscrowEvent: {
     setup: () => {
       mockPublicClient.getTransactionReceipt.mockResolvedValueOnce(
-        createMockReceipt({ status: "success", logs: [] })
+        createMockReceipt({ status: "success", logs: [] }),
       );
       mockPublicClient.getTransaction.mockResolvedValueOnce(
-        createMockTransaction({ to: MOCK_ADDRESSES.ESCROW_CONTRACT })
+        createMockTransaction({ to: MOCK_ADDRESSES.ESCROW_CONTRACT }),
       );
     },
     expected: {

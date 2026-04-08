@@ -16,15 +16,11 @@
  * @see Phase 1.2: Error Handling & Logging
  */
 
-import {
-  AppError,
-  ErrorCode,
-  toAppError,
-  getErrorStatusCode,
-  formatApiError,
-} from '@repo/shared';
-import { Logger } from './logger';
-import { isNextRedirectError } from './utils/next-errors';
+import { AppError, ErrorCode, toAppError, getErrorStatusCode } from "./errors";
+import { formatApiError } from "./utils/api-error";
+import { validateErrorResponse } from "./utils/api-error";
+import { Logger } from "./logger";
+import { isNextRedirectError } from "./utils/next-errors";
 
 // ============================================================================
 // ERROR RESPONSE FORMAT
@@ -59,9 +55,7 @@ export interface ApiSuccessResponse<T = unknown> {
 /**
  * Union type for API responses
  */
-export type ApiResponse<T = unknown> =
-  | ApiSuccessResponse<T>
-  | ApiErrorResponse;
+export type ApiResponse<T = unknown> = ApiSuccessResponse<T> | ApiErrorResponse;
 
 // ============================================================================
 // ERROR HANDLER CONFIGURATION
@@ -82,8 +76,8 @@ export interface ErrorHandlerOptions {
  * Default error handler options
  */
 const DEFAULT_OPTIONS: ErrorHandlerOptions = {
-  serviceName: 'api',
-  includeStackTrace: process.env.NODE_ENV !== 'production',
+  serviceName: "api",
+  includeStackTrace: process.env.NODE_ENV !== "production",
 };
 
 // ============================================================================
@@ -119,7 +113,7 @@ const DEFAULT_OPTIONS: ErrorHandlerOptions = {
  */
 export function withApiErrorHandler<T extends (...args: any[]) => Promise<any>>(
   handler: T,
-  options: ErrorHandlerOptions = DEFAULT_OPTIONS
+  options: ErrorHandlerOptions = DEFAULT_OPTIONS,
 ) {
   const {
     serviceName = DEFAULT_OPTIONS.serviceName,
@@ -142,8 +136,8 @@ export function withApiErrorHandler<T extends (...args: any[]) => Promise<any>>(
 
       // Extract trace ID from error context or args
       const traceId =
-        appError.details?.traceId as string ||
-        (args[0] as any)?.headers?.get?.('x-trace-id') ||
+        (appError.details?.traceId as string) ||
+        (args[0] as any)?.headers?.get?.("x-trace-id") ||
         undefined;
 
       // Log error with structured context
@@ -160,11 +154,22 @@ export function withApiErrorHandler<T extends (...args: any[]) => Promise<any>>(
       // Note: Sentry reporting is available via @repo/shared/server module
       // Initialize Sentry there for Node.js server environments
 
-      // Return formatted error response
-      return formatApiError(appError, appError.code as ErrorCode, undefined, {
-        includeStack: includeStackTrace,
-        traceId,
-      }) as Awaited<ReturnType<T>>;
+      // Format error response
+      const errorResponse = formatApiError(
+        appError,
+        appError.code as ErrorCode,
+        undefined,
+        {
+          includeStack: includeStackTrace,
+          traceId,
+        },
+      );
+
+      // SECURITY: Validate and sanitize response to prevent stack trace leaks
+      // This ensures the response conforms to the schema and strips stacks in production
+      const sanitizedResponse = validateErrorResponse(errorResponse);
+
+      return sanitizedResponse as Awaited<ReturnType<T>>;
     }
   };
 }
@@ -187,7 +192,7 @@ export function formatError(
   options: {
     includeStack?: boolean;
     traceId?: string;
-  } = {}
+  } = {},
 ): ApiErrorResponse {
   const appError = toAppError(error, code);
   const { includeStack = false, traceId } = options;
@@ -198,7 +203,8 @@ export function formatError(
       code: appError.code,
       message: appError.message,
       ...(appError.details && { details: appError.details }),
-      ...(includeStack && appError.stackTrace && { stack: appError.stackTrace }),
+      ...(includeStack &&
+        appError.stackTrace && { stack: appError.stackTrace }),
     },
     timestamp: new Date().toISOString(),
     ...(traceId && { traceId }),
@@ -214,7 +220,7 @@ export function formatError(
  */
 export function formatSuccess<T = unknown>(
   data?: T,
-  meta?: { message?: string; traceId?: string }
+  meta?: { message?: string; traceId?: string },
 ): ApiSuccessResponse<T> {
   const { message, traceId } = meta || {};
 
@@ -254,7 +260,7 @@ export async function withRetry<T>(
     maxDelay?: number;
     factor?: number;
     shouldRetry?: (error: Error) => boolean;
-  } = {}
+  } = {},
 ): Promise<T> {
   const {
     maxRetries = 3,
@@ -284,7 +290,7 @@ export async function withRetry<T>(
       }
 
       // Wait before retrying with exponential backoff
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await new Promise((resolve) => setTimeout(resolve, delay));
       delay = Math.min(delay * factor, maxDelay);
     }
   }
@@ -304,7 +310,7 @@ export async function withRetry<T>(
 export async function withTimeout<T>(
   fn: () => Promise<T>,
   timeoutMs: number,
-  operation: string = 'Operation'
+  operation: string = "Operation",
 ): Promise<T> {
   const timeoutPromise = new Promise<never>((_, reject) => {
     setTimeout(() => {
@@ -341,11 +347,10 @@ export async function withTimeout<T>(
  */
 export async function settleAll<T>(
   promises: Array<Promise<T>>,
-  options: { stopOnFirstFailure?: boolean } = {}
+  options: { stopOnFirstFailure?: boolean } = {},
 ): Promise<
   Array<
-    | { status: 'fulfilled'; value: T }
-    | { status: 'rejected'; reason: unknown }
+    { status: "fulfilled"; value: T } | { status: "rejected"; reason: unknown }
   >
 > {
   const { stopOnFirstFailure = false } = options;
@@ -353,11 +358,11 @@ export async function settleAll<T>(
   if (stopOnFirstFailure) {
     // Race to first failure
     const results = await Promise.allSettled(promises);
-    const firstFailure = results.find(r => r.status === 'rejected');
+    const firstFailure = results.find((r) => r.status === "rejected");
     if (firstFailure) {
       throw (firstFailure as PromiseRejectedResult).reason;
     }
-    return results as Array<{ status: 'fulfilled'; value: T }>;
+    return results as Array<{ status: "fulfilled"; value: T }>;
   }
 
   return Promise.allSettled(promises);
@@ -370,12 +375,12 @@ export async function settleAll<T>(
 /**
  * Sentry integration has been moved to @repo/shared/server
  * to avoid Edge Runtime compatibility issues.
- * 
+ *
  * For Sentry support, import from the server module:
  * ```typescript
  * import { initSentry, setSentryUser, addSentryBreadcrumb } from '@repo/shared/server';
  * ```
- * 
+ *
  * The error handler will automatically use Sentry if it has been initialized
  * via the server module.
  */

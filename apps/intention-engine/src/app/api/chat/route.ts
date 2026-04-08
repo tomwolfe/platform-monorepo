@@ -395,7 +395,7 @@ export const POST = withApiErrorHandler(async (req: Request) => {
   })();
 
   // Orchestrate the chat request (security, intent inference, live state, async execution)
-  const { avoidTools } = await getPlanWithAvoidance(userText, userIp);
+  const { avoidTools } = await getPlanWithAvoidance(userText, userId);
   const history = recentLogs
     .filter(
       (log) =>

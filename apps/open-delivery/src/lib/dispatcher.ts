@@ -224,7 +224,8 @@ export async function findAvailableDrivers(
   const searchRadiusKm = 50; // Search within 50km radius
   const latDiff = searchRadiusKm / 111;
   const lngDiff =
-    searchRadiusKm / (111 * Math.cos((pickupLat! * Math.PI) / 180));
+    searchRadiusKm /
+    (111 * Math.max(0.01, Math.cos((pickupLat! * Math.PI) / 180)));
 
   // Clamp bounding box values to valid global coordinate ranges to prevent SQL silent failures
   const minLat = Math.max(-90, pickupLat! - latDiff);

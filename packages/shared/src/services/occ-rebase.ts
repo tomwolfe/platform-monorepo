@@ -14,7 +14,7 @@
  * Usage:
  * ```typescript
  * const rebase = createAtomicStateRebaser('task:execution-123');
- * 
+ *
  * const result = await rebase.update(
  *   (currentState) => ({
  *     ...currentState,
@@ -23,7 +23,7 @@
  *   }),
  *   { maxRetries: 3 }
  * );
- * 
+ *
  * if (result.success) {
  *   console.log('State updated atomically');
  * } else {
@@ -57,7 +57,7 @@ export interface AtomicUpdateResult<T extends { version?: number }> {
   succeededViaRebase: boolean;
 }
 
-export interface AtomicUpdateOptions {
+export interface AtomicUpdateOptions<T extends { version?: number }> {
   /** Maximum number of rebase attempts (default: 3) */
   maxRetries?: number;
   /** Base delay for exponential backoff in ms (default: 100) */
@@ -67,10 +67,10 @@ export interface AtomicUpdateOptions {
   /** Enable debug logging */
   debug?: boolean;
   /** Custom conflict handler (if not provided, uses automatic rebase) */
-  onConflict?: (currentState: any, expectedState: any) => Promise<any>;
+  onConflict?: (currentState: T, expectedState: T) => Promise<T | void>;
 }
 
-const DEFAULT_OPTIONS: AtomicUpdateOptions = {
+const DEFAULT_OPTIONS: AtomicUpdateOptions<{ version?: number }> = {
   maxRetries: 3,
   baseDelayMs: 100,
   maxDelayMs: 1000,
@@ -189,14 +189,18 @@ export class AtomicStateRebaser<T extends { version?: number }> {
     const data = await this.redis.get<string>(this.key);
     if (!data) return null;
     // Handle both raw string (production Redis) and pre-parsed objects (test mocks)
-    if (typeof data === 'object') return data as T;
+    if (typeof data === "object") return data as T;
     return JSON.parse(data) as T;
   }
 
   /**
    * Calculate exponential backoff delay
    */
-  private calculateBackoff(attempt: number, baseDelayMs: number, maxDelayMs: number): number {
+  private calculateBackoff(
+    attempt: number,
+    baseDelayMs: number,
+    maxDelayMs: number,
+  ): number {
     const exponentialDelay = baseDelayMs * Math.pow(2, attempt);
     const jitter = Math.random() * 0.3 * exponentialDelay; // Add 30% jitter
     return Math.min(exponentialDelay + jitter, maxDelayMs);
@@ -211,7 +215,7 @@ export class AtomicStateRebaser<T extends { version?: number }> {
    */
   async update(
     updateFn: (currentState: T) => Partial<T>,
-    options: AtomicUpdateOptions = {}
+    options: AtomicUpdateOptions<T> = {},
   ): Promise<AtomicUpdateResult<T>> {
     const opts = { ...DEFAULT_OPTIONS, ...options };
     let rebaseAttempts = 0;
@@ -221,7 +225,7 @@ export class AtomicStateRebaser<T extends { version?: number }> {
       try {
         // Load current state
         const currentState = await this.loadState();
-        
+
         if (!currentState) {
           return {
             success: false,
@@ -257,7 +261,7 @@ export class AtomicStateRebaser<T extends { version?: number }> {
         if (opts.debug) {
           console.log(
             `[AtomicStateRebaser] Conflict detected for ${this.key} ` +
-            `(expected version ${currentVersion}, got ${result.currentVersion})`
+              `(expected version ${currentVersion}, got ${result.currentVersion})`,
           );
         }
 
@@ -277,27 +281,26 @@ export class AtomicStateRebaser<T extends { version?: number }> {
         const delay = this.calculateBackoff(
           rebaseAttempts,
           opts.baseDelayMs!,
-          opts.maxDelayMs!
+          opts.maxDelayMs!,
         );
-        
+
         if (opts.debug) {
           console.log(
             `[AtomicStateRebaser] Backing off for ${delay.toFixed(0)}ms ` +
-            `before rebase attempt ${rebaseAttempts}/${opts.maxRetries}`
+              `before rebase attempt ${rebaseAttempts}/${opts.maxRetries}`,
           );
         }
-        
-        await this.sleep(delay);
 
+        await this.sleep(delay);
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
-        
+
         if (opts.debug) {
           console.error(`[AtomicStateRebaser] Error during update:`, error);
         }
 
         rebaseAttempts++;
-        
+
         if (rebaseAttempts > opts.maxRetries!) {
           return {
             success: false,
@@ -311,7 +314,7 @@ export class AtomicStateRebaser<T extends { version?: number }> {
         const delay = this.calculateBackoff(
           rebaseAttempts,
           opts.baseDelayMs!,
-          opts.maxDelayMs!
+          opts.maxDelayMs!,
         );
         await this.sleep(delay);
       }
@@ -330,13 +333,13 @@ export class AtomicStateRebaser<T extends { version?: number }> {
    */
   private async atomicCas(
     expectedVersion: number,
-    newState: T
+    newState: T,
   ): Promise<{
     success: boolean;
     currentVersion: number;
     overwrittenState?: T;
   }> {
-    const newVersion = (newState.version || 0);
+    const newVersion = newState.version || 0;
 
     try {
       const result = await this.redis.eval(
@@ -346,7 +349,7 @@ export class AtomicStateRebaser<T extends { version?: number }> {
           expectedVersion.toString(),
           JSON.stringify(newState),
           newVersion.toString(),
-        ]
+        ],
       );
 
       const [success, version, stateJson] = result as [number, number, string];
@@ -359,7 +362,8 @@ export class AtomicStateRebaser<T extends { version?: number }> {
       }
 
       // Conflict - state was modified by another writer
-      const overwrittenState = stateJson !== "null" ? JSON.parse(stateJson) as T : undefined;
+      const overwrittenState =
+        stateJson !== "null" ? (JSON.parse(stateJson) as T) : undefined;
 
       return {
         success: false,
@@ -379,7 +383,7 @@ export class AtomicStateRebaser<T extends { version?: number }> {
    */
   async applyDelta(
     delta: Partial<Omit<T, "_version">>,
-    options: AtomicUpdateOptions = {}
+    options: AtomicUpdateOptions<T> = {},
   ): Promise<AtomicUpdateResult<T>> {
     const opts = { ...DEFAULT_OPTIONS, ...options };
     let rebaseAttempts = 0;
@@ -388,7 +392,7 @@ export class AtomicStateRebaser<T extends { version?: number }> {
       try {
         // Load current state
         const currentState = await this.loadState();
-        
+
         if (!currentState) {
           return {
             success: false,
@@ -405,13 +409,14 @@ export class AtomicStateRebaser<T extends { version?: number }> {
         const result = await this.redis.eval(
           ATOMIC_DELTA_SCRIPT,
           [this.key],
-          [
-            JSON.stringify(delta),
-            newVersion.toString(),
-          ]
+          [JSON.stringify(delta), newVersion.toString()],
         );
 
-        const [success, version, stateJson] = result as [number, number, string];
+        const [success, version, stateJson] = result as [
+          number,
+          number,
+          string,
+        ];
 
         if (success === 1) {
           return {
@@ -437,10 +442,9 @@ export class AtomicStateRebaser<T extends { version?: number }> {
         const delay = this.calculateBackoff(
           rebaseAttempts,
           opts.baseDelayMs!,
-          opts.maxDelayMs!
+          opts.maxDelayMs!,
         );
         await this.sleep(delay);
-
       } catch (error) {
         if (opts.debug) {
           console.error(`[AtomicStateRebaser] Delta update failed:`, error);
@@ -460,7 +464,7 @@ export class AtomicStateRebaser<T extends { version?: number }> {
         const delay = this.calculateBackoff(
           rebaseAttempts,
           opts.baseDelayMs!,
-          opts.maxDelayMs!
+          opts.maxDelayMs!,
         );
         await this.sleep(delay);
       }
@@ -478,7 +482,7 @@ export class AtomicStateRebaser<T extends { version?: number }> {
    * Sleep helper
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
 
@@ -492,7 +496,7 @@ export class AtomicStateRebaser<T extends { version?: number }> {
 export function createAtomicStateRebaser<T extends { version?: number }>(
   key: string,
   debug?: boolean,
-  redis?: Redis
+  redis?: Redis,
 ): AtomicStateRebaser<T> {
   return new AtomicStateRebaser<T>(key, debug, redis);
 }
@@ -505,9 +509,13 @@ export function createAtomicStateRebaser<T extends { version?: number }>(
 export async function atomicUpdateState<T extends { version?: number }>(
   key: string,
   updateFn: (currentState: T) => Partial<T>,
-  options?: AtomicUpdateOptions & { redis?: Redis }
+  options?: AtomicUpdateOptions<T> & { redis?: Redis },
 ): Promise<AtomicUpdateResult<T>> {
-  const rebaser = createAtomicStateRebaser<T>(key, options?.debug, options?.redis);
+  const rebaser = createAtomicStateRebaser<T>(
+    key,
+    options?.debug,
+    options?.redis,
+  );
   return rebaser.update(updateFn, options);
 }
 
@@ -526,10 +534,10 @@ export function buildExecutionStateKey(executionId: string): string {
 /**
  * Create atomic rebaser for workflow execution state
  */
-export function createWorkflowStateRebaser(
+export function createWorkflowStateRebaser<T extends { version?: number }>(
   executionId: string,
-  debug?: boolean
-): AtomicStateRebaser<any> {
+  debug?: boolean,
+): AtomicStateRebaser<T> {
   const key = buildExecutionStateKey(executionId);
   return createAtomicStateRebaser(key, debug);
 }

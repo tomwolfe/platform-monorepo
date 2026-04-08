@@ -214,33 +214,6 @@ export function installGlobalErrorHandler(logger?: Logger) {
  * });
  * ```
  */
-/**
- * Centralized error handler for API routes
- *
- * Wraps async route handlers and provides:
- * - Consistent error formatting
- * - Structured error logging
- * - Sentry error reporting (if configured)
- * - Stack trace sanitization for production
- *
- * IMPORTANT: Re-throws Next.js redirect() and notFound() errors to preserve
- * their navigation behavior. These errors contain special digest properties.
- *
- * @param handler - Async route handler function
- * @param options - Error handler configuration
- * @returns Wrapped handler with error handling
- *
- * @example
- * ```typescript
- * export const POST = withApiErrorHandler(async (req: NextRequest) => {
- *   const body = await req.json();
- *   if (!body.email) {
- *     throw new ValidationError('Email is required');
- *   }
- *   return { success: true, data: { message: 'Success' } };
- * });
- * ```
- */
 
 // Type for optional observability flush function
 type FlushObservabilityFn = () => Promise<void>;

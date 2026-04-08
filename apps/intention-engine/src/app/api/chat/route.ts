@@ -114,7 +114,7 @@ async function getTools(
         description,
         inputSchema,
         execute: async (params) => {
-          console.log(`Executing MCP tool ${toolName}`, params);
+          logger.info({ message: `Executing MCP tool ${toolName}`, params });
 
           // Use the manager's executeTool method with parameter aliasing
           // This handles routing between remote MCP tools and local tool executions

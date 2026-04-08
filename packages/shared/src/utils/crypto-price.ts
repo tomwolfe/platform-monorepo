@@ -516,11 +516,13 @@ export async function usdToCryptoBigInt(
  *
  * @param cryptoAmountWei - Crypto amount in token's smallest unit (wei)
  * @param token - Token symbol
+ * @param decimals - Token decimals (default 18)
  * @returns USD amount in cents
  */
 export async function cryptoToUsdBigInt(
   cryptoAmountWei: bigint,
   token: "ETH" | "MATIC",
+  decimals: number = 18,
 ): Promise<bigint> {
   const price = await getTokenPrice(token);
   if (price === 0) {
@@ -528,13 +530,12 @@ export async function cryptoToUsdBigInt(
   }
 
   // price is in USD per token (e.g., ETH = 3000.0)
-  // cryptoAmountWei is in wei (10^-18 tokens)
-  // usdAmount = (cryptoAmountWei / 10^18) * price
+  // cryptoAmountWei is in token's smallest unit (e.g., wei for 18-decimal tokens)
+  // usdAmount = (cryptoAmountWei / 10^decimals) * price
   // Return in cents: usdAmount * 100
 
   const priceScaled = BigInt(Math.round(price * 100)); // Price in cents
-  // CRITICAL: Use 10n ** 18n to avoid Float64 precision loss
-  const usdCents = (cryptoAmountWei * priceScaled) / 10n ** 18n;
+  const usdCents = (cryptoAmountWei * priceScaled) / 10n ** BigInt(decimals);
   return usdCents;
 }
 

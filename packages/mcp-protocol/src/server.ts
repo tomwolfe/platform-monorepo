@@ -123,7 +123,7 @@ export function createMcpServerRoutes(
   server: McpServer,
   options?: {
     enableLogging?: boolean;
-  }
+  },
 ): McpServerRoutes {
   const enableLogging = options?.enableLogging ?? true;
 
@@ -163,7 +163,7 @@ export function createMcpServerRoutes(
         headers: {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
-          "Connection": "keep-alive",
+          Connection: "keep-alive",
           "X-Trace-Id": traceId,
         },
       });
@@ -182,12 +182,25 @@ export function createMcpServerRoutes(
       if (!transport) {
         return Response.json(
           { error: "No active transport", traceId },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
       try {
-        const body = await request.json();
+        let body: unknown;
+        try {
+          body = await request.json();
+        } catch {
+          return Response.json(
+            {
+              jsonrpc: "2.0",
+              id: null,
+              error: { code: -32700, message: "Parse error" },
+            },
+            { status: 400 },
+          );
+        }
+
         // Attach traceId to transport for tool execution context
         (transport as any).traceId = traceId;
         await (transport as any).handlePostRequest(request, Response as any);
@@ -211,7 +224,7 @@ export function createMcpServerRoutes(
             headers: {
               "X-Trace-Id": traceId,
             },
-          }
+          },
         );
       }
     },

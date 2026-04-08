@@ -14,6 +14,9 @@
  */
 
 import { CacheClient, getSharedCache } from "../infrastructure/cache";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "cache-middleware" });
 
 // ============================================================================
 // STABLE STRINGIFICATION
@@ -192,7 +195,7 @@ export function withCache<T extends (...args: any[]) => Promise<any>>(
       if (cached !== null) {
         cacheMetrics.hits++;
         updateHitRate();
-        console.log(`[Cache] HIT: ${cacheKey}`);
+        logger.info({ message: `[Cache] HIT: ${cacheKey}` });
 
         // Attach cache control metadata if response object
         const result = cached as any;
@@ -209,7 +212,7 @@ export function withCache<T extends (...args: any[]) => Promise<any>>(
       // Cache miss - execute function
       cacheMetrics.misses++;
       updateHitRate();
-      console.log(`[Cache] MISS: ${cacheKey}`);
+      logger.info({ message: `[Cache] MISS: ${cacheKey}` });
 
       const result = await fn(...args);
 
@@ -228,7 +231,7 @@ export function withCache<T extends (...args: any[]) => Promise<any>>(
       return result;
     } catch (error) {
       cacheMetrics.errors++;
-      console.error(`[Cache] Error for key ${cacheKey}:`, error);
+      logger.error({ message: `[Cache] Error for key ${cacheKey}:`, error });
       // On error, execute function without caching
       return await fn(...args);
     }
@@ -290,10 +293,15 @@ export async function invalidateCacheByTag(
     // Delete tag set
     await cacheClient.getRawClient().del(tagKey);
 
-    console.log(`[Cache] Invalidated ${keys.length} entries for tag: ${tag}`);
+    logger.info({
+      message: `[Cache] Invalidated ${keys.length} entries for tag: ${tag}`,
+    });
     return keys.length;
   } catch (error) {
-    console.error(`[Cache] Failed to invalidate tag ${tag}:`, error);
+    logger.error({
+      message: `[Cache] Failed to invalidate tag ${tag}:`,
+      error,
+    });
     return 0;
   }
 }
@@ -319,9 +327,9 @@ export async function invalidateCacheByPattern(
     await cacheClient.delete(key);
   }
 
-  console.log(
-    `[Cache] Invalidated ${keys.length} entries for pattern: ${pattern}`,
-  );
+  logger.info({
+    message: `[Cache] Invalidated ${keys.length} entries for pattern: ${pattern}`,
+  });
   return keys.length;
 }
 
@@ -380,7 +388,7 @@ export function withCacheMiddleware<
       if (cached !== null) {
         cacheMetrics.hits++;
         updateHitRate();
-        console.log(`[Cache] HIT: ${cacheKey}`);
+        logger.info({ message: `[Cache] HIT: ${cacheKey}` });
 
         return new Response(JSON.stringify(cached.body), {
           status: 200,
@@ -402,7 +410,7 @@ export function withCacheMiddleware<
       // Cache miss - execute handler
       cacheMetrics.misses++;
       updateHitRate();
-      console.log(`[Cache] MISS: ${cacheKey}`);
+      logger.info({ message: `[Cache] MISS: ${cacheKey}` });
 
       const response = await handler(...args);
 
@@ -436,7 +444,7 @@ export function withCacheMiddleware<
       return newResponse;
     } catch (error) {
       cacheMetrics.errors++;
-      console.error(`[Cache] Error for key ${cacheKey}:`, error);
+      logger.error({ message: `[Cache] Error for key ${cacheKey}:`, error });
 
       // On error, execute handler without caching
       return await handler(...args);

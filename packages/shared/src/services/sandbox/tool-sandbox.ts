@@ -22,17 +22,17 @@
  */
 
 // Node.js specific imports - only available in Node.js environment
-import { Worker, isMainThread, parentPort, MessagePort } from 'worker_threads';
-import { z } from 'zod';
-import { EventEmitter } from 'events';
-import { Logger } from '../../logger';
+import { Worker, isMainThread, parentPort, MessagePort } from "worker_threads";
+import { z } from "zod";
+import { EventEmitter } from "events";
+import { Logger } from "../../logger";
 
 // ============================================================================
 // WORKER MESSAGES
 // ============================================================================
 
 export interface WorkerRequest {
-  type: 'execute_tool';
+  type: "execute_tool";
   toolName: string;
   parameters: Record<string, unknown>;
   timeoutMs: number;
@@ -50,7 +50,7 @@ export interface WorkerResponse {
 }
 
 export interface WorkerError {
-  type: 'error';
+  type: "error";
   message: string;
   code: string;
   stack?: string;
@@ -115,7 +115,7 @@ export class ToolSandbox extends EventEmitter {
   constructor(config: Partial<SandboxConfig> = {}) {
     super();
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.logger = new Logger({ serviceName: 'tool-sandbox' });
+    this.logger = new Logger({ serviceName: "tool-sandbox" });
   }
 
   /**
@@ -124,7 +124,9 @@ export class ToolSandbox extends EventEmitter {
   async executeTool(
     toolName: string,
     parameters: Record<string, unknown>,
-    options?: Partial<Pick<SandboxConfig, 'timeoutMs' | 'maxMemoryMb' | 'allowedEnvVars'>>
+    options?: Partial<
+      Pick<SandboxConfig, "timeoutMs" | "maxMemoryMb" | "allowedEnvVars">
+    >,
   ): Promise<WorkerResponse> {
     const startTime = Date.now();
     this.stats.totalExecutions++;
@@ -150,6 +152,7 @@ export class ToolSandbox extends EventEmitter {
     return new Promise<WorkerResponse>((resolve) => {
       let resolved = false;
       const cleanup = () => {
+        worker.removeAllListeners();
         this.activeWorkers.delete(worker);
       };
 
@@ -159,28 +162,28 @@ export class ToolSandbox extends EventEmitter {
         resolved = true;
         this.stats.timeoutExecutions++;
         this.stats.failedExecutions++;
-        
+
         worker.terminate().catch(console.error);
         cleanup();
-        
-        this.emit('timeout', { toolName, timeoutMs: workerConfig.timeoutMs });
-        
+
+        this.emit("timeout", { toolName, timeoutMs: workerConfig.timeoutMs });
+
         resolve({
           success: false,
           error: `Tool execution timed out after ${workerConfig.timeoutMs}ms`,
-          errorCode: 'TIMEOUT',
+          errorCode: "TIMEOUT",
           executionTimeMs: Date.now() - startTime,
         });
       }, workerConfig.timeoutMs);
 
       // Message handler
-      worker.on('message', (response: WorkerResponse | WorkerError) => {
+      worker.on("message", (response: WorkerResponse | WorkerError) => {
         if (resolved) return;
         resolved = true;
         clearTimeout(timeoutId);
 
         // Type guard to check if this is a WorkerError
-        if ('type' in response && response.type === 'error') {
+        if ("type" in response && response.type === "error") {
           this.stats.failedExecutions++;
           cleanup();
 
@@ -200,7 +203,11 @@ export class ToolSandbox extends EventEmitter {
 
         cleanup();
 
-        this.emit('complete', { toolName, response: response as WorkerResponse, executionTime });
+        this.emit("complete", {
+          toolName,
+          response: response as WorkerResponse,
+          executionTime,
+        });
 
         resolve({
           ...(response as WorkerResponse),
@@ -209,27 +216,27 @@ export class ToolSandbox extends EventEmitter {
       });
 
       // Error handler
-      worker.on('error', (error) => {
+      worker.on("error", (error) => {
         if (resolved) return;
         resolved = true;
         clearTimeout(timeoutId);
-        
+
         this.stats.failedExecutions++;
         cleanup();
-        
-        this.emit('error', { toolName, error });
-        
+
+        this.emit("error", { toolName, error });
+
         resolve({
           success: false,
           error: error.message,
-          errorCode: 'WORKER_ERROR',
+          errorCode: "WORKER_ERROR",
           executionTimeMs: Date.now() - startTime,
         });
       });
 
       // Send execution request
       const request: WorkerRequest = {
-        type: 'execute_tool',
+        type: "execute_tool",
         toolName,
         parameters,
         timeoutMs: workerConfig.timeoutMs,
@@ -244,7 +251,9 @@ export class ToolSandbox extends EventEmitter {
   /**
    * Create a new worker thread
    */
-  private createWorker(config: Pick<SandboxConfig, 'timeoutMs' | 'maxMemoryMb' | 'allowedEnvVars'>): Worker {
+  private createWorker(
+    config: Pick<SandboxConfig, "timeoutMs" | "maxMemoryMb" | "allowedEnvVars">,
+  ): Worker {
     const worker = new Worker(workerScript, {
       eval: true,
       env: this.sanitizeEnvironment(config.allowedEnvVars),
@@ -252,12 +261,16 @@ export class ToolSandbox extends EventEmitter {
         maxOldGenerationSizeMb: config.maxMemoryMb,
         maxYoungGenerationSizeMb: Math.floor(config.maxMemoryMb / 4),
       },
-      execArgv: ['--max-old-space-size=' + config.maxMemoryMb],
+      execArgv: ["--max-old-space-size=" + config.maxMemoryMb],
     });
 
     if (this.config.debug) {
-      worker.on('message', (msg) => this.logger.debug('Worker message', { msg }));
-      worker.on('error', (err) => this.logger.error('Worker error', { error: err.message }));
+      worker.on("message", (msg) =>
+        this.logger.debug("Worker message", { msg }),
+      );
+      worker.on("error", (err) =>
+        this.logger.error("Worker error", { error: err.message }),
+      );
     }
 
     return worker;
@@ -268,17 +281,17 @@ export class ToolSandbox extends EventEmitter {
    */
   private sanitizeEnvironment(allowedVars: string[]): Record<string, string> {
     const sanitized: Record<string, string> = {};
-    
+
     // Only include explicitly allowed variables
     for (const envVar of allowedVars) {
       if (process.env[envVar]) {
         sanitized[envVar] = process.env[envVar]!;
       }
     }
-    
+
     // Always include NODE_ENV
-    sanitized.NODE_ENV = process.env.NODE_ENV || 'production';
-    
+    sanitized.NODE_ENV = process.env.NODE_ENV || "production";
+
     return sanitized;
   }
 
@@ -288,11 +301,11 @@ export class ToolSandbox extends EventEmitter {
   private updateStats(response: WorkerResponse, executionTimeMs: number): void {
     // Update averages using running average formula
     const n = this.stats.totalExecutions;
-    this.stats.avgExecutionTimeMs = 
+    this.stats.avgExecutionTimeMs =
       (this.stats.avgExecutionTimeMs * (n - 1) + executionTimeMs) / n;
-    
+
     if (response.memoryUsedMb) {
-      this.stats.avgMemoryUsedMb = 
+      this.stats.avgMemoryUsedMb =
         (this.stats.avgMemoryUsedMb * (n - 1) + response.memoryUsedMb) / n;
     }
   }
@@ -309,11 +322,16 @@ export class ToolSandbox extends EventEmitter {
    */
   async terminateAll(): Promise<void> {
     const terminatePromises: Promise<void>[] = [];
-    
+
     for (const worker of this.activeWorkers) {
-      terminatePromises.push(worker.terminate().then(() => {}).catch(console.error));
+      terminatePromises.push(
+        worker
+          .terminate()
+          .then(() => {})
+          .catch(console.error),
+      );
     }
-    
+
     await Promise.all(terminatePromises);
     this.activeWorkers.clear();
   }
@@ -450,7 +468,9 @@ parentPort.postMessage({ type: 'ready' });
 // FACTORY
 // ============================================================================
 
-export function createToolSandbox(config?: Partial<SandboxConfig>): ToolSandbox {
+export function createToolSandbox(
+  config?: Partial<SandboxConfig>,
+): ToolSandbox {
   return new ToolSandbox(config);
 }
 

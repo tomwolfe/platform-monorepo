@@ -3,8 +3,10 @@ import { z } from "zod";
 /**
  * Recursive helper to map JSON Schema to Zod for deep validation.
  */
-export function mapJsonSchemaToZod(schema: Record<string, unknown>): z.ZodTypeAny {
-  if (!schema || Object.keys(schema).length === 0) return z.any();
+export function mapJsonSchemaToZod(
+  schema: Record<string, unknown>,
+): z.ZodTypeAny {
+  if (!schema || Object.keys(schema).length === 0) return z.unknown();
 
   const type = schema.type as string | undefined;
 
@@ -24,7 +26,8 @@ export function mapJsonSchemaToZod(schema: Record<string, unknown>): z.ZodTypeAn
       return z.array(mapJsonSchemaToZod(items || {}));
     case "object":
       const shape: Record<string, z.ZodTypeAny> = {};
-      const properties = (schema.properties as Record<string, Record<string, unknown>>) || {};
+      const properties =
+        (schema.properties as Record<string, Record<string, unknown>>) || {};
       const required = (schema.required as string[]) || [];
 
       for (const [key, value] of Object.entries(properties)) {
@@ -40,6 +43,6 @@ export function mapJsonSchemaToZod(schema: Record<string, unknown>): z.ZodTypeAn
       if (schema.properties) {
         return mapJsonSchemaToZod({ ...schema, type: "object" });
       }
-      return z.any();
+      return z.unknown();
   }
 }

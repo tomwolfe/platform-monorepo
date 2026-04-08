@@ -248,7 +248,10 @@ export class RateLimiterService {
     // If the serverless function times out or crashes between INCR and EXPIRE,
     // the Lua script ensures both operations happen atomically,
     // preventing permanent lockout of the user.
-    const currentCount = (await RateLimiterService.redis!.eval(
+    if (!RateLimiterService.redis) {
+      throw new Error("Redis client not initialized for RateLimiterService");
+    }
+    const currentCount = (await RateLimiterService.redis.eval(
       RateLimiterService.RATE_LIMIT_LUA_SCRIPT,
       [redisKey],
       [Math.ceil(endpointConfig.windowMs / 1000)],

@@ -36,11 +36,11 @@ export const ToolDefinitionSchema = z.object({
   description: z.string(),
   inputSchema: z.object({
     type: z.literal("object"),
-    properties: z.record(z.string(), z.any()),
+    properties: z.record(z.string(), z.unknown()),
     required: z.array(z.string()).optional(),
-    anyOf: z.array(z.any()).optional(),
-    oneOf: z.array(z.any()).optional(),
-    allOf: z.array(z.any()).optional(),
+    anyOf: z.array(z.unknown()).optional(),
+    oneOf: z.array(z.unknown()).optional(),
+    allOf: z.array(z.unknown()).optional(),
   }),
   return_schema: z.record(z.string(), z.unknown()),
   parameter_aliases: z.record(z.string(), z.string()).optional(),
@@ -61,7 +61,7 @@ export const ToolDefinitionSchema = z.object({
       requests_per_hour: z.number().int().positive().optional(),
     })
     .optional(),
-  responseSchema: z.any().optional(),
+  responseSchema: z.unknown().optional(),
 });
 
 // Extended type with optional execute function (not serialized)

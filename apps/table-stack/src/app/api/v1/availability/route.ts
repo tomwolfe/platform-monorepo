@@ -1,14 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 export const revalidate = 30; // ISR: Revalidate every 30 seconds
-import { getDb } from "@repo/database";
-import {
-  restaurantTables,
-  restaurantReservations,
-  restaurants,
-} from "@repo/database";
+import { restaurants } from "@repo/database";
 import type { InferSelectModel } from "drizzle-orm";
-import { and, eq, gte, or, sql } from "@repo/database";
+import { eq } from "@repo/database";
 import { addMinutes, parseISO } from "date-fns";
 import { toZonedTime, format } from "date-fns-tz";
 import { validateRequest } from "@tablestack/lib/auth";
@@ -21,6 +16,7 @@ import {
   ServiceNamespace,
   Logger,
 } from "@repo/shared";
+import { reservationService } from "@tablestack/lib/reservation-service";
 
 export const runtime = "nodejs";
 
@@ -159,7 +155,7 @@ export const GET = withApiErrorHandler(
       }
 
       const duration = restaurant.defaultDurationMinutes || 90;
-      const availableTables = await getAvailableTables(
+      const availableTables = await reservationService.getAvailableTables(
         targetRestaurantId,
         requestedDate,
         partySize,
@@ -189,7 +185,7 @@ export const GET = withApiErrorHandler(
             continue;
           }
 
-          const tables = await getAvailableTables(
+          const tables = await reservationService.getAvailableTables(
             targetRestaurantId,
             suggestedTime,
             partySize,
@@ -235,188 +231,3 @@ export const GET = withApiErrorHandler(
   ),
   "EXECUTION_FAILED",
 );
-
-async function getAvailableTables(
-  restaurantId: string,
-  startTime: Date,
-  partySize: number,
-  duration: number,
-) {
-  const endTime = addMinutes(startTime, duration);
-  const db = getDb();
-
-  // OPTIMIZATION: Use PostgreSQL native overlap operators and capacity filtering
-  // This reduces memory bloat by only fetching relevant rows
-
-  // Step 1: Find occupied table IDs using PostgreSQL OVERLAPS operator
-  const occupiedTableIdsQuery = db
-    .select({
-      tableId: restaurantReservations.tableId,
-      combinedTableIds: restaurantReservations.combinedTableIds,
-    })
-    .from(restaurantReservations)
-    .where(
-      and(
-        eq(restaurantReservations.restaurantId, restaurantId),
-        or(
-          eq(restaurantReservations.status, "confirmed"),
-          and(
-            eq(restaurantReservations.isVerified, false),
-            gte(
-              restaurantReservations.createdAt,
-              new Date(Date.now() - 15 * 60 * 1000),
-            ),
-          ),
-        ),
-        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${startTime.toISOString()}::timestamptz, ${endTime.toISOString()}::timestamptz)`,
-      ),
-    );
-
-  const occupiedReservations = await occupiedTableIdsQuery;
-
-  // Build a set of all occupied table IDs (including combined tables)
-  const occupiedTableIds = new Set<string>();
-  for (const res of occupiedReservations) {
-    if (res.tableId) {
-      occupiedTableIds.add(res.tableId);
-    }
-    if (res.combinedTableIds && Array.isArray(res.combinedTableIds)) {
-      res.combinedTableIds.forEach((id: string) => occupiedTableIds.add(id));
-    }
-  }
-
-  // Step 2: Fetch only available tables that match capacity requirements
-  // OPTIMIZATION: Filter by capacity and status in SQL, not in memory
-  const occupiedIdsArray = Array.from(occupiedTableIds);
-  const notInCondition =
-    occupiedTableIds.size > 0
-      ? sql`${restaurantTables.id} NOT IN (${sql.join(
-          occupiedIdsArray.map((id) => sql`${id}`),
-          sql`, `,
-        )})`
-      : sql`1=1`;
-
-  const availableIndividualTables = await db
-    .select({
-      id: restaurantTables.id,
-      tableNumber: restaurantTables.tableNumber,
-      maxCapacity: restaurantTables.maxCapacity,
-      minCapacity: restaurantTables.minCapacity,
-      tableType: restaurantTables.tableType,
-      xPos: restaurantTables.xPos,
-      yPos: restaurantTables.yPos,
-    })
-    .from(restaurantTables)
-    .where(
-      and(
-        eq(restaurantTables.restaurantId, restaurantId),
-        eq(restaurantTables.isActive, true),
-        eq(restaurantTables.status, "vacant"),
-        sql`${restaurantTables.maxCapacity} >= ${partySize}`,
-        notInCondition,
-      ),
-    );
-
-  if (availableIndividualTables.length > 0) {
-    return availableIndividualTables.map((t) => ({
-      ...t,
-      isCombined: false,
-    }));
-  }
-
-  // Step 3: If no individual table fits, try joining two tables
-  // OPTIMIZATION: Only fetch vacant tables with sufficient combined capacity
-  const vacantTables = await db
-    .select({
-      id: restaurantTables.id,
-      tableNumber: restaurantTables.tableNumber,
-      maxCapacity: restaurantTables.maxCapacity,
-      minCapacity: restaurantTables.minCapacity,
-    })
-    .from(restaurantTables)
-    .where(
-      and(
-        eq(restaurantTables.restaurantId, restaurantId),
-        eq(restaurantTables.isActive, true),
-        eq(restaurantTables.status, "vacant"),
-        notInCondition,
-      ),
-    );
-
-  const suggestedCombos: Array<{
-    id: string;
-    tableNumber: string;
-    combinedTableIds: string[];
-    maxCapacity: number;
-    isCombined: boolean;
-    table1: typeof restaurantTables.$inferSelect;
-    table2: typeof restaurantTables.$inferSelect;
-  }> = [];
-
-  // Circuit breaker: limit combinations to prevent O(N^2) event-loop blocking
-  const MAX_COMBOS = 5; // Return top 5 combinations max
-  let comboCount = 0;
-
-  // Pre-filter: exclude tables that cannot possibly satisfy partySize even when combined
-  // with the largest available table
-  const MAX_KNOWN_TABLE_CAPACITY =
-    vacantTables.length > 0
-      ? Math.max(...vacantTables.map((t) => t.maxCapacity))
-      : 0;
-
-  const feasibleTables = vacantTables.filter(
-    (t) => t.maxCapacity + MAX_KNOWN_TABLE_CAPACITY >= partySize,
-  );
-
-  comboSearch: for (let i = 0; i < feasibleTables.length; i++) {
-    const t1 = feasibleTables[i];
-    if (!t1) continue;
-
-    // Early continue: if t1 alone satisfies partySize, it would have been caught by single-table check
-    if (t1.maxCapacity >= partySize) continue;
-
-    for (let j = i + 1; j < feasibleTables.length; j++) {
-      if (comboCount >= MAX_COMBOS) break comboSearch;
-      const t2 = feasibleTables[j];
-      if (!t1 || !t2) continue;
-
-      // Join capacity check - only compute distance if capacity is sufficient
-      const combinedCapacity = t1.maxCapacity + t2.maxCapacity;
-      if (combinedCapacity < partySize) continue;
-
-      // Check adjacency (distance formula with threshold)
-      const distance = Math.sqrt(
-        Math.pow((t1.xPos || 0) - (t2.xPos || 0), 2) +
-          Math.pow((t1.yPos || 0) - (t2.yPos || 0), 2),
-      );
-
-      if (distance < 120) {
-        // Adjacency threshold in floor plan units
-        suggestedCombos.push({
-          id: `${t1.id}+${t2.id}`,
-          tableNumber: `${t1.tableNumber}+${t2.tableNumber}`,
-          combinedTableIds: [t1.id, t2.id],
-          maxCapacity: combinedCapacity,
-          isCombined: true,
-          table1: t1,
-          table2: t2,
-        });
-        comboCount++;
-      }
-    }
-  }
-
-  // Log when circuit breaker limits combinations — ops teams need visibility
-  if (
-    comboCount >= MAX_COMBOS &&
-    (vacantTables.length * (vacantTables.length - 1)) / 2 > MAX_COMBOS
-  ) {
-    logger.info("Table combination search capped by circuit breaker", {
-      maxCombos: MAX_COMBOS,
-      vacantTableCount: vacantTables.length,
-      possibleCombos: (vacantTables.length * (vacantTables.length - 1)) / 2,
-    });
-  }
-
-  return suggestedCombos;
-}

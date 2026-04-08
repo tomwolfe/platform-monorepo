@@ -1,17 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOLS } from "@repo/mcp-protocol";
-import {
-  getDb,
-  restaurants,
-  restaurantTables,
-  restaurantReservations,
-  eq,
-  gte,
-  or,
-  and,
-} from "@repo/database";
-import { sql } from "drizzle-orm";
+import { getDb, restaurants, restaurantReservations, eq } from "@repo/database";
 import { addMinutes, parseISO } from "date-fns";
 import { toZonedTime, format } from "date-fns-tz";
 import {
@@ -20,6 +10,7 @@ import {
 } from "@repo/mcp-protocol/server";
 import { randomUUID } from "crypto";
 import { Logger } from "@repo/shared";
+import { reservationService } from "@tablestack/lib/reservation-service";
 
 const logger = new Logger({ serviceName: "table-stack" });
 
@@ -28,152 +19,6 @@ const server = new McpServer({
   name: "tablestack-server",
   version: "0.1.0",
 });
-
-async function getAvailableTables(
-  restaurantId: string,
-  startTime: Date,
-  partySize: number,
-  duration: number,
-  traceId: string,
-) {
-  logger.info(`Getting available tables for restaurant ${restaurantId}`, {
-    restaurantId,
-    traceId,
-  });
-  const endTime = addMinutes(startTime, duration);
-
-  const occupiedTableIdsResult = await db
-    .select({ tableId: restaurantReservations.tableId })
-    .from(restaurantReservations)
-    .where(
-      and(
-        eq(restaurantReservations.restaurantId, restaurantId),
-        or(
-          eq(restaurantReservations.status, "confirmed"),
-          and(
-            eq(restaurantReservations.isVerified, false),
-            gte(
-              restaurantReservations.createdAt,
-              new Date(Date.now() - 15 * 60 * 1000),
-            ),
-          ),
-        ),
-        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(startTime.toISOString())}::timestamptz, ${sql.placeholder(endTime.toISOString())}::timestamptz)`,
-      ),
-    );
-
-  const occupiedTableIds = occupiedTableIdsResult
-    .map((r: any) => r.tableId)
-    .filter(Boolean) as string[];
-
-  const occupiedCombinedTableIdsResult = await db
-    .select({ combinedTableIds: restaurantReservations.combinedTableIds })
-    .from(restaurantReservations)
-    .where(
-      and(
-        eq(restaurantReservations.restaurantId, restaurantId),
-        or(
-          eq(restaurantReservations.status, "confirmed"),
-          and(
-            eq(restaurantReservations.isVerified, false),
-            gte(
-              restaurantReservations.createdAt,
-              new Date(Date.now() - 15 * 60 * 1000),
-            ),
-          ),
-        ),
-        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(startTime.toISOString())}::timestamptz, ${sql.placeholder(endTime.toISOString())}::timestamptz)`,
-      ),
-    );
-
-  occupiedCombinedTableIdsResult.forEach((r: any) => {
-    if (r.combinedTableIds) {
-      occupiedTableIds.push(...(r.combinedTableIds as string[]));
-    }
-  });
-
-  const allTables = await db
-    .select()
-    .from(restaurantTables)
-    .where(
-      and(
-        eq(restaurantTables.restaurantId, restaurantId),
-        eq(restaurantTables.isActive, true),
-        eq(restaurantTables.status, "vacant"),
-      ),
-    );
-
-  const availableIndividualTables = allTables.filter(
-    (t: any) => !occupiedTableIds.includes(t.id) && t.maxCapacity >= partySize,
-  );
-
-  if (availableIndividualTables.length > 0) {
-    return availableIndividualTables.map((t: any) => ({
-      ...t,
-      isCombined: false,
-    }));
-  }
-
-  // OPTIMIZATION: Only attempt combinations when individual tables are insufficient
-  const vacantTables = allTables.filter(
-    (t: any) => !occupiedTableIds.includes(t.id),
-  );
-  const suggestedCombos: any[] = [];
-
-  // Circuit breaker: limit combinations to prevent O(N^2) event-loop blocking
-  const MAX_COMBOS = 5;
-  let comboCount = 0;
-
-  // PERFORMANCE OPTIMIZATION: Pre-filter and early-exit to avoid wasteful comparisons
-  // 1. Find the largest table capacity to filter impossible combinations
-  const MAX_KNOWN_TABLE_CAPACITY =
-    vacantTables.length > 0
-      ? Math.max(...vacantTables.map((t) => t.maxCapacity))
-      : 0;
-
-  // 2. Pre-filter: exclude tables that cannot possibly satisfy partySize even when combined
-  const feasibleTables = vacantTables.filter(
-    (t) => t.maxCapacity + MAX_KNOWN_TABLE_CAPACITY >= partySize,
-  );
-
-  comboSearch: for (let i = 0; i < feasibleTables.length; i++) {
-    const t1 = feasibleTables[i];
-    if (!t1) continue;
-
-    // Early continue: if t1 alone satisfies partySize, it would have been caught by single-table check
-    if (t1.maxCapacity >= partySize) continue;
-
-    for (let j = i + 1; j < feasibleTables.length; j++) {
-      if (comboCount >= MAX_COMBOS) break comboSearch;
-      const t2 = feasibleTables[j];
-      if (!t1 || !t2) continue;
-
-      // Join capacity check - only compute distance if capacity is sufficient
-      const combinedCapacity = t1.maxCapacity + t2.maxCapacity;
-      if (combinedCapacity < partySize) continue;
-
-      const distance = Math.sqrt(
-        Math.pow((t1.xPos || 0) - (t2.xPos || 0), 2) +
-          Math.pow((t1.yPos || 0) - (t2.yPos || 0), 2),
-      );
-
-      if (distance < 120) {
-        suggestedCombos.push({
-          id: `${t1.id}+${t2.id}`,
-          tableNumber: `${t1.tableNumber}+${t2.tableNumber}`,
-          combinedTableIds: [t1.id, t2.id],
-          maxCapacity: combinedCapacity,
-          isCombined: true,
-          table1: t1,
-          table2: t2,
-        });
-        comboCount++;
-      }
-    }
-  }
-
-  return suggestedCombos;
-}
 
 // Existing getAvailability tool with traceId support
 server.tool(
@@ -228,12 +73,11 @@ server.tool(
     }
 
     const duration = restaurant.defaultDurationMinutes || 90;
-    const availableTables = await getAvailableTables(
+    const availableTables = await reservationService.getAvailableTables(
       restaurantId,
       requestedDate,
       partySize,
       duration,
-      traceId,
     );
 
     const suggestedSlots: any[] = [];
@@ -253,12 +97,11 @@ server.tool(
           continue;
         }
 
-        const tables = await getAvailableTables(
+        const tables = await reservationService.getAvailableTables(
           restaurantId,
           suggestedTime,
           partySize,
           duration,
-          traceId,
         );
         if (tables.length > 0) {
           suggestedSlots.push({
@@ -370,12 +213,11 @@ server.tool(
 
     const requestedDate = parseISO(date);
     const duration = restaurant.defaultDurationMinutes || 90;
-    const availableTables = await getAvailableTables(
+    const availableTables = await reservationService.getAvailableTables(
       restaurantId,
       requestedDate,
       partySize,
       duration,
-      traceId,
     );
 
     const isValid = availableTables.length > 0;

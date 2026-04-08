@@ -115,58 +115,68 @@ vi.mock("@repo/database", async () => {
 });
 
 // Mock wagmi hooks - MUST come before imports
-vi.mock("wagmi", async () => {
-  const actual = await vi.importActual("wagmi");
+const mockWagmi = vi.hoisted(() => ({
+  useAccount: vi.fn(() => ({
+    address: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1",
+    isConnected: true,
+    chain: { id: 8453, name: "Base" },
+  })),
+  useSendTransaction: vi.fn(() => ({
+    data: null,
+    sendTransaction: vi.fn(),
+    error: null,
+    status: "idle",
+  })),
+  useWaitForTransactionReceipt: vi.fn(() => ({
+    isLoading: false,
+    isSuccess: false,
+    data: null,
+    error: null,
+  })),
+  useBalance: vi.fn(() => ({
+    data: {
+      value: BigInt("1000000000000000000"), // 1 ETH
+      decimals: 18,
+      symbol: "ETH",
+    },
+  })),
+  useSignMessage: vi.fn(() => ({
+    signMessage: vi.fn(),
+    data: null,
+    error: null,
+    isPending: false,
+  })),
+  useWriteContract: vi.fn(() => ({
+    writeContract: vi.fn(),
+    data: null,
+    error: null,
+    isPending: false,
+  })),
+  useReadContract: vi.fn(() => ({
+    data: BigInt("100000000"), // 100 USDC
+    error: null,
+    isLoading: false,
+  })),
+  useEstimateGas: vi.fn(() => ({
+    data: BigInt("21000"),
+    error: null,
+    isLoading: false,
+    isError: false,
+  })),
+}));
+
+vi.mock("wagmi", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("wagmi")>();
   return {
-    ...(actual as any),
-    useAccount: vi.fn(() => ({
-      address: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1",
-      isConnected: true,
-      chain: { id: 8453, name: "Base" },
-    })),
-    useSendTransaction: vi.fn(() => ({
-      data: null,
-      sendTransaction: vi.fn(),
-      error: null,
-      status: "idle",
-    })),
-    useWaitForTransactionReceipt: vi.fn(() => ({
-      isLoading: false,
-      isSuccess: false,
-      data: null,
-      error: null,
-    })),
-    useBalance: vi.fn(() => ({
-      data: {
-        value: BigInt("1000000000000000000"), // 1 ETH
-        decimals: 18,
-        symbol: "ETH",
-      },
-    })),
-    useSignMessage: vi.fn(() => ({
-      signMessage: vi.fn(),
-      data: null,
-      error: null,
-      isPending: false,
-    })),
-    useWriteContract: vi.fn(() => ({
-      writeContract: vi.fn(),
-      data: null,
-      error: null,
-      isPending: false,
-    })),
-    useReadContract: vi.fn(() => ({
-      // Return USDC balance (100 USDC in atomic units = 100 * 10^6)
-      data: BigInt("100000000"), // 100 USDC
-      error: null,
-      isLoading: false,
-    })),
-    useEstimateGas: vi.fn(() => ({
-      data: BigInt("21000"),
-      error: null,
-      isLoading: false,
-      isError: false,
-    })),
+    ...actual,
+    useAccount: mockWagmi.useAccount,
+    useSendTransaction: mockWagmi.useSendTransaction,
+    useWaitForTransactionReceipt: mockWagmi.useWaitForTransactionReceipt,
+    useBalance: mockWagmi.useBalance,
+    useSignMessage: mockWagmi.useSignMessage,
+    useWriteContract: mockWagmi.useWriteContract,
+    useReadContract: mockWagmi.useReadContract,
+    useEstimateGas: mockWagmi.useEstimateGas,
   };
 });
 
@@ -266,9 +276,7 @@ describe("CryptoCheckout Integration", () => {
     expect(() => screen.getByText("100 USDC")).not.toThrow();
   });
 
-  // SKIP: Requires extensive wagmi hook mocking for balance state testing
-  // Better suited for E2E tests with actual wallet connection
-  it.skip("should show sufficient balance indicator when balance > total", () => {
+  it("should show sufficient balance indicator when balance > total", () => {
     render(<CryptoCheckout {...mockProps} />, {
       wrapper: createTestWrapper(),
     });
@@ -281,14 +289,15 @@ describe("CryptoCheckout Integration", () => {
     expect(balanceContainer).toHaveClass("bg-green-50");
   });
 
-  // SKIP: Requires extensive wagmi hook mocking for balance state testing
-  it.skip("should show insufficient balance warning when balance < total", async () => {
-    const lowBalanceProps = {
-      ...mockProps,
-      tip: 999999.0, // Make total exceed balance
-    };
+  it("should show insufficient balance warning when balance < total", () => {
+    // Mock USDC balance to be very low (0 USDC)
+    mockWagmi.useReadContract.mockReturnValueOnce({
+      data: BigInt("0"),
+      error: null,
+      isLoading: false,
+    } as any);
 
-    render(<CryptoCheckout {...lowBalanceProps} />, {
+    render(<CryptoCheckout {...mockProps} />, {
       wrapper: createTestWrapper(),
     });
 
@@ -300,31 +309,28 @@ describe("CryptoCheckout Integration", () => {
     expect(balanceContainer).toHaveClass("bg-red-50");
   });
 
-  // SKIP: Requires extensive wagmi hook mocking for button state testing
-  it.skip("should disable pay button when balance is insufficient", () => {
-    const lowBalanceProps = {
-      ...mockProps,
-      tip: 999999.0,
-    };
+  it("should disable pay button when balance is insufficient", () => {
+    // Mock USDC balance to be very low (0 USDC)
+    mockWagmi.useReadContract.mockReturnValueOnce({
+      data: BigInt("0"),
+      error: null,
+      isLoading: false,
+    } as any);
 
-    render(<CryptoCheckout {...lowBalanceProps} />, {
+    render(<CryptoCheckout {...mockProps} />, {
       wrapper: createTestWrapper(),
     });
 
-    // When balance is insufficient, button shows "Insufficient Balance (Including Gas)" for ETH
-    // or is disabled. The button text changes based on payment currency (default USDC).
+    // When balance is insufficient, button is disabled
     const payButton = screen.getByRole("button", {
-      name: /Pay with|Insufficient|Balance/i,
+      name: /Pay with USDC/i,
     });
     expect(payButton).toBeDisabled();
   });
 
-  // SKIP: Requires extensive wagmi hook mocking for transaction flow testing
-  it.skip("should call onCheckoutComplete when payment succeeds", async () => {
+  it("should call onCheckoutComplete when payment succeeds", async () => {
     // Mock successful transaction
-    vi.mocked(
-      await import("wagmi"),
-    ).useWaitForTransactionReceipt.mockReturnValue({
+    mockWagmi.useWaitForTransactionReceipt.mockReturnValue({
       isLoading: false,
       isSuccess: true,
       data: {
@@ -336,11 +342,21 @@ describe("CryptoCheckout Integration", () => {
       error: null,
     });
 
+    // Mock signMessage to return a signature immediately
+    mockWagmi.useSignMessage.mockReturnValue({
+      signMessage: vi.fn(),
+      data: "0xsignature",
+      error: null,
+      isPending: false,
+    } as any);
+
     render(<CryptoCheckout {...mockProps} />, {
       wrapper: createTestWrapper(),
     });
 
-    const payButton = screen.getByText("Pay with USDC");
+    const payButton = screen.getByRole("button", {
+      name: /Pay with USDC/i,
+    });
     fireEvent.click(payButton);
 
     await waitFor(() => {
@@ -353,21 +369,22 @@ describe("CryptoCheckout Integration", () => {
     });
   });
 
-  // SKIP: Requires extensive wagmi hook mocking for error flow testing
-  it.skip("should call onError when transaction fails", async () => {
+  it("should call onError when transaction fails", async () => {
     // Mock failed transaction
-    vi.mocked(await import("wagmi")).useSendTransaction.mockReturnValue({
+    mockWagmi.useWriteContract.mockReturnValue({
+      writeContract: vi.fn(),
       data: null,
-      sendTransaction: vi.fn(),
       error: new Error("Transaction failed"),
-      status: "error",
+      isPending: false,
     } as any);
 
     render(<CryptoCheckout {...mockProps} />, {
       wrapper: createTestWrapper(),
     });
 
-    const payButton = screen.getByText("Pay with USDC");
+    const payButton = screen.getByRole("button", {
+      name: /Pay with USDC/i,
+    });
     fireEvent.click(payButton);
 
     await waitFor(() => {

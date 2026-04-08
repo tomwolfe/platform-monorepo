@@ -16,7 +16,7 @@
 // TYPE DEFINITIONS
 // ============================================================================
 
-export interface JsonParseResult<T = any> {
+export interface JsonParseResult<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
@@ -177,7 +177,7 @@ ${malformedJson.substring(0, 2000)} // Truncated for context
  * @returns Parsed JSON object or Promise if repair is attempted
  * @throws Error if JSON cannot be parsed
  */
-export async function parseJsonWithFallback<T = any>(
+export async function parseJsonWithFallback<T = unknown>(
   content: string,
   options?: {
     /** Schema description for LLM repair (AI-01) */
@@ -239,7 +239,7 @@ export async function parseJsonWithFallback<T = any>(
  * @param options - Parsing options
  * @returns Parse result with success flag
  */
-export async function safeParseJson<T = any>(
+export async function safeParseJson<T = unknown>(
   content: string,
   options?: {
     schema?: string;
@@ -272,7 +272,7 @@ export async function safeParseJson<T = any>(
  * @param content - Raw LLM output
  * @returns Parse result with success flag
  */
-export function safeParseJsonSync<T = any>(
+export function safeParseJsonSync<T = unknown>(
   content: string,
 ): JsonParseResult<T> {
   try {

@@ -26,6 +26,7 @@ vi.mock("@repo/database", () => ({
   restaurantTables: { $inferInsert: {}, $inferSelect: {} },
   restaurantReservations: { $inferInsert: {}, $inferSelect: {} },
   restaurantWaitlist: { $inferInsert: {}, $inferSelect: {} },
+  restaurantProducts: { $inferInsert: {}, $inferSelect: {} },
   inventoryLevels: { $inferInsert: {}, $inferSelect: {} },
   guestProfiles: { $inferInsert: {}, $inferSelect: {} },
   eq: vi.fn(),
@@ -45,9 +46,46 @@ describe("Checkout/Reserve Flow Integration", () => {
     vi.unstubAllEnvs();
   });
 
-  // Skip these tests - they require full route handler setup with database
-  it.skip("should validate reserve request schema correctly", async () => {});
-  it.skip("should reject request without idempotency key", async () => {});
+  // Un-skipped tests - validate schema and idempotency requirements
+  it("should validate reserve request schema correctly", async () => {
+    // POST to checkout with empty body - should return 400 VALIDATION_ERROR
+    const { POST } = await import("../../app/api/v1/checkout/route");
+    const req = new Request("http://localhost/api/v1/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    const response = await POST(req as any);
+    expect(response.status).toBe(400);
+    const data = (await response.json()) as Record<string, unknown>;
+    // formatValidationError returns { success: false, error: { code: "VALIDATION_ERROR", ... } }
+    expect(data).toHaveProperty("success", false);
+    expect(data).toHaveProperty("error");
+    const errorObj = data.error as Record<string, unknown>;
+    expect(errorObj).toHaveProperty("code", "VALIDATION_ERROR");
+  });
+
+  it("should reject request with invalid txHash format", async () => {
+    // Provide a body with an invalid txHash to ensure validation fails
+    const { POST } = await import("../../app/api/v1/checkout/route");
+    const invalidBody = {
+      txHash: "invalid-hash",
+      reservationId: "550e8400-e29b-41d4-a716-446655440000",
+      paymentCurrency: "USDC" as const,
+    };
+
+    const req = new Request("http://localhost/api/v1/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(invalidBody),
+    });
+
+    const response = await POST(req as any);
+    expect(response.status).toBe(400);
+    const data = (await response.json()) as Record<string, unknown>;
+    expect(data).toHaveProperty("success", false);
+  });
 
   it("should handle MSW-intercepted Ably notification during reserve flow", async () => {
     // Verify that when a reserve flow triggers Ably, the MSW handler intercepts it

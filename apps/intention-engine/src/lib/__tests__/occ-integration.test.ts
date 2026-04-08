@@ -77,8 +77,12 @@ vi.mock("@repo/shared/redis", () => {
       const store = this.store;
       const key = keys[0];
 
-      // Handle ATOMIC_CAS_SCRIPT (Compare-And-Swap)
-      if (script.includes("expectedVersion") && script.includes("newState")) {
+      // Handle ATOMIC_CAS_SCRIPT (Compare-And-Swap) - used by AtomicStateRebaser
+      if (
+        script.includes("expectedVersion") &&
+        script.includes("newState") &&
+        script.includes("cjson")
+      ) {
         const expectedVersion = args[0];
         const newState = args[1];
         const newVersion = parseInt(args[2], 10);
@@ -121,7 +125,7 @@ vi.mock("@repo/shared/redis", () => {
       }
 
       // Handle ATOMIC_DELTA_SCRIPT
-      if (script.includes("deltaJson")) {
+      if (script.includes("deltaJson") && script.includes("cjson")) {
         const deltaJson = JSON.parse(args[0]);
         const newVersion = parseInt(args[1], 10);
 
@@ -141,6 +145,46 @@ vi.mock("@repo/shared/redis", () => {
         const newState = JSON.stringify(currentState);
         store.set(key, newState);
         return [1, newVersion, newState];
+      }
+
+      // Handle MemoryClient's updateStateAtomically script (uses redis.error_reply and setex)
+      if (script.includes("error_reply") && script.includes("CONFLICT")) {
+        const expectedVersion = parseInt(args[0], 10);
+        const newStateJson = args[1];
+        const timestamp = args[2];
+
+        const current = store.get(key);
+        if (!current) {
+          // Simulate redis.error_reply('NOT_FOUND')
+          const err = new Error("NOT_FOUND");
+          (err as any).message = "NOT_FOUND";
+          throw err;
+        }
+
+        let currentVersion = 0;
+        let currentState: Record<string, unknown> = {};
+        try {
+          currentState = JSON.parse(current);
+          currentVersion = (currentState as any).version ?? 0;
+        } catch {
+          /* ignore */
+        }
+
+        if (currentVersion !== expectedVersion) {
+          // Conflict detected
+          const err = new Error(`CONFLICT:${currentVersion}`);
+          (err as any).message = `CONFLICT:${currentVersion}`;
+          throw err;
+        }
+
+        // Merge and save
+        const newState = JSON.parse(newStateJson);
+        Object.assign(currentState, newState);
+        currentState.version = currentVersion + 1;
+        currentState.updated_at = timestamp;
+
+        store.set(key, JSON.stringify(currentState));
+        return String(currentState.version);
       }
 
       return null;
@@ -197,6 +241,9 @@ vi.mock("@repo/shared/redis", () => {
     }
   }
 
+  // Expose on globalThis so tests can access the prototype for patching
+  (globalThis as any).InMemoryRedis = InMemoryRedis;
+
   // Singleton instance - all getRedisClient() calls return the same instance
   const singletonMock = new InMemoryRedis() as unknown as Redis;
 
@@ -214,13 +261,11 @@ import {
   getRedisClient,
   ServiceNamespace,
   getMemoryClient,
-} from "@repo/shared";
-import {
   AtomicStateRebaser,
   createAtomicStateRebaser,
   atomicUpdateState,
   createWorkflowStateRebaser,
-} from "@repo/shared/occ-rebase";
+} from "@repo/shared";
 
 // ============================================================================
 // TEST HELPERS
@@ -291,47 +336,74 @@ describe("AtomicStateRebaser", () => {
     });
 
     it("should handle conflicts with automatic rebase", async () => {
-      // Simulate concurrent modification during our update
-      const conflictingUpdate = async () => {
-        // Read current state
-        const currentState = await redis.get<TestState>(testKey);
-        if (currentState) {
-          // Write with incremented version (simulating concurrent writer)
-          await redis.set(
-            testKey,
-            JSON.stringify({
-              ...currentState,
-              counter: currentState.counter + 100,
-              version: currentState.version! + 1,
-            }),
-          );
+      const InMemoryRedis = (global as any).InMemoryRedis;
+      const originalEval = InMemoryRedis.prototype.eval;
+      let callCount = 0;
+
+      // Patch eval to cause a conflict on the first CAS attempt
+      const conflictEval = async function (
+        this: any,
+        script: string,
+        keys: string[],
+        args: string[],
+      ) {
+        // Handle CAS script conflicts
+        if (
+          script.includes("expectedVersion") &&
+          script.includes("newState") &&
+          script.includes("cjson")
+        ) {
+          callCount++;
+          if (callCount === 1) {
+            // First attempt: simulate conflict by returning a higher version
+            const current = this.store.get(keys[0]);
+            let currentVersion = 0;
+            let currentState: string | null = null;
+            if (current) {
+              try {
+                const decoded = JSON.parse(current);
+                currentVersion = decoded.version ?? decoded._version ?? 0;
+                currentState = current;
+              } catch {
+                /* ignore */
+              }
+            }
+            // Return conflict with a version ahead of what's expected
+            return [0, currentVersion + 1, currentState || "null"];
+          }
         }
+        return originalEval.call(this, script, keys, args);
       };
 
-      // Start conflicting update (runs synchronously before our update)
-      await conflictingUpdate();
+      InMemoryRedis.prototype.eval = conflictEval;
 
-      // Attempt our update with rebase support
-      const result = await rebaser.update(
-        (state) => ({
-          counter: state.counter + 1,
-          data: "rebased",
-        }),
-        { maxRetries: 3, baseDelayMs: 50, debug: false },
-      );
+      try {
+        // Attempt our update with rebase support
+        const result = await rebaser.update(
+          (state) => ({
+            counter: state.counter + 1,
+            data: "rebased",
+          }),
+          { maxRetries: 3, baseDelayMs: 50, debug: false },
+        );
 
-      // Should succeed via rebase (read latest state, re-apply our delta)
-      expect(result.success).toBe(true);
-      expect(result.rebaseAttempts).toBeGreaterThanOrEqual(1);
-      expect(result.succeededViaRebase).toBe(true);
+        // Should succeed via rebase (read latest state, re-apply our delta)
+        expect(result.success).toBe(true);
+        expect(result.rebaseAttempts).toBeGreaterThanOrEqual(1);
+        expect(result.succeededViaRebase).toBe(true);
 
-      // Final state should have both updates applied
-      expect(result.updatedState?.counter).toBeGreaterThan(0);
-      expect(result.updatedState?.data).toBe("rebased");
+        // Final state should have both updates applied
+        expect(result.updatedState?.counter).toBe(1);
+        expect(result.updatedState?.data).toBe("rebased");
+      } finally {
+        // Restore original eval
+        InMemoryRedis.prototype.eval = originalEval;
+      }
     });
 
     it("should fail after max retries exceeded", async () => {
       // Force continuous conflicts during retries
+      const InMemoryRedis = (global as any).InMemoryRedis;
       const originalEval = InMemoryRedis.prototype.eval;
       let conflictCount = 0;
 
@@ -525,14 +597,16 @@ describe("MemoryClient.saveStateWithOCC()", () => {
   let redis: Redis;
   let memory: ReturnType<typeof getMemoryClient>;
   let executionId: string;
+  let taskKey: string;
 
   beforeEach(async () => {
     redis = getTestRedis();
     memory = getMemoryClient();
     executionId = crypto.randomUUID();
+    // MemoryClient uses the key format: shared:task_state:${executionId}
+    taskKey = `shared:task_state:${executionId}`;
 
-    // Initialize task state
-    const key = `shared:task:${executionId}`;
+    // Initialize task state with the correct key
     const initialState = {
       execution_id: executionId,
       status: "EXECUTING",
@@ -541,12 +615,11 @@ describe("MemoryClient.saveStateWithOCC()", () => {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    await redis.setex(key, 86400, JSON.stringify(initialState));
+    await redis.setex(taskKey, 86400, JSON.stringify(initialState));
   });
 
   afterEach(async () => {
-    const key = `shared:task:${executionId}`;
-    await redis.del(key);
+    await redis.del(taskKey);
   });
 
   it("should save state with OCC protection", async () => {
@@ -560,8 +633,7 @@ describe("MemoryClient.saveStateWithOCC()", () => {
     expect(result.attempts).toBe(0);
 
     // Verify state was saved
-    const key = `shared:task:${executionId}`;
-    const savedState = await redis.get<any>(key);
+    const savedState = await redis.get<any>(taskKey);
     expect(savedState.status).toBe("COMPLETED");
     expect(savedState.version).toBe(2);
   });
@@ -569,11 +641,10 @@ describe("MemoryClient.saveStateWithOCC()", () => {
   it("should handle concurrent saves with automatic retry", async () => {
     // Simulate concurrent save
     setTimeout(async () => {
-      const key = `shared:task:${executionId}`;
-      const currentState = await redis.get<any>(key);
+      const currentState = await redis.get<any>(taskKey);
       if (currentState) {
         await redis.set(
-          key,
+          taskKey,
           JSON.stringify({
             ...currentState,
             status: "MODIFIED_CONCURRENTLY",

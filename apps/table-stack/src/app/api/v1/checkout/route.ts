@@ -18,7 +18,7 @@ import {
 import {
   CheckoutRequestSchema,
   CheckoutResponseSchema,
-  validateRequest as validateZodRequest,
+  createValidationMiddleware,
   errorResponse,
   successResponse,
   withApiErrorHandler,
@@ -73,23 +73,11 @@ const DEADLINE_TOLERANCE_SECONDS = 5 * 60;
  * }
  */
 async function postHandler(req: NextRequest) {
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json(
-      errorResponse(
-        "VALIDATION_ERROR",
-        "Invalid or malformed JSON request body",
-      ),
-      { status: 400 },
-    );
-  }
-
-  // Validate request body with Zod schema
-  const validation = validateZodRequest(CheckoutRequestSchema, body);
-  if (!validation.success) {
-    return NextResponse.json(validation.error, { status: 400 });
+  // Use standardized validation middleware
+  const validate = createValidationMiddleware(CheckoutRequestSchema);
+  const validation = await validate(req);
+  if (!validation.valid) {
+    return NextResponse.json(validation.error, { status: validation.status });
   }
 
   // CRITICAL: Do NOT trust expectedAmount from client - it's removed from the destructuring

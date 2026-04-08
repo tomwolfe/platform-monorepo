@@ -129,6 +129,21 @@ export {
 export type { CircuitState } from "./services/circuit-breaker";
 
 // ============================================================================
+// OCC WITH REBASE (Optimistic Concurrency Control)
+// ============================================================================
+export {
+  AtomicStateRebaser,
+  createAtomicStateRebaser,
+  atomicUpdateState,
+  createWorkflowStateRebaser,
+  buildExecutionStateKey,
+} from "./services/occ-rebase";
+export type {
+  AtomicUpdateResult,
+  AtomicUpdateOptions,
+} from "./services/occ-rebase";
+
+// ============================================================================
 // REDIS (Client & utilities)
 // ============================================================================
 export {

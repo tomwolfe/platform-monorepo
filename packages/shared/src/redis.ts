@@ -29,7 +29,7 @@ export function getRedisClient(namespace: ServiceNamespace): Redis {
   return wrapWithPrefix(baseClient, getNamespacePrefix(namespace));
 }
 
-export function wrapWithPrefix(obj: any, prefix: string): any {
+export function wrapWithPrefix<T extends object>(obj: T, prefix: string): T {
   return new Proxy(obj, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);

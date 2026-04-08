@@ -11,14 +11,24 @@
  * - Driver ranking by trust score, proximity, and acceptance rate
  */
 
-import { getDb, drivers as driversTable, orders as ordersTable, eq, and, gt, gte, sql as drizzleSql, desc } from "@repo/database";
-import { getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
+import {
+  getDb,
+  drivers as driversTable,
+  orders as ordersTable,
+  eq,
+  and,
+  gt,
+  gte,
+  sql as drizzleSql,
+  desc,
+} from "@repo/database";
+import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.OD);
 import { RealtimeService } from "@repo/shared";
 import { geocode } from "@repo/shared/utils/geo";
 import { randomUUID } from "crypto";
 
-const logger = new Logger({ serviceName: 'open-delivery' });
+const logger = new Logger({ serviceName: "open-delivery" });
 
 export interface Driver {
   id: string;
@@ -44,7 +54,7 @@ export interface OrderIntent {
   items: Array<{ name: string; quantity: number; weight?: number }>;
   priority: "standard" | "express" | "urgent";
   // CRYPTO PAYMENT SUPPORT - priceDetails now uses strings for token amounts
-  priceDetails?: { 
+  priceDetails?: {
     total: number | string; // Can be fiat (number) or crypto smallest units (string)
     basePay?: number | string;
     tip?: number | string;
@@ -70,8 +80,13 @@ export interface MatchResult {
 /**
  * Calculate required vehicle type based on order items
  */
-function getRequiredVehicleType(items: OrderIntent["items"]): "bike" | "car" | "van" | "truck" {
-  const totalWeight = items.reduce((sum, item) => sum + (item.weight || 0.5), 0);
+function getRequiredVehicleType(
+  items: OrderIntent["items"],
+): "bike" | "car" | "van" | "truck" {
+  const totalWeight = items.reduce(
+    (sum, item) => sum + (item.weight || 0.5),
+    0,
+  );
 
   if (totalWeight > 50) return "truck";
   if (totalWeight > 20) return "van";
@@ -87,22 +102,22 @@ function calculateHaversineDistance(
   lat1: number,
   lng1: number,
   lat2: number,
-  lng2: number
+  lng2: number,
 ): number {
   const R = 6371; // Earth's radius in kilometers
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lng2 - lng1) * Math.PI) / 180;
-  
+
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos((lat1 * Math.PI) / 180) *
-    Math.cos((lat2 * Math.PI) / 180) *
-    Math.sin(dLon / 2) *
-    Math.sin(dLon / 2);
-  
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   const distance = R * c;
-  
+
   return distance;
 }
 
@@ -114,7 +129,7 @@ function calculateDriverScore(
   driver: Driver,
   requiredVehicle: string,
   pickupLat: number,
-  pickupLng: number
+  pickupLng: number,
 ): number {
   let score = 0;
 
@@ -125,7 +140,8 @@ function calculateDriverScore(
   if (driver.vehicleType === requiredVehicle) {
     score += 25;
   } else if (
-    (requiredVehicle === "bike" && ["car", "van"].includes(driver.vehicleType || "")) ||
+    (requiredVehicle === "bike" &&
+      ["car", "van"].includes(driver.vehicleType || "")) ||
     (requiredVehicle === "car" && ["van"].includes(driver.vehicleType || ""))
   ) {
     score += 15; // Can upgrade vehicle
@@ -143,7 +159,7 @@ function calculateDriverScore(
       driver.currentLat,
       driver.currentLng,
       pickupLat,
-      pickupLng
+      pickupLng,
     );
     // Closer drivers get higher score (max 10 points for < 1km)
     score += Math.max(0, 10 - distanceKm * 2);
@@ -157,7 +173,7 @@ function calculateDriverScore(
  * Returns drivers sorted by match score
  */
 export async function findAvailableDrivers(
-  orderIntent: OrderIntent
+  orderIntent: OrderIntent,
 ): Promise<Array<Driver & { matchScore: number }>> {
   const requiredVehicle = getRequiredVehicleType(orderIntent.items);
 
@@ -182,7 +198,10 @@ export async function findAvailableDrivers(
       // Geocoding failed - return empty array, do NOT use fallback coordinates
       logger.error({
         message: `[Dispatcher] Geocoding failed for "${orderIntent.pickupAddress}": ${geocodeResult.error}. Cannot match drivers without valid coordinates.`,
-        details: { orderId: orderIntent.orderId, fulfillmentId: orderIntent.fulfillmentId },
+        details: {
+          orderId: orderIntent.orderId,
+          fulfillmentId: orderIntent.fulfillmentId,
+        },
       });
       return [];
     }
@@ -191,7 +210,10 @@ export async function findAvailableDrivers(
     logger.error({
       message: `[Dispatcher] Geocoding error for "${orderIntent.pickupAddress}"`,
       error: error instanceof Error ? error.message : String(error),
-      details: { orderId: orderIntent.orderId, fulfillmentId: orderIntent.fulfillmentId },
+      details: {
+        orderId: orderIntent.orderId,
+        fulfillmentId: orderIntent.fulfillmentId,
+      },
     });
     return [];
   }
@@ -201,7 +223,8 @@ export async function findAvailableDrivers(
   // 1 degree of latitude ≈ 111 km, 1 degree of longitude ≈ 111 km * cos(lat)
   const searchRadiusKm = 50; // Search within 50km radius
   const latDiff = searchRadiusKm / 111;
-  const lngDiff = searchRadiusKm / (111 * Math.cos((pickupLat! * Math.PI) / 180));
+  const lngDiff =
+    searchRadiusKm / (111 * Math.cos((pickupLat! * Math.PI) / 180));
 
   // Clamp bounding box values to valid global coordinate ranges to prevent SQL silent failures
   const minLat = Math.max(-90, pickupLat! - latDiff);
@@ -224,8 +247,8 @@ export async function findAvailableDrivers(
         gte(driversTable.currentLat, minLat),
         drizzleSql`${driversTable.currentLat}::numeric <= ${maxLat}`,
         gte(driversTable.currentLng, minLng),
-        drizzleSql`${driversTable.currentLng}::numeric <= ${maxLng}`
-      )
+        drizzleSql`${driversTable.currentLng}::numeric <= ${maxLng}`,
+      ),
     )
     .orderBy(desc(driversTable.trustScore))
     .limit(20);
@@ -238,17 +261,27 @@ export async function findAvailableDrivers(
   }
 
   // Calculate match scores with validated coordinates
-  const scoredDrivers = drivers.map((driver: typeof drivers[number]) => ({
+  const scoredDrivers = drivers.map((driver: (typeof drivers)[number]) => ({
     ...driver,
-    matchScore: calculateDriverScore(driver, requiredVehicle, pickupLat!, pickupLng!),
+    matchScore: calculateDriverScore(
+      driver,
+      requiredVehicle,
+      pickupLat!,
+      pickupLng!,
+    ),
   }));
 
   // Sort by score descending
-  scoredDrivers.sort((a: { matchScore: number }, b: { matchScore: number }) => b.matchScore - a.matchScore);
+  scoredDrivers.sort(
+    (a: { matchScore: number }, b: { matchScore: number }) =>
+      b.matchScore - a.matchScore,
+  );
 
   logger.info({
     message: `[Dispatcher] Found ${scoredDrivers.length} drivers for order ${orderIntent.orderId}`,
-    details: { bestMatch: `${scoredDrivers[0].fullName} (score: ${scoredDrivers[0].matchScore.toFixed(1)})` },
+    details: {
+      bestMatch: `${scoredDrivers[0].fullName} (score: ${scoredDrivers[0].matchScore.toFixed(1)})`,
+    },
   });
 
   return scoredDrivers;
@@ -260,7 +293,7 @@ export async function findAvailableDrivers(
  */
 export async function assignOrderToDriver(
   orderId: string,
-  driverId: string
+  driverId: string,
 ): Promise<boolean> {
   try {
     // Get database connection
@@ -271,17 +304,17 @@ export async function assignOrderToDriver(
       .update(ordersTable)
       .set({
         driverId,
-        status: 'matched',
+        status: "matched",
         matchedAt: new Date(),
         updatedAt: new Date(),
       })
       .where(
         and(
           eq(ordersTable.id, orderId),
-          eq(ordersTable.status, 'pending'),
+          eq(ordersTable.status, "pending"),
           // Optimistic locking: only update if driver_id is NULL
-          eq(ordersTable.driverId, null)
-        )
+          eq(ordersTable.driverId, null),
+        ),
       )
       .returning({ id: ordersTable.id });
 
@@ -300,7 +333,7 @@ export async function assignOrderToDriver(
     return assigned;
   } catch (error) {
     logger.error({
-      message: '[Dispatcher] Error assigning order',
+      message: "[Dispatcher] Error assigning order",
       error: error instanceof Error ? error.message : String(error),
     });
     return false;
@@ -312,7 +345,7 @@ export async function assignOrderToDriver(
  * Main entry point for order matching
  */
 export async function dispatchOrder(
-  orderIntent: OrderIntent
+  orderIntent: OrderIntent,
 ): Promise<MatchResult> {
   const traceId = orderIntent.traceId || randomUUID();
 
@@ -334,7 +367,7 @@ export async function dispatchOrder(
           status: "no_drivers_available",
           retryCount: 0,
           lastAttempt: new Date().toISOString(),
-        })
+        }),
       );
 
       return {
@@ -351,7 +384,7 @@ export async function dispatchOrder(
 
     const assigned = await assignOrderToDriver(
       orderIntent.orderId,
-      topDriver.id
+      topDriver.id,
     );
 
     if (!assigned) {
@@ -361,7 +394,7 @@ export async function dispatchOrder(
         const nextDriver = availableDrivers[i];
         const retryAssigned = await assignOrderToDriver(
           orderIntent.orderId,
-          nextDriver.id
+          nextDriver.id,
         );
 
         if (retryAssigned) {
@@ -399,7 +432,7 @@ export async function dispatchOrder(
 async function createMatchResult(
   orderIntent: OrderIntent,
   driver: Driver,
-  traceId: string
+  traceId: string,
 ): Promise<MatchResult> {
   const now = new Date();
   const estimatedArrival = new Date(now.getTime() + 10 * 60 * 1000); // 10 mins
@@ -430,24 +463,28 @@ async function createMatchResult(
 
   // Step 5: Broadcast to Nervous System
   try {
-    await RealtimeService.publish("nervous-system:updates", "order.matched", {
-      orderId: orderIntent.orderId,
-      fulfillmentId: orderIntent.fulfillmentId,
-      driverId: driver.id,
-      driverName: driver.fullName,
-      driverEmail: driver.email,
-      trustScore: driver.trustScore,
-      vehicleType: driver.vehicleType,
-      status: "matched",
-      matchedAt: now.toISOString(),
-      estimatedArrival: estimatedArrival.toISOString(),
-      estimatedPickup: estimatedPickup.toISOString(),
-      estimatedDelivery: estimatedDelivery.toISOString(),
-      traceId,
-    });
+    await RealtimeService.publish(
+      "nervous-system:updates",
+      "DeliveryDispatched",
+      {
+        orderId: orderIntent.orderId,
+        fulfillmentId: orderIntent.fulfillmentId,
+        driverId: driver.id,
+        driverName: driver.fullName,
+        driverEmail: driver.email,
+        trustScore: driver.trustScore,
+        vehicleType: driver.vehicleType,
+        status: "matched",
+        matchedAt: now.toISOString(),
+        estimatedArrival: estimatedArrival.toISOString(),
+        estimatedPickup: estimatedPickup.toISOString(),
+        estimatedDelivery: estimatedDelivery.toISOString(),
+        traceId,
+      },
+    );
 
     logger.info({
-      message: `[Dispatcher:${traceId}] Broadcast order.matched for ${orderIntent.orderId}`,
+      message: `[Dispatcher:${traceId}] Broadcast DeliveryDispatched for ${orderIntent.orderId}`,
     });
   } catch (error) {
     logger.warn({

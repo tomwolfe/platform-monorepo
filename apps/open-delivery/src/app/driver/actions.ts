@@ -1,7 +1,13 @@
 "use server";
 
-import { getDb } from "@repo/database";
-import { sql } from "drizzle-orm";
+import {
+  getDb,
+  drivers as driversTable,
+  orders as ordersTable,
+  eq,
+  and,
+  isNull,
+} from "@repo/database";
 import { currentUser } from "@clerk/nextjs/server";
 import { RealtimeService, Logger, withServerActionHandler } from "@repo/shared";
 import { revalidatePath } from "next/cache";
@@ -25,11 +31,9 @@ export const acceptDelivery = withServerActionHandler(
     }
 
     // 2. Verify driver identity and active status
-    const driverResult = await getDb().execute(
-      sql`SELECT * FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`,
-    );
-
-    const driver = driverResult.rows[0] as any | undefined;
+    const driver = await getDb().query.drivers.findFirst({
+      where: eq(driversTable.clerkId, user.id),
+    });
 
     if (!driver) {
       throw new Error(
@@ -37,48 +41,53 @@ export const acceptDelivery = withServerActionHandler(
       );
     }
 
-    if (!driver.is_active) {
+    if (!driver.isActive) {
       throw new Error("Driver account is inactive. Please contact support.");
     }
 
     // 3. Atomic update: Claim the order
     // Uses WHERE clause to ensure order is still pending and unassigned
-    const updateResult = await getDb().execute(
-      sql`
-        UPDATE orders
-        SET
-          status = 'matched',
-          driver_id = ${driver.id},
-          matched_at = NOW(),
-          updated_at = NOW()
-        WHERE
-          id = ${orderId}
-          AND status = 'pending'
-          AND driver_id IS NULL
-        RETURNING *
-      `,
-    );
+    const updateResult = await getDb()
+      .update(ordersTable)
+      .set({
+        status: "matched",
+        driverId: driver.id,
+        matchedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(ordersTable.id, orderId),
+          eq(ordersTable.status, "pending"),
+          isNull(ordersTable.driverId),
+        ),
+      )
+      .returning();
 
     // Check if update succeeded (order might have been taken by another driver)
-    if (updateResult.rows.length === 0) {
+    if (updateResult.length === 0) {
       throw new Error("Order no longer available - already taken or invalid.");
     }
 
-    const order = updateResult.rows[0] as any;
+    const order = updateResult[0];
 
     // 4. Broadcast to Nervous System (Customer & other drivers)
     try {
-      await RealtimeService.publish("nervous-system:updates", "order.matched", {
-        orderId: order.id,
-        driverId: driver.id,
-        driverName: driver.full_name,
-        driverEmail: driver.email,
-        trustScore: driver.trust_score,
-        status: "matched",
-        matchedAt: new Date().toISOString(),
-        timestamp: new Date().toISOString(),
-      });
-      logger.info(`Broadcast order.matched for ${order.id}`);
+      await RealtimeService.publish(
+        "nervous-system:updates",
+        "DeliveryDispatched",
+        {
+          orderId: order.id,
+          driverId: driver.id,
+          driverName: driver.fullName,
+          driverEmail: driver.email,
+          trustScore: driver.trustScore,
+          status: "matched",
+          matchedAt: new Date().toISOString(),
+          timestamp: new Date().toISOString(),
+        },
+      );
+      logger.info(`Broadcast DeliveryDispatched for ${order.id}`);
     } catch (error) {
       logger.warn(`Failed to broadcast to Ably`, { error });
       // Non-fatal - continue even if broadcast fails
@@ -142,19 +151,16 @@ export const linkDriverWallet = withServerActionHandler(
     }
 
     // Atomic update to link the EIP-55 address to the driver profile
-    const updateResult = await getDb().execute(
-      sql`
-        UPDATE drivers
-        SET
-          wallet_address = ${walletAddress},
-          updated_at = NOW()
-        WHERE
-          clerk_id = ${user.id}
-        RETURNING *
-      `,
-    );
+    const updateResult = await getDb()
+      .update(driversTable)
+      .set({
+        walletAddress: walletAddress,
+        updatedAt: new Date(),
+      })
+      .where(eq(driversTable.clerkId, user.id))
+      .returning();
 
-    if (updateResult.rows.length === 0) {
+    if (updateResult.length === 0) {
       throw new Error(
         "No driver profile found. Please register as a driver first.",
       );
@@ -180,17 +186,18 @@ export const getDriverWallet = withServerActionHandler(
       throw new Error("Unauthorized");
     }
 
-    const result = await getDb().execute(
-      sql`SELECT wallet_address FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`,
-    );
-
-    const driver = result.rows[0] as any | undefined;
+    const driver = await getDb().query.drivers.findFirst({
+      where: eq(driversTable.clerkId, user.id),
+      columns: {
+        walletAddress: true,
+      },
+    });
 
     if (!driver) {
       throw new Error("No driver profile found");
     }
 
-    return { walletAddress: driver.wallet_address };
+    return { walletAddress: driver.walletAddress };
   },
   { errorCode: "GET_WALLET_FAILED" },
 );

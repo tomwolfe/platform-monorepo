@@ -26,9 +26,9 @@
  * @see Phase 2.3: Monitoring & Alerting
  */
 
-import { getRedisClient, ServiceNamespace } from '../redis';
-import { Logger } from '../logger';
-import { QStashService } from './qstash';
+import { getRedisClient, ServiceNamespace } from "../redis";
+import { Logger } from "../logger";
+import { QStashService } from "./qstash";
 
 const redis = getRedisClient(ServiceNamespace.SHARED);
 
@@ -37,17 +37,17 @@ const redis = getRedisClient(ServiceNamespace.SHARED);
 // ============================================================================
 
 export enum AlertLevel {
-  INFO = 'info',
-  WARNING = 'warning',
-  ERROR = 'error',
-  CRITICAL = 'critical',
+  INFO = "info",
+  WARNING = "warning",
+  ERROR = "error",
+  CRITICAL = "critical",
 }
 
 export enum MetricType {
-  COUNTER = 'counter',
-  GAUGE = 'gauge',
-  HISTOGRAM = 'histogram',
-  TIMER = 'timer',
+  COUNTER = "counter",
+  GAUGE = "gauge",
+  HISTOGRAM = "histogram",
+  TIMER = "timer",
 }
 
 export interface MetricDefinition {
@@ -62,7 +62,7 @@ export interface AlertConfig {
   name: string;
   metric: string;
   threshold: number;
-  operator: '>' | '>=' | '<' | '<=' | '==';
+  operator: ">" | ">=" | "<" | "<=" | "==";
   windowSeconds: number;
   alertLevel: AlertLevel;
   message: string;
@@ -82,7 +82,7 @@ export interface Alert {
 }
 
 export interface HealthStatus {
-  status: 'healthy' | 'degraded' | 'unhealthy';
+  status: "healthy" | "degraded" | "unhealthy";
   checks: HealthCheck[];
   timestamp: string;
   uptime: number;
@@ -90,7 +90,7 @@ export interface HealthStatus {
 
 export interface HealthCheck {
   name: string;
-  status: 'pass' | 'warn' | 'fail';
+  status: "pass" | "warn" | "fail";
   message?: string;
   latency?: number;
   timestamp: string;
@@ -102,74 +102,74 @@ export interface HealthCheck {
 
 export const BUSINESS_METRICS: MetricDefinition[] = [
   {
-    name: 'reservations_created',
+    name: "reservations_created",
     type: MetricType.COUNTER,
-    description: 'Total number of reservations created',
+    description: "Total number of reservations created",
   },
   {
-    name: 'reservations_cancelled',
+    name: "reservations_cancelled",
     type: MetricType.COUNTER,
-    description: 'Total number of reservations cancelled',
+    description: "Total number of reservations cancelled",
   },
   {
-    name: 'orders_created',
+    name: "orders_created",
     type: MetricType.COUNTER,
-    description: 'Total number of delivery orders created',
+    description: "Total number of delivery orders created",
   },
   {
-    name: 'orders_completed',
+    name: "orders_completed",
     type: MetricType.COUNTER,
-    description: 'Total number of delivery orders completed',
+    description: "Total number of delivery orders completed",
   },
   {
-    name: 'active_users',
+    name: "active_users",
     type: MetricType.GAUGE,
-    description: 'Number of currently active users',
+    description: "Number of currently active users",
   },
   {
-    name: 'revenue_total',
+    name: "revenue_total",
     type: MetricType.COUNTER,
-    description: 'Total revenue in USD cents',
-    unit: 'cents',
+    description: "Total revenue in USD cents",
+    unit: "cents",
   },
 ];
 
 export const PERFORMANCE_METRICS: MetricDefinition[] = [
   {
-    name: 'api_latency_p50',
+    name: "api_latency_p50",
     type: MetricType.HISTOGRAM,
-    description: 'API response latency 50th percentile',
-    unit: 'ms',
+    description: "API response latency 50th percentile",
+    unit: "ms",
   },
   {
-    name: 'api_latency_p95',
+    name: "api_latency_p95",
     type: MetricType.HISTOGRAM,
-    description: 'API response latency 95th percentile',
-    unit: 'ms',
+    description: "API response latency 95th percentile",
+    unit: "ms",
   },
   {
-    name: 'api_latency_p99',
+    name: "api_latency_p99",
     type: MetricType.HISTOGRAM,
-    description: 'API response latency 99th percentile',
-    unit: 'ms',
+    description: "API response latency 99th percentile",
+    unit: "ms",
   },
   {
-    name: 'db_query_latency',
+    name: "db_query_latency",
     type: MetricType.HISTOGRAM,
-    description: 'Database query latency',
-    unit: 'ms',
+    description: "Database query latency",
+    unit: "ms",
   },
   {
-    name: 'cache_hit_rate',
+    name: "cache_hit_rate",
     type: MetricType.GAUGE,
-    description: 'Cache hit rate percentage',
-    unit: '%',
+    description: "Cache hit rate percentage",
+    unit: "%",
   },
   {
-    name: 'error_rate',
+    name: "error_rate",
     type: MetricType.GAUGE,
-    description: 'Error rate percentage',
-    unit: '%',
+    description: "Error rate percentage",
+    unit: "%",
   },
 ];
 
@@ -179,53 +179,53 @@ export const PERFORMANCE_METRICS: MetricDefinition[] = [
 
 export const DEFAULT_ALERTS: AlertConfig[] = [
   {
-    name: 'high_error_rate',
-    metric: 'error_rate',
+    name: "high_error_rate",
+    metric: "error_rate",
     threshold: 5,
-    operator: '>',
+    operator: ">",
     windowSeconds: 300, // 5 minutes
     alertLevel: AlertLevel.CRITICAL,
-    message: 'Error rate exceeded 5% in the last 5 minutes',
+    message: "Error rate exceeded 5% in the last 5 minutes",
     cooldownSeconds: 600,
   },
   {
-    name: 'high_latency_p95',
-    metric: 'api_latency_p95',
+    name: "high_latency_p95",
+    metric: "api_latency_p95",
     threshold: 1000,
-    operator: '>',
+    operator: ">",
     windowSeconds: 300,
     alertLevel: AlertLevel.WARNING,
-    message: 'P95 latency exceeded 1 second',
+    message: "P95 latency exceeded 1 second",
     cooldownSeconds: 300,
   },
   {
-    name: 'high_latency_p99',
-    metric: 'api_latency_p99',
+    name: "high_latency_p99",
+    metric: "api_latency_p99",
     threshold: 2000,
-    operator: '>',
+    operator: ">",
     windowSeconds: 300,
     alertLevel: AlertLevel.CRITICAL,
-    message: 'P99 latency exceeded 2 seconds',
+    message: "P99 latency exceeded 2 seconds",
     cooldownSeconds: 300,
   },
   {
-    name: 'low_cache_hit_rate',
-    metric: 'cache_hit_rate',
+    name: "low_cache_hit_rate",
+    metric: "cache_hit_rate",
     threshold: 50,
-    operator: '<',
+    operator: "<",
     windowSeconds: 600,
     alertLevel: AlertLevel.WARNING,
-    message: 'Cache hit rate below 50%',
+    message: "Cache hit rate below 50%",
     cooldownSeconds: 900,
   },
   {
-    name: 'reservation_spike',
-    metric: 'reservations_created',
+    name: "reservation_spike",
+    metric: "reservations_created",
     threshold: 100,
-    operator: '>',
+    operator: ">",
     windowSeconds: 300,
     alertLevel: AlertLevel.INFO,
-    message: 'Unusual spike in reservations (>100 in 5 minutes)',
+    message: "Unusual spike in reservations (>100 in 5 minutes)",
     cooldownSeconds: 600,
   },
 ];
@@ -236,12 +236,12 @@ export const DEFAULT_ALERTS: AlertConfig[] = [
 
 export class MonitoringServiceClass {
   private logger: Logger;
-  private metricsPrefix = 'monitoring:metrics:';
-  private alertsPrefix = 'monitoring:alerts:';
+  private metricsPrefix = "monitoring:metrics:";
+  private alertsPrefix = "monitoring:alerts:";
   private initialized = false;
 
   constructor() {
-    this.logger = new Logger({ serviceName: 'monitoring' });
+    this.logger = new Logger({ serviceName: "monitoring" });
   }
 
   /**
@@ -263,7 +263,7 @@ export class MonitoringServiceClass {
     this.startAlertMonitoring();
 
     this.initialized = true;
-    this.logger.info('Monitoring service initialized');
+    this.logger.info("Monitoring service initialized");
   }
 
   // ============================================================================
@@ -281,8 +281,8 @@ export class MonitoringServiceClass {
         name: metric.name,
         type: metric.type,
         description: metric.description,
-        unit: metric.unit || '',
-        labels: metric.labels ? JSON.stringify(metric.labels) : '',
+        unit: metric.unit || "",
+        labels: metric.labels ? JSON.stringify(metric.labels) : "",
       });
     }
   }
@@ -290,7 +290,11 @@ export class MonitoringServiceClass {
   /**
    * Increment a counter metric
    */
-  async incrementMetric(name: string, value: number = 1, labels?: Record<string, string>): Promise<void> {
+  async incrementMetric(
+    name: string,
+    value: number = 1,
+    labels?: Record<string, string>,
+  ): Promise<void> {
     const client = redis;
     const key = this.getMetricKey(name, labels);
     await client.incrby(key, value);
@@ -298,32 +302,47 @@ export class MonitoringServiceClass {
     // Also track in time series (for windowed queries)
     const timestamp = Date.now();
     const windowKey = `${this.metricsPrefix}series:${name}:${Math.floor(timestamp / 60000)}`; // 1-minute windows
-    await client.zadd(windowKey, { score: timestamp, value: JSON.stringify({ value, timestamp, labels }) });
+    await client.zadd(windowKey, {
+      score: timestamp,
+      value: JSON.stringify({ value, timestamp, labels }),
+    });
     await client.expire(windowKey, 3600); // Keep 1 hour of data
 
-    this.logger.debug('Metric incremented', { name, value, labels });
+    this.logger.debug("Metric incremented", { name, value, labels });
   }
 
   /**
    * Set a gauge metric
    */
-  async setGauge(name: string, value: number, labels?: Record<string, string>): Promise<void> {
+  async setGauge(
+    name: string,
+    value: number,
+    labels?: Record<string, string>,
+  ): Promise<void> {
     const client = redis;
     const key = this.getMetricKey(name, labels);
-    await client.set(key, value.toString());
+    // DB-01: Add explicit TTL to prevent memory bloat
+    await client.set(key, value.toString(), { ex: 86400 }); // 24 hour TTL
 
-    this.logger.debug('Gauge set', { name, value, labels });
+    this.logger.debug("Gauge set", { name, value, labels });
   }
 
   /**
    * Track latency (histogram)
    */
-  async trackLatency(name: string, latencyMs: number, labels?: Record<string, string>): Promise<void> {
+  async trackLatency(
+    name: string,
+    latencyMs: number,
+    labels?: Record<string, string>,
+  ): Promise<void> {
     const client = redis;
     const key = `${this.metricsPrefix}histogram:${name}`;
 
     // Add to sorted set for percentile calculations
-    await client.zadd(key, { score: latencyMs, value: `${Date.now()}:${latencyMs}` });
+    await client.zadd(key, {
+      score: latencyMs,
+      value: `${Date.now()}:${latencyMs}`,
+    });
 
     // Keep only last 10000 samples
     await client.zremrangebyrank(key, 0, -10001);
@@ -331,13 +350,16 @@ export class MonitoringServiceClass {
     // Also set as gauge for current value
     await this.setGauge(`${name}_current`, latencyMs, labels);
 
-    this.logger.debug('Latency tracked', { name, latencyMs, labels });
+    this.logger.debug("Latency tracked", { name, latencyMs, labels });
   }
 
   /**
    * Get metric value
    */
-  async getMetric(name: string, labels?: Record<string, string>): Promise<number> {
+  async getMetric(
+    name: string,
+    labels?: Record<string, string>,
+  ): Promise<number> {
     const client = redis;
     const key = this.getMetricKey(name, labels);
     const value = await client.get(key);
@@ -347,7 +369,10 @@ export class MonitoringServiceClass {
   /**
    * Get metric with time window aggregation
    */
-  async getMetricWindow(name: string, windowSeconds: number = 300): Promise<{
+  async getMetricWindow(
+    name: string,
+    windowSeconds: number = 300,
+  ): Promise<{
     sum: number;
     count: number;
     avg: number;
@@ -401,7 +426,7 @@ export class MonitoringServiceClass {
     const key = `${this.metricsPrefix}histogram:${name}`;
 
     // Get all values
-    const values = await client.zrange(key, 0, -1, 'WITHSCORES');
+    const values = await client.zrange(key, 0, -1, "WITHSCORES");
 
     if (!values || values.length === 0) {
       return 0;
@@ -410,7 +435,7 @@ export class MonitoringServiceClass {
     // Extract scores (latencies)
     const latencies = values
       .filter((_, i) => i % 2 === 1) // Get scores (odd indices)
-      .map(v => parseFloat(v as any))
+      .map((v) => parseFloat(v as any))
       .sort((a, b) => a - b);
 
     // Calculate percentile
@@ -453,17 +478,25 @@ export class MonitoringServiceClass {
     const alertKeys = await client.keys(`${this.alertsPrefix}config:*`);
 
     for (const key of alertKeys) {
-      const config = await client.hgetall(key) as unknown as AlertConfig;
+      const config = (await client.hgetall(key)) as unknown as AlertConfig;
       if (!config) continue;
 
       // Get current metric value
-      const windowStats = await this.getMetricWindow(config.metric, config.windowSeconds);
-      const metricValue = config.metric.includes('rate') || config.metric.includes('latency')
-        ? windowStats.avg
-        : windowStats.sum;
+      const windowStats = await this.getMetricWindow(
+        config.metric,
+        config.windowSeconds,
+      );
+      const metricValue =
+        config.metric.includes("rate") || config.metric.includes("latency")
+          ? windowStats.avg
+          : windowStats.sum;
 
       // Check threshold
-      const triggered = this.evaluateThreshold(metricValue, config.threshold, config.operator);
+      const triggered = this.evaluateThreshold(
+        metricValue,
+        config.threshold,
+        config.operator,
+      );
 
       if (triggered) {
         // Check cooldown
@@ -471,7 +504,10 @@ export class MonitoringServiceClass {
         const lastAlert = await client.get(lastAlertKey);
         const now = Date.now();
 
-        if (lastAlert && now - parseInt(lastAlert) < (config.cooldownSeconds || 300) * 1000) {
+        if (
+          lastAlert &&
+          now - parseInt(lastAlert) < (config.cooldownSeconds || 300) * 1000
+        ) {
           continue; // Still in cooldown
         }
 
@@ -495,7 +531,7 @@ export class MonitoringServiceClass {
         // Send alert notification
         await this.sendAlertNotification(alert);
 
-        this.logger.warn('Alert triggered', alert);
+        this.logger.warn("Alert triggered", alert);
       }
     }
 
@@ -510,29 +546,35 @@ export class MonitoringServiceClass {
     await QStashService.publishJSON({
       url: `${process.env.APP_URL}/api/alerts/webhook`,
       body: {
-        type: 'alert',
+        type: "alert",
         ...alert,
       },
     });
 
     // Also log to console
     const emoji = {
-      [AlertLevel.INFO]: 'ℹ️',
-      [AlertLevel.WARNING]: '⚠️',
-      [AlertLevel.ERROR]: '❌',
-      [AlertLevel.CRITICAL]: '🚨',
+      [AlertLevel.INFO]: "ℹ️",
+      [AlertLevel.WARNING]: "⚠️",
+      [AlertLevel.ERROR]: "❌",
+      [AlertLevel.CRITICAL]: "🚨",
     }[alert.level];
 
-    console.log(`${emoji} [ALERT] ${alert.name}: ${alert.message} (value: ${alert.metricValue}, threshold: ${alert.threshold})`);
+    console.log(
+      `${emoji} [ALERT] ${alert.name}: ${alert.message} (value: ${alert.metricValue}, threshold: ${alert.threshold})`,
+    );
   }
 
   /**
    * Manually send an alert
    */
-  async sendAlert(message: string, level: AlertLevel = AlertLevel.INFO, metadata?: Record<string, any>): Promise<void> {
+  async sendAlert(
+    message: string,
+    level: AlertLevel = AlertLevel.INFO,
+    metadata?: Record<string, any>,
+  ): Promise<void> {
     const alert: Alert = {
       id: `alert:manual:${Date.now()}`,
-      name: 'manual_alert',
+      name: "manual_alert",
       level,
       message,
       metricValue: 0,
@@ -550,7 +592,14 @@ export class MonitoringServiceClass {
   /**
    * Register a health check
    */
-  async registerHealthCheck(name: string, check: () => Promise<{ status: 'pass' | 'warn' | 'fail'; message?: string; latency?: number }>): Promise<void> {
+  async registerHealthCheck(
+    name: string,
+    check: () => Promise<{
+      status: "pass" | "warn" | "fail";
+      message?: string;
+      latency?: number;
+    }>,
+  ): Promise<void> {
     const client = redis;
     const key = `${this.metricsPrefix}health:${name}`;
 
@@ -561,17 +610,20 @@ export class MonitoringServiceClass {
 
       await client.hset(key, {
         status: result.status,
-        message: result.message || '',
+        message: result.message || "",
         latency: result.latency || latency,
         timestamp: new Date().toISOString(),
       });
 
-      this.logger.debug('Health check registered', { name, status: result.status });
+      this.logger.debug("Health check registered", {
+        name,
+        status: result.status,
+      });
     } catch (error) {
       await client.hset(key, {
-        status: 'fail',
+        status: "fail",
         message: error instanceof Error ? error.message : String(error),
-        latency: '0',
+        latency: "0",
         timestamp: new Date().toISOString(),
       });
     }
@@ -585,25 +637,25 @@ export class MonitoringServiceClass {
     const healthKeys = await client.keys(`${this.metricsPrefix}health:*`);
 
     const checks: HealthCheck[] = [];
-    let overallStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
+    let overallStatus: "healthy" | "degraded" | "unhealthy" = "healthy";
 
     for (const key of healthKeys) {
       const data = await client.hgetall(key);
-      const name = key.split(':')[2];
+      const name = key.split(":")[2];
 
       checks.push({
         name,
-        status: (data.status as 'pass' | 'warn' | 'fail') || 'fail',
+        status: (data.status as "pass" | "warn" | "fail") || "fail",
         message: data.message,
-        latency: parseFloat(data.latency || '0'),
+        latency: parseFloat(data.latency || "0"),
         timestamp: data.timestamp || new Date().toISOString(),
       });
 
       // Update overall status
-      if (data.status === 'fail') {
-        overallStatus = 'unhealthy';
-      } else if (data.status === 'warn' && overallStatus !== 'unhealthy') {
-        overallStatus = 'degraded';
+      if (data.status === "fail") {
+        overallStatus = "unhealthy";
+      } else if (data.status === "warn" && overallStatus !== "unhealthy") {
+        overallStatus = "degraded";
       }
     }
 
@@ -628,20 +680,30 @@ export class MonitoringServiceClass {
       const labelStr = Object.entries(labels)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([k, v]) => `${k}=${v}`)
-        .join(':');
+        .join(":");
       key += `:${labelStr}`;
     }
     return key;
   }
 
-  private evaluateThreshold(value: number, threshold: number, operator: string): boolean {
+  private evaluateThreshold(
+    value: number,
+    threshold: number,
+    operator: string,
+  ): boolean {
     switch (operator) {
-      case '>': return value > threshold;
-      case '>=': return value >= threshold;
-      case '<': return value < threshold;
-      case '<=': return value <= threshold;
-      case '==': return value === threshold;
-      default: return false;
+      case ">":
+        return value > threshold;
+      case ">=":
+        return value >= threshold;
+      case "<":
+        return value < threshold;
+      case "<=":
+        return value <= threshold;
+      case "==":
+        return value === threshold;
+      default:
+        return false;
     }
   }
 
@@ -651,11 +713,13 @@ export class MonitoringServiceClass {
       try {
         await this.checkAlerts();
       } catch (error) {
-        this.logger.error('Alert monitoring failed', { error: error instanceof Error ? error.message : String(error) });
+        this.logger.error("Alert monitoring failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }, 60000);
 
-    this.logger.info('Alert monitoring started');
+    this.logger.info("Alert monitoring started");
   }
 }
 
@@ -669,20 +733,31 @@ export const MonitoringService = new MonitoringServiceClass();
 // CONVENIENCE FUNCTIONS
 // ============================================================================
 
-export async function trackMetric(name: string, value?: number, labels?: Record<string, string>) {
+export async function trackMetric(
+  name: string,
+  value?: number,
+  labels?: Record<string, string>,
+) {
   if (value !== undefined) {
     return MonitoringService.setGauge(name, value, labels);
   }
   return MonitoringService.incrementMetric(name, 1, labels);
 }
 
-export async function trackLatency(name: string, latencyMs: number, labels?: Record<string, string>) {
+export async function trackLatency(
+  name: string,
+  latencyMs: number,
+  labels?: Record<string, string>,
+) {
   return MonitoringService.trackLatency(name, latencyMs, labels);
 }
 
 export async function trackError(endpoint: string, error: string) {
-  await MonitoringService.incrementMetric('errors_total', 1, { endpoint, error });
-  await MonitoringService.trackLatency('error_latency', Date.now());
+  await MonitoringService.incrementMetric("errors_total", 1, {
+    endpoint,
+    error,
+  });
+  await MonitoringService.trackLatency("error_latency", Date.now());
 }
 
 export async function getHealth() {

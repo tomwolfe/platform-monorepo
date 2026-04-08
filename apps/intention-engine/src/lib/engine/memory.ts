@@ -19,8 +19,8 @@ import {
   type MemoryEntry as SharedMemoryEntry,
   type MemoryEntryType as SharedMemoryEntryType,
   type MemoryQuery as SharedMemoryQuery,
-} from '@repo/shared/redis/memory';
-import { getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
+} from "@repo/shared/redis/memory";
+import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
 import type { Redis } from "@upstash/redis";
 import {
   MemoryEntry,
@@ -52,13 +52,13 @@ export const MEMORY_CONFIG = {
 
   // TTL by entry type (Vercel Hobby Tier Optimization - 24h for execution states)
   ttl_by_type: {
-    execution_state: 86400,     // 24 hours (Free Tier storage optimization)
-    execution_trace: 86400,     // 24 hours
-    intent_history: 86400 * 3,  // 3 days
-    plan_cache: 3600,           // 1 hour
-    tool_result: 1800,          // 30 minutes
-    user_context: 86400 * 7,    // 7 days
-    system_config: 0,           // No TTL (persistent)
+    execution_state: 86400, // 24 hours (Free Tier storage optimization)
+    execution_trace: 86400, // 24 hours
+    intent_history: 86400 * 3, // 3 days
+    plan_cache: 3600, // 1 hour
+    tool_result: 1800, // 30 minutes
+    user_context: 86400 * 7, // 7 days
+    system_config: 0, // No TTL (persistent)
   } as Record<MemoryEntryType, number>,
 };
 
@@ -67,7 +67,10 @@ export const MEMORY_CONFIG = {
 // Type for store method input (without auto-generated fields)
 // ============================================================================
 
-export type MemoryEntryInput = Omit<MemoryEntry, "key" | "created_at" | "expires_at">;
+export type MemoryEntryInput = Omit<
+  MemoryEntry,
+  "key" | "created_at" | "expires_at"
+>;
 
 // ============================================================================
 // MEMORY CLIENT
@@ -83,7 +86,8 @@ export class MemoryClient extends SharedMemoryClient {
     this.isAvailable = !!redis;
     if (!this.isAvailable) {
       logger.warn({
-        message: '[MemoryClient] Redis client not available. Degrading to stateless mode.',
+        message:
+          "[MemoryClient] Redis client not available. Degrading to stateless mode.",
       });
     }
   }
@@ -94,11 +98,15 @@ export class MemoryClient extends SharedMemoryClient {
   async store(entry: MemoryEntryInput): Promise<MemoryEntry> {
     const timestamp = new Date().toISOString();
     const key = this.buildKey(entry.type, entry.namespace);
-    const ttlSeconds = entry.ttl_seconds ?? MEMORY_CONFIG.ttl_by_type[entry.type] ?? MEMORY_CONFIG.default_ttl_seconds;
+    const ttlSeconds =
+      entry.ttl_seconds ??
+      MEMORY_CONFIG.ttl_by_type[entry.type] ??
+      MEMORY_CONFIG.default_ttl_seconds;
     const effectiveTtl = Math.min(ttlSeconds, MEMORY_CONFIG.max_ttl_seconds);
-    const expiresAt = effectiveTtl > 0
-      ? new Date(Date.now() + effectiveTtl * 1000).toISOString()
-      : undefined;
+    const expiresAt =
+      effectiveTtl > 0
+        ? new Date(Date.now() + effectiveTtl * 1000).toISOString()
+        : undefined;
 
     const completeEntry: MemoryEntry = MemoryEntrySchema.parse({
       ...entry,
@@ -111,7 +119,8 @@ export class MemoryClient extends SharedMemoryClient {
     // RESILIENCE FIX: Gracefully handle Redis unavailability
     if (!this.isAvailable) {
       logger.warn({
-        message: '[MemoryClient] Redis unavailable, skipping store operation in stateless mode.',
+        message:
+          "[MemoryClient] Redis unavailable, skipping store operation in stateless mode.",
       });
       return completeEntry;
     }
@@ -119,9 +128,16 @@ export class MemoryClient extends SharedMemoryClient {
     try {
       // Store in Redis with TTL
       if (effectiveTtl > 0) {
-        await this.redis.setex(key, effectiveTtl, JSON.stringify(completeEntry));
+        await this.redis.setex(
+          key,
+          effectiveTtl,
+          JSON.stringify(completeEntry),
+        );
       } else {
-        await this.redis.set(key, JSON.stringify(completeEntry));
+        // DB-01: Add explicit TTL to prevent memory bloat (30 days for memory entries)
+        await this.redis.set(key, JSON.stringify(completeEntry), {
+          ex: 86400 * 30,
+        });
       }
       return completeEntry;
     } catch (error) {
@@ -141,7 +157,8 @@ export class MemoryClient extends SharedMemoryClient {
   async retrieve(key: string): Promise<MemoryEntry | null> {
     if (!this.isAvailable) {
       logger.warn({
-        message: '[MemoryClient] Redis unavailable, returning null in stateless mode.',
+        message:
+          "[MemoryClient] Redis unavailable, returning null in stateless mode.",
       });
       return null;
     }
@@ -165,7 +182,9 @@ export class MemoryClient extends SharedMemoryClient {
   /**
    * Get recent successful intents - preserved from original implementation
    */
-  async getRecentSuccessfulIntents(limit: number = 3): Promise<ExecutionState[]> {
+  async getRecentSuccessfulIntents(
+    limit: number = 3,
+  ): Promise<ExecutionState[]> {
     try {
       if (!this.isAvailable && process.env.CI === "true") return [];
 
@@ -177,13 +196,16 @@ export class MemoryClient extends SharedMemoryClient {
 
       const entries = await this.query(query);
       return entries
-        .map(e => e.data as ExecutionState)
-        .filter(s => s.status === "COMPLETED")
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .map((e) => e.data as ExecutionState)
+        .filter((s) => s.status === "COMPLETED")
+        .sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+        )
         .slice(0, limit);
     } catch (error) {
       logger.error({
-        message: 'Failed to get recent successful intents',
+        message: "Failed to get recent successful intents",
         error: error instanceof Error ? error.message : String(error),
       });
       return [];
@@ -217,7 +239,10 @@ export class ExecutionStateStorage {
   }
 
   async loadState(executionId: string): Promise<ExecutionState | null> {
-    const entry = await this.memory.retrieveByTypeAndId("execution_state", executionId);
+    const entry = await this.memory.retrieveByTypeAndId(
+      "execution_state",
+      executionId,
+    );
     return entry ? (entry.data as ExecutionState) : null;
   }
 
@@ -253,19 +278,23 @@ export class ExecutionTraceStorage {
   }
 
   async loadTrace(executionId: string): Promise<ExecutionTrace | null> {
-    const entry = await this.memory.retrieveByTypeAndId("execution_trace", executionId);
+    const entry = await this.memory.retrieveByTypeAndId(
+      "execution_trace",
+      executionId,
+    );
     return entry ? (entry.data as ExecutionTrace) : null;
   }
 
   async appendTraceEntry(
     executionId: string,
-    traceEntry: ExecutionTrace["entries"][0]
+    traceEntry: ExecutionTrace["entries"][0],
   ): Promise<void> {
     const existing = await this.loadTrace(executionId);
 
     if (existing) {
       existing.entries.push(traceEntry);
-      existing.total_latency_ms = (existing.total_latency_ms || 0) + (traceEntry.latency_ms || 0);
+      existing.total_latency_ms =
+        (existing.total_latency_ms || 0) + (traceEntry.latency_ms || 0);
       await this.saveTrace(existing);
     } else {
       const newTrace: ExecutionTrace = {
@@ -298,7 +327,7 @@ export function getMemoryClientSafe(): MemoryClient | null {
     return getMemoryClient();
   } catch (error) {
     logger.warn({
-      message: '[MemoryClient] Redis unavailable, returning null',
+      message: "[MemoryClient] Redis unavailable, returning null",
       error: error instanceof Error ? error.message : String(error),
     });
     return null;
@@ -316,35 +345,40 @@ export async function saveExecutionState(
     maxRetries?: number;
     baseDelayMs?: number;
     debug?: boolean;
-  }
-): Promise<MemoryEntry | { success: boolean; version?: number; attempts: number; error?: string }> {
+  },
+): Promise<
+  | MemoryEntry
+  | { success: boolean; version?: number; attempts: number; error?: string }
+> {
   if (useOCC) {
     // Use the locally exported getMemoryClient instead of dynamic require
     // This avoids circular dependency issues and enables proper static analysis
     const sharedMemory = getMemoryClient();
 
-    return sharedMemory.saveStateWithOCC(
-      state.execution_id,
-      state,
-      options
-    );
+    return sharedMemory.saveStateWithOCC(state.execution_id, state, options);
   }
 
   const storage = new ExecutionStateStorage();
   return storage.saveState(state);
 }
 
-export async function loadExecutionState(executionId: string): Promise<ExecutionState | null> {
+export async function loadExecutionState(
+  executionId: string,
+): Promise<ExecutionState | null> {
   const storage = new ExecutionStateStorage();
   return storage.loadState(executionId);
 }
 
-export async function saveExecutionTrace(trace: ExecutionTrace): Promise<MemoryEntry> {
+export async function saveExecutionTrace(
+  trace: ExecutionTrace,
+): Promise<MemoryEntry> {
   const storage = new ExecutionTraceStorage();
   return storage.saveTrace(trace);
 }
 
-export async function loadExecutionTrace(executionId: string): Promise<ExecutionTrace | null> {
+export async function loadExecutionTrace(
+  executionId: string,
+): Promise<ExecutionTrace | null> {
   const storage = new ExecutionTraceStorage();
   return storage.loadTrace(executionId);
 }

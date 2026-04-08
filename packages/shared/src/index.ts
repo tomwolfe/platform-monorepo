@@ -18,41 +18,41 @@
 // ============================================================================
 // ERROR CLASSES & HANDLING (Isomorphic)
 // ============================================================================
-export * from './errors';
+export * from "./errors";
 export {
   ApiError,
   withApiErrorHandler,
   type ApiErrorOptions,
   type ApiErrorResponse,
   type ErrorCategory,
-} from './error-handler';
+} from "./error-handler";
 
 // ============================================================================
 // LOGGER (Isomorphic structured logging)
 // ============================================================================
-export { Logger, type LogContext, type LogLevel } from './logger';
+export { Logger, type LogContext, type LogLevel } from "./logger";
 
 // ============================================================================
 // SCHEMAS & VALIDATION (Isomorphic Zod schemas)
 // ============================================================================
-export * from './api-schemas';
-export * from './api-response';
+export * from "./api-schemas";
+export * from "./api-response";
 export {
   createValidationMiddleware,
   type ValidationMiddleware,
   type ValidationMiddlewareResult,
-} from './validation-middleware';
+} from "./validation-middleware";
 
 // ============================================================================
 // SECURITY (Isomorphic headers & audit)
 // ============================================================================
-export * from './security-middleware';
-export * from './security-audit';
+export * from "./security-middleware";
+export * from "./security-audit";
 export {
   generateSecurityHeaders,
   type SecurityHeadersConfig,
   type SecurityHeaderPreset,
-} from './security-headers';
+} from "./security-headers";
 
 // ============================================================================
 // TRACING (Isomorphic subset)
@@ -78,27 +78,27 @@ export {
   emitTrace,
   getGlobalTraceEmitter,
   setGlobalTraceEmitter,
-} from './tracing';
+} from "./tracing";
 
 // ============================================================================
 // RUNTIME REGISTRY (Isomorphic types)
 // ============================================================================
-export * from './runtime-registry';
+export * from "./runtime-registry";
 
 // ============================================================================
 // TOOL TYPES (Isomorphic)
 // ============================================================================
-export * from './types/tool';
+export * from "./types/tool";
 
 // ============================================================================
 // STATE MACHINE (Isomorphic)
 // ============================================================================
-export * from './state-machine';
+export * from "./state-machine";
 
 // ============================================================================
 // NORMALIZATION (Isomorphic)
 // ============================================================================
-export * from './normalization';
+export * from "./normalization";
 
 // ============================================================================
 // CONFIGURATION SCHEMAS (Isomorphic Zod schemas)
@@ -107,14 +107,14 @@ export {
   BaseConfigSchema,
   ServiceUrlsSchema,
   FullConfigSchema,
-} from './config';
-export type { FullConfig } from './config';
+} from "./config";
+export type { FullConfig } from "./config";
 
 // ============================================================================
 // TYPE DEFINITIONS (Isomorphic)
 // ============================================================================
-export * from './types/execution';
-export type { DatabaseSchema } from './types/database';
+export * from "./types/execution";
+export type { DatabaseSchema } from "./types/database";
 
 // ============================================================================
 // CIRCUIT BREAKER (Isomorphic types & error classes)
@@ -124,20 +124,37 @@ export {
   type CircuitBreakerConfig,
   type CircuitBreakerStats,
   type CircuitEvent,
-} from './services/circuit-breaker';
-export type { CircuitState } from './services/circuit-breaker';
+} from "./services/circuit-breaker";
+export type { CircuitState } from "./services/circuit-breaker";
 
 // ============================================================================
 // PRIVACY & PII SCRUBBING (Isomorphic)
 // ============================================================================
-export * from './services/privacy-gateway';
+export * from "./services/privacy-gateway";
 
 // ============================================================================
 // WEB3 / CRYPTO - ISOMORPHIC SCHEMAS ONLY
 // ============================================================================
-export * from './utils/erc20-abi';
-export * from './utils/escrow-abi';
-export * from './utils/next-errors'; // Next.js redirect/notFound error detection
+export * from "./utils/erc20-abi";
+export * from "./utils/escrow-abi";
+export * from "./utils/next-errors"; // Next.js redirect/notFound error detection
 
 // JSON parsing utilities (isomorphic)
-export { parseJsonWithFallback, safeParseJson, sanitizeJsonOutput } from './utils/json-parser';
+export {
+  parseJsonWithFallback,
+  safeParseJson,
+  safeParseJsonSync,
+  sanitizeJsonOutput,
+} from "./utils/json-parser";
+
+// Error handling utilities (AI-01: Global error sanitization)
+export {
+  withApiErrorHandler,
+  formatError,
+  formatSuccess,
+  withRetry,
+  withTimeout,
+  settleAll,
+  installGlobalErrorHandler, // SEC-01: Global error handler
+  sanitizeErrorForExternal, // SEC-01: Error sanitization
+} from "./error-handler";

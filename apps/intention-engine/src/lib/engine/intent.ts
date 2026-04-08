@@ -1,7 +1,7 @@
 /**
  * IntentionEngine - Intent Parser
  * Phase 3: Parse user input into structured, validated Intent
- * 
+ *
  * Constraints:
  * - No planning logic
  * - No execution logic
@@ -36,10 +36,13 @@ const logger = new Logger({ serviceName: "intention-engine" });
  * Generates a deterministic SHA-256 hash for an intent.
  * Sorts parameters alphabetically to ensure "A and B" == "B and A".
  */
-export function generateIntentHash(type: string, parameters: Record<string, unknown>): string {
+export function generateIntentHash(
+  type: string,
+  parameters: Record<string, unknown>,
+): string {
   const sortedParams: Record<string, unknown> = {};
   const keys = Object.keys(parameters).sort();
-  
+
   for (const key of keys) {
     sortedParams[key] = parameters[key];
   }
@@ -196,7 +199,7 @@ Output: {
 
 export async function parseIntent(
   input: string,
-  context: ParseContext = {}
+  context: ParseContext = {},
 ): Promise<ParseResult> {
   const startTime = performance.now();
   const timestamp = new Date().toISOString();
@@ -225,9 +228,12 @@ export async function parseIntent(
         timeoutMs: 15000, // 15 second timeout for parsing
       });
     } catch (error) {
-      const isTimeout = error instanceof Error && (error.message.includes("timeout") || error.message.includes("deadline"));
+      const isTimeout =
+        error instanceof Error &&
+        (error.message.includes("timeout") ||
+          error.message.includes("deadline"));
       logger.warn({
-        message: `[Intent Engine] Structured generation failed (${isTimeout ? 'TIMEOUT' : 'ERROR'}), falling back to SERVICE_DEGRADED`,
+        message: `[Intent Engine] Structured generation failed (${isTimeout ? "TIMEOUT" : "ERROR"}), falling back to SERVICE_DEGRADED`,
         error: error instanceof Error ? error.message : String(error),
       });
 
@@ -236,11 +242,12 @@ export async function parseIntent(
         type: "SERVICE_DEGRADED",
         confidence: 0.3,
         parameters: {},
-        explanation: isTimeout 
-          ? "The intent parsing service timed out. Switching to degraded mode." 
+        explanation: isTimeout
+          ? "The intent parsing service timed out. Switching to degraded mode."
           : "The intent parsing service encountered an error. Switching to degraded mode.",
         requires_clarification: true,
-        clarification_prompt: "I'm having some trouble processing your request right now. Could you please try again in a moment, or simplify your request?"
+        clarification_prompt:
+          "I'm having some trouble processing your request right now. Could you please try again in a moment, or simplify your request?",
       };
 
       const intent: Intent = IntentSchema.parse({
@@ -250,7 +257,10 @@ export async function parseIntent(
         parameters: fallbackParsedIntent.parameters,
         rawText: input.trim(),
         explanation: fallbackParsedIntent.explanation,
-        hash: generateIntentHash(fallbackParsedIntent.type, fallbackParsedIntent.parameters),
+        hash: generateIntentHash(
+          fallbackParsedIntent.type,
+          fallbackParsedIntent.parameters,
+        ),
         metadata: IntentMetadataSchema.parse({
           version: "1.0.0",
           timestamp,
@@ -270,14 +280,22 @@ export async function parseIntent(
         input: { rawText: input.trim(), context },
         output: intent,
         latency_ms: latencyMs,
-        token_usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        token_usage: {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+        },
       });
 
       return {
         intent,
         trace_entry: traceEntry,
         latency_ms: latencyMs,
-        token_usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        token_usage: {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+        },
       };
     }
 
@@ -344,7 +362,7 @@ export async function parseIntent(
 
     // Wrap unexpected errors
     const errorMessage = error instanceof Error ? error.message : String(error);
-    
+
     throw EngineErrorSchema.parse({
       code: "INTENT_PARSE_FAILED",
       message: `Intent parsing failed: ${errorMessage}`,
@@ -372,7 +390,7 @@ export const CONFIDENCE_THRESHOLDS = {
 
 export function validateIntentConfidence(
   intent: Intent,
-  minimumThreshold: number = CONFIDENCE_THRESHOLDS.MINIMUM
+  minimumThreshold: number = CONFIDENCE_THRESHOLDS.MINIMUM,
 ): { valid: boolean; reason?: string } {
   if (intent.confidence < minimumThreshold) {
     return {
@@ -412,7 +430,7 @@ export function validateIntentConfidence(
 
 export async function parseIntentBatch(
   inputs: string[],
-  context: ParseContext = {}
+  context: ParseContext = {},
 ): Promise<ParseResult[]> {
   const results: ParseResult[] = [];
 
@@ -430,21 +448,22 @@ export async function parseIntentBatch(
  */
 export async function validateOutputAgainstConstraints(
   output: unknown,
-  constraints: string[]
+  constraints: string[],
 ): Promise<{ score: number; valid: boolean; reason?: string }> {
-  if (!constraints || constraints.length === 0) return { score: 1, valid: true };
-  
+  if (!constraints || constraints.length === 0)
+    return { score: 1, valid: true };
+
   const outputString = JSON.stringify(output).toLowerCase();
   let matches = 0;
-  
+
   for (const constraint of constraints) {
     if (outputString.includes(constraint.toLowerCase())) {
       matches++;
     }
   }
-  
+
   const heuristicScore = matches / constraints.length;
-  
+
   // If heuristic is low or ambiguous, use LLM for semantic validation
   if (heuristicScore < 0.8) {
     try {
@@ -457,21 +476,26 @@ Respond with a JSON object: {"score": number (0-1), "explanation": string}`;
       const validationResult = await generateStructured({
         modelType: "classification",
         prompt,
-        systemPrompt: "You are a high-precision semantic validation system. Verify if the provided entity data matches the user's qualitative adjectives (e.g. 'romantic', 'cheap', 'nearby').",
+        systemPrompt:
+          "You are a high-precision semantic validation system. Verify if the provided entity data matches the user's qualitative adjectives (e.g. 'romantic', 'cheap', 'nearby').",
         schema: z.object({ score: z.number(), explanation: z.string() }),
       });
 
       return {
         score: validationResult.data.score,
         valid: validationResult.data.score >= 0.7,
-        reason: validationResult.data.explanation
+        reason: validationResult.data.explanation,
       };
     } catch (e) {
       logger.warn({
         message: `Semantic validation failed, falling back to heuristic`,
         error: e instanceof Error ? e.message : String(e),
       });
-      return { score: heuristicScore, valid: heuristicScore >= 0.5, reason: "Heuristic validation applied" };
+      return {
+        score: heuristicScore,
+        valid: heuristicScore >= 0.5,
+        reason: "Heuristic validation applied",
+      };
     }
   }
 
@@ -495,6 +519,10 @@ export interface IntentInferenceResult {
 /**
  * Backward-compatible wrapper for legacy inferIntent API.
  * Maps parseIntent result to the legacy IntentInferenceResult structure.
+ *
+ * AI-03: Confidence-Based Clarification Routing
+ * - If intent.confidence < 0.6, automatically sets status to CLARIFICATION_REQUIRED
+ * - Injects clarification_prompt from predefined fallback list if not provided
  */
 export async function inferIntent(
   text: string,
@@ -505,18 +533,68 @@ export async function inferIntent(
     rawText?: string;
     parameters?: Record<string, unknown>;
   },
-  clerkId?: string
+  clerkId?: string,
 ): Promise<IntentInferenceResult> {
   // Note: avoidTools, history, lastContext, and clerkId are ignored in this wrapper
   // as the new parseIntent doesn't use them. Future enhancement: integrate these.
   const parseResult = await parseIntent(text);
-  
+
+  let intent = parseResult.intent;
+
+  // AI-03: Confidence-Based Clarification Routing
+  if (intent.confidence < 0.6 && intent.type !== "CLARIFICATION_REQUIRED") {
+    logger.info({
+      message:
+        "[AI-03] Low confidence intent detected, routing to clarification",
+      confidence: intent.confidence,
+      intentType: intent.type,
+    });
+
+    // Override to CLARIFICATION_REQUIRED status
+    intent = {
+      ...intent,
+      type: "CLARIFICATION_REQUIRED" as any,
+      requires_clarification: true,
+      clarification_prompt:
+        intent.clarification_prompt ||
+        generateFallbackClarificationPrompt(text),
+      explanation: `${intent.explanation || ""} [AI-03: Confidence below 0.6 threshold, clarification required]`,
+    };
+  }
+
   return {
     hypotheses: {
-      primary: parseResult.intent,
+      primary: intent,
       alternatives: [],
-      isAmbiguous: parseResult.intent.requires_clarification,
+      isAmbiguous: intent.requires_clarification || intent.confidence < 0.6,
     },
-    rawResponse: JSON.stringify(parseResult.intent),
+    rawResponse: JSON.stringify(intent),
   };
+}
+
+// ============================================================================
+// AI-03: FALLBACK CLARIFICATION PROMPTS
+// Predefined clarification prompts for low-confidence intents
+// ============================================================================
+
+const FALLBACK_CLARIFICATION_PROMPTS = [
+  "Could you please provide more details about what you'd like to do?",
+  "I want to make sure I understand correctly. Can you clarify your request?",
+  "Could you specify more details so I can help you better?",
+  "I'm not entirely sure I understood. Could you rephrase or add more context?",
+];
+
+let fallbackPromptIndex = 0;
+
+/**
+ * Generate a fallback clarification prompt when the LLM doesn't provide one.
+ * Rotates through predefined prompts to avoid repetition.
+ */
+function generateFallbackClarificationPrompt(originalInput: string): string {
+  const prompt =
+    FALLBACK_CLARIFICATION_PROMPTS[
+      fallbackPromptIndex % FALLBACK_CLARIFICATION_PROMPTS.length
+    ];
+  fallbackPromptIndex++;
+  return prompt;
 }

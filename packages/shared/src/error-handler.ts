@@ -2,7 +2,7 @@
  * Centralized Error Handler
  *
  * Provides standardized error handling across all API routes and services.
- * Handles error formatting, logging, and Sentry reporting.
+ * Handles error formatting, logging, and Sentry error reporting.
  *
  * Usage:
  * ```typescript
@@ -14,6 +14,7 @@
  * ```
  *
  * @see Phase 1.2: Error Handling & Logging
+ * @see SEC-01: Global Error Sanitization
  */
 
 import { AppError, ErrorCode, toAppError, getErrorStatusCode } from "./errors";
@@ -79,6 +80,85 @@ const DEFAULT_OPTIONS: ErrorHandlerOptions = {
   serviceName: "api",
   includeStackTrace: process.env.NODE_ENV !== "production",
 };
+
+// ============================================================================
+// ERROR SANITIZATION (SEC-01)
+// Strip stack traces and sensitive details in production
+// ============================================================================
+
+/**
+ * Sanitize error for external consumption.
+ * Removes stack traces and internal details in production.
+ *
+ * @param error - Error to sanitize
+ * @param includeStack - Whether to include stack trace
+ * @returns Sanitized error object
+ */
+export function sanitizeErrorForExternal(
+  error: unknown,
+  includeStack = process.env.NODE_ENV === "development",
+): { code: string; message: string; details?: Record<string, unknown> } {
+  const appError = toAppError(error);
+
+  const sanitized: {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  } = {
+    code: appError.code,
+    message: includeStack ? appError.message : appError.message,
+  };
+
+  // Include details but strip sensitive fields in production
+  if (appError.details) {
+    const { stack, stackTrace, internal, ...safeDetails } =
+      appError.details as Record<string, unknown>;
+    sanitized.details = includeStack ? appError.details : safeDetails;
+  }
+
+  return sanitized;
+}
+
+/**
+ * Global unhandled rejection handler.
+ * Catches unhandled promise rejections and ensures stack traces are stripped in production.
+ * Install this handler once at application startup.
+ */
+export function installGlobalErrorHandler(logger?: Logger) {
+  const errorHandlerLogger =
+    logger || new Logger({ serviceName: "global-error-handler" });
+
+  process.on("unhandledRejection", (reason, promise) => {
+    const error = reason instanceof Error ? reason : new Error(String(reason));
+    const isProduction = process.env.NODE_ENV === "production";
+
+    errorHandlerLogger.error({
+      message: "Unhandled promise rejection caught by global handler",
+      code: "UNHANDLED_REJECTION",
+      error: isProduction ? sanitizeErrorForExternal(error, false) : error,
+      stack: isProduction ? undefined : error.stack,
+    });
+
+    // Don't crash the process - the rejection is already handled by logging
+    // This prevents the default behavior of crashing the process
+  });
+
+  // Also catch uncaught exceptions
+  process.on("uncaughtException", (error) => {
+    const isProduction = process.env.NODE_ENV === "production";
+
+    errorHandlerLogger.error({
+      message: "Uncaught exception caught by global handler",
+      code: "UNCAUGHT_EXCEPTION",
+      error: isProduction ? sanitizeErrorForExternal(error, false) : error,
+      stack: isProduction ? undefined : error.stack,
+    });
+
+    // For uncaught exceptions, we should still exit to be safe
+    // but give time for logging to complete
+    setTimeout(() => process.exit(1), 1000);
+  });
+}
 
 // ============================================================================
 // ERROR HANDLER
@@ -310,7 +390,7 @@ export async function withRetry<T>(
 export async function withTimeout<T>(
   fn: () => Promise<T>,
   timeoutMs: number,
-  operation: string = "Operation",
+  operation: string = "operation",
 ): Promise<T> {
   const timeoutPromise = new Promise<never>((_, reject) => {
     setTimeout(() => {

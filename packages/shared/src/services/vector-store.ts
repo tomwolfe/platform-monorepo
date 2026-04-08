@@ -159,7 +159,7 @@ export class UpstashVectorStore implements VectorStore {
     this.indexName = config.indexName;
     // Build full index name with prefix for multi-tenant safety
     // Format: {prefix}_{indexName} (e.g., "apps-monorepo_semantic_memory")
-    this.fullIndexName = config.indexPrefix 
+    this.fullIndexName = config.indexPrefix
       ? `${config.indexPrefix}_${config.indexName}`
       : config.indexName;
   }
@@ -186,7 +186,9 @@ export class UpstashVectorStore implements VectorStore {
         await this.createIndex();
         console.log(`[UpstashVector] Created index: ${this.fullIndexName}`);
       } else {
-        console.log(`[UpstashVector] Using existing index: ${this.fullIndexName}`);
+        console.log(
+          `[UpstashVector] Using existing index: ${this.fullIndexName}`,
+        );
       }
 
       this.initialized = true;
@@ -217,15 +219,18 @@ export class UpstashVectorStore implements VectorStore {
    * Create a new vector index
    */
   private async createIndex(): Promise<void> {
-    const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}`, {
-      method: "PUT",
-      headers: this.getHeaders(),
-      body: JSON.stringify({
-        dimension: this.config.dimensions,
-        metric: this.config.metric,
-        clusters: this.config.clusters,
-      }),
-    });
+    const response = await fetch(
+      `${this.getBaseUrl()}/index/${this.fullIndexName}`,
+      {
+        method: "PUT",
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          dimension: this.config.dimensions,
+          metric: this.config.metric,
+          clusters: this.config.clusters,
+        }),
+      },
+    );
 
     if (!response.ok) {
       throw new Error(`Failed to create index: ${response.statusText}`);
@@ -240,33 +245,38 @@ export class UpstashVectorStore implements VectorStore {
 
     const id = crypto.randomUUID();
 
-    const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}/upsert`, {
-      method: "POST",
-      headers: this.getHeaders(),
-      body: JSON.stringify({
-        id,
-        vector: entry.embedding,
-        metadata: {
-          userId: entry.userId,
-          intentType: entry.intentType,
-          rawText: entry.rawText,
-          parameters: entry.parameters,
-          timestamp: entry.timestamp,
-          executionId: entry.executionId,
-          restaurantId: entry.restaurantId,
-          restaurantSlug: entry.restaurantSlug,
-          restaurantName: entry.restaurantName,
-          outcome: entry.outcome,
-          ...entry.metadata,
-        },
-      }),
-    });
+    const response = await fetch(
+      `${this.getBaseUrl()}/index/${this.fullIndexName}/upsert`,
+      {
+        method: "POST",
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          id,
+          vector: entry.embedding,
+          metadata: {
+            userId: entry.userId,
+            intentType: entry.intentType,
+            rawText: entry.rawText,
+            parameters: entry.parameters,
+            timestamp: entry.timestamp,
+            executionId: entry.executionId,
+            restaurantId: entry.restaurantId,
+            restaurantSlug: entry.restaurantSlug,
+            restaurantName: entry.restaurantName,
+            outcome: entry.outcome,
+            ...entry.metadata,
+          },
+        }),
+      },
+    );
 
     if (!response.ok) {
       throw new Error(`Failed to add vector: ${response.statusText}`);
     }
 
-    console.log(`[UpstashVector] Added vector ${id} for user ${entry.userId} (index: ${this.fullIndexName})`);
+    console.log(
+      `[UpstashVector] Added vector ${id} for user ${entry.userId} (index: ${this.fullIndexName})`,
+    );
     return id;
   }
 
@@ -277,10 +287,10 @@ export class UpstashVectorStore implements VectorStore {
     await this.initialize();
 
     const ids: string[] = [];
-    const vectors = entries.map(entry => {
+    const vectors = entries.map((entry) => {
       const id = crypto.randomUUID();
       ids.push(id);
-      
+
       return {
         id,
         vector: entry.embedding,
@@ -300,11 +310,14 @@ export class UpstashVectorStore implements VectorStore {
       };
     });
 
-    const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}/upsert`, {
-      method: "POST",
-      headers: this.getHeaders(),
-      body: JSON.stringify({ vectors }),
-    });
+    const response = await fetch(
+      `${this.getBaseUrl()}/index/${this.fullIndexName}/upsert`,
+      {
+        method: "POST",
+        headers: this.getHeaders(),
+        body: JSON.stringify({ vectors }),
+      },
+    );
 
     if (!response.ok) {
       throw new Error(`Failed to add vectors: ${response.statusText}`);
@@ -322,15 +335,15 @@ export class UpstashVectorStore implements VectorStore {
 
     // Build filter
     const filter: Record<string, unknown> = {};
-    
+
     if (query.userId) {
       filter.userId = query.userId;
     }
-    
+
     if (query.intentType) {
       filter.intentType = query.intentType;
     }
-    
+
     if (query.restaurantId) {
       filter.restaurantId = query.restaurantId;
     }
@@ -339,24 +352,27 @@ export class UpstashVectorStore implements VectorStore {
       Object.assign(filter, query.filter);
     }
 
-    const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}/query`, {
-      method: "POST",
-      headers: this.getHeaders(),
-      body: JSON.stringify({
-        vector: query.queryVector,
-        topK: query.limit,
-        includeMetadata: true,
-        includeVectors: false,
-        filter: Object.keys(filter).length > 0 ? filter : undefined,
-      }),
-    });
+    const response = await fetch(
+      `${this.getBaseUrl()}/index/${this.fullIndexName}/query`,
+      {
+        method: "POST",
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          vector: query.queryVector,
+          topK: query.limit,
+          includeMetadata: true,
+          includeVectors: false,
+          filter: Object.keys(filter).length > 0 ? filter : undefined,
+        }),
+      },
+    );
 
     if (!response.ok) {
       throw new Error(`Failed to search vectors: ${response.statusText}`);
     }
 
     const data = await response.json();
-    
+
     return (data.results || [])
       .filter((result: any) => result.score >= query.minScore)
       .map((result: any, index: number) => ({
@@ -373,11 +389,14 @@ export class UpstashVectorStore implements VectorStore {
   async deleteVector(id: string): Promise<boolean> {
     await this.initialize();
 
-    const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}/delete`, {
-      method: "POST",
-      headers: this.getHeaders(),
-      body: JSON.stringify({ ids: [id] }),
-    });
+    const response = await fetch(
+      `${this.getBaseUrl()}/index/${this.fullIndexName}/delete`,
+      {
+        method: "POST",
+        headers: this.getHeaders(),
+        body: JSON.stringify({ ids: [id] }),
+      },
+    );
 
     if (!response.ok) {
       throw new Error(`Failed to delete vector: ${response.statusText}`);
@@ -407,11 +426,14 @@ export class UpstashVectorStore implements VectorStore {
     }
 
     // Delete all found vectors
-    const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}/delete`, {
-      method: "POST",
-      headers: this.getHeaders(),
-      body: JSON.stringify({ ids: results.map(r => r.id) }),
-    });
+    const response = await fetch(
+      `${this.getBaseUrl()}/index/${this.fullIndexName}/delete`,
+      {
+        method: "POST",
+        headers: this.getHeaders(),
+        body: JSON.stringify({ ids: results.map((r) => r.id) }),
+      },
+    );
 
     if (!response.ok) {
       throw new Error(`Failed to delete user vectors: ${response.statusText}`);
@@ -432,17 +454,20 @@ export class UpstashVectorStore implements VectorStore {
     await this.initialize();
 
     try {
-      const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}/info`, {
-        method: "GET",
-        headers: this.getHeaders(),
-      });
+      const response = await fetch(
+        `${this.getBaseUrl()}/index/${this.fullIndexName}/info`,
+        {
+          method: "GET",
+          headers: this.getHeaders(),
+        },
+      );
 
       if (!response.ok) {
         throw new Error(`Failed to get index info: ${response.statusText}`);
       }
 
       const info = await response.json();
-      
+
       return {
         totalVectors: info.vectorCount || 0,
         uniqueUsers: info.uniqueUsers || 0,
@@ -464,10 +489,13 @@ export class UpstashVectorStore implements VectorStore {
   async reset(): Promise<void> {
     await this.initialize();
 
-    const response = await fetch(`${this.getBaseUrl()}/index/${this.fullIndexName}/reset`, {
-      method: "POST",
-      headers: this.getHeaders(),
-    });
+    const response = await fetch(
+      `${this.getBaseUrl()}/index/${this.fullIndexName}/reset`,
+      {
+        method: "POST",
+        headers: this.getHeaders(),
+      },
+    );
 
     if (!response.ok) {
       throw new Error(`Failed to reset index: ${response.statusText}`);
@@ -488,7 +516,7 @@ export class UpstashVectorStore implements VectorStore {
    */
   private getHeaders(): Record<string, string> {
     return {
-      "Authorization": `Bearer ${this.config.upstashToken}`,
+      Authorization: `Bearer ${this.config.upstashToken}`,
       "Content-Type": "application/json",
     };
   }
@@ -516,20 +544,23 @@ export class RedisVectorStore implements VectorStore {
 
   async initialize(): Promise<void> {
     // No initialization needed for Redis implementation
-    console.log(`[RedisVectorStore] Using legacy brute-force search for index: ${this.indexName}`);
+    console.log(
+      `[RedisVectorStore] Using legacy brute-force search for index: ${this.indexName}`,
+    );
   }
 
   async addVector(entry: Omit<VectorEntry, "id">): Promise<string> {
     const id = crypto.randomUUID();
     const key = this.buildKey(id);
-    
+
     const entryData: VectorEntry = {
       ...entry,
       id,
     };
 
-    await this.redis.set(key, JSON.stringify(entryData));
-    
+    // DB-01: Add explicit TTL to prevent memory bloat (30 days for vector entries)
+    await this.redis.set(key, JSON.stringify(entryData), { ex: 86400 * 30 });
+
     // Add to user index
     const userIndexKey = `${this.indexName}:user:${entry.userId}`;
     await this.redis.zadd(userIndexKey, {
@@ -537,12 +568,14 @@ export class RedisVectorStore implements VectorStore {
       score: new Date(entry.timestamp).getTime(),
     });
 
-    console.log(`[RedisVectorStore] Added vector ${id} for user ${entry.userId}`);
+    console.log(
+      `[RedisVectorStore] Added vector ${id} for user ${entry.userId}`,
+    );
     return id;
   }
 
   async addVectors(entries: Array<Omit<VectorEntry, "id">>): Promise<string[]> {
-    const ids = await Promise.all(entries.map(e => this.addVector(e)));
+    const ids = await Promise.all(entries.map((e) => this.addVector(e)));
     return ids;
   }
 
@@ -552,7 +585,7 @@ export class RedisVectorStore implements VectorStore {
 
     if (query.userId) {
       const userIndexKey = `${this.indexName}:user:${query.userId}`;
-      candidateIds = await this.redis.zrange(userIndexKey, 0, -1) as string[];
+      candidateIds = (await this.redis.zrange(userIndexKey, 0, -1)) as string[];
     } else {
       // Global search - use SCAN
       candidateIds = await this.scanForKeys(`${this.indexName}:entry:*`, 1000);
@@ -563,13 +596,17 @@ export class RedisVectorStore implements VectorStore {
     if (candidateIds.length > MAX_CANDIDATES) {
       console.warn(
         `[RedisVectorStore] Candidate set (${candidateIds.length}) exceeds limit. ` +
-        `Consider migrating to Upstash Vector for production scale.`
+          `Consider migrating to Upstash Vector for production scale.`,
       );
       candidateIds = candidateIds.slice(0, MAX_CANDIDATES);
     }
 
     // Compute similarities
-    const results: Array<{ id: string; score: number; metadata: Record<string, unknown> }> = [];
+    const results: Array<{
+      id: string;
+      score: number;
+      metadata: Record<string, unknown>;
+    }> = [];
 
     for (const entryId of candidateIds) {
       const key = this.buildKey(entryId);
@@ -578,16 +615,22 @@ export class RedisVectorStore implements VectorStore {
       if (!entryData) continue;
 
       try {
-        const entry: VectorEntry = typeof entryData === 'string'
-          ? JSON.parse(entryData)
-          : entryData;
+        const entry: VectorEntry =
+          typeof entryData === "string" ? JSON.parse(entryData) : entryData;
 
         // Apply filters
         if (query.intentType && entry.intentType !== query.intentType) continue;
-        if (query.filter?.restaurantId && entry.restaurantId !== query.filter.restaurantId) continue;
+        if (
+          query.filter?.restaurantId &&
+          entry.restaurantId !== query.filter.restaurantId
+        )
+          continue;
 
         // Compute cosine similarity
-        const similarity = this.cosineSimilarity(query.queryVector, entry.embedding);
+        const similarity = this.cosineSimilarity(
+          query.queryVector,
+          entry.embedding,
+        );
 
         if (similarity >= query.minScore) {
           results.push({
@@ -605,7 +648,10 @@ export class RedisVectorStore implements VectorStore {
           });
         }
       } catch (error) {
-        console.warn(`[RedisVectorStore] Failed to parse entry ${entryId}:`, error);
+        console.warn(
+          `[RedisVectorStore] Failed to parse entry ${entryId}:`,
+          error,
+        );
       }
     }
 
@@ -625,9 +671,8 @@ export class RedisVectorStore implements VectorStore {
     if (!entryData) return false;
 
     try {
-      const entry: VectorEntry = typeof entryData === 'string'
-        ? JSON.parse(entryData)
-        : entryData;
+      const entry: VectorEntry =
+        typeof entryData === "string" ? JSON.parse(entryData) : entryData;
 
       // Remove from user index
       const userIndexKey = `${this.indexName}:user:${entry.userId}`;
@@ -644,7 +689,7 @@ export class RedisVectorStore implements VectorStore {
 
   async deleteByUserId(userId: string): Promise<number> {
     const userIndexKey = `${this.indexName}:user:${userId}`;
-    const entryIds = await this.redis.zrange(userIndexKey, 0, -1) as string[];
+    const entryIds = (await this.redis.zrange(userIndexKey, 0, -1)) as string[];
 
     let deletedCount = 0;
 
@@ -664,9 +709,18 @@ export class RedisVectorStore implements VectorStore {
     uniqueUsers: number;
     uniqueRestaurants: number;
   }> {
-    const entryKeys = await this.scanForKeys(`${this.indexName}:entry:*`, 10000);
-    const userIndexKeys = await this.scanForKeys(`${this.indexName}:user:*`, 1000);
-    const restaurantIndexKeys = await this.scanForKeys(`${this.indexName}:restaurant:*`, 1000);
+    const entryKeys = await this.scanForKeys(
+      `${this.indexName}:entry:*`,
+      10000,
+    );
+    const userIndexKeys = await this.scanForKeys(
+      `${this.indexName}:user:*`,
+      1000,
+    );
+    const restaurantIndexKeys = await this.scanForKeys(
+      `${this.indexName}:restaurant:*`,
+      1000,
+    );
 
     return {
       totalVectors: entryKeys.length,
@@ -676,13 +730,19 @@ export class RedisVectorStore implements VectorStore {
   }
 
   async reset(): Promise<void> {
-    const entryKeys = await this.scanForKeys(`${this.indexName}:entry:*`, 10000);
-    
+    const entryKeys = await this.scanForKeys(
+      `${this.indexName}:entry:*`,
+      10000,
+    );
+
     for (const key of entryKeys) {
       await this.redis.del(key);
     }
 
-    const userIndexKeys = await this.scanForKeys(`${this.indexName}:user:*`, 1000);
+    const userIndexKeys = await this.scanForKeys(
+      `${this.indexName}:user:*`,
+      1000,
+    );
     for (const key of userIndexKeys) {
       await this.redis.del(key);
     }
@@ -694,7 +754,10 @@ export class RedisVectorStore implements VectorStore {
     return `${this.indexName}:entry:${entryId}`;
   }
 
-  private async scanForKeys(pattern: string, maxCount: number = 1000): Promise<string[]> {
+  private async scanForKeys(
+    pattern: string,
+    maxCount: number = 1000,
+  ): Promise<string[]> {
     const keys: string[] = [];
     let cursor = 0;
     const batchSize = 100;
@@ -774,7 +837,7 @@ export function createVectorStore(options: VectorStoreOptions): VectorStore {
   if (options.useUpstashVector && options.upstashVectorToken) {
     console.log(
       `[VectorStore] Using Upstash Vector (production mode) ` +
-      `${indexConfig.indexPrefix ? `with prefix "${indexConfig.indexPrefix}"` : ''}`
+        `${indexConfig.indexPrefix ? `with prefix "${indexConfig.indexPrefix}"` : ""}`,
     );
     return new UpstashVectorStore({
       ...indexConfig,
@@ -785,10 +848,12 @@ export function createVectorStore(options: VectorStoreOptions): VectorStore {
 
   // Fallback to Redis brute-force
   if (options.redis) {
-    console.log("[VectorStore] Using Redis Vector Store (development/legacy mode)");
+    console.log(
+      "[VectorStore] Using Redis Vector Store (development/legacy mode)",
+    );
     console.warn(
       "[VectorStore] WARNING: Brute-force similarity search is O(N). " +
-      "For production scale (>10k vectors), migrate to Upstash Vector."
+        "For production scale (>10k vectors), migrate to Upstash Vector.",
     );
     return new RedisVectorStore({
       ...indexConfig,
@@ -797,6 +862,6 @@ export function createVectorStore(options: VectorStoreOptions): VectorStore {
   }
 
   throw new Error(
-    "VectorStore: Either 'useUpstashVector' with token or 'redis' client must be provided"
+    "VectorStore: Either 'useUpstashVector' with token or 'redis' client must be provided",
   );
 }

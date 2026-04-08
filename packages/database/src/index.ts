@@ -195,6 +195,10 @@ const globalForDb = globalThis as unknown as {
  * This is the ONLY supported way to access the database. The db proxy export
  * has been removed to prevent type inference issues and masked connection failures.
  *
+ * DB-03: Query Timeout Wrapper
+ * - Wraps all queries with configurable timeout (default: 30s)
+ * - Throws TimeoutError on exceedance
+ *
  * @example
  * ```typescript
  * import { getDb } from '@repo/database';
@@ -204,6 +208,7 @@ const globalForDb = globalThis as unknown as {
  * ```
  *
  * @throws Error if DATABASE_URL is not configured
+ * @throws TimeoutError if query exceeds the configured timeout
  */
 export function getDb() {
   if (globalForDb._dbInstance) return globalForDb._dbInstance;
@@ -217,12 +222,75 @@ export function getDb() {
   }
 
   const client = neon(databaseUrl);
-  globalForDb._dbInstance = drizzle(client, { schema });
+  const baseDb = drizzle(client, { schema });
+
+  // DB-03: Wrap with timeout proxy
+  const timeoutMs = dbConfig.queryTimeout || 30000; // Default 30 seconds
+  globalForDb._dbInstance = createTimeoutProxy(baseDb, timeoutMs);
 
   // Log initialization
-  console.log("[Database] Initialized with Neon HTTP driver");
+  console.log(
+    `[Database] Initialized with Neon HTTP driver, query timeout: ${timeoutMs}ms`,
+  );
 
   return globalForDb._dbInstance;
+}
+
+// ============================================================================
+// DB-03: Query Timeout Wrapper
+// ============================================================================
+
+/**
+ * Error thrown when a query exceeds the configured timeout
+ */
+export class TimeoutError extends Error {
+  constructor(
+    message: string,
+    public timeoutMs: number,
+  ) {
+    super(message);
+    this.name = "TimeoutError";
+  }
+}
+
+/**
+ * Creates a proxy around the Drizzle client that enforces query timeouts.
+ * Wraps execute() and query methods with Promise.race timeout.
+ */
+function createTimeoutProxy<T extends Record<string, any>>(
+  db: T,
+  timeoutMs: number,
+): T {
+  return new Proxy(db, {
+    get(target, prop: string) {
+      const value = target[prop];
+
+      // If it's not a function, return as-is
+      if (typeof value !== "function") {
+        return value;
+      }
+
+      // Wrap the function with timeout
+      return function (...args: any[]) {
+        const queryPromise = value.apply(target, args);
+
+        // Create timeout promise
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(
+              new TimeoutError(
+                `Query timed out after ${timeoutMs}ms`,
+                timeoutMs,
+              ),
+            );
+          }, timeoutMs);
+        });
+
+        // Race between query and timeout
+        return Promise.race([queryPromise, timeoutPromise]);
+      };
+    },
+  });
 }
 
 export type { InferSelectModel, InferInsertModel } from "drizzle-orm";

@@ -1,14 +1,14 @@
-import { Redis } from '@upstash/redis';
-import { AppConfig } from './config';
+import { Redis } from "@upstash/redis";
+import { AppConfig } from "./config";
 
 /**
  * Service Namespace Enum
  * Enforces namespace isolation across all services
  */
 export enum ServiceNamespace {
-  IE = "ie",      // Intention Engine
-  OD = "od",      // Open Delivery
-  TS = "ts",      // Table Stack
+  IE = "ie", // Intention Engine
+  OD = "od", // Open Delivery
+  TS = "ts", // Table Stack
   SHARED = "shared",
 }
 
@@ -33,20 +33,24 @@ export function wrapWithPrefix(obj: any, prefix: string): any {
   return new Proxy(obj, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
-      if (typeof value === 'function') {
+      if (typeof value === "function") {
         return (...args: any[]) => {
           // Special handling for keys()
-          if (prop === 'keys') {
-            const pattern = args[0] || '*';
-            return target.keys(prefix + pattern).then((keys: string[]) =>
-              keys.map((k: string) => k.startsWith(prefix) ? k.slice(prefix.length) : k)
-            );
+          if (prop === "keys") {
+            const pattern = args[0] || "*";
+            return target
+              .keys(prefix + pattern)
+              .then((keys: string[]) =>
+                keys.map((k: string) =>
+                  k.startsWith(prefix) ? k.slice(prefix.length) : k,
+                ),
+              );
           }
 
           // Custom flushdb()
-          if (prop === 'flushdb' || prop === 'flushall') {
+          if (prop === "flushdb" || prop === "flushall") {
             return (async () => {
-              const keys = await target.keys(prefix + '*');
+              const keys = await target.keys(prefix + "*");
               if (keys.length > 0) {
                 return await target.del(...keys);
               }
@@ -55,41 +59,49 @@ export function wrapWithPrefix(obj: any, prefix: string): any {
           }
 
           // Wrap pipeline and multi
-          if (prop === 'pipeline' || prop === 'multi') {
+          if (prop === "pipeline" || prop === "multi") {
             const result = value.apply(target, args);
             return wrapWithPrefix(result, prefix);
           }
 
           // Special handling for scan results
-          if (prop === 'scan') {
+          if (prop === "scan") {
             if (args[1]?.match) {
               args[1].match = prefix + args[1].match;
             }
-            return target.scan(...args).then(([cursor, keys]: [string, string[]]) => [
-              cursor,
-              keys.map((k: string) => k.startsWith(prefix) ? k.slice(prefix.length) : k)
-            ]);
+            return target
+              .scan(...args)
+              .then(([cursor, keys]: [string, string[]]) => [
+                cursor,
+                keys.map((k: string) =>
+                  k.startsWith(prefix) ? k.slice(prefix.length) : k,
+                ),
+              ]);
           }
 
           // FIX: Correctly prefix keys in Lua script evaluation (eval)
-          if (prop === 'eval') {
+          if (prop === "eval") {
             const [script, keys, ...rest] = args;
             if (Array.isArray(keys)) {
               // Only prefix if it's not already prefixed
-              const prefixedKeys = keys.map(k => k.startsWith(prefix) ? k : prefix + k);
+              const prefixedKeys = keys.map((k) =>
+                k.startsWith(prefix) ? k : prefix + k,
+              );
               return target.eval(script, prefixedKeys, ...rest);
             }
           }
 
           // Optimized prefixing for hot paths - skip eval as it's handled above
-          if (typeof args[0] === 'string' &&
-              !['info', 'ping', 'echo', 'quit', 'eval'].includes(prop as string)) {
+          if (
+            typeof args[0] === "string" &&
+            !["info", "ping", "echo", "quit", "eval"].includes(prop as string)
+          ) {
             args[0] = prefix + args[0];
 
             // Handle multiple keys in del, exists, etc.
-            if (prop === 'del' || prop === 'exists' || prop === 'unlink') {
+            if (prop === "del" || prop === "exists" || prop === "unlink") {
               for (let i = 1; i < args.length; i++) {
-                if (typeof args[i] === 'string') args[i] = prefix + args[i];
+                if (typeof args[i] === "string") args[i] = prefix + args[i];
               }
             }
           }
@@ -98,7 +110,7 @@ export function wrapWithPrefix(obj: any, prefix: string): any {
         };
       }
       return value;
-    }
+    },
   });
 }
 
@@ -108,28 +120,61 @@ export const getRedisConfig = (appName: string) => {
 
   // CRITICAL: Fail fast in production runtime if Redis is not configured
   // We allow CI/test environments to use fallback values
-  const isProductionRuntime = AppConfig.isProduction() && process.env.CI !== 'true';
+  const isProductionRuntime =
+    AppConfig.isProduction() && process.env.CI !== "true";
 
   if (!url || !token) {
     if (isProductionRuntime) {
       throw new Error(
         `CRITICAL: Redis configuration missing for ${appName}. ` +
-        'Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN environment variables.'
+          "Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN environment variables.",
       );
     }
     // Development/CI/test: provide fallback without warnings in CI
-    if (process.env.CI !== 'true' && !AppConfig.isTest()) {
+    if (process.env.CI !== "true" && !AppConfig.isTest()) {
       console.warn(
         `[${appName}] Redis environment variables missing. ` +
-        'Using localhost fallback. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for production.'
+          "Using localhost fallback. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for production.",
       );
     }
     // Use localhost with Upstash proxy port (8080) for SDK compatibility
     return {
-      url: 'http://localhost:8080',
-      token: 'apps'
+      url: "http://localhost:8080",
+      token: "apps",
     };
   }
 
   return { url, token };
 };
+
+// ============================================================================
+// DB-01: TTL Enforcement Helper
+// Default TTL for Redis writes (24 hours)
+// ============================================================================
+
+export const DEFAULT_REDIS_TTL_SECONDS = 86400; // 24 hours
+
+/**
+ * DB-01: Ensure Redis set operations include explicit TTL.
+ * If no TTL is provided, appends the default TTL to prevent memory bloat.
+ *
+ * @param redis - Redis client
+ * @param key - Redis key
+ * @param value - Value to set
+ * @param options - Optional Redis set options
+ * @returns Result of Redis set operation
+ */
+export async function redisSetWithTTL(
+  redis: Redis,
+  key: string,
+  value: string,
+  options?: { ex?: number; nx?: boolean; xx?: boolean },
+): Promise<"OK" | null> {
+  // If no TTL is provided, use the default TTL
+  const ttl = options?.ex ?? DEFAULT_REDIS_TTL_SECONDS;
+
+  return redis.set(key, value, {
+    ...options,
+    ex: ttl,
+  });
+}

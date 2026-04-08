@@ -1,14 +1,14 @@
 /**
  * Standardized Cache Layer
- * 
+ *
  * Unified Redis caching for all apps. Eliminates duplicated Redis clients.
- * 
+ *
  * Features:
  * - Namespace isolation
  * - TTL management
  * - Type-safe operations
  * - Circuit breaker integration
- * 
+ *
  * @see Phase 2.3: Standardize Redis + Persistence
  */
 
@@ -100,7 +100,7 @@ export class CacheClient {
   async set<T = unknown>(
     key: string,
     value: T,
-    options?: { ttlSeconds?: number; version?: number }
+    options?: { ttlSeconds?: number; version?: number },
   ): Promise<void> {
     const fullKey = this.buildKey(key);
     const ttlSeconds = options?.ttlSeconds || this.config.defaultTtlSeconds;
@@ -110,9 +110,10 @@ export class CacheClient {
       key: fullKey,
       value,
       createdAt: new Date().toISOString(),
-      expiresAt: effectiveTtl > 0
-        ? new Date(Date.now() + effectiveTtl * 1000).toISOString()
-        : undefined,
+      expiresAt:
+        effectiveTtl > 0
+          ? new Date(Date.now() + effectiveTtl * 1000).toISOString()
+          : undefined,
       ttlSeconds: effectiveTtl > 0 ? effectiveTtl : undefined,
       version: options?.version || 1,
     };
@@ -120,7 +121,8 @@ export class CacheClient {
     if (effectiveTtl > 0) {
       await this.redis.setex(fullKey, effectiveTtl, JSON.stringify(entry));
     } else {
-      await this.redis.set(fullKey, JSON.stringify(entry));
+      // DB-01: Add explicit TTL to prevent memory bloat (24 hour default)
+      await this.redis.set(fullKey, JSON.stringify(entry), { ex: 86400 });
     }
   }
 
@@ -176,7 +178,11 @@ export class CacheClient {
   // SET IF NOT EXISTS (NX)
   // ========================================================================
 
-  async setNx<T = unknown>(key: string, value: T, ttlSeconds?: number): Promise<boolean> {
+  async setNx<T = unknown>(
+    key: string,
+    value: T,
+    ttlSeconds?: number,
+  ): Promise<boolean> {
     const fullKey = this.buildKey(key);
     const entry = JSON.stringify({
       key: fullKey,
@@ -245,7 +251,9 @@ export class CacheClient {
 // Convenience factories for each app namespace
 // ============================================================================
 
-export function getIntentionEngineCache(config?: Partial<CacheConfig>): CacheClient {
+export function getIntentionEngineCache(
+  config?: Partial<CacheConfig>,
+): CacheClient {
   return new CacheClient({
     ...config,
     namespace: ServiceNamespace.IE,
@@ -259,7 +267,9 @@ export function getTableStackCache(config?: Partial<CacheConfig>): CacheClient {
   });
 }
 
-export function getOpenDeliveryCache(config?: Partial<CacheConfig>): CacheClient {
+export function getOpenDeliveryCache(
+  config?: Partial<CacheConfig>,
+): CacheClient {
   return new CacheClient({
     ...config,
     namespace: ServiceNamespace.OD,

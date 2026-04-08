@@ -1,4 +1,4 @@
-import { Redis } from '@upstash/redis';
+import { Redis } from "@upstash/redis";
 
 export interface IdempotencyServiceConfig {
   /** Salt hash with userId to prevent cross-user blocking */
@@ -16,6 +16,12 @@ export interface IdempotencyServiceConfig {
   parentIntentId?: string;
   /** Lamport timestamp for causal ordering */
   lamportTimestamp?: number;
+  /**
+   * SEC-03: Route namespace for idempotency keys
+   * Prevents key collisions across different API routes
+   * Example: 'reserve', 'checkout', 'execute'
+   */
+  routeName?: string;
 }
 
 export class IdempotencyService {
@@ -25,14 +31,16 @@ export class IdempotencyService {
   private enableCausalKey: boolean;
   private parentIntentId?: string;
   private lamportTimestamp?: number;
+  private routeName?: string; // SEC-03: Route namespace
 
   constructor(redis: Redis, config?: IdempotencyServiceConfig) {
     this.redis = redis;
     this.userId = config?.userId;
-    this.defaultTtlSeconds = config?.defaultTtlSeconds ?? (24 * 60 * 60);
+    this.defaultTtlSeconds = config?.defaultTtlSeconds ?? 24 * 60 * 60;
     this.enableCausalKey = config?.enableCausalKey ?? true;
     this.parentIntentId = config?.parentIntentId;
     this.lamportTimestamp = config?.lamportTimestamp;
+    this.routeName = config?.routeName; // SEC-03
   }
 
   /**
@@ -60,17 +68,17 @@ export class IdempotencyService {
   private async generateParamsHash(
     toolName: string,
     parameters: Record<string, unknown>,
-    userId?: string
+    userId?: string,
   ): Promise<string> {
     // PERFECT GRADE: Include causal chain components
     const causalComponents: any = {
-      user: userId || 'anonymous',
+      user: userId || "anonymous",
       tool: toolName,
     };
 
     // Add causal chain tracking if enabled
     if (this.enableCausalKey) {
-      causalComponents.parentIntent = this.parentIntentId || 'none';
+      causalComponents.parentIntent = this.parentIntentId || "none";
       causalComponents.lamportTs = this.lamportTimestamp || 0;
     }
 
@@ -84,9 +92,11 @@ export class IdempotencyService {
     // Use Web Crypto API for Edge Runtime compatibility
     const encoder = new TextEncoder();
     const data = encoder.encode(sortedParams);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    const hashHex = hashArray
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
 
     return hashHex.substring(0, 16); // Use 16 chars for better collision resistance
   }
@@ -98,20 +108,20 @@ export class IdempotencyService {
    * - Objects: JSON stringify with sorted keys
    */
   private normalizeValue(value: unknown): unknown {
-    if (typeof value === 'string') {
+    if (typeof value === "string") {
       // Trim whitespace but preserve case for meaningful values
       return value.trim();
     }
-    if (typeof value === 'number' || typeof value === 'boolean') {
+    if (typeof value === "number" || typeof value === "boolean") {
       return value;
     }
     if (value === null || value === undefined) {
       return null;
     }
     if (Array.isArray(value)) {
-      return value.map(v => this.normalizeValue(v));
+      return value.map((v) => this.normalizeValue(v));
     }
-    if (typeof value === 'object') {
+    if (typeof value === "object") {
       return Object.entries(value as object)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([k, v]) => [k, this.normalizeValue(v)]);
@@ -135,25 +145,36 @@ export class IdempotencyService {
    * - Prevents "Double-Tap" bugs across devices/sessions belonging to same user
    * - Ensures action is unique to the specific causal chain of conversation
    *
+   * SEC-03: Route Namespacing
+   * - Prepends route context to prevent key collisions across API routes
+   * - Key format: idempotency:{routeName}:{key}:{paramsHash}
+   *
    * @param key - Base key (e.g., `${executionId}:${stepIndex}`)
    * @param toolName - Tool name to include in semantic hash
    * @param parameters - Optional parameters to include in hash for stricter idempotency
    * @param userId - Optional user ID to salt the hash (prevents cross-user blocking)
+   * @param context - Optional context including routeName for namespacing
    * @returns true if it's a duplicate, false if it's new.
    */
   async isDuplicate(
     key: string,
     toolName: string,
     parameters?: Record<string, unknown>,
-    userId?: string
+    userId?: string,
+    context?: { routeName?: string },
   ): Promise<boolean> {
     const effectiveUserId = userId || this.userId;
-    const paramsHash = parameters ? await this.generateParamsHash(toolName, parameters, effectiveUserId) : null;
+    const effectiveRouteName =
+      context?.routeName || this.routeName || "unknown";
+    const paramsHash = parameters
+      ? await this.generateParamsHash(toolName, parameters, effectiveUserId)
+      : null;
+    // SEC-03: Namespace idempotency keys with route context
     const fullKey = paramsHash
-      ? `idempotency:${key}:${paramsHash}`
-      : `idempotency:${key}`;
+      ? `idempotency:${effectiveRouteName}:${key}:${paramsHash}`
+      : `idempotency:${effectiveRouteName}:${key}`;
 
-    const set = await this.redis.set(fullKey, 'processed', {
+    const set = await this.redis.set(fullKey, "processed", {
       nx: true,
       ex: this.defaultTtlSeconds,
     });
@@ -167,13 +188,19 @@ export class IdempotencyService {
     key: string,
     toolName: string,
     parameters?: Record<string, unknown>,
-    userId?: string
+    userId?: string,
+    context?: { routeName?: string },
   ): Promise<string> {
     const effectiveUserId = userId || this.userId;
-    const paramsHash = parameters ? await this.generateParamsHash(toolName, parameters, effectiveUserId) : null;
+    const effectiveRouteName =
+      context?.routeName || this.routeName || "unknown";
+    const paramsHash = parameters
+      ? await this.generateParamsHash(toolName, parameters, effectiveUserId)
+      : null;
+    // SEC-03: Namespace idempotency keys with route context
     return paramsHash
-      ? `idempotency:${key}:${paramsHash}`
-      : `idempotency:${key}`;
+      ? `idempotency:${effectiveRouteName}:${key}:${paramsHash}`
+      : `idempotency:${effectiveRouteName}:${key}`;
   }
 
   /**
@@ -189,7 +216,7 @@ export class IdempotencyService {
    */
   withCausalContext(
     parentIntentId: string,
-    lamportTimestamp: number
+    lamportTimestamp: number,
   ): IdempotencyService {
     return new IdempotencyService(this.redis, {
       userId: this.userId,

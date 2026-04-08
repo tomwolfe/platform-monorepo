@@ -312,6 +312,24 @@ export const TOOLS = {
       schema: ParallelExecutionSchema,
     },
   },
+  // System utilities for testing and debugging
+  system: {
+    log: {
+      name: "log",
+      description: "Log a message for debugging or auditing purposes.",
+      schema: z.object({
+        message: z.string().optional().describe("The message to log"),
+        special_requests: z
+          .string()
+          .optional()
+          .describe("Special request message (alias for message)"),
+        level: z
+          .enum(["info", "warn", "error", "debug"])
+          .optional()
+          .describe("Log level"),
+      }),
+    },
+  },
 } as const;
 
 export type McpToolRegistry = typeof TOOLS;

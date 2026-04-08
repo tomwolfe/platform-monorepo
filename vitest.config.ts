@@ -103,6 +103,10 @@ export default defineConfig({
       ),
       // Shared packages
       "@repo/shared": path.resolve(__dirname, "./packages/shared/src"),
+      "@repo/shared/occ-rebase": path.resolve(
+        __dirname,
+        "./packages/shared/src/services/occ-rebase.ts",
+      ),
       "@repo/mcp-protocol": path.resolve(
         __dirname,
         "./packages/mcp-protocol/src",

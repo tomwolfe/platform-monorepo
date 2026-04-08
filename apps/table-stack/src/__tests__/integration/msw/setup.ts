@@ -4,6 +4,16 @@ import { http, HttpResponse } from "msw";
 // Web3 RPC handlers (for Base chain - chainId 8453)
 export const web3RpcHandlers = [
   http.post("*", async ({ request }) => {
+    // Skip non-RPC requests (like Resend, Ably, etc.)
+    const url = new URL(request.url);
+    if (
+      url.hostname.includes("resend") ||
+      url.hostname.includes("ably") ||
+      url.pathname.startsWith("/api/")
+    ) {
+      return; // Let other handlers process it
+    }
+
     let body: { method: string; params?: unknown[] };
     try {
       body = (await request.json()) as { method: string; params?: unknown[] };

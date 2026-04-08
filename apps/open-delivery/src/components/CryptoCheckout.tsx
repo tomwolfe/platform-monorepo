@@ -103,29 +103,6 @@ export function CryptoCheckout({
     chainId: chain?.id || defaultChainId,
   });
 
-  // Estimate gas for ETH transactions
-  const { data: estimatedGas, isError: isGasEstimationError } = useEstimateGas({
-    to: escrowContractAddress as Address,
-    value: totalEthWei > 0n ? totalEthWei : undefined,
-    data: orderId ? stringToHex(orderId) : undefined,
-    chainId: defaultChainId,
-    query: {
-      enabled: paymentCurrency === "ETH" && !!address && totalEthWei > 0n,
-    },
-  });
-
-  // Calculate estimated gas fee in USD
-  const [estimatedGasFeeUsd, setEstimatedGasFeeUsd] = useState<number>(0);
-
-  useEffect(() => {
-    if (estimatedGas && ethPrice) {
-      // Gas is in wei, convert to ETH then to USD
-      const gasEth = parseFloat(formatUnits(estimatedGas, 18));
-      const gasFeeUsd = gasEth * ethPrice;
-      setEstimatedGasFeeUsd(gasFeeUsd);
-    }
-  }, [estimatedGas, ethPrice]);
-
   // Calculate totals
   const subtotalFiat = cart.reduce(
     (sum, item) => sum + item.price * item.quantity,
@@ -162,6 +139,62 @@ export function CryptoCheckout({
   const [isPriceStale, setIsPriceStale] = useState(false); // Track if price is stale (financial safety)
   const [showSlippageSettings, setShowSlippageSettings] = useState(false);
   const [slippageTolerance, setSlippageTolerance] = useState<number>(1); // Default 1% slippage tolerance
+
+  // CRITICAL: Use BigInt math to avoid floating-point precision errors
+  // Convert USD to ETH using basis points (10000 = 1.0) for precision
+  // Formula: ETH_Wei = (USD_cents * 10^20) / (ETH_price_USD_scaled)
+  const BASIS_POINTS = 10_000n;
+  const ethPriceScaled =
+    ethPrice !== null
+      ? BigInt(Math.round(ethPrice * Number(BASIS_POINTS)))
+      : null;
+
+  // Convert fiat amounts to cents first (integer), then to Wei
+  // Multiplier: 10^20 to convert cents to Wei with price scaling (18 decimals + 2 for cents)
+  const CENTS_TO_WEI_MULTIPLIER = 10n ** 20n;
+
+  // Calculate ETH amounts in Wei using BigInt division
+  const subtotalEthWei =
+    paymentCurrency === "ETH" && ethPriceScaled !== null
+      ? (subtotalCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
+      : BigInt(0);
+  const tipEthWei =
+    paymentCurrency === "ETH" && ethPriceScaled !== null
+      ? (tipCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
+      : BigInt(0);
+  const platformFeeEthWei =
+    paymentCurrency === "ETH" && ethPriceScaled !== null
+      ? (platformFeeCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
+      : BigInt(0);
+  const totalEthWei =
+    paymentCurrency === "ETH" && ethPriceScaled !== null
+      ? ((subtotalCents + tipCents + platformFeeCents) *
+          CENTS_TO_WEI_MULTIPLIER) /
+        ethPriceScaled
+      : BigInt(0);
+
+  // Estimate gas for ETH transactions (must come after totalEthWei definition)
+  const { data: estimatedGas, isError: isGasEstimationError } = useEstimateGas({
+    to: escrowContractAddress as Address,
+    value: totalEthWei > 0n ? totalEthWei : undefined,
+    data: orderId ? stringToHex(orderId) : undefined,
+    chainId: defaultChainId,
+    query: {
+      enabled: paymentCurrency === "ETH" && !!address && totalEthWei > 0n,
+    },
+  });
+
+  // Calculate estimated gas fee in USD
+  const [estimatedGasFeeUsd, setEstimatedGasFeeUsd] = useState<number>(0);
+
+  useEffect(() => {
+    if (estimatedGas && ethPrice) {
+      // Gas is in wei, convert to ETH then to USD
+      const gasEth = parseFloat(formatUnits(estimatedGas, 18));
+      const gasFeeUsd = gasEth * ethPrice;
+      setEstimatedGasFeeUsd(gasFeeUsd);
+    }
+  }, [estimatedGas, ethPrice]);
 
   /**
    * Map viem errors to user-friendly messages
@@ -249,39 +282,6 @@ export function CryptoCheckout({
     }
     fetchEthPrice();
   }, []);
-
-  // CRITICAL: Use BigInt math to avoid floating-point precision errors
-  // Convert USD to ETH using basis points (10000 = 1.0) for precision
-  // Formula: ETH_Wei = (USD_cents * 10^20) / (ETH_price_USD_scaled)
-  const BASIS_POINTS = 10_000n;
-  const ethPriceScaled =
-    ethPrice !== null
-      ? BigInt(Math.round(ethPrice * Number(BASIS_POINTS)))
-      : null;
-
-  // Convert fiat amounts to cents first (integer), then to Wei
-  // Multiplier: 10^20 to convert cents to Wei with price scaling (18 decimals + 2 for cents)
-  const CENTS_TO_WEI_MULTIPLIER = 10n ** 20n;
-
-  // Calculate ETH amounts in Wei using BigInt division
-  const subtotalEthWei =
-    paymentCurrency === "ETH" && ethPriceScaled !== null
-      ? (subtotalCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
-      : BigInt(0);
-  const tipEthWei =
-    paymentCurrency === "ETH" && ethPriceScaled !== null
-      ? (tipCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
-      : BigInt(0);
-  const platformFeeEthWei =
-    paymentCurrency === "ETH" && ethPriceScaled !== null
-      ? (platformFeeCents * CENTS_TO_WEI_MULTIPLIER) / ethPriceScaled
-      : BigInt(0);
-  const totalEthWei =
-    paymentCurrency === "ETH" && ethPriceScaled !== null
-      ? ((subtotalCents + tipCents + platformFeeCents) *
-          CENTS_TO_WEI_MULTIPLIER) /
-        ethPriceScaled
-      : BigInt(0);
 
   // Calculate display ETH amounts (for UI only, not for transactions)
   const totalEth =

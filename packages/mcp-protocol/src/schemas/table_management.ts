@@ -225,7 +225,7 @@ export const UpdateWaitlistStatusSchema = z.object({
     .string()
     .uuid()
     .describe("The unique identifier of the waitlist entry"),
-  status: WaitlistSchema.shape.status.describe("New status"),
+  status: (WaitlistSchema.shape?.status ?? z.string()).describe("New status"),
 });
 
 // ============================================================================

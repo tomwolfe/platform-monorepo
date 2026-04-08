@@ -1,17 +1,24 @@
-import { RealtimeService, getRedisClient, ServiceNamespace } from "@repo/shared";
-import { createTypedSystemEvent, type CircuitBreakerEventPayload } from "@repo/mcp-protocol";
+import {
+  RealtimeService,
+  getRedisClient,
+  ServiceNamespace,
+} from "@repo/shared";
+import {
+  createTypedSystemEvent,
+  type CircuitBreakerEventPayload,
+} from "@repo/mcp-protocol";
 import { LRUCache } from "lru-cache";
 import { Logger } from "@repo/shared";
 
-const logger = new Logger({ serviceName: 'circuit-breaker' });
+const logger = new Logger({ serviceName: "circuit-breaker" });
 
 /**
  * CircuitBreaker - Phase 4: Harden Resilience
- * 
+ *
  * Implements the circuit breaker pattern to prevent cascade failures when
  * downstream services degrade. Uses a sliding window failure counter with
  * automatic state transitions.
- * 
+ *
  * States:
  * - CLOSED: Normal operation, requests pass through
  * - OPEN: Circuit tripped, requests fail fast
@@ -62,7 +69,7 @@ export class CircuitBreakerError extends Error {
   constructor(
     message: string,
     public readonly state: CircuitState,
-    public readonly retryAfterMs?: number
+    public readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = "CircuitBreakerError";
@@ -105,7 +112,10 @@ export class CircuitBreaker {
     if (this.state === CircuitState.OPEN) {
       const timeSinceLastFailure = Date.now() - (this.lastFailureTime || 0);
       if (timeSinceLastFailure >= this.config.recoveryTimeoutMs) {
-        this.transitionState(CircuitState.HALF_OPEN, "Recovery timeout elapsed");
+        this.transitionState(
+          CircuitState.HALF_OPEN,
+          "Recovery timeout elapsed",
+        );
       }
     }
     return this.state;
@@ -151,7 +161,9 @@ export class CircuitBreaker {
     const currentState = await this.getState();
 
     if (currentState === CircuitState.OPEN) {
-      const retryAfter = this.config.recoveryTimeoutMs - (Date.now() - (this.lastFailureTime || 0));
+      const retryAfter =
+        this.config.recoveryTimeoutMs -
+        (Date.now() - (this.lastFailureTime || 0));
 
       await this.publishCircuitBreakerEvent("CircuitBreakerOpened", {
         reason: "Circuit is OPEN - failing fast",
@@ -161,7 +173,7 @@ export class CircuitBreaker {
       throw new CircuitBreakerError(
         `Circuit breaker OPEN for ${this.config.serviceName}. Retry after ${Math.max(0, Math.round(retryAfter / 1000))}s`,
         CircuitState.OPEN,
-        Math.max(0, retryAfter)
+        Math.max(0, retryAfter),
       );
     }
 
@@ -210,9 +222,14 @@ export class CircuitBreaker {
     // Add to Redis sorted set with timestamp as score
     if (this.redisKey) {
       try {
-        await this.redis.zadd(this.redisKey, { score: now, value: `${now}:${Math.random()}` });
+        await this.redis.zadd(this.redisKey, {
+          score: now,
+          member: `${now}:${Math.random()}`,
+        });
       } catch (err) {
-        logger.warn('Failed to add failure to Redis', { error: err instanceof Error ? err.message : String(err) });
+        logger.warn("Failed to add failure to Redis", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 
@@ -225,23 +242,31 @@ export class CircuitBreaker {
         const redisCount = await this.redis.zcard(this.redisKey);
         this.failureCount = redisCount;
       } catch (err) {
-        logger.warn('Failed to update Redis sorted set', { error: err instanceof Error ? err.message : String(err) });
+        logger.warn("Failed to update Redis sorted set", {
+          error: err instanceof Error ? err.message : String(err),
+        });
         // Fallback to in-memory count
-        this.failureTimestamps = this.failureTimestamps.filter(ts => ts > windowStart);
+        this.failureTimestamps = this.failureTimestamps.filter(
+          (ts) => ts > windowStart,
+        );
         this.failureCount = this.failureTimestamps.length;
       }
     } else {
       // Fallback if no redisKey
-      this.failureTimestamps = this.failureTimestamps.filter(ts => ts > windowStart);
+      this.failureTimestamps = this.failureTimestamps.filter(
+        (ts) => ts > windowStart,
+      );
       this.failureCount = this.failureTimestamps.length;
     }
 
     // Check if we should open the circuit
-    if (this.state === CircuitState.CLOSED &&
-        this.failureCount >= this.config.failureThreshold) {
+    if (
+      this.state === CircuitState.CLOSED &&
+      this.failureCount >= this.config.failureThreshold
+    ) {
       this.transitionState(
         CircuitState.OPEN,
-        `Failure threshold reached (${this.failureCount}/${this.config.failureThreshold})`
+        `Failure threshold reached (${this.failureCount}/${this.config.failureThreshold})`,
       );
     }
   }
@@ -325,17 +350,25 @@ export class CircuitBreaker {
       try {
         listener(event);
       } catch (err) {
-        logger.error('State change listener error', { error: err instanceof Error ? err.message : String(err) });
+        logger.error("State change listener error", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 
     // Publish to Nervous System mesh
     this.publishCircuitBreakerEvent(
-      newState === CircuitState.OPEN ? "CircuitBreakerOpened" : "CircuitBreakerClosed",
-      { reason }
-    ).catch(err => logger.error('Failed to publish event', { error: err instanceof Error ? err.message : String(err) }));
+      newState === CircuitState.OPEN
+        ? "CircuitBreakerOpened"
+        : "CircuitBreakerClosed",
+      { reason },
+    ).catch((err) =>
+      logger.error("Failed to publish event", {
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
 
-    logger.info('Circuit state transition', {
+    logger.info("Circuit state transition", {
       serviceName: this.config.serviceName,
       previousState,
       newState,
@@ -348,7 +381,7 @@ export class CircuitBreaker {
    */
   private async publishCircuitBreakerEvent(
     eventType: "CircuitBreakerOpened" | "CircuitBreakerClosed",
-    extra: { reason?: string; retryAfterMs?: number }
+    extra: { reason?: string; retryAfterMs?: number },
   ): Promise<void> {
     try {
       const payload: CircuitBreakerEventPayload = {
@@ -356,7 +389,9 @@ export class CircuitBreaker {
         serverUrl: this.config.serverUrl,
         state: this.state,
         failureCount: this.failureCount,
-        lastFailureTime: this.lastFailureTime ? new Date(this.lastFailureTime).toISOString() : undefined,
+        lastFailureTime: this.lastFailureTime
+          ? new Date(this.lastFailureTime).toISOString()
+          : undefined,
         ...extra,
       };
 
@@ -365,17 +400,19 @@ export class CircuitBreaker {
         eventType,
         payload,
         "intention-engine",
-        { traceId: this.traceId }
+        { traceId: this.traceId },
       );
 
       await RealtimeService.publishNervousSystemEvent(
         event.type,
         event.payload,
-        event.traceId
+        event.traceId,
       );
     } catch (error) {
       // Don't throw - circuit breaker events are observability, not critical path
-      logger.warn('Failed to publish event to mesh', { error: error instanceof Error ? error.message : String(error) });
+      logger.warn("Failed to publish event to mesh", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 }
@@ -399,7 +436,7 @@ export class CircuitBreakerRegistry {
    */
   get(serviceName: string, serverUrl: string): CircuitBreaker {
     const key = `${serviceName}:${serverUrl}`;
-    
+
     if (!this.breakers.has(key)) {
       const breaker = new CircuitBreaker({
         ...this.defaultConfig,
@@ -408,7 +445,7 @@ export class CircuitBreakerRegistry {
       });
       this.breakers.set(key, breaker);
     }
-    
+
     return this.breakers.get(key)!;
   }
 
@@ -436,7 +473,9 @@ export class CircuitBreakerRegistry {
    * Reset all circuit breakers
    */
   async resetAll(): Promise<void> {
-    const promises = Array.from(this.breakers.values()).map(breaker => breaker.reset());
+    const promises = Array.from(this.breakers.values()).map((breaker) =>
+      breaker.reset(),
+    );
     await Promise.all(promises);
   }
 }

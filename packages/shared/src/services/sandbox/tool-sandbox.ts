@@ -406,6 +406,11 @@ parentPort.on('message', async (request) => {
   const startTime = Date.now();
 
   try {
+    // SECURITY: Validate toolName to prevent path traversal / LFI attacks
+    if (!/^[a-zA-Z0-9_-]+$/.test(toolName)) {
+      throw new Error('SECURITY VIOLATION: Invalid tool name format');
+    }
+
     // Check memory before execution
     const initialMemory = getMemoryUsage();
     if (initialMemory > maxMemoryMb * 0.8) {

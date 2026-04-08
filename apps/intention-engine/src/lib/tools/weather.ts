@@ -6,43 +6,59 @@ export const weatherReturnSchema = {
   temperature_c: "number",
   condition: "string",
   humidity: "number",
-  wind_speed_kmh: "number"
+  wind_speed_kmh: "number",
 };
 
 export type WeatherDataParams = z.infer<typeof WeatherDataSchema>;
 
-export async function get_weather_data(params: WeatherDataParams): Promise<{ success: boolean; result?: any; error?: string }> {
+export async function get_weather_data(
+  params: WeatherDataParams,
+): Promise<{ success: boolean; result?: any; error?: string }> {
   const validated = WeatherDataSchema.safeParse(params);
   if (!validated.success) {
-    return { success: false, error: "Invalid parameters: " + validated.error.message };
+    return {
+      success: false,
+      error: "Invalid parameters: " + validated.error.message,
+    };
   }
-  
+
   const { lat, lon } = validated.data;
 
   console.log(`Getting weather data for coordinates (${lat}, ${lon})...`);
-  
+
   try {
-    const response = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=temperature_2m,relativehumidity_2m,windspeed_10m`
-    );
-    
-    if (!response.ok) {
-      throw new Error(`Weather API error: ${response.statusText}`);
-    }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
 
-    const data = await response.json();
-    const current = data.current_weather;
+    try {
+      const response = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=temperature_2m,relativehumidity_2m,windspeed_10m`,
+        { signal: controller.signal },
+      );
 
-    return {
-      success: true,
-      result: {
-        location: `${lat}, ${lon}`,
-        temperature_c: current.temperature,
-        condition: getWeatherCondition(current.weathercode),
-        humidity: data.hourly.relativehumidity_2m[0],
-        wind_speed_kmh: current.windspeed
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`Weather API error: ${response.statusText}`);
       }
-    };
+
+      const data = await response.json();
+      const current = data.current_weather;
+
+      return {
+        success: true,
+        result: {
+          location: `${lat}, ${lon}`,
+          temperature_c: current.temperature,
+          condition: getWeatherCondition(current.weathercode),
+          humidity: data.hourly.relativehumidity_2m[0],
+          wind_speed_kmh: current.windspeed,
+        },
+      };
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
+    }
   } catch (error: unknown) {
     return { success: false, error: error.message };
   }

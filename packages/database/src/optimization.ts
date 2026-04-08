@@ -55,7 +55,7 @@ const INDEX_DEFINITIONS = {
   ],
 
   // Reservation indexes
-  restaurantReservations: [
+  restaurant_reservations: [
     {
       name: "idx_reservations_restaurant_time",
       columns: ["restaurant_id", "start_time", "end_time"],
@@ -95,7 +95,7 @@ const INDEX_DEFINITIONS = {
   ],
 
   // Table indexes
-  restaurantTables: [
+  restaurant_tables: [
     {
       name: "idx_tables_restaurant_status",
       columns: ["restaurant_id", "status", "is_active"],
@@ -111,7 +111,7 @@ const INDEX_DEFINITIONS = {
   ],
 
   // Guest profile indexes
-  guestProfiles: [
+  guest_profiles: [
     {
       name: "idx_guest_profiles_restaurant_email",
       columns: ["restaurant_id", "email"],
@@ -127,7 +127,7 @@ const INDEX_DEFINITIONS = {
   ],
 
   // Waitlist indexes
-  restaurantWaitlist: [
+  restaurant_waitlist: [
     {
       name: "idx_waitlist_restaurant_status",
       columns: ["restaurant_id", "status", "created_at"],

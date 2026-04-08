@@ -1,46 +1,54 @@
 /**
  * Proactive Cache Warming API
- * 
+ *
  * Zero-Latency Context Pre-fetching
  * When a user starts typing (detected via client-side typing indicator),
  * this endpoint pre-fetches LiveOperationalState into Redis cache.
- * 
+ *
  * Benefits:
  * - Eliminates cold-start latency for restaurant state lookups
  * - Pre-computes failover policies before the actual chat request
  * - Reduces end-to-end response time by 200-500ms
- * 
+ *
  * Usage:
  * Client sends a debounced "typing" event (after 300ms of typing):
  *   fetch('/api/chat/warm-cache', {
  *     method: 'POST',
- *     body: JSON.stringify({ 
+ *     body: JSON.stringify({
  *       messagePreview: "Book a table at...",
  *       userLocation: { lat, lng }
  *     })
  *   })
- * 
+ *
  * @package apps/intention-engine
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
-import { getRedisClient, ServiceNamespace, withApiErrorHandler, formatApiSuccess, formatApiError } from '@repo/shared';
-import { getDb } from '@repo/database';
-import { rateLimitMiddleware } from '@/lib/middleware/rate-limiter';
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import {
+  getRedisClient,
+  ServiceNamespace,
+  withApiErrorHandler,
+  formatApiSuccess,
+  formatApiError,
+} from "@repo/shared";
+import { getDb } from "@repo/database";
+import { rateLimitMiddleware } from "@/lib/middleware/rate-limiter";
 
 const redis = getRedisClient(ServiceNamespace.IE);
 
 const WarmCacheRequestSchema = z.object({
   messagePreview: z.string().min(1).max(500),
-  userLocation: z.object({
-    lat: z.number().min(-90).max(90),
-    lng: z.number().min(-180).max(180),
-  }).optional(),
+  userLocation: z
+    .object({
+      lat: z.number().min(-90).max(90),
+      lng: z.number().min(-180).max(180),
+    })
+    .optional(),
   clerkId: z.string().optional(),
 });
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 export const maxDuration = 5; // Short timeout - this is a best-effort cache warm
 
 async function warmCacheHandler(req: NextRequest) {
@@ -49,22 +57,28 @@ async function warmCacheHandler(req: NextRequest) {
 
   if (!validatedBody.success) {
     return NextResponse.json(
-      formatApiError(new Error('Invalid request parameters'), 'VALIDATION_ERROR', {
-        details: validatedBody.error.format(),
-      }),
-      { status: 400 }
+      formatApiError(
+        new Error("Invalid request parameters"),
+        "VALIDATION_ERROR",
+        {
+          details: validatedBody.error.format(),
+        },
+      ),
+      { status: 400 },
     );
   }
 
   const { messagePreview, userLocation, clerkId } = validatedBody.data;
 
   // Rate limiting - more generous than chat endpoint
-  const userId = clerkId || req.headers.get('x-forwarded-for') || 'anonymous';
-  const rateLimitResult = await rateLimitMiddleware(userId, 'cache');
+  const userId = clerkId || req.headers.get("x-forwarded-for") || "anonymous";
+  const rateLimitResult = await rateLimitMiddleware(userId, "cache");
 
   if (!rateLimitResult.allowed) {
     // Return 200 anyway - cache warming is best-effort, don't block
-    console.log(`[WarmCache] Rate limited but continuing (best-effort): ${userId}`);
+    console.log(
+      `[WarmCache] Rate limited but continuing (best-effort): ${userId}`,
+    );
   }
 
   // Extract potential restaurant mentions from message preview
@@ -72,12 +86,17 @@ async function warmCacheHandler(req: NextRequest) {
 
   if (restaurantMentions.length === 0) {
     return NextResponse.json(
-      formatApiSuccess({ warmed: false, reason: 'No restaurant mentions detected' }),
-      { status: 200 }
+      formatApiSuccess({
+        warmed: false,
+        reason: "No restaurant mentions detected",
+      }),
+      { status: 200 },
     );
   }
 
-  console.log(`[WarmCache] Pre-fetching state for: ${restaurantMentions.join(', ')}`);
+  console.log(
+    `[WarmCache] Pre-fetching state for: ${restaurantMentions.join(", ")}`,
+  );
 
   // Warm cache for each restaurant
   const warmResults = await Promise.allSettled(
@@ -88,12 +107,13 @@ async function warmCacheHandler(req: NextRequest) {
       // Check if already cached (avoid redundant fetches)
       const cachedState = await redis?.get<any>(stateKey);
       if (cachedState) {
-        return { restaurantRef, status: 'already_cached', hit: true };
+        return { restaurantRef, status: "already_cached", hit: true };
       }
 
       // Fetch from database
       try {
-        const { eq, restaurants, restaurantTables } = await import('@repo/database');
+        const { eq, restaurants, restaurantTables } =
+          await import("@repo/database");
 
         const db = getDb();
         const [restaurant, recentFailures] = await Promise.all([
@@ -104,7 +124,7 @@ async function warmCacheHandler(req: NextRequest) {
         ]);
 
         if (!restaurant) {
-          return { restaurantRef, status: 'not_found', hit: false };
+          return { restaurantRef, status: "not_found", hit: false };
         }
 
         // Fetch table availability
@@ -112,21 +132,25 @@ async function warmCacheHandler(req: NextRequest) {
           where: eq(restaurantTables.restaurantId, restaurant.id),
         });
 
-        const availableTables = tables.filter((t: any) => t.status === 'available').length;
+        const availableTables = tables.filter(
+          (t: any) => t.status === "vacant",
+        ).length;
         const totalTables = tables.length;
 
-        const tableAvailability = availableTables === 0
-          ? 'full'
-          : availableTables < totalTables / 2
-            ? 'limited'
-            : 'available';
+        const tableAvailability =
+          availableTables === 0
+            ? "full"
+            : availableTables < totalTables / 2
+              ? "limited"
+              : "available";
 
         // Cache the state (5 minute TTL for warm cache)
         const stateData = {
           id: restaurant.id,
           name: restaurant.name,
           tableAvailability,
-          nextAvailableSlot: availableTables === 0 ? 'Unknown - try waitlist' : undefined,
+          nextAvailableSlot:
+            availableTables === 0 ? "Unknown - try waitlist" : undefined,
           hasRecentFailures: recentFailures && recentFailures.length > 0,
           warmedAt: new Date().toISOString(),
           isWarmCache: true, // Mark as pre-fetched (not from actual request)
@@ -134,21 +158,26 @@ async function warmCacheHandler(req: NextRequest) {
 
         await redis?.setex(stateKey, 300, JSON.stringify(stateData)); // 5 min TTL
 
-        return { restaurantRef, status: 'warmed', hit: true };
+        return { restaurantRef, status: "warmed", hit: true };
       } catch (error) {
         console.warn(`[WarmCache] Failed to fetch ${restaurantRef}:`, error);
-        return { restaurantRef, status: 'error', hit: false, error: String(error) };
+        return {
+          restaurantRef,
+          status: "error",
+          hit: false,
+          error: String(error),
+        };
       }
-    })
+    }),
   );
 
   // Summarize results
   const warmed = warmResults.filter(
-    r => r.status === 'fulfilled' && r.value.hit
+    (r) => r.status === "fulfilled" && r.value.hit,
   ).length;
 
   const hits = warmResults.filter(
-    r => r.status === 'fulfilled' && r.value.status === 'already_cached'
+    (r) => r.status === "fulfilled" && r.value.status === "already_cached",
   ).length;
 
   return NextResponse.json(
@@ -157,15 +186,17 @@ async function warmCacheHandler(req: NextRequest) {
       restaurants: restaurantMentions.length,
       cacheHits: hits,
       cacheWarmed: warmed - hits,
-      results: warmResults.map(r => r.status === 'fulfilled' ? r.value : { status: 'error' }),
+      results: warmResults.map((r) =>
+        r.status === "fulfilled" ? r.value : { status: "error" },
+      ),
     }),
-    { status: 200 }
+    { status: 200 },
   );
 }
 
 export const POST = withApiErrorHandler(warmCacheHandler, {
-  serviceName: 'warm-cache',
-  includeStackTrace: process.env.NODE_ENV !== 'production',
+  serviceName: "warm-cache",
+  includeStackTrace: process.env.NODE_ENV !== "production",
 });
 
 /**
@@ -199,7 +230,7 @@ function extractRestaurantMentions(text: string): string[] {
   for (const match of text.matchAll(capitalizedPattern)) {
     const name = match[1];
     // Filter out common non-restaurant words
-    if (!['The', 'A', 'An', 'This', 'That', 'These', 'Those'].includes(name)) {
+    if (!["The", "A", "An", "This", "That", "These", "Those"].includes(name)) {
       mentions.add(name);
     }
   }

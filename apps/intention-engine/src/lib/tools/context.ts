@@ -2,7 +2,10 @@ import { z } from "zod";
 import { ToolDefinitionMetadata, ToolParameter } from "./types";
 import { normalizeLocation } from "./mobility";
 import { WeatherSchema, UnifiedLocationSchema } from "@repo/mcp-protocol";
-import { withNervousSystemTracing, injectTracingHeaders } from "@repo/shared/tracing";
+import {
+  withNervousSystemTracing,
+  injectTracingHeaders,
+} from "@repo/shared/tracing";
 
 export type WeatherParams = z.infer<typeof WeatherSchema>;
 
@@ -11,17 +14,22 @@ export const weatherReturnSchema = {
   temperature_c: "number",
   condition: "string",
   humidity: "number",
-  wind_speed_kmh: "number"
+  wind_speed_kmh: "number",
 };
 
 import { geocode_location } from "./location_search";
 
-export async function get_weather(params: WeatherParams): Promise<{ success: boolean; result?: any; error?: string }> {
+export async function get_weather(
+  params: WeatherParams,
+): Promise<{ success: boolean; result?: any; error?: string }> {
   const validated = WeatherSchema.safeParse(params);
   if (!validated.success) {
-    return { success: false, error: "Invalid parameters: " + validated.error.message };
+    return {
+      success: false,
+      error: "Invalid parameters: " + validated.error.message,
+    };
   }
-  
+
   let { location, date } = validated.data;
   let lat: number;
   let lon: number;
@@ -32,7 +40,10 @@ export async function get_weather(params: WeatherParams): Promise<{ success: boo
       lat = geo.result.lat;
       lon = geo.result.lon;
     } else {
-      return { success: false, error: "Could not geocode location: " + location };
+      return {
+        success: false,
+        error: "Could not geocode location: " + location,
+      };
     }
   } else {
     lat = location.lat;
@@ -40,34 +51,47 @@ export async function get_weather(params: WeatherParams): Promise<{ success: boo
   }
 
   const normalizedLocation = normalizeLocation(location);
-  console.log(`Getting functional weather for ${normalizedLocation} (${lat}, ${lon})...`);
+  console.log(
+    `Getting functional weather for ${normalizedLocation} (${lat}, ${lon})...`,
+  );
 
   try {
     return await withNervousSystemTracing(async ({ correlationId }) => {
-      const response = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=temperature_2m,relativehumidity_2m,windspeed_10m`,
-        {
-          headers: injectTracingHeaders({}, correlationId),
-        }
-      );
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
 
-      if (!response.ok) {
-        throw new Error(`Weather API error: ${response.statusText}`);
+      try {
+        const response = await fetch(
+          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=temperature_2m,relativehumidity_2m,windspeed_10m`,
+          {
+            headers: injectTracingHeaders({}, correlationId),
+            signal: controller.signal,
+          },
+        );
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          throw new Error(`Weather API error: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        const current = data.current_weather;
+
+        return {
+          success: true,
+          result: {
+            location: normalizedLocation,
+            temperature_c: current.temperature,
+            condition: getWeatherCondition(current.weathercode),
+            humidity: data.hourly.relativehumidity_2m[0],
+            wind_speed_kmh: current.windspeed,
+          },
+        };
+      } catch (error) {
+        clearTimeout(timeoutId);
+        throw error;
       }
-
-      const data = await response.json();
-      const current = data.current_weather;
-
-      return {
-        success: true,
-        result: {
-          location: normalizedLocation,
-          temperature_c: current.temperature,
-          condition: getWeatherCondition(current.weathercode),
-          humidity: data.hourly.relativehumidity_2m[0],
-          wind_speed_kmh: current.windspeed
-        }
-      };
     });
   } catch (error: unknown) {
     return { success: false, error: error.message };
@@ -90,17 +114,22 @@ function getWeatherCondition(code: number): string {
 export const getWeatherToolDefinition: ToolDefinitionMetadata = {
   name: "get_weather",
   version: "1.0.0",
-  description: "Gets weather forecast for a specific location and optional date for temporal planning context.",
+  description:
+    "Gets weather forecast for a specific location and optional date for temporal planning context.",
   inputSchema: {
     type: "object",
     properties: {
-      location: { 
-        type: "object", 
-        description: "The city or location to get weather for. Can be a string address OR an object with lat/lon coordinates: {lat: number, lon: number, address?: string}" 
+      location: {
+        type: "object",
+        description:
+          "The city or location to get weather for. Can be a string address OR an object with lat/lon coordinates: {lat: number, lon: number, address?: string}",
       },
-      date: { type: "string", description: "The date for the weather forecast in ISO 8601 format." }
+      date: {
+        type: "string",
+        description: "The date for the weather forecast in ISO 8601 format.",
+      },
     },
-    required: ["location"]
+    required: ["location"],
   },
   return_schema: weatherReturnSchema,
   timeout_ms: 15000,
@@ -108,6 +137,6 @@ export const getWeatherToolDefinition: ToolDefinitionMetadata = {
   category: "data",
   rate_limits: {
     requests_per_minute: 60,
-    requests_per_hour: 1000
-  }
+    requests_per_hour: 1000,
+  },
 };

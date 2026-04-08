@@ -13,7 +13,7 @@
  *   getClientId: async (request) => {
  *     // Custom client ID logic (e.g., Clerk user, cookie verification)
  *     const user = await currentUser();
- *     return user?.id || `anonymous-${Math.random().toString(36).substring(2, 9)}`;
+ *     return user?.id || `anonymous-${crypto.randomUUID()}`;
  *   },
  *   capabilities: {
  *     "nervous-system:updates": ["subscribe"],
@@ -80,7 +80,7 @@ const DEFAULT_CAPABILITIES: Record<string, string[]> = {
  * export const GET = createAblyAuthHandler({
  *   getClientId: async (request) => {
  *     const user = await currentUser();
- *     return user?.id || `anonymous-${Math.random().toString(36).substring(2, 9)}`;
+ *     return user?.id || `anonymous-${crypto.randomUUID()}`;
  *   },
  *   capabilities: {
  *     "nervous-system:updates": ["subscribe"],
@@ -111,7 +111,7 @@ export function createAblyAuthHandler(config: AblyAuthConfig = {}) {
       if (getClientId) {
         clientId = await getClientId(request);
       } else {
-        clientId = `anonymous-${Math.random().toString(36).substring(2, 9)}`;
+        clientId = `anonymous-${crypto.randomUUID()}`;
       }
 
       // Get API key from environment
@@ -120,12 +120,15 @@ export function createAblyAuthHandler(config: AblyAuthConfig = {}) {
         console.error(`${logPrefix} ABLY_API_KEY is not configured`);
         return NextResponse.json(
           { error: "Ably API key not configured" },
-          { status: 500 }
+          { status: 500 },
         );
       }
 
       // Debug: Log key format (first 10 chars only for security)
-      console.log(`${logPrefix} Key name:`, apiKey.split(":")[0]?.slice(0, 10) + "...");
+      console.log(
+        `${logPrefix} Key name:`,
+        apiKey.split(":")[0]?.slice(0, 10) + "...",
+      );
 
       // Initialize Ably Rest client
       const ably = new Ably.Rest({ key: apiKey });
@@ -152,7 +155,7 @@ export function createAblyAuthHandler(config: AblyAuthConfig = {}) {
           error: "Failed to authenticate",
           details: error instanceof Error ? error.message : "Unknown error",
         },
-        { status: 500 }
+        { status: 500 },
       );
     }
   };
@@ -165,7 +168,9 @@ export function createAblyAuthHandler(config: AblyAuthConfig = {}) {
  * @param capabilities - Optional custom capabilities (defaults to nervous-system:updates subscribe)
  * @returns A Next.js GET handler function
  */
-export function createClerkAblyAuthHandler(capabilities?: Record<string, string[]>) {
+export function createClerkAblyAuthHandler(
+  capabilities?: Record<string, string[]>,
+) {
   return createAblyAuthHandler({
     capabilities,
     getClientId: async (request: NextRequest) => {
@@ -190,7 +195,7 @@ export function createClerkAblyAuthHandler(capabilities?: Record<string, string[
         }
       }
 
-      return userId || `anonymous-${Math.random().toString(36).substring(2, 9)}`;
+      return userId || `anonymous-${crypto.randomUUID()}`;
     },
   });
 }
@@ -202,11 +207,13 @@ export function createClerkAblyAuthHandler(capabilities?: Record<string, string[
  * @param capabilities - Optional custom capabilities (defaults to nervous-system:updates subscribe)
  * @returns A Next.js GET handler function
  */
-export function createPublicAblyAuthHandler(capabilities?: Record<string, string[]>) {
+export function createPublicAblyAuthHandler(
+  capabilities?: Record<string, string[]>,
+) {
   return createAblyAuthHandler({
     capabilities,
     getClientId: () => {
-      return `public-client-${Math.random().toString(36).substring(2, 9)}`;
+      return `public-client-${crypto.randomUUID()}`;
     },
   });
 }

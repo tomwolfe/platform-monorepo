@@ -21,8 +21,8 @@
  * @since 1.0.0
  */
 
-import { QStashService } from './services/qstash';
-import { signServiceToken } from '@repo/auth';
+import { QStashService } from "./services/qstash";
+import { signServiceToken } from "@repo/auth";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -99,13 +99,13 @@ export class OutboxRelayService {
    */
   static async triggerRelay(
     executionId: string,
-    config?: OutboxRelayConfig
+    config?: OutboxRelayConfig,
   ): Promise<OutboxRelayTriggerResult> {
     const effectiveConfig = { ...this.config, ...config };
 
     try {
       // Use QStash for reliable delivery
-      const { AppConfig } = await import('./config');
+      const { AppConfig } = await import("./config");
       const url = `${effectiveConfig.baseUrl || AppConfig.getIntentionEngineApiUrl()}/api/engine/outbox-relay`;
       const payload = JSON.stringify({
         executionId,
@@ -115,24 +115,24 @@ export class OutboxRelayService {
       // SECURITY: Generate short-lived JWT for internal service-to-service communication
       const authToken = await signServiceToken(
         {
-          service: 'outbox-relay',
+          service: "outbox-relay",
           executionId,
-          action: 'trigger-relay',
+          action: "trigger-relay",
         },
-        '5m'
+        "5m",
       );
 
       const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         Authorization: `Bearer ${authToken}`,
       };
 
       // Propagate trace context
       if (effectiveConfig.traceId) {
-        headers['x-trace-id'] = effectiveConfig.traceId;
+        headers["x-trace-id"] = effectiveConfig.traceId;
       }
       if (effectiveConfig.correlationId) {
-        headers['x-correlation-id'] = effectiveConfig.correlationId;
+        headers["x-correlation-id"] = effectiveConfig.correlationId;
       }
 
       // Trigger QStash
@@ -144,8 +144,10 @@ export class OutboxRelayService {
 
       console.log(
         `[OutboxRelay] Triggered relay for execution ${executionId}` +
-        (messageId ? ` [message: ${messageId}]` : '') +
-        (effectiveConfig.traceId ? ` [trace: ${effectiveConfig.traceId}]` : '')
+          (messageId ? ` [message: ${messageId}]` : "") +
+          (effectiveConfig.traceId
+            ? ` [trace: ${effectiveConfig.traceId}]`
+            : ""),
       );
 
       return {
@@ -154,10 +156,10 @@ export class OutboxRelayService {
         fallbackUsed: false,
       };
     } catch (error) {
-      console.error('[OutboxRelay] Failed to trigger relay:', error);
+      console.error("[OutboxRelay] Failed to trigger relay:", error);
 
       // In production, throw to let caller handle
-      if (process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV === "production") {
         return {
           success: false,
           messageId: null,
@@ -179,7 +181,10 @@ export class OutboxRelayService {
           success: false,
           messageId: null,
           fallbackUsed: true,
-          error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+          error:
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : String(fallbackError),
         };
       }
     }
@@ -187,122 +192,68 @@ export class OutboxRelayService {
 
   /**
    * Fallback to direct fetch when QStash is not configured
-   * Fire-and-forget using Next.js after() to ensure execution continues after response
+   * Executes asynchronously without blocking the response
    */
   private static async fallbackFetch(
     executionId: string,
-    config: OutboxRelayConfig
+    config: OutboxRelayConfig,
   ): Promise<void> {
-    const baseUrl = config.baseUrl || (process.env.NODE_ENV === 'production' ? undefined : 'http://localhost:3000');
+    const baseUrl =
+      config.baseUrl ||
+      (process.env.NODE_ENV === "production"
+        ? undefined
+        : "http://localhost:3000");
     if (!baseUrl) {
-      throw new Error("CRITICAL: Outbox relay baseUrl is undefined in production environment.");
+      throw new Error(
+        "CRITICAL: Outbox relay baseUrl is undefined in production environment.",
+      );
     }
     const url = `${baseUrl}/api/engine/outbox-relay`;
 
-    try {
-      // Use dynamic import to avoid breaking non-Next.js environments
-      const { after } = await import('next/server');
+    // SECURITY: Generate short-lived JWT for internal service-to-service communication
+    const authToken = await signServiceToken(
+      {
+        service: "outbox-relay",
+        executionId,
+        action: "trigger-relay",
+      },
+      "5m",
+    );
 
-      // SECURITY: Generate short-lived JWT for internal service-to-service communication
-      const authToken = await signServiceToken(
-        {
-          service: 'outbox-relay',
-          executionId,
-          action: 'trigger-relay',
-        },
-        '5m'
-      );
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`,
+    };
 
-      after(() => {
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`,
-        };
-
-        if (config.traceId) {
-          headers['x-trace-id'] = config.traceId;
-        }
-        if (config.correlationId) {
-          headers['x-correlation-id'] = config.correlationId;
-        }
-
-        return fetch(url, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            executionId,
-            timestamp: new Date().toISOString(),
-          }),
-        }).then(response => {
-          if (!response.ok) {
-            console.error(
-              `[OutboxRelay:Fallback] Failed to trigger relay: ${response.status} ${response.statusText}`
-            );
-          } else {
-            console.log(`[OutboxRelay:Fallback] Relay triggered successfully`);
-          }
-        }).catch(error => {
-          console.error(`[OutboxRelay:Fallback] Error triggering relay:`, error);
-        });
-      });
-    } catch (error) {
-      // after() is not available - execute synchronously to prevent silent failures in serverless
-      console.warn("[OutboxRelay:Fallback] after() not available, executing synchronously");
-      
-      // SECURITY: Generate short-lived JWT for internal service-to-service communication
-      const authToken = await signServiceToken(
-        {
-          service: 'outbox-relay',
-          executionId,
-          action: 'trigger-relay',
-        },
-        '5m'
-      );
-
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${authToken}`,
-      };
-
-      if (config.traceId) {
-        headers['x-trace-id'] = config.traceId;
-      }
-      if (config.correlationId) {
-        headers['x-correlation-id'] = config.correlationId;
-      }
-
-      // Execute synchronously with timeout to prevent hanging in serverless
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
-
-      try {
-        const response = await fetch(url, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            executionId,
-            timestamp: new Date().toISOString(),
-          }),
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-          throw new Error(
-            `[OutboxRelay:Fallback] Failed to trigger relay: ${response.status} ${response.statusText}`
-          );
-        }
-        
-        console.log(`[OutboxRelay:Fallback] Relay triggered successfully`);
-      } catch (fetchError) {
-        clearTimeout(timeoutId);
-        // Re-throw to prevent silent failures
-        throw new Error(
-          `[OutboxRelay:Fallback] Error triggering relay: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`
-        );
-      }
+    if (config.traceId) {
+      headers["x-trace-id"] = config.traceId;
     }
+    if (config.correlationId) {
+      headers["x-correlation-id"] = config.correlationId;
+    }
+
+    // Fire-and-forget: execute asynchronously without awaiting
+    // This avoids blocking the response while still triggering the relay
+    fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        executionId,
+        timestamp: new Date().toISOString(),
+      }),
+    })
+      .then((response) => {
+        if (!response.ok) {
+          console.error(
+            `[OutboxRelay:Fallback] Failed to trigger relay: ${response.status} ${response.statusText}`,
+          );
+        } else {
+          console.log(`[OutboxRelay:Fallback] Relay triggered successfully`);
+        }
+      })
+      .catch((error) => {
+        console.error(`[OutboxRelay:Fallback] Error triggering relay:`, error);
+      });
   }
 
   /**
@@ -336,12 +287,12 @@ export async function publishToQStash(options: {
   headers?: Record<string, string>;
 }): Promise<string | null> {
   // Import dynamically to avoid circular dependencies
-  const { Client } = await import('@upstash/qstash');
+  const { Client } = await import("@upstash/qstash");
 
   const token = process.env.QSTASH_TOKEN || process.env.UPSTASH_QSTASH_TOKEN;
 
   if (!token) {
-    console.warn('[publishToQStash] QStash token not configured');
+    console.warn("[publishToQStash] QStash token not configured");
     return null;
   }
 
@@ -350,20 +301,23 @@ export async function publishToQStash(options: {
   try {
     const result = await client.publish({
       url: options.url,
-      body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body),
-      headers: options.headers || { 'Content-Type': 'application/json' },
+      body:
+        typeof options.body === "string"
+          ? options.body
+          : JSON.stringify(options.body),
+      headers: options.headers || { "Content-Type": "application/json" },
     });
 
-    const messageId = 'messageId' in result ? result.messageId : undefined;
+    const messageId = "messageId" in result ? result.messageId : undefined;
     return messageId || null;
   } catch (error) {
-    console.error('[publishToQStash] Failed to publish:', error);
+    console.error("[publishToQStash] Failed to publish:", error);
     throw error;
   }
 }
 
 // Auto-initialize on import if environment variables are present
-if (typeof process !== 'undefined' && typeof process.env !== 'undefined') {
+if (typeof process !== "undefined" && typeof process.env !== "undefined") {
   const internalKey = process.env.INTERNAL_SYSTEM_KEY;
   if (internalKey) {
     OutboxRelayService.initialize({ internalKey });

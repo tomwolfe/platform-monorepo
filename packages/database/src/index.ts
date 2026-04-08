@@ -244,77 +244,29 @@ export {
   type QueryOptimizationOptions,
 } from "./optimization";
 
-// Import drizzle-orm comparison functions with aliases
-import {
-  eq as drizzleEq,
-  lt as drizzleLt,
-  gt as drizzleGt,
-  gte as drizzleGte,
-  lte as drizzleLte,
-  desc as drizzleDesc,
-  and as drizzleAnd,
-  or as drizzleOr,
-  ne as drizzleNe,
-  isNull as drizzleIsNull,
-  isNotNull as drizzleIsNotNull,
-  inArray as drizzleInArray,
-  notInArray as drizzleNotInArray,
-  like as drizzleLike,
-  notLike as drizzleNotLike,
-  ilike as drizzleIlike,
-  notIlike as drizzleNotIlike,
-  exists as drizzleExists,
-  notExists as drizzleNotExists,
-  between as drizzleBetween,
-  notBetween as drizzleNotBetween,
-  type SQL,
-  type SQLWrapper,
+export {
+  eq,
+  lt,
+  gt,
+  gte,
+  lte,
+  desc,
+  and,
+  or,
+  ne,
+  isNull,
+  isNotNull,
+  inArray,
+  notInArray,
+  like,
+  notLike,
+  ilike,
+  notIlike,
+  exists,
+  notExists,
+  between,
+  notBetween,
 } from "drizzle-orm";
-
-// Type-safe wrapper functions for drizzle-orm comparison operators
-// These preserve type inference while providing a cleaner API
-export const eq = <T>(col: SQLWrapper, value: T) =>
-  drizzleEq(col, value as any);
-export const lt = <T>(col: SQLWrapper, value: T) =>
-  drizzleLt(col, value as any);
-export const gt = <T>(col: SQLWrapper, value: T) =>
-  drizzleGt(col, value as any);
-export const gte = <T>(col: SQLWrapper, value: T) =>
-  drizzleGte(col, value as any);
-export const lte = <T>(col: SQLWrapper, value: T) =>
-  drizzleLte(col, value as any);
-export const desc = <T>(col: SQLWrapper) => drizzleDesc(col);
-export const and = (
-  ...conditions: Array<SQL | SQLWrapper | undefined | null | false>
-) => drizzleAnd(conditions as any);
-export const or = (
-  ...conditions: Array<SQL | SQLWrapper | undefined | null | false>
-) => drizzleOr(conditions as any);
-export const ne = <T>(col: SQLWrapper, value: T) =>
-  drizzleNe(col, value as any);
-export const isNull = (col: SQLWrapper) => drizzleIsNull(col);
-export const isNotNull = (col: SQLWrapper) => drizzleIsNotNull(col);
-export const inArray = <T>(
-  col: SQLWrapper,
-  values: readonly T[] | SQLWrapper,
-) => drizzleInArray(col, values as any);
-export const notInArray = <T>(
-  col: SQLWrapper,
-  values: readonly T[] | SQLWrapper,
-) => drizzleNotInArray(col, values as any);
-export const like = (col: SQLWrapper, value: string) => drizzleLike(col, value);
-export const notLike = (col: SQLWrapper, value: string) =>
-  drizzleNotLike(col, value);
-export const ilike = (col: SQLWrapper, value: string) =>
-  drizzleIlike(col, value);
-export const notIlike = (col: SQLWrapper, value: string) =>
-  drizzleNotIlike(col, value);
-export const exists = (subquery: SQL) => drizzleExists(subquery);
-export const notExists = (subquery: SQL) => drizzleNotExists(subquery);
-export const between = <T>(col: SQLWrapper, min: T, max: T) =>
-  drizzleBetween(col, min as any, max as any);
-export const notBetween = <T>(col: SQLWrapper, min: T, max: T) =>
-  drizzleNotBetween(col, min as any, max as any);
 
 // ============================================================================
 // WEB3 PAYMENT TYPES

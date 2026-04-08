@@ -8,6 +8,7 @@ import {
   eq,
   sql,
   and,
+  inArray,
 } from "@repo/database";
 import { parseEther, formatEther, type Address } from "viem";
 import { base } from "viem/chains";
@@ -81,12 +82,11 @@ async function getCronHandler(req: NextRequest) {
         count: orphanedPayouts.length,
       });
 
-      for (const order of orphanedPayouts) {
-        await getDb()
-          .update(orders)
-          .set({ escrowStatus: "locked", payoutProcessedAt: null })
-          .where(eq(orders.id, order.id));
-      }
+      const orphanedIds = orphanedPayouts.map((o) => o.id);
+      await getDb()
+        .update(orders)
+        .set({ escrowStatus: "locked", payoutProcessedAt: null })
+        .where(inArray(orders.id, orphanedIds));
 
       logger.info({
         message: "Successfully recovered orphaned payouts",

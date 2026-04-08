@@ -4,7 +4,7 @@ import {
   tool,
   stepCountIs,
   convertToModelMessages,
-  type CoreMessage,
+  type ModelMessage,
 } from "ai";
 import { z } from "zod";
 import { getToolCapabilitiesPrompt } from "@/lib/tools/registry";
@@ -229,9 +229,9 @@ function buildLiveStateContext(
 }
 
 /**
- * Extract user text from core messages
+ * Extract user text from model messages
  */
-function extractUserText(coreMessages: CoreMessage[]): string {
+function extractUserText(coreMessages: ModelMessage[]): string {
   const lastUserMessage = [...coreMessages]
     .reverse()
     .find((m) => m.role === "user");

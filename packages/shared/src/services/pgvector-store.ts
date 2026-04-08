@@ -38,12 +38,30 @@
  * @since 1.0.0
  */
 
-import type { Database } from '../types/database';
-import { eq, and, gte, lte, sql, desc, type SQL } from 'drizzle-orm';
-import type { VectorStore, VectorEntry, VectorSearchQuery, VectorSearchResult } from './vector-store';
+import type { Database } from "../types/database";
+import { eq, and, gte, lte, sql, desc, type SQL } from "drizzle-orm";
+import type {
+  VectorStore,
+  VectorEntry,
+  VectorSearchQuery,
+  VectorSearchResult,
+} from "./vector-store";
 
 // Import table reference and cosineSimilarity from database package
-import { semanticMemories, cosineSimilarity } from '@repo/database';
+import {
+  semanticMemories,
+  cosineSimilarity,
+  type SemanticMemory,
+} from "@repo/database";
+
+// Type-safe column references for use in queries
+const columns = {
+  id: semanticMemories.id,
+  userId: semanticMemories.userId,
+  intentType: semanticMemories.intentType,
+  restaurantId: semanticMemories.restaurantId,
+  embedding: semanticMemories.embedding,
+} as const;
 
 // ============================================================================
 // PGVECTOR STORE IMPLEMENTATION
@@ -104,30 +122,33 @@ export class PGVectorStore implements VectorStore {
     // Validate embedding dimensions
     if (entry.embedding.length !== this.config.dimensions) {
       throw new Error(
-        `Embedding dimension mismatch: expected ${this.config.dimensions}, got ${entry.embedding.length}`
+        `Embedding dimension mismatch: expected ${this.config.dimensions}, got ${entry.embedding.length}`,
       );
     }
 
     // Insert into database
-    const inserted = await this.db.insert(semanticMemories).values({
-      id,
-      userId: entry.userId,
-      intentType: entry.intentType,
-      rawText: entry.rawText,
-      embedding: entry.embedding,
-      parameters: entry.parameters,
-      timestamp: new Date(entry.timestamp),
-      executionId: entry.executionId,
-      restaurantId: entry.restaurantId,
-      restaurantSlug: entry.restaurantSlug,
-      restaurantName: entry.restaurantName,
-      outcome: entry.outcome,
-      metadata: entry.metadata,
-    }).returning();
+    const inserted = await this.db
+      .insert(semanticMemories)
+      .values({
+        id,
+        userId: entry.userId,
+        intentType: entry.intentType,
+        rawText: entry.rawText,
+        embedding: entry.embedding,
+        parameters: entry.parameters,
+        timestamp: new Date(entry.timestamp),
+        executionId: entry.executionId,
+        restaurantId: entry.restaurantId,
+        restaurantSlug: entry.restaurantSlug,
+        restaurantName: entry.restaurantName,
+        outcome: entry.outcome,
+        metadata: entry.metadata,
+      })
+      .returning();
 
     console.log(
       `[PGVectorStore] Added vector ${id} for user ${entry.userId} ` +
-      `(${entry.intentType})`
+        `(${entry.intentType})`,
     );
 
     return id;
@@ -149,29 +170,29 @@ export class PGVectorStore implements VectorStore {
     // Validate query vector dimensions
     if (queryVector.length !== this.config.dimensions) {
       throw new Error(
-        `Query vector dimension mismatch: expected ${this.config.dimensions}, got ${queryVector.length}`
+        `Query vector dimension mismatch: expected ${this.config.dimensions}, got ${queryVector.length}`,
       );
     }
 
     // Build filter conditions
-    const conditions = [];
+    const conditions: SQL[] = [];
 
     if (userId) {
-      conditions.push(eq(semanticMemories.userId as any, userId));
+      conditions.push(eq(columns.userId, userId));
     }
 
     if (filter) {
       // Add metadata filters
       if (filter.intentType) {
-        conditions.push(eq(semanticMemories.intentType as any, filter.intentType as string));
+        conditions.push(eq(columns.intentType, filter.intentType));
       }
       if (filter.restaurantId) {
-        conditions.push(eq(semanticMemories.restaurantId as any, filter.restaurantId as string));
+        conditions.push(eq(columns.restaurantId, filter.restaurantId));
       }
     }
 
     // Build similarity computation
-    const similarityExpr = cosineSimilarity(semanticMemories.embedding, queryVector);
+    const similarityExpr = cosineSimilarity(columns.embedding, queryVector);
 
     // Execute query
     const results = await this.db
@@ -183,30 +204,38 @@ export class PGVectorStore implements VectorStore {
       .where(
         conditions.length > 0
           ? and(...conditions, sql`${similarityExpr} >= ${minScore}`)
-          : sql`${similarityExpr} >= ${minScore}`
+          : sql`${similarityExpr} >= ${minScore}`,
       )
-      .orderBy(desc(similarityExpr as any))
+      .orderBy(desc(similarityExpr))
       .limit(limit);
 
     // Convert to VectorSearchResult format
-    return results.map((result: { entry: typeof semanticMemories.$inferSelect; similarity: number }, index: number) => ({
-      id: result.entry.id,
-      score: result.similarity,
-      metadata: {
-        userId: result.entry.userId,
-        intentType: result.entry.intentType,
-        rawText: result.entry.rawText,
-        parameters: result.entry.parameters,
-        timestamp: result.entry.timestamp.toISOString(),
-        executionId: result.entry.executionId,
-        restaurantId: result.entry.restaurantId,
-        restaurantSlug: result.entry.restaurantSlug,
-        restaurantName: result.entry.restaurantName,
-        outcome: result.entry.outcome,
-        metadata: result.entry.metadata,
-      },
-      rank: index + 1,
-    }));
+    return results.map(
+      (
+        result: {
+          entry: typeof semanticMemories.$inferSelect;
+          similarity: number;
+        },
+        index: number,
+      ) => ({
+        id: result.entry.id,
+        score: result.similarity,
+        metadata: {
+          userId: result.entry.userId,
+          intentType: result.entry.intentType,
+          rawText: result.entry.rawText,
+          parameters: result.entry.parameters,
+          timestamp: result.entry.timestamp.toISOString(),
+          executionId: result.entry.executionId,
+          restaurantId: result.entry.restaurantId,
+          restaurantSlug: result.entry.restaurantSlug,
+          restaurantName: result.entry.restaurantName,
+          outcome: result.entry.outcome,
+          metadata: result.entry.metadata,
+        },
+        rank: index + 1,
+      }),
+    );
   }
 
   /**
@@ -216,20 +245,20 @@ export class PGVectorStore implements VectorStore {
     const results = await this.db
       .select()
       .from(semanticMemories)
-      .where(eq(semanticMemories.id as any, id))
+      .where(eq(columns.id, id))
       .limit(1);
 
     if (results.length === 0) return null;
 
-    const entry = results[0];
+    const entry: SemanticMemory = results[0];
 
     return {
       id: entry.id,
       userId: entry.userId,
       intentType: entry.intentType,
       rawText: entry.rawText,
-      embedding: entry.embedding as unknown as number[],
-      parameters: entry.parameters as Record<string, unknown> | undefined,
+      embedding: entry.embedding,
+      parameters: entry.parameters,
       timestamp: entry.timestamp.toISOString(),
       executionId: entry.executionId,
       restaurantId: entry.restaurantId,
@@ -246,7 +275,7 @@ export class PGVectorStore implements VectorStore {
   async deleteVector(id: string): Promise<boolean> {
     const result = await this.db
       .delete(semanticMemories)
-      .where(eq(semanticMemories.id as any, id));
+      .where(eq(columns.id, id));
 
     const deleted = result.rowCount || 0;
     console.log(`[PGVectorStore] Deleted vector ${id} (${deleted} rows)`);
@@ -259,10 +288,12 @@ export class PGVectorStore implements VectorStore {
   async deleteByUserId(userId: string): Promise<number> {
     const result = await this.db
       .delete(semanticMemories)
-      .where(eq(semanticMemories.userId as any, userId));
+      .where(eq(columns.userId, userId));
 
     const deleted = result.rowCount || 0;
-    console.log(`[PGVectorStore] Deleted ${deleted} vectors for user ${userId}`);
+    console.log(
+      `[PGVectorStore] Deleted ${deleted} vectors for user ${userId}`,
+    );
     return deleted;
   }
 
@@ -271,17 +302,19 @@ export class PGVectorStore implements VectorStore {
    */
   async updateMetadata(
     id: string,
-    metadata: Record<string, unknown>
+    metadata: Record<string, unknown>,
   ): Promise<boolean> {
     const result = await this.db
       .update(semanticMemories)
       .set({
         metadata,
       })
-      .where(eq(semanticMemories.id as any, id));
+      .where(eq(columns.id, id));
 
     const updated = result.rowCount || 0;
-    console.log(`[PGVectorStore] Updated metadata for vector ${id} (${updated} rows)`);
+    console.log(
+      `[PGVectorStore] Updated metadata for vector ${id} (${updated} rows)`,
+    );
     return updated > 0;
   }
 
@@ -307,14 +340,14 @@ export class PGVectorStore implements VectorStore {
 
     // Get unique users
     const usersResult = await this.db
-      .select({ count: sql<number>`count(distinct ${semanticMemories.userId as any})` })
+      .select({ count: sql<number>`count(distinct ${columns.userId})` })
       .from(semanticMemories);
 
     const uniqueUsers = usersResult[0]?.count || 0;
 
     // Get unique restaurants
     const restaurantsResult = await this.db
-      .select({ count: sql<number>`count(distinct ${semanticMemories.restaurantId as any})` })
+      .select({ count: sql<number>`count(distinct ${columns.restaurantId})` })
       .from(semanticMemories);
 
     const uniqueRestaurants = restaurantsResult[0]?.count || 0;
@@ -344,13 +377,13 @@ export class PGVectorStore implements VectorStore {
     for (let i = 0; i < entries.length; i += batchSize) {
       const batch = entries.slice(i, i + batchSize);
 
-      const values = batch.map(entry => {
+      const values = batch.map((entry) => {
         const id = crypto.randomUUID();
         ids.push(id);
 
         if (entry.embedding.length !== this.config.dimensions) {
           throw new Error(
-            `Embedding dimension mismatch: expected ${this.config.dimensions}, got ${entry.embedding.length}`
+            `Embedding dimension mismatch: expected ${this.config.dimensions}, got ${entry.embedding.length}`,
           );
         }
 
@@ -374,7 +407,7 @@ export class PGVectorStore implements VectorStore {
       await this.db.insert(semanticMemories).values(values);
 
       console.log(
-        `[PGVectorStore] Batch inserted ${batch.length} vectors (${i + batch.length}/${entries.length})`
+        `[PGVectorStore] Batch inserted ${batch.length} vectors (${i + batch.length}/${entries.length})`,
       );
     }
 
@@ -397,6 +430,9 @@ export class PGVectorStore implements VectorStore {
 // Create PGVector store instance - requires db instance
 // ============================================================================
 
-export function createPGVectorStore(db: Database, config?: PGVectorStoreConfig): PGVectorStore {
+export function createPGVectorStore(
+  db: Database,
+  config?: PGVectorStoreConfig,
+): PGVectorStore {
   return new PGVectorStore(db, config);
 }

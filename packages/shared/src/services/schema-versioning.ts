@@ -19,7 +19,11 @@
 import { z } from "zod";
 import { Redis } from "@upstash/redis";
 import { getRedisClient, ServiceNamespace } from "../redis";
-import { generateSchemaHash, AllToolsMap, getTypedToolEntry } from "@repo/mcp-protocol";
+import {
+  generateSchemaHash,
+  AllToolsMap,
+  getTypedToolEntry,
+} from "@repo/mcp-protocol";
 
 // ============================================================================
 // SCHEMAS
@@ -52,7 +56,9 @@ export const SchemaVersioningMetadataSchema = z.object({
   capturedAt: z.string().datetime(),
 });
 
-export type SchemaVersioningMetadata = z.infer<typeof SchemaVersioningMetadataSchema>;
+export type SchemaVersioningMetadata = z.infer<
+  typeof SchemaVersioningMetadataSchema
+>;
 
 /**
  * Schema drift detection result
@@ -60,12 +66,14 @@ export type SchemaVersioningMetadata = z.infer<typeof SchemaVersioningMetadataSc
  */
 export const SchemaDriftResultSchema = z.object({
   hasDrift: z.boolean(),
-  driftedTools: z.array(z.object({
-    toolName: z.string(),
-    oldHash: z.string(),
-    newHash: z.string(),
-    severity: z.enum(["minor", "major", "breaking"]),
-  })),
+  driftedTools: z.array(
+    z.object({
+      toolName: z.string(),
+      oldHash: z.string(),
+      newHash: z.string(),
+      severity: z.enum(["minor", "major", "breaking"]),
+    }),
+  ),
   hasOrchestratorDrift: z.boolean(),
   oldOrchestratorSha: z.string().optional(),
   newOrchestratorSha: z.string().optional(),
@@ -97,7 +105,7 @@ export type ParameterMapping = z.infer<typeof ParameterMappingSchema>;
 // ============================================================================
 
 export interface SchemaVersioningConfig {
-  redis: Redis;
+  redis: Redis | null;
   // TTL for version records (default: 24 hours)
   versionTtlSeconds?: number;
   // Index name prefix
@@ -105,7 +113,7 @@ export interface SchemaVersioningConfig {
 }
 
 const DEFAULT_CONFIG: Required<SchemaVersioningConfig> = {
-  redis: null as any, // Must be provided
+  redis: null,
   versionTtlSeconds: 24 * 60 * 60, // 24 hours
   indexPrefix: "schema_versioning",
 };
@@ -129,20 +137,24 @@ export class SchemaVersioningService {
     // In Vercel: VERCEL_GIT_COMMIT_SHA
     // In GitHub Actions: GITHUB_SHA
     // Fallback to timestamp for local development
-    return process.env.VERCEL_GIT_COMMIT_SHA 
-      || process.env.GITHUB_SHA 
-      || process.env.SCHEMA_REGISTRY_VERSION 
-      || `v${Date.now()}`;
+    return (
+      process.env.VERCEL_GIT_COMMIT_SHA ||
+      process.env.GITHUB_SHA ||
+      process.env.SCHEMA_REGISTRY_VERSION ||
+      `v${Date.now()}`
+    );
   }
 
   /**
    * Get current git commit SHA for logic pinning
    */
   private getGitCommitSha(): string {
-    return process.env.VERCEL_GIT_COMMIT_SHA 
-      || process.env.GITHUB_SHA 
-      || process.env.GIT_COMMIT_SHA 
-      || 'unknown';
+    return (
+      process.env.VERCEL_GIT_COMMIT_SHA ||
+      process.env.GITHUB_SHA ||
+      process.env.GIT_COMMIT_SHA ||
+      "unknown"
+    );
   }
 
   // ========================================================================
@@ -169,7 +181,9 @@ export class SchemaVersioningService {
    * Capture the current schema version for a tool
    * Called when a checkpoint is created
    */
-  async captureToolVersion(toolName: string): Promise<ToolVersionRecord | null> {
+  async captureToolVersion(
+    toolName: string,
+  ): Promise<ToolVersionRecord | null> {
     const tool = getTypedToolEntry(toolName as keyof AllToolsMap);
     if (!tool) {
       console.warn(`[SchemaVersioning] Unknown tool: ${toolName}`);
@@ -192,7 +206,7 @@ export class SchemaVersioningService {
     await this.config.redis.setex(
       versionKey,
       this.config.versionTtlSeconds,
-      JSON.stringify(versionRecord)
+      JSON.stringify(versionRecord),
     );
 
     // Add to version history (sorted set for timeline)
@@ -206,7 +220,7 @@ export class SchemaVersioningService {
     await this.config.redis.zremrangebyrank(historyKey, 0, -11);
 
     console.log(
-      `[SchemaVersioning] Captured version for ${toolName}: ${schemaHash} (${this.currentRegistryVersion})`
+      `[SchemaVersioning] Captured version for ${toolName}: ${schemaHash} (${this.currentRegistryVersion})`,
     );
 
     return versionRecord;
@@ -222,11 +236,14 @@ export class SchemaVersioningService {
     if (!versionData) return null;
 
     try {
-      return typeof versionData === 'string'
+      return typeof versionData === "string"
         ? JSON.parse(versionData)
         : versionData;
     } catch (error) {
-      console.error(`[SchemaVersioning] Failed to parse version for ${toolName}:`, error);
+      console.error(
+        `[SchemaVersioning] Failed to parse version for ${toolName}:`,
+        error,
+      );
       return null;
     }
   }
@@ -234,22 +251,30 @@ export class SchemaVersioningService {
   /**
    * Get version history for a tool
    */
-  async getVersionHistory(toolName: string, limit: number = 10): Promise<ToolVersionRecord[]> {
+  async getVersionHistory(
+    toolName: string,
+    limit: number = 10,
+  ): Promise<ToolVersionRecord[]> {
     const historyKey = this.buildHistoryKey(toolName);
-    const historyData = await this.config.redis.zrange(
+    const historyData = (await this.config.redis.zrange(
       historyKey,
       -limit,
-      -1
-    ) as string[];
+      -1,
+    )) as string[];
 
-    return historyData.map(data => {
-      try {
-        return typeof data === 'string' ? JSON.parse(data) : data;
-      } catch (error) {
-        console.warn(`[SchemaVersioning] Failed to parse history entry:`, error);
-        return null;
-      }
-    }).filter((v): v is ToolVersionRecord => v !== null);
+    return historyData
+      .map((data) => {
+        try {
+          return typeof data === "string" ? JSON.parse(data) : data;
+        } catch (error) {
+          console.warn(
+            `[SchemaVersioning] Failed to parse history entry:`,
+            error,
+          );
+          return null;
+        }
+      })
+      .filter((v): v is ToolVersionRecord => v !== null);
   }
 
   // ========================================================================
@@ -263,7 +288,7 @@ export class SchemaVersioningService {
    */
   async captureCheckpointMetadata(
     executionId: string,
-    toolNames: string[]
+    toolNames: string[],
   ): Promise<SchemaVersioningMetadata> {
     const toolVersions: Record<string, ToolVersionRecord> = {};
 
@@ -287,7 +312,7 @@ export class SchemaVersioningService {
     await this.config.redis.setex(
       checkpointKey,
       this.config.versionTtlSeconds,
-      JSON.stringify(metadata)
+      JSON.stringify(metadata),
     );
 
     // Register in checkpoint index for efficient cleanup
@@ -297,12 +322,15 @@ export class SchemaVersioningService {
         score: Date.now(),
       });
     } catch (err) {
-      console.warn('[SchemaVersioning] Failed to update checkpoint index:', err);
+      console.warn(
+        "[SchemaVersioning] Failed to update checkpoint index:",
+        err,
+      );
     }
 
     console.log(
       `[SchemaVersioning] Captured checkpoint metadata for ${executionId} ` +
-      `with ${Object.keys(toolVersions).length} tools (orchestrator: ${metadata.orchestratorGitSha})`
+        `with ${Object.keys(toolVersions).length} tools (orchestrator: ${metadata.orchestratorGitSha})`,
     );
 
     return metadata;
@@ -311,16 +339,21 @@ export class SchemaVersioningService {
   /**
    * Get checkpoint metadata for an execution
    */
-  async getCheckpointMetadata(executionId: string): Promise<SchemaVersioningMetadata | null> {
+  async getCheckpointMetadata(
+    executionId: string,
+  ): Promise<SchemaVersioningMetadata | null> {
     const checkpointKey = this.buildCheckpointKey(executionId);
     const metadata = await this.config.redis.get<any>(checkpointKey);
 
     if (!metadata) return null;
 
     try {
-      return typeof metadata === 'string' ? JSON.parse(metadata) : metadata;
+      return typeof metadata === "string" ? JSON.parse(metadata) : metadata;
     } catch (error) {
-      console.error(`[SchemaVersioning] Failed to parse checkpoint metadata:`, error);
+      console.error(
+        `[SchemaVersioning] Failed to parse checkpoint metadata:`,
+        error,
+      );
       return null;
     }
   }
@@ -336,7 +369,7 @@ export class SchemaVersioningService {
    */
   async detectDrift(
     executionId: string,
-    toolNames: string[]
+    toolNames: string[],
   ): Promise<SchemaDriftResult> {
     // Get checkpoint metadata
     const checkpointMetadata = await this.getCheckpointMetadata(executionId);
@@ -375,7 +408,11 @@ export class SchemaVersioningService {
         });
       } else if (checkpointVersion.schemaHash !== currentVersion.schemaHash) {
         // Schema hash changed - determine severity
-        const severity = await this.assessDriftSeverity(toolName, checkpointVersion, currentVersion);
+        const severity = await this.assessDriftSeverity(
+          toolName,
+          checkpointVersion,
+          currentVersion,
+        );
         driftedTools.push({
           toolName,
           oldHash: checkpointVersion.schemaHash,
@@ -387,29 +424,40 @@ export class SchemaVersioningService {
 
     // Check for orchestrator logic drift
     const currentGitSha = this.getGitCommitSha();
-    const hasOrchestratorDrift = !!(checkpointMetadata.orchestratorGitSha
-      && checkpointMetadata.orchestratorGitSha !== 'unknown'
-      && currentGitSha !== 'unknown'
-      && checkpointMetadata.orchestratorGitSha !== currentGitSha);
+    const hasOrchestratorDrift = !!(
+      checkpointMetadata.orchestratorGitSha &&
+      checkpointMetadata.orchestratorGitSha !== "unknown" &&
+      currentGitSha !== "unknown" &&
+      checkpointMetadata.orchestratorGitSha !== currentGitSha
+    );
 
     const hasDrift = driftedTools.length > 0 || hasOrchestratorDrift;
-    const requiresReflection = driftedTools.some(t => t.severity === "breaking" || t.severity === "major") || hasOrchestratorDrift;
+    const requiresReflection =
+      driftedTools.some(
+        (t) => t.severity === "breaking" || t.severity === "major",
+      ) || hasOrchestratorDrift;
 
     let recommendation = "No schema drift detected - safe to resume";
     if (hasDrift) {
       const reasons = [];
       if (driftedTools.length > 0) {
-        reasons.push(`Tool schema changes: ${driftedTools.map(t => t.toolName).join(", ")}`);
+        reasons.push(
+          `Tool schema changes: ${driftedTools.map((t) => t.toolName).join(", ")}`,
+        );
       }
       if (hasOrchestratorDrift) {
-        reasons.push(`Orchestrator logic change: ${checkpointMetadata.orchestratorGitSha} -> ${currentGitSha}`);
+        reasons.push(
+          `Orchestrator logic change: ${checkpointMetadata.orchestratorGitSha} -> ${currentGitSha}`,
+        );
       }
-      
+
       if (requiresReflection) {
-        recommendation = `Logic drift detected (${reasons.join("; ")}). ` +
+        recommendation =
+          `Logic drift detected (${reasons.join("; ")}). ` +
           "Trigger REFLECTING state for parameter mapping or logic re-evaluation.";
       } else {
-        recommendation = `Minor drift detected (${reasons.join("; ")}). ` +
+        recommendation =
+          `Minor drift detected (${reasons.join("; ")}). ` +
           "Can resume with caution - monitor for errors.";
       }
     }
@@ -431,13 +479,14 @@ export class SchemaVersioningService {
   private async assessDriftSeverity(
     toolName: string,
     oldVersion: ToolVersionRecord,
-    newVersion: ToolVersionRecord
+    newVersion: ToolVersionRecord,
   ): Promise<"minor" | "major" | "breaking"> {
     const tool = getTypedToolEntry(toolName as keyof AllToolsMap);
     if (!tool) return "breaking";
 
     // Get old and new schema shapes
-    const oldShape = "shape" in tool.schema ? Object.keys(tool.schema.shape as object) : [];
+    const oldShape =
+      "shape" in tool.schema ? Object.keys(tool.schema.shape as object) : [];
 
     // For now, use a simple heuristic:
     // - If required fields changed: breaking
@@ -447,10 +496,11 @@ export class SchemaVersioningService {
     // In production, you'd compare the actual Zod schemas in detail
     // This is a simplified version
 
-    const newShape = "shape" in tool.schema ? Object.keys(tool.schema.shape as object) : [];
+    const newShape =
+      "shape" in tool.schema ? Object.keys(tool.schema.shape as object) : [];
 
-    const addedFields = newShape.filter(f => !oldShape.includes(f));
-    const removedFields = oldShape.filter(f => !newShape.includes(f));
+    const addedFields = newShape.filter((f) => !oldShape.includes(f));
+    const removedFields = oldShape.filter((f) => !newShape.includes(f));
 
     if (removedFields.length > 0) {
       // Removing fields is potentially breaking
@@ -476,18 +526,20 @@ export class SchemaVersioningService {
   async generateParameterMapping(
     toolName: string,
     oldCheckpointVersion: ToolVersionRecord,
-    newCurrentVersion: ToolVersionRecord
+    newCurrentVersion: ToolVersionRecord,
   ): Promise<ParameterMapping | null> {
     const tool = getTypedToolEntry(toolName as keyof AllToolsMap);
     if (!tool) return null;
 
     // Get current schema fields
-    const currentShape = "shape" in tool.schema ? Object.keys(tool.schema.shape as object) : [];
-    const oldShape = Object.keys(oldCheckpointVersion.schemaHash)
-      .filter(k => k !== 'schemaHash' && k !== 'version' && k !== 'capturedAt');
+    const currentShape =
+      "shape" in tool.schema ? Object.keys(tool.schema.shape as object) : [];
+    const oldShape = Object.keys(oldCheckpointVersion.schemaHash).filter(
+      (k) => k !== "schemaHash" && k !== "version" && k !== "capturedAt",
+    );
 
-    const removedFields = oldShape.filter(f => !currentShape.includes(f));
-    const addedFields = currentShape.filter(f => !oldShape.includes(f));
+    const removedFields = oldShape.filter((f) => !currentShape.includes(f));
+    const addedFields = currentShape.filter((f) => !oldShape.includes(f));
 
     // Generate field mappings (simple heuristic - in production, use LLM)
     const fieldMappings: Record<string, string> = {};
@@ -508,7 +560,10 @@ export class SchemaVersioningService {
       fieldMappings,
       removedFields,
       addedFields,
-      transformationHints: this.generateTransformationHints(removedFields, addedFields),
+      transformationHints: this.generateTransformationHints(
+        removedFields,
+        addedFields,
+      ),
     };
   }
 
@@ -517,17 +572,18 @@ export class SchemaVersioningService {
    */
   private generateTransformationHints(
     removedFields: string[],
-    addedFields: string[]
+    addedFields: string[],
   ): Record<string, string> {
     const hints: Record<string, string> = {};
 
     // Common transformation patterns
     for (const field of addedFields) {
-      if (field.endsWith('_at') || field.endsWith('At')) {
+      if (field.endsWith("_at") || field.endsWith("At")) {
         hints[field] = "Use current timestamp (new Date().toISOString())";
-      } else if (field.endsWith('_id') || field.endsWith('Id')) {
-        hints[field] = "Use UUID from context or generate with crypto.randomUUID()";
-      } else if (field === 'metadata' || field === 'options') {
+      } else if (field.endsWith("_id") || field.endsWith("Id")) {
+        hints[field] =
+          "Use UUID from context or generate with crypto.randomUUID()";
+      } else if (field === "metadata" || field === "options") {
         hints[field] = "Use empty object {} as default";
       }
     }
@@ -569,7 +625,7 @@ export class SchemaVersioningService {
           matrix[i][j] = Math.min(
             matrix[i - 1][j - 1] + 1,
             matrix[i][j - 1] + 1,
-            matrix[i - 1][j] + 1
+            matrix[i - 1][j] + 1,
           );
         }
       }
@@ -587,7 +643,11 @@ export class SchemaVersioningService {
    */
   async cleanupExpiredCheckpoints(): Promise<number> {
     // Get all checkpoint IDs from the sorted set index
-    const checkpointIds = await this.config.redis.zrange(this.checkpointIndexKey, 0, -1);
+    const checkpointIds = await this.config.redis.zrange(
+      this.checkpointIndexKey,
+      0,
+      -1,
+    );
     if (!checkpointIds || checkpointIds.length === 0) {
       return 0;
     }
@@ -603,7 +663,9 @@ export class SchemaVersioningService {
       }
     }
 
-    console.log(`[SchemaVersioning] Cleaned up ${deletedCount} expired checkpoints`);
+    console.log(
+      `[SchemaVersioning] Cleaned up ${deletedCount} expired checkpoints`,
+    );
     return deletedCount;
   }
 }

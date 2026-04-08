@@ -3,7 +3,7 @@ module.exports = {
   rules: {
     "@next/next/no-html-link-for-pages": "off",
     "@typescript-eslint/no-unused-vars": "warn",
-    "@typescript-eslint/no-explicit-any": "off",
+    "@typescript-eslint/no-explicit-any": "error",
     "react-hooks/exhaustive-deps": "warn",
   },
 };

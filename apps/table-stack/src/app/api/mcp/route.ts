@@ -1,15 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOLS } from "@repo/mcp-protocol";
-import { getDb, restaurants, restaurantTables, restaurantReservations, eq, gte, or, and } from "@repo/database";
-import { sql } from 'drizzle-orm';
-import { addMinutes, parseISO } from 'date-fns';
-import { toZonedTime, format } from 'date-fns-tz';
-import { createMcpServerRoutes, createResponse } from "@repo/mcp-protocol/server";
+import {
+  getDb,
+  restaurants,
+  restaurantTables,
+  restaurantReservations,
+  eq,
+  gte,
+  or,
+  and,
+} from "@repo/database";
+import { sql } from "drizzle-orm";
+import { addMinutes, parseISO } from "date-fns";
+import { toZonedTime, format } from "date-fns-tz";
+import {
+  createMcpServerRoutes,
+  createResponse,
+} from "@repo/mcp-protocol/server";
 import { randomUUID } from "crypto";
 import { Logger } from "@repo/shared";
 
-const logger = new Logger({ serviceName: 'table-stack' });
+const logger = new Logger({ serviceName: "table-stack" });
 
 // Create a singleton server instance
 const server = new McpServer({
@@ -18,13 +30,16 @@ const server = new McpServer({
 });
 
 async function getAvailableTables(
-  restaurantId: string, 
-  startTime: Date, 
-  partySize: number, 
+  restaurantId: string,
+  startTime: Date,
+  partySize: number,
   duration: number,
-  traceId: string
+  traceId: string,
 ) {
-  logger.info(`Getting available tables for restaurant ${restaurantId}`, { restaurantId, traceId });
+  logger.info(`Getting available tables for restaurant ${restaurantId}`, {
+    restaurantId,
+    traceId,
+  });
   const endTime = addMinutes(startTime, duration);
 
   const occupiedTableIdsResult = await db
@@ -34,17 +49,22 @@ async function getAvailableTables(
       and(
         eq(restaurantReservations.restaurantId, restaurantId),
         or(
-          eq(restaurantReservations.status, 'confirmed'),
+          eq(restaurantReservations.status, "confirmed"),
           and(
             eq(restaurantReservations.isVerified, false),
-            gte(restaurantReservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
-          )
+            gte(
+              restaurantReservations.createdAt,
+              new Date(Date.now() - 15 * 60 * 1000),
+            ),
+          ),
         ),
-        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(startTime.toISOString())}::timestamptz, ${sql.placeholder(endTime.toISOString())}::timestamptz)`
-      )
+        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(startTime.toISOString())}::timestamptz, ${sql.placeholder(endTime.toISOString())}::timestamptz)`,
+      ),
     );
 
-  const occupiedTableIds = occupiedTableIdsResult.map((r: any) => r.tableId).filter(Boolean) as string[];
+  const occupiedTableIds = occupiedTableIdsResult
+    .map((r: any) => r.tableId)
+    .filter(Boolean) as string[];
 
   const occupiedCombinedTableIdsResult = await db
     .select({ combinedTableIds: restaurantReservations.combinedTableIds })
@@ -53,14 +73,17 @@ async function getAvailableTables(
       and(
         eq(restaurantReservations.restaurantId, restaurantId),
         or(
-          eq(restaurantReservations.status, 'confirmed'),
+          eq(restaurantReservations.status, "confirmed"),
           and(
             eq(restaurantReservations.isVerified, false),
-            gte(restaurantReservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
-          )
+            gte(
+              restaurantReservations.createdAt,
+              new Date(Date.now() - 15 * 60 * 1000),
+            ),
+          ),
         ),
-        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(startTime.toISOString())}::timestamptz, ${sql.placeholder(endTime.toISOString())}::timestamptz)`
-      )
+        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(startTime.toISOString())}::timestamptz, ${sql.placeholder(endTime.toISOString())}::timestamptz)`,
+      ),
     );
 
   occupiedCombinedTableIdsResult.forEach((r: any) => {
@@ -76,20 +99,25 @@ async function getAvailableTables(
       and(
         eq(restaurantTables.restaurantId, restaurantId),
         eq(restaurantTables.isActive, true),
-        eq(restaurantTables.status, 'vacant')
-      )
+        eq(restaurantTables.status, "vacant"),
+      ),
     );
 
-  const availableIndividualTables = allTables.filter((t: any) => 
-    !occupiedTableIds.includes(t.id) && t.maxCapacity >= partySize
+  const availableIndividualTables = allTables.filter(
+    (t: any) => !occupiedTableIds.includes(t.id) && t.maxCapacity >= partySize,
   );
 
   if (availableIndividualTables.length > 0) {
-    return availableIndividualTables.map((t: any) => ({ ...t, isCombined: false }));
+    return availableIndividualTables.map((t: any) => ({
+      ...t,
+      isCombined: false,
+    }));
   }
 
   // OPTIMIZATION: Only attempt combinations when individual tables are insufficient
-  const vacantTables = allTables.filter((t: any) => !occupiedTableIds.includes(t.id));
+  const vacantTables = allTables.filter(
+    (t: any) => !occupiedTableIds.includes(t.id),
+  );
   const suggestedCombos: any[] = [];
 
   // Circuit breaker: limit combinations to prevent O(N^2) event-loop blocking
@@ -98,15 +126,17 @@ async function getAvailableTables(
 
   // PERFORMANCE OPTIMIZATION: Pre-filter and early-exit to avoid wasteful comparisons
   // 1. Find the largest table capacity to filter impossible combinations
-  const MAX_KNOWN_TABLE_CAPACITY = vacantTables.length > 0
-    ? Math.max(...vacantTables.map(t => t.maxCapacity))
-    : 0;
+  const MAX_KNOWN_TABLE_CAPACITY =
+    vacantTables.length > 0
+      ? Math.max(...vacantTables.map((t) => t.maxCapacity))
+      : 0;
 
   // 2. Pre-filter: exclude tables that cannot possibly satisfy partySize even when combined
-  const feasibleTables = vacantTables.filter(t => t.maxCapacity + MAX_KNOWN_TABLE_CAPACITY >= partySize);
+  const feasibleTables = vacantTables.filter(
+    (t) => t.maxCapacity + MAX_KNOWN_TABLE_CAPACITY >= partySize,
+  );
 
-  comboSearch:
-  for (let i = 0; i < feasibleTables.length; i++) {
+  comboSearch: for (let i = 0; i < feasibleTables.length; i++) {
     const t1 = feasibleTables[i];
     if (!t1) continue;
 
@@ -124,7 +154,7 @@ async function getAvailableTables(
 
       const distance = Math.sqrt(
         Math.pow((t1.xPos || 0) - (t2.xPos || 0), 2) +
-        Math.pow((t1.yPos || 0) - (t2.yPos || 0), 2)
+          Math.pow((t1.yPos || 0) - (t2.yPos || 0), 2),
       );
 
       if (distance < 120) {
@@ -152,7 +182,7 @@ server.tool(
   TOOLS.tableStack.getAvailability.schema.shape,
   async ({ restaurantId, date, partySize }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
-    
+
     const restaurant = await getDb().query.restaurants.findFirst({
       where: eq(restaurants.id, restaurantId),
     });
@@ -162,29 +192,49 @@ server.tool(
     }
 
     const requestedDate = parseISO(date);
-    const timezone = restaurant.timezone || 'UTC';
+    const timezone = restaurant.timezone || "UTC";
     const restaurantTime = toZonedTime(requestedDate, timezone);
-    
-    const dayOfWeek = format(restaurantTime, 'eeee', { timeZone: timezone }).toLowerCase();
-    const openDays = restaurant.daysOpen?.split(',').map((d: string) => d.trim().toLowerCase()) || [];
-    
+
+    const dayOfWeek = format(restaurantTime, "eeee", {
+      timeZone: timezone,
+    }).toLowerCase();
+    const openDays =
+      restaurant.daysOpen
+        ?.split(",")
+        .map((d: string) => d.trim().toLowerCase()) || [];
+
     if (!openDays.includes(dayOfWeek)) {
-      return createResponse({ 
-        message: 'Restaurant is closed on this day', 
-        availableTables: [] 
-      }, traceId);
+      return createResponse(
+        {
+          message: "Restaurant is closed on this day",
+          availableTables: [],
+        },
+        traceId,
+      );
     }
 
-    const timeStr = format(restaurantTime, 'HH:mm', { timeZone: timezone });
-    if (timeStr < (restaurant.openingTime || '00:00') || timeStr > (restaurant.closingTime || '23:59')) {
-      return createResponse({ 
-        message: 'Restaurant is closed at this time', 
-        availableTables: [] 
-      }, traceId);
+    const timeStr = format(restaurantTime, "HH:mm", { timeZone: timezone });
+    if (
+      timeStr < (restaurant.openingTime || "00:00") ||
+      timeStr > (restaurant.closingTime || "23:59")
+    ) {
+      return createResponse(
+        {
+          message: "Restaurant is closed at this time",
+          availableTables: [],
+        },
+        traceId,
+      );
     }
 
     const duration = restaurant.defaultDurationMinutes || 90;
-    const availableTables = await getAvailableTables(restaurantId, requestedDate, partySize, duration, traceId);
+    const availableTables = await getAvailableTables(
+      restaurantId,
+      requestedDate,
+      partySize,
+      duration,
+      traceId,
+    );
 
     const suggestedSlots: any[] = [];
     if (availableTables.length === 0) {
@@ -192,13 +242,24 @@ server.tool(
       for (const offset of offsets) {
         const suggestedTime = addMinutes(requestedDate, offset);
         const suggestedZonedTime = toZonedTime(suggestedTime, timezone);
-        const suggestedTimeStr = format(suggestedZonedTime, 'HH:mm', { timeZone: timezone });
-        
-        if (suggestedTimeStr < (restaurant.openingTime || '00:00') || suggestedTimeStr > (restaurant.closingTime || '23:59')) {
+        const suggestedTimeStr = format(suggestedZonedTime, "HH:mm", {
+          timeZone: timezone,
+        });
+
+        if (
+          suggestedTimeStr < (restaurant.openingTime || "00:00") ||
+          suggestedTimeStr > (restaurant.closingTime || "23:59")
+        ) {
           continue;
         }
 
-        const tables = await getAvailableTables(restaurantId, suggestedTime, partySize, duration, traceId);
+        const tables = await getAvailableTables(
+          restaurantId,
+          suggestedTime,
+          partySize,
+          duration,
+          traceId,
+        );
         if (tables.length > 0) {
           suggestedSlots.push({
             time: suggestedTime.toISOString(),
@@ -208,14 +269,17 @@ server.tool(
       }
     }
 
-    return createResponse({
-      restaurantId,
-      requestedTime: requestedDate.toISOString(),
-      partySize,
-      availableTables,
-      suggestedSlots: suggestedSlots.length > 0 ? suggestedSlots : undefined,
-    }, traceId);
-  }
+    return createResponse(
+      {
+        restaurantId,
+        requestedTime: requestedDate.toISOString(),
+        partySize,
+        availableTables,
+        suggestedSlots: suggestedSlots.length > 0 ? suggestedSlots : undefined,
+      },
+      traceId,
+    );
+  },
 );
 
 // Existing bookTable tool with traceId support
@@ -223,9 +287,12 @@ server.tool(
   TOOLS.tableStack.bookTable.name,
   TOOLS.tableStack.bookTable.description,
   TOOLS.tableStack.bookTable.schema.shape,
-  async ({ restaurantId, tableId, guestName, guestEmail, partySize, startTime }, _extra: any) => {
+  async (
+    { restaurantId, tableId, guestName, guestEmail, partySize, startTime },
+    _extra: any,
+  ) => {
     const traceId = _extra?.traceId || randomUUID();
-    
+
     const restaurant = await getDb().query.restaurants.findFirst({
       where: eq(restaurants.id, restaurantId),
     });
@@ -238,30 +305,40 @@ server.tool(
     const duration = restaurant.defaultDurationMinutes || 90;
     const end = addMinutes(start, duration);
 
-    const isCombined = tableId.includes('+');
-    const tableIds = isCombined ? tableId.split('+') : [tableId];
+    const isCombined = tableId.includes("+");
+    const tableIds = isCombined ? tableId.split("+") : [tableId];
 
-    const [newReservation] = await getDb().insert(restaurantReservations).values({
-      restaurantId,
-      tableId: isCombined ? null : tableId,
-      combinedTableIds: isCombined ? tableIds : null,
+    const [newReservation] = await getDb()
+      .insert(restaurantReservations)
+      .values({
+        restaurantId,
+        tableId: isCombined ? null : tableId,
+        combinedTableIds: isCombined ? tableIds : null,
+        guestName,
+        guestEmail,
+        partySize,
+        startTime: start,
+        endTime: end,
+        status: "confirmed",
+        isVerified: true,
+      })
+      .returning();
+
+    logger.info(`Created reservation for ${guestName}`, {
+      reservationId: newReservation.id,
       guestName,
-      guestEmail,
-      partySize,
-      startTime: start,
-      endTime: end,
-      status: 'confirmed',
-      isVerified: true,
-    }).returning();
+      traceId,
+    });
 
-    logger.info(`Created reservation for ${guestName}`, { reservationId: newReservation.id, guestName, traceId });
-
-    return createResponse({
-      status: "confirmed",
-      message: "Reservation confirmed successfully",
-      booking_id: newReservation.id,
-    }, traceId);
-  }
+    return createResponse(
+      {
+        status: "confirmed",
+        message: "Reservation confirmed successfully",
+        booking_id: newReservation.id,
+      },
+      traceId,
+    );
+  },
 );
 
 // Table Management Tools - DRY RUN Validation
@@ -275,40 +352,54 @@ server.tool(
   },
   async ({ restaurantId, date, partySize }, _extra: any) => {
     const traceId = _extra?.traceId || randomUUID();
-    
+
     const restaurant = await getDb().query.restaurants.findFirst({
       where: eq(restaurants.id, restaurantId),
     });
 
     if (!restaurant) {
-      return createResponse({ 
-        valid: false, 
-        error: "Restaurant not found" 
-      }, traceId, true);
+      return createResponse(
+        {
+          valid: false,
+          error: "Restaurant not found",
+        },
+        traceId,
+        true,
+      );
     }
 
     const requestedDate = parseISO(date);
     const duration = restaurant.defaultDurationMinutes || 90;
-    const availableTables = await getAvailableTables(restaurantId, requestedDate, partySize, duration, traceId);
+    const availableTables = await getAvailableTables(
+      restaurantId,
+      requestedDate,
+      partySize,
+      duration,
+      traceId,
+    );
 
     const isValid = availableTables.length > 0;
-    
-    return createResponse({
-      valid: isValid,
-      restaurantId,
-      requestedTime: requestedDate.toISOString(),
-      partySize,
-      availableTables: isValid ? availableTables : undefined,
-      message: isValid 
-        ? "Reservation is valid and can be created" 
-        : "No tables available for requested time and party size",
-    }, traceId);
-  }
+
+    return createResponse(
+      {
+        valid: isValid,
+        restaurantId,
+        requestedTime: requestedDate.toISOString(),
+        partySize,
+        availableTables: isValid ? availableTables : undefined,
+        message: isValid
+          ? "Reservation is valid and can be created"
+          : "No tables available for requested time and party size",
+      },
+      traceId,
+    );
+  },
 );
 
 // Operational State tool with traceId
+const liveOperationalStateTool = TOOLS.tableStack.getLiveOperationalState;
 server.tool(
-  (TOOLS.tableStack as any).getLiveOperationalState?.name || "get_live_operational_state",
+  liveOperationalStateTool.name,
   "Retrieve real-time table status for a restaurant",
   { restaurant_id: TOOLS.tableStack.getAvailability.schema.shape.restaurantId },
   async ({ restaurant_id }: any, _extra: any) => {
@@ -319,12 +410,17 @@ server.tool(
 
     const liveData = await redis.hgetall(key);
 
-    return createResponse({
-      restaurant_id,
-      live_data: liveData || {},
-      message: liveData ? "Live operational state retrieved successfully." : "No live data available."
-    }, traceId);
-  }
+    return createResponse(
+      {
+        restaurant_id,
+        live_data: liveData || {},
+        message: liveData
+          ? "Live operational state retrieved successfully."
+          : "No live data available.",
+      },
+      traceId,
+    );
+  },
 );
 
 // Export standardized MCP routes using factory

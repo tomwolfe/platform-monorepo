@@ -25,7 +25,7 @@ import { QStashService } from "./qstash";
 // ============================================================================
 
 export interface HeartbeatConfig {
-  redis: Redis;
+  redis: Redis | null;
   /** Delay before heartbeat check (default: 30 seconds) */
   heartbeatDelaySeconds?: number;
   /** Maximum number of recovery attempts (default: 3) */
@@ -39,7 +39,7 @@ export interface HeartbeatRecord {
   nextStepIndex: number;
   scheduledAt: string;
   checkScheduledAt: string;
-  status: 'pending' | 'checked' | 'recovered' | 'escalated';
+  status: "pending" | "checked" | "recovered" | "escalated";
   recoveryAttempts: number;
   lastKnownState?: string;
   traceId?: string;
@@ -51,7 +51,7 @@ export interface HeartbeatCheckResult {
   isStuck: boolean;
   currentStepIndex?: number;
   expectedStepIndex: number;
-  action: 'none' | 'resume' | 'escalate';
+  action: "none" | "resume" | "escalate";
   reason: string;
 }
 
@@ -60,7 +60,7 @@ export interface HeartbeatCheckResult {
 // ============================================================================
 
 const DEFAULT_CONFIG: Required<HeartbeatConfig> = {
-  redis: null as any, // Must be provided
+  redis: null,
   heartbeatDelaySeconds: 30,
   maxRecoveryAttempts: 3,
   indexPrefix: "heartbeat",
@@ -104,17 +104,19 @@ export class HeartbeatService {
     options?: {
       traceId?: string;
       correlationId?: string;
-    }
+    },
   ): Promise<HeartbeatRecord> {
     const now = new Date().toISOString();
-    const checkTime = new Date(Date.now() + this.config.heartbeatDelaySeconds * 1000).toISOString();
+    const checkTime = new Date(
+      Date.now() + this.config.heartbeatDelaySeconds * 1000,
+    ).toISOString();
 
     const heartbeat: HeartbeatRecord = {
       executionId,
       nextStepIndex,
       scheduledAt: now,
       checkScheduledAt: checkTime,
-      status: 'pending',
+      status: "pending",
       recoveryAttempts: 0,
       traceId: options?.traceId,
       correlationId: options?.correlationId,
@@ -125,7 +127,7 @@ export class HeartbeatService {
     await this.config.redis.setex(
       key,
       3600, // 1 hour TTL
-      JSON.stringify(heartbeat)
+      JSON.stringify(heartbeat),
     );
 
     // Add to active heartbeats set
@@ -135,7 +137,7 @@ export class HeartbeatService {
     });
 
     // Schedule QStash webhook call
-    const { AppConfig } = await import('../config');
+    const { AppConfig } = await import("../config");
     const webhookUrl = `${AppConfig.getIntentionEngineApiUrl()}/api/engine/heartbeat-check`;
     const payload = {
       executionId,
@@ -148,17 +150,20 @@ export class HeartbeatService {
         url: webhookUrl,
         body: payload,
         headers: {
-          'x-trace-id': options?.traceId || '',
-          'x-correlation-id': options?.correlationId || '',
+          "x-trace-id": options?.traceId || "",
+          "x-correlation-id": options?.correlationId || "",
         },
       });
 
       console.log(
         `[HeartbeatService] Scheduled heartbeat check for ${executionId} ` +
-        `in ${this.config.heartbeatDelaySeconds}s (step ${nextStepIndex})`
+          `in ${this.config.heartbeatDelaySeconds}s (step ${nextStepIndex})`,
       );
     } catch (error) {
-      console.error(`[HeartbeatService] Failed to schedule QStash webhook:`, error);
+      console.error(
+        `[HeartbeatService] Failed to schedule QStash webhook:`,
+        error,
+      );
       // Continue anyway - heartbeat is still tracked in Redis
     }
 
@@ -188,8 +193,8 @@ export class HeartbeatService {
    */
   async updateHeartbeat(
     executionId: string,
-    status: HeartbeatRecord['status'],
-    updates?: Partial<HeartbeatRecord>
+    status: HeartbeatRecord["status"],
+    updates?: Partial<HeartbeatRecord>,
   ): Promise<void> {
     const key = this.buildHeartbeatKey(executionId);
     const existing = await this.getHeartbeat(executionId);
@@ -218,7 +223,7 @@ export class HeartbeatService {
     if (!data) return null;
 
     try {
-      return typeof data === 'string' ? JSON.parse(data) : data;
+      return typeof data === "string" ? JSON.parse(data) : data;
     } catch (error) {
       console.error(`[HeartbeatService] Failed to parse heartbeat:`, error);
       return null;
@@ -239,7 +244,7 @@ export class HeartbeatService {
    */
   async checkHeartbeat(
     executionId: string,
-    expectedStepIndex: number
+    expectedStepIndex: number,
   ): Promise<HeartbeatCheckResult> {
     const heartbeat = await this.getHeartbeat(executionId);
 
@@ -248,8 +253,8 @@ export class HeartbeatService {
         executionId,
         isStuck: false,
         expectedStepIndex,
-        action: 'none',
-        reason: 'No heartbeat record found - saga may have completed',
+        action: "none",
+        reason: "No heartbeat record found - saga may have completed",
       };
     }
 
@@ -262,7 +267,8 @@ export class HeartbeatService {
     if (stateData) {
       // Parse state to find highest completed step
       try {
-        const state = typeof stateData === 'string' ? JSON.parse(stateData) : stateData;
+        const state =
+          typeof stateData === "string" ? JSON.parse(stateData) : stateData;
         // Extract current step index from state
         currentStepIndex = state.nextStepIndex || 0;
       } catch (error) {
@@ -280,7 +286,7 @@ export class HeartbeatService {
         isStuck: false,
         currentStepIndex,
         expectedStepIndex,
-        action: 'none',
+        action: "none",
         reason: `Saga progressed normally (current: ${currentStepIndex}, expected: ${expectedStepIndex})`,
       };
     }
@@ -290,7 +296,7 @@ export class HeartbeatService {
 
     if (recoveryAttempts >= this.config.maxRecoveryAttempts) {
       // Max attempts exceeded - escalate to human
-      await this.updateHeartbeat(executionId, 'escalated', {
+      await this.updateHeartbeat(executionId, "escalated", {
         recoveryAttempts: recoveryAttempts + 1,
         lastKnownState: `step:${currentStepIndex}`,
       });
@@ -300,13 +306,13 @@ export class HeartbeatService {
         isStuck: true,
         currentStepIndex,
         expectedStepIndex,
-        action: 'escalate',
+        action: "escalate",
         reason: `Max recovery attempts (${this.config.maxRecoveryAttempts}) exceeded`,
       };
     }
 
     // Attempt automatic recovery
-    await this.updateHeartbeat(executionId, 'recovered', {
+    await this.updateHeartbeat(executionId, "recovered", {
       recoveryAttempts: recoveryAttempts + 1,
       lastKnownState: `step:${currentStepIndex}`,
     });
@@ -316,7 +322,7 @@ export class HeartbeatService {
       isStuck: true,
       currentStepIndex,
       expectedStepIndex,
-      action: 'resume',
+      action: "resume",
       reason: `Saga stuck at step ${currentStepIndex}, attempting recovery (attempt ${recoveryAttempts + 1}/${this.config.maxRecoveryAttempts})`,
     };
   }
@@ -330,7 +336,7 @@ export class HeartbeatService {
    */
   async executeRecovery(
     executionId: string,
-    stepIndex: number
+    stepIndex: number,
   ): Promise<{ success: boolean; error?: string }> {
     try {
       // Trigger saga resume via QStash
@@ -340,7 +346,7 @@ export class HeartbeatService {
       });
 
       console.log(
-        `[HeartbeatService] Executed recovery for ${executionId} - resuming at step ${stepIndex}`
+        `[HeartbeatService] Executed recovery for ${executionId} - resuming at step ${stepIndex}`,
       );
 
       return { success: true };
@@ -366,11 +372,11 @@ export class HeartbeatService {
       expectedStepIndex: number;
       recoveryAttempts: number;
       lastKnownState?: string;
-    }
+    },
   ): Promise<void> {
     console.error(
       `[HeartbeatService] ESCALATION: Saga ${executionId} stuck after ${context.recoveryAttempts} recovery attempts. ` +
-      `Last known state: step ${context.currentStepIndex}, expected: step ${context.expectedStepIndex}`
+        `Last known state: step ${context.currentStepIndex}, expected: step ${context.expectedStepIndex}`,
     );
 
     // In production, send alert via:
@@ -381,12 +387,12 @@ export class HeartbeatService {
 
     // Example: Send email alert
     try {
-      const { Resend } = require('resend');
+      const { Resend } = require("resend");
       const resend = new Resend(process.env.RESEND_API_KEY);
 
       await resend.emails.send({
-        from: process.env.EMAIL_FROM || 'onboarding@resend.dev',
-        to: process.env.ALERT_EMAIL || 'alerts@example.com',
+        from: process.env.EMAIL_FROM || "onboarding@resend.dev",
+        to: process.env.ALERT_EMAIL || "alerts@example.com",
         subject: `🚨 Saga Escalation: ${executionId}`,
         html: `
           <h2>Saga Recovery Failed</h2>
@@ -394,16 +400,21 @@ export class HeartbeatService {
           <p><strong>Current Step:</strong> ${context.currentStepIndex}</p>
           <p><strong>Expected Step:</strong> ${context.expectedStepIndex}</p>
           <p><strong>Recovery Attempts:</strong> ${context.recoveryAttempts}</p>
-          <p><strong>Last Known State:</strong> ${context.lastKnownState || 'N/A'}</p>
+          <p><strong>Last Known State:</strong> ${context.lastKnownState || "N/A"}</p>
           <p><strong>Timestamp:</strong> ${new Date().toISOString()}</p>
           <hr/>
           <p><em>Manual intervention required. Check Redis and logs for details.</em></p>
         `,
       });
 
-      console.log(`[HeartbeatService] Escalation email sent for ${executionId}`);
+      console.log(
+        `[HeartbeatService] Escalation email sent for ${executionId}`,
+      );
     } catch (error) {
-      console.error(`[HeartbeatService] Failed to send escalation email:`, error);
+      console.error(
+        `[HeartbeatService] Failed to send escalation email:`,
+        error,
+      );
     }
   }
 
@@ -415,11 +426,11 @@ export class HeartbeatService {
    * Get all active heartbeats
    */
   async getActiveHeartbeats(): Promise<HeartbeatRecord[]> {
-    const executionIds = await this.config.redis.zrange(
+    const executionIds = (await this.config.redis.zrange(
       this.buildActiveHeartbeatsKey(),
       0,
-      -1
-    ) as string[];
+      -1,
+    )) as string[];
 
     const heartbeats: HeartbeatRecord[] = [];
 
@@ -447,10 +458,10 @@ export class HeartbeatService {
 
     return {
       totalActive: heartbeats.length,
-      pending: heartbeats.filter(h => h.status === 'pending').length,
-      checked: heartbeats.filter(h => h.status === 'checked').length,
-      recovered: heartbeats.filter(h => h.status === 'recovered').length,
-      escalated: heartbeats.filter(h => h.status === 'escalated').length,
+      pending: heartbeats.filter((h) => h.status === "pending").length,
+      checked: heartbeats.filter((h) => h.status === "checked").length,
+      recovered: heartbeats.filter((h) => h.status === "recovered").length,
+      escalated: heartbeats.filter((h) => h.status === "escalated").length,
     };
   }
 
@@ -473,7 +484,9 @@ export class HeartbeatService {
       }
     }
 
-    console.log(`[HeartbeatService] Cleaned up ${deletedCount} expired heartbeats`);
+    console.log(
+      `[HeartbeatService] Cleaned up ${deletedCount} expired heartbeats`,
+    );
     return deletedCount;
   }
 }

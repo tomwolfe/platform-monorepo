@@ -95,6 +95,15 @@ interface NormalizedRetryConfig {
 }
 
 /**
+ * Interface for errors with HTTP-like status codes
+ */
+interface HttpError extends Error {
+  status?: number;
+  statusCode?: number;
+  response?: { status?: number };
+}
+
+/**
  * Check if an error is a transient network error based on error codes
  */
 function isRetryableNetworkError(
@@ -111,9 +120,9 @@ function isRetryableNetworkError(
       "cause" in error &&
       error.cause instanceof Error &&
       "code" in error.cause &&
-      typeof (error.cause as any).code === "string"
+      typeof error.cause.code === "string"
     ) {
-      return retryableErrors.includes((error.cause as any).code);
+      return retryableErrors.includes(error.cause.code);
     }
   }
   return false;
@@ -124,27 +133,20 @@ function isRetryableNetworkError(
  */
 function is5xxError(error: unknown): boolean {
   if (error instanceof Error) {
+    const httpError = error as HttpError;
     // Check for HTTP response errors with status codes
-    if ("status" in error && typeof (error as any).status === "number") {
-      const status = (error as any).status;
-      return status >= 500 && status < 600;
+    if (typeof httpError.status === "number") {
+      return httpError.status >= 500 && httpError.status < 600;
     }
     // Check for response object with status (common in fetch/axios patterns)
-    if (
-      "response" in error &&
-      error.response &&
-      typeof (error.response as any).status === "number"
-    ) {
-      const status = (error.response as any).status;
-      return status >= 500 && status < 600;
+    if (httpError.response && typeof httpError.response.status === "number") {
+      return (
+        httpError.response.status >= 500 && httpError.response.status < 600
+      );
     }
     // Check for statusCode property directly on the error
-    if (
-      "statusCode" in error &&
-      typeof (error as any).statusCode === "number"
-    ) {
-      const statusCode = (error as any).statusCode;
-      return statusCode >= 500 && statusCode < 600;
+    if (typeof httpError.statusCode === "number") {
+      return httpError.statusCode >= 500 && httpError.statusCode < 600;
     }
   }
   return false;
@@ -262,15 +264,17 @@ export function withRetry<T extends (...args: any[]) => Promise<any>>(
         const delay = calculateBackoffDelay(attempt, config.baseDelay);
 
         // Log retry attempt with structured data
+        const errorCode =
+          error instanceof Error && "code" in error
+            ? (error as HttpError).code
+            : undefined;
+
         logger.warn("Retrying operation", {
           attempt,
           maxAttempts: config.maxAttempts,
           delay: Math.round(delay),
           error: error instanceof Error ? error.message : String(error),
-          errorCode:
-            error instanceof Error && "code" in error
-              ? (error as any).code
-              : undefined,
+          errorCode,
           timestamp: new Date().toISOString(),
         });
 

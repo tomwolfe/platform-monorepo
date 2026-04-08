@@ -22,9 +22,9 @@
  * Usage:
  * ```typescript
  * const repairAgent = createRepairAgent();
- * 
+ *
  * const result = await repairAgent.analyzeAndRepair(zombieSaga);
- * 
+ *
  * if (result.repairSuccessful) {
  *   console.log(`Auto-repaired ${zombieSaga.executionId}`);
  * } else {
@@ -111,7 +111,12 @@ export type FailureType =
  * Suggested fix payload
  */
 export interface SuggestedFix {
-  type: "ADAPT_PARAMETERS" | "RETRY_STEP" | "SKIP_STEP" | "UPDATE_TIMEOUT" | "MANUAL_REVIEW";
+  type:
+    | "ADAPT_PARAMETERS"
+    | "RETRY_STEP"
+    | "SKIP_STEP"
+    | "UPDATE_TIMEOUT"
+    | "MANUAL_REVIEW";
   description: string;
   parameters?: {
     stepIndex?: number;
@@ -176,7 +181,7 @@ const RepairSuggestionSchema = z.object({
 // ============================================================================
 
 export interface RepairAgentConfig {
-  redis: Redis;
+  redis: Redis | null;
   /** Maximum auto-repair attempts before escalation (default: 2) */
   maxAutoRepairAttempts: number;
   /** Minimum confidence threshold for auto-repair (default: 0.8) */
@@ -184,17 +189,20 @@ export interface RepairAgentConfig {
   /** Enable shadow dry-run before applying fix (default: true) */
   enableShadowDryRun: boolean;
   /** LLM model for repair analysis */
-  llmModel: any;
+  llmModel: unknown;
   /** Enable debug logging */
   debug: boolean;
 }
 
-const DEFAULT_CONFIG: Required<RepairAgentConfig> = {
-  redis: null as any,
+const DEFAULT_CONFIG: Omit<
+  Required<RepairAgentConfig>,
+  "redis" | "llmModel"
+> & { redis: Redis | null; llmModel: unknown } = {
+  redis: null,
   maxAutoRepairAttempts: 2,
   minConfidenceThreshold: 0.8,
   enableShadowDryRun: true,
-  llmModel: null as any,
+  llmModel: null,
   debug: false,
 };
 
@@ -205,13 +213,19 @@ const DEFAULT_CONFIG: Required<RepairAgentConfig> = {
 export class RepairAgent {
   private config: Required<RepairAgentConfig>;
   private schemaVersioning: ReturnType<typeof createSchemaVersioningService>;
-  private semanticVersioning: ReturnType<typeof createSemanticVersioningService>;
+  private semanticVersioning: ReturnType<
+    typeof createSemanticVersioningService
+  >;
   private shadowDryRun: ReturnType<typeof createShadowDryRunService>;
 
   constructor(config: RepairAgentConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.schemaVersioning = createSchemaVersioningService({ redis: this.config.redis });
-    this.semanticVersioning = createSemanticVersioningService({ redis: this.config.redis });
+    this.schemaVersioning = createSchemaVersioningService({
+      redis: this.config.redis,
+    });
+    this.semanticVersioning = createSemanticVersioningService({
+      redis: this.config.redis,
+    });
     this.shadowDryRun = createShadowDryRunService();
   }
 
@@ -223,22 +237,24 @@ export class RepairAgent {
    */
   async analyzeAndRepair(zombie: ZombieSaga): Promise<RepairResult> {
     // FEATURE FLAG: Check if repair agent is enabled
-    const { getFeatureFlags } = await import('../feature-flags');
+    const { getFeatureFlags } = await import("../feature-flags");
     const flags = getFeatureFlags();
-    
+
     if (!flags.ENABLE_REPAIR_AGENT) {
       // Feature disabled - return early without repair
       return {
         repairSuccessful: false,
         requiresHumanIntervention: true,
-        escalationReason: 'Repair agent feature is disabled via feature flag',
+        escalationReason: "Repair agent feature is disabled via feature flag",
         analysis: null,
       };
     }
 
     try {
       if (this.config.debug) {
-        console.log(`[RepairAgent] Analyzing zombie saga ${zombie.executionId}`);
+        console.log(
+          `[RepairAgent] Analyzing zombie saga ${zombie.executionId}`,
+        );
       }
 
       // Step 1: Analyze failure
@@ -247,7 +263,7 @@ export class RepairAgent {
       if (this.config.debug) {
         console.log(
           `[RepairAgent] Analysis complete: ${analysis.failureType} ` +
-          `(confidence: ${analysis.confidence.toFixed(2)}, canRepair: ${analysis.canAutoRepair})`
+            `(confidence: ${analysis.confidence.toFixed(2)}, canRepair: ${analysis.canAutoRepair})`,
         );
       }
 
@@ -261,7 +277,7 @@ export class RepairAgent {
         if (this.config.debug) {
           console.log(
             `[RepairAgent] Confidence ${analysis.confidence.toFixed(2)} ` +
-            `below threshold ${this.config.minConfidenceThreshold}`
+              `below threshold ${this.config.minConfidenceThreshold}`,
           );
         }
         return await this.escalateToHuman(zombie, analysis);
@@ -272,19 +288,19 @@ export class RepairAgent {
         return await this.escalateToHuman(
           zombie,
           analysis,
-          `Max auto-repair attempts exceeded (${this.config.maxAutoRepairAttempts})`
+          `Max auto-repair attempts exceeded (${this.config.maxAutoRepairAttempts})`,
         );
       }
 
       // Step 5: Apply fix (with shadow dry-run if enabled)
       if (this.config.enableShadowDryRun) {
         const dryRunResult = await this.testFixWithDryRun(zombie, analysis);
-        
+
         if (!dryRunResult.passed) {
           return await this.escalateToHuman(
             zombie,
             analysis,
-            `Shadow dry-run failed: ${dryRunResult.divergencePercentage.toFixed(1)}% divergence`
+            `Shadow dry-run failed: ${dryRunResult.divergencePercentage.toFixed(1)}% divergence`,
           );
         }
 
@@ -295,7 +311,10 @@ export class RepairAgent {
         return await this.applyFixAndResume(zombie, analysis);
       }
     } catch (error) {
-      console.error(`[RepairAgent] Repair failed for ${zombie.executionId}:`, error);
+      console.error(
+        `[RepairAgent] Repair failed for ${zombie.executionId}:`,
+        error,
+      );
       return {
         success: false,
         action: "ESCALATED",
@@ -331,8 +350,8 @@ Auto-repair is only safe for clear, fixable issues like parameter mismatches or 
    * Build failure context for LLM analysis
    */
   private buildFailureContext(zombie: ZombieSaga): string {
-    const failedStep = zombie.stepStates.find(s => s.status === "failed");
-    
+    const failedStep = zombie.stepStates.find((s) => s.status === "failed");
+
     const context = `
 ## Zombie Saga Context
 - Execution ID: ${zombie.executionId}
@@ -342,23 +361,30 @@ Auto-repair is only safe for clear, fixable issues like parameter mismatches or 
 - Recovery Attempts: ${zombie.recoveryAttempts}
 
 ## Failed Step
-${failedStep ? `
+${
+  failedStep
+    ? `
 - Step ID: ${failedStep.step_id}
 - Tool: ${failedStep.tool_name || "unknown"}
 - Error: ${JSON.stringify(failedStep.error, null, 2)}
 - Parameters: ${JSON.stringify(failedStep.parameters || {}, null, 2)}
-` : "No failed step identified"}
+`
+    : "No failed step identified"
+}
 
 ## Step States
-${zombie.stepStates.map((s, i) => 
-  `${i}. ${s.step_id} (${s.tool_name || "unknown"}): ${s.status}${s.error ? ` [${JSON.stringify(s.error)}]` : ""}`
-).join("\n")}
+${zombie.stepStates
+  .map(
+    (s, i) =>
+      `${i}. ${s.step_id} (${s.tool_name || "unknown"}): ${s.status}${s.error ? ` [${JSON.stringify(s.error)}]` : ""}`,
+  )
+  .join("\n")}
 
 ## Compensations Registered
 ${zombie.compensationsRegistered?.length || 0} compensations:
-${(zombie.compensationsRegistered || []).map((c, i) => 
-  `${i}. ${c.compensationTool}: ${JSON.stringify(c.parameters)}`
-).join("\n")}
+${(zombie.compensationsRegistered || [])
+  .map((c, i) => `${i}. ${c.compensationTool}: ${JSON.stringify(c.parameters)}`)
+  .join("\n")}
 `;
 
     return context;
@@ -403,7 +429,7 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
    */
   private async testFixWithDryRun(
     zombie: ZombieSaga,
-    analysis: RepairAnalysis
+    analysis: RepairAnalysis,
   ): Promise<{
     passed: boolean;
     divergencePercentage: number;
@@ -412,13 +438,14 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
     try {
       // Capture current state snapshot
       const stateSnapshot = await this.captureStateSnapshot(zombie);
-      
+
       if (!stateSnapshot) {
         throw new Error("Failed to capture state snapshot");
       }
 
       // Get checkpoint metadata
-      const checkpointMetadata = await this.schemaVersioning.getCheckpointMetadata(zombie.executionId);
+      const checkpointMetadata =
+        await this.schemaVersioning.getCheckpointMetadata(zombie.executionId);
 
       // Execute shadow dry-run
       const dryRunResult = await this.shadowDryRun.executeDryRun({
@@ -435,18 +462,28 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
           },
         },
         plan: stateSnapshot.plan,
-        checkpointMetadata: checkpointMetadata ? {
-          orchestratorGitSha: checkpointMetadata.orchestratorGitSha || "unknown",
-          toolVersions: checkpointMetadata.toolVersions ? Object.fromEntries(
-            Object.entries(checkpointMetadata.toolVersions).map(([key, value]) => [
-              key,
-              { version: value.version, schemaHash: value.schemaHash }
-            ])
-          ) : {},
-        } : {
-          orchestratorGitSha: "unknown",
-          toolVersions: {},
-        },
+        checkpointMetadata: checkpointMetadata
+          ? {
+              orchestratorGitSha:
+                checkpointMetadata.orchestratorGitSha || "unknown",
+              toolVersions: checkpointMetadata.toolVersions
+                ? Object.fromEntries(
+                    Object.entries(checkpointMetadata.toolVersions).map(
+                      ([key, value]) => [
+                        key,
+                        {
+                          version: value.version,
+                          schemaHash: value.schemaHash,
+                        },
+                      ],
+                    ),
+                  )
+                : {},
+            }
+          : {
+              orchestratorGitSha: "unknown",
+              toolVersions: {},
+            },
         currentMetadata: {
           orchestratorGitSha: process.env.VERCEL_GIT_COMMIT_SHA || "unknown",
           toolVersions: {},
@@ -463,7 +500,9 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
       return {
         passed: false,
         divergencePercentage: 100,
-        warnings: [`Shadow dry-run error: ${error instanceof Error ? error.message : String(error)}`],
+        warnings: [
+          `Shadow dry-run error: ${error instanceof Error ? error.message : String(error)}`,
+        ],
       };
     }
   }
@@ -474,9 +513,9 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
   private async captureStateSnapshot(zombie: ZombieSaga): Promise<any> {
     const key = `intentionengine:task:${zombie.executionId}`;
     const data = await this.config.redis.get<any>(key);
-    
+
     if (!data) return null;
-    
+
     const taskState = typeof data === "string" ? JSON.parse(data) : data;
     return taskState.context?.execution_state || null;
   }
@@ -487,7 +526,11 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
   private async applyFixAndResume(
     zombie: ZombieSaga,
     analysis: RepairAnalysis,
-    dryRunResult?: { passed: boolean; divergencePercentage: number; warnings: string[] }
+    dryRunResult?: {
+      passed: boolean;
+      divergencePercentage: number;
+      warnings: string[];
+    },
   ): Promise<RepairResult> {
     try {
       // Increment recovery attempts
@@ -509,7 +552,7 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
 
       // Apply fix based on type
       let resumePayload: Record<string, unknown> = {};
-      
+
       switch (analysis.suggestedFix.type) {
         case "ADAPT_PARAMETERS":
           resumePayload = {
@@ -550,12 +593,12 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
           fixPayload: resumePayload,
           timestamp: new Date().toISOString(),
         },
-        undefined
+        undefined,
       );
 
       console.log(
         `[RepairAgent] Auto-repaired zombie saga ${zombie.executionId} ` +
-        `(${analysis.failureType}, confidence: ${analysis.confidence.toFixed(2)})`
+          `(${analysis.failureType}, confidence: ${analysis.confidence.toFixed(2)})`,
       );
 
       return {
@@ -563,18 +606,20 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
         action: "AUTO_REPAIRED",
         executionId: zombie.executionId,
         repairAnalysis: analysis,
-        dryRunResult: dryRunResult ? {
-          passed: dryRunResult.passed,
-          divergencePercentage: dryRunResult.divergencePercentage,
-          warnings: dryRunResult.warnings,
-        } : undefined,
+        dryRunResult: dryRunResult
+          ? {
+              passed: dryRunResult.passed,
+              divergencePercentage: dryRunResult.divergencePercentage,
+              warnings: dryRunResult.warnings,
+            }
+          : undefined,
       };
     } catch (error) {
       console.error(`[RepairAgent] Failed to apply fix:`, error);
       return await this.escalateToHuman(
         zombie,
         analysis,
-        `Failed to apply fix: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to apply fix: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -585,7 +630,7 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
   private async escalateToHuman(
     zombie: ZombieSaga,
     analysis: RepairAnalysis,
-    additionalReason?: string
+    additionalReason?: string,
   ): Promise<RepairResult> {
     try {
       // Store escalation metadata
@@ -603,7 +648,7 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
       });
 
       // Publish alert
-      await RealtimeService.publish('system:alerts', 'saga_repair_escalated', {
+      await RealtimeService.publish("system:alerts", "saga_repair_escalated", {
         executionId: zombie.executionId,
         workflowId: zombie.workflowId,
         intentId: zombie.intentId,
@@ -631,12 +676,12 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
           escalationReason: additionalReason,
           timestamp: new Date().toISOString(),
         },
-        undefined
+        undefined,
       );
 
       console.warn(
         `[RepairAgent] Escalated zombie saga ${zombie.executionId} to human: ` +
-        `${additionalReason || analysis.rootCause}`
+          `${additionalReason || analysis.rootCause}`,
       );
 
       return {

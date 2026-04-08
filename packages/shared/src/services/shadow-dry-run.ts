@@ -44,11 +44,11 @@
  * @since 1.0.0
  */
 
-import { Redis } from '@upstash/redis';
-import { getRedisClient, ServiceNamespace } from '../redis';
-import type { ExecutionState } from '../types/execution';
-import { z } from 'zod';
-import { createWasmSandbox, WasmSandbox } from './sandbox/wasm-sandbox';
+import { Redis } from "@upstash/redis";
+import { getRedisClient, ServiceNamespace } from "../redis";
+import type { ExecutionState } from "../types/execution";
+import { z } from "zod";
+import { createWasmSandbox, WasmSandbox } from "./sandbox/wasm-sandbox";
 
 // ============================================================================
 // SCHEMA-TO-MOCK UTILITY
@@ -59,23 +59,25 @@ import { createWasmSandbox, WasmSandbox } from './sandbox/wasm-sandbox';
  * Generate mock data from a JSON schema
  * Used for shadow dry-run simulations when WASM sandbox fails
  */
-function generateMockFromSchema(schema: Record<string, unknown> | undefined): unknown {
+function generateMockFromSchema(
+  schema: Record<string, unknown> | undefined,
+): unknown {
   if (!schema) {
     return { simulated: true, timestamp: new Date().toISOString() };
   }
 
   // Handle Zod schema converted to JSON schema format
-  if ('type' in schema) {
+  if ("type" in schema) {
     const jsonSchema = schema as any;
     return generateMockFromJsonSchema(jsonSchema);
   }
 
   // Handle plain object schema
-  if (typeof schema === 'object' && schema !== null) {
+  if (typeof schema === "object" && schema !== null) {
     const mock: Record<string, unknown> = {};
     const properties = (schema as any).properties;
 
-    if (properties && typeof properties === 'object') {
+    if (properties && typeof properties === "object") {
       for (const [key, propSchema] of Object.entries(properties)) {
         mock[key] = generateMockFromJsonSchema(propSchema as any);
       }
@@ -91,49 +93,51 @@ function generateMockFromSchema(schema: Record<string, unknown> | undefined): un
  * Generate mock value from JSON schema type
  */
 function generateMockFromJsonSchema(schema: any): unknown {
-  if (!schema || typeof schema !== 'object') {
-    return 'simulated_value';
+  if (!schema || typeof schema !== "object") {
+    return "simulated_value";
   }
 
   const type = schema.type as string | undefined;
   const format = schema.format as string | undefined;
 
   // Handle specific formats
-  if (format === 'date-time') {
+  if (format === "date-time") {
     return new Date().toISOString();
   }
-  if (format === 'email') {
-    return 'simulated@example.com';
+  if (format === "email") {
+    return "simulated@example.com";
   }
-  if (format === 'uuid') {
+  if (format === "uuid") {
     return crypto.randomUUID();
   }
 
   // Handle type-specific mocks
   switch (type) {
-    case 'string':
+    case "string":
       if (schema.enum && Array.isArray(schema.enum)) {
         return schema.enum[0];
       }
-      return schema.description || `simulated_${schema.propertyName || 'string'}`;
+      return (
+        schema.description || `simulated_${schema.propertyName || "string"}`
+      );
 
-    case 'number':
-    case 'integer':
+    case "number":
+    case "integer":
       if (schema.enum && Array.isArray(schema.enum)) {
         return schema.enum[0];
       }
       return schema.default ?? 0;
 
-    case 'boolean':
+    case "boolean":
       return schema.default ?? true;
 
-    case 'array':
+    case "array":
       if (schema.items) {
         return [generateMockFromJsonSchema(schema.items)];
       }
       return [];
 
-    case 'object':
+    case "object":
       if (schema.properties) {
         const mock: Record<string, unknown> = {};
         for (const [key, propSchema] of Object.entries(schema.properties)) {
@@ -144,7 +148,7 @@ function generateMockFromJsonSchema(schema: any): unknown {
       return {};
 
     default:
-      return 'simulated_value';
+      return "simulated_value";
   }
 }
 
@@ -152,16 +156,18 @@ function generateMockFromJsonSchema(schema: any): unknown {
  * Get tool return schema from the Unified Tool Registry
  * This dynamically looks up the tool's return_schema for mock generation
  */
-function getToolReturnSchema(toolName: string): Record<string, unknown> | undefined {
+function getToolReturnSchema(
+  toolName: string,
+): Record<string, unknown> | undefined {
   try {
-    const { UnifiedToolRegistry } = require('../runtime-registry');
+    const { UnifiedToolRegistry } = require("../runtime-registry");
     const registry = UnifiedToolRegistry.getInstance();
     const tool = registry.get(toolName);
-    
+
     if (tool && tool.return_schema) {
       return tool.return_schema;
     }
-    
+
     return undefined;
   } catch (error) {
     // Registry not available or tool not found
@@ -189,7 +195,7 @@ interface Plan {
 // ============================================================================
 
 export interface ShadowDryRunConfig {
-  redis: Redis;
+  redis: Redis | null;
   /** Maximum divergence percentage before flagging (default: 10%) */
   maxDivergenceThreshold?: number;
   /** TTL for dry-run state snapshots (default: 1 hour) */
@@ -198,8 +204,10 @@ export interface ShadowDryRunConfig {
   enableDetailedLogging?: boolean;
 }
 
-const DEFAULT_CONFIG: Required<ShadowDryRunConfig> = {
-  redis: null as any,
+const DEFAULT_CONFIG: Omit<Required<ShadowDryRunConfig>, "redis"> & {
+  redis: Redis | null;
+} = {
+  redis: null,
   maxDivergenceThreshold: 10, // 10% divergence is acceptable
   snapshotTtlSeconds: 3600, // 1 hour
   enableDetailedLogging: false,
@@ -230,7 +238,7 @@ export interface DryRunResult {
     dryRunOutput: unknown;
     divergenceReason: string;
   }>;
-  recommendation: 'SAFE_TO_RESUME' | 'REVIEW_REQUIRED' | 'BLOCK_RESUME';
+  recommendation: "SAFE_TO_RESUME" | "REVIEW_REQUIRED" | "BLOCK_RESUME";
   details: string;
   executedAt: string;
 }
@@ -298,7 +306,7 @@ export class ShadowDryRunService {
     executionId: string,
     state: ExecutionState,
     orchestratorGitSha: string,
-    toolVersions: Record<string, { version: string; schemaHash: string }>
+    toolVersions: Record<string, { version: string; schemaHash: string }>,
   ): Promise<ShadowStateSnapshot> {
     const snapshot: ShadowStateSnapshot = {
       executionId,
@@ -312,12 +320,12 @@ export class ShadowDryRunService {
     await this.config.redis.setex(
       this.buildSnapshotKey(executionId),
       this.config.snapshotTtlSeconds,
-      JSON.stringify(snapshot)
+      JSON.stringify(snapshot),
     );
 
     console.log(
       `[ShadowDryRun] Captured snapshot for ${executionId} ` +
-      `(git: ${orchestratorGitSha}, tools: ${Object.keys(toolVersions).length})`
+        `(git: ${orchestratorGitSha}, tools: ${Object.keys(toolVersions).length})`,
     );
 
     return snapshot;
@@ -328,17 +336,17 @@ export class ShadowDryRunService {
    */
   async getSnapshot(executionId: string): Promise<ShadowStateSnapshot | null> {
     const data = await this.config.redis.get<any>(
-      this.buildSnapshotKey(executionId)
+      this.buildSnapshotKey(executionId),
     );
 
     if (!data) return null;
 
     try {
-      return typeof data === 'string' ? JSON.parse(data) : data;
+      return typeof data === "string" ? JSON.parse(data) : data;
     } catch (error) {
       console.error(
         `[ShadowDryRun] Failed to parse snapshot for ${executionId}:`,
-        error instanceof Error ? error.message : String(error)
+        error instanceof Error ? error.message : String(error),
       );
       return null;
     }
@@ -359,12 +367,12 @@ export class ShadowDryRunService {
    */
   async executeDryRun(request: DryRunRequest): Promise<DryRunResult> {
     const startTime = new Date().toISOString();
-    const divergentSteps: DryRunResult['divergentSteps'] = [];
+    const divergentSteps: DryRunResult["divergentSteps"] = [];
 
     console.log(
       `[ShadowDryRun] Starting dry-run for ${request.executionId} ` +
-      `(checkpoint: ${request.checkpointMetadata.orchestratorGitSha} -> ` +
-      `current: ${request.currentMetadata.orchestratorGitSha})`
+        `(checkpoint: ${request.checkpointMetadata.orchestratorGitSha} -> ` +
+        `current: ${request.currentMetadata.orchestratorGitSha})`,
     );
 
     try {
@@ -372,14 +380,18 @@ export class ShadowDryRunService {
       const pendingSteps = request.plan.steps.filter(
         (step) =>
           !request.stateSnapshot.step_states.some(
-            (s) => s.step_id === step.id &&
-            (s.status === 'completed' || s.status === 'failed')
-          )
+            (s) =>
+              s.step_id === step.id &&
+              (s.status === "completed" || s.status === "failed"),
+          ),
       );
 
       for (const step of pendingSteps) {
         // Simulate step execution (dry-run mode)
-        const simulation = await this.simulateStepExecution(step, request.stateSnapshot);
+        const simulation = await this.simulateStepExecution(
+          step,
+          request.stateSnapshot,
+        );
 
         // Compare with expected outcome
         const expectedOutcome = this.getExpectedOutcome(step);
@@ -390,7 +402,10 @@ export class ShadowDryRunService {
             toolName: step.tool_name,
             expectedOutput: expectedOutcome,
             dryRunOutput: simulation,
-            divergenceReason: this.getDivergenceReason(simulation, expectedOutcome),
+            divergenceReason: this.getDivergenceReason(
+              simulation,
+              expectedOutcome,
+            ),
           });
         }
       }
@@ -398,20 +413,20 @@ export class ShadowDryRunService {
       // Calculate divergence percentage
       const totalSteps = pendingSteps.length;
       const divergenceCount = divergentSteps.length;
-      const divergencePercentage = totalSteps > 0
-        ? (divergenceCount / totalSteps) * 100
-        : 0;
+      const divergencePercentage =
+        totalSteps > 0 ? (divergenceCount / totalSteps) * 100 : 0;
 
       // Determine recommendation
-      let recommendation: DryRunResult['recommendation'] = 'SAFE_TO_RESUME';
+      let recommendation: DryRunResult["recommendation"] = "SAFE_TO_RESUME";
       let details = `Dry-run completed: ${divergenceCount}/${totalSteps} steps show divergence (${divergencePercentage.toFixed(1)}%)`;
 
       if (divergencePercentage >= this.config.maxDivergenceThreshold * 2) {
-        recommendation = 'BLOCK_RESUME';
-        details += ' - CRITICAL: High divergence detected, manual review required';
+        recommendation = "BLOCK_RESUME";
+        details +=
+          " - CRITICAL: High divergence detected, manual review required";
       } else if (divergencePercentage > 0) {
-        recommendation = 'REVIEW_REQUIRED';
-        details += ' - WARNING: Some divergence detected, monitor closely';
+        recommendation = "REVIEW_REQUIRED";
+        details += " - WARNING: Some divergence detected, monitor closely";
       }
 
       const result: DryRunResult = {
@@ -428,19 +443,19 @@ export class ShadowDryRunService {
       await this.config.redis.setex(
         this.buildResultKey(request.executionId),
         this.config.snapshotTtlSeconds,
-        JSON.stringify(result)
+        JSON.stringify(result),
       );
 
       console.log(
         `[ShadowDryRun] Dry-run complete for ${request.executionId}: ` +
-        `${recommendation} (${divergencePercentage.toFixed(1)}% divergence)`
+          `${recommendation} (${divergencePercentage.toFixed(1)}% divergence)`,
       );
 
       return result;
     } catch (error) {
       console.error(
         `[ShadowDryRun] Dry-run failed for ${request.executionId}:`,
-        error instanceof Error ? error.message : String(error)
+        error instanceof Error ? error.message : String(error),
       );
 
       return {
@@ -448,7 +463,7 @@ export class ShadowDryRunService {
         divergenceDetected: false,
         divergencePercentage: 0,
         divergentSteps: [],
-        recommendation: 'REVIEW_REQUIRED',
+        recommendation: "REVIEW_REQUIRED",
         details: `Dry-run execution failed: ${error instanceof Error ? error.message : String(error)}`,
         executedAt: startTime,
       };
@@ -468,7 +483,7 @@ export class ShadowDryRunService {
    */
   private async simulateStepExecution(
     step: PlanStep,
-    stateSnapshot: ExecutionState
+    stateSnapshot: ExecutionState,
   ): Promise<unknown> {
     try {
       const sandbox = await this.getWasmSandbox();
@@ -489,8 +504,8 @@ export class ShadowDryRunService {
         // Provide read-only data access
         __readData: {
           completedSteps: stateSnapshot.step_states
-            .filter(s => s.status === 'completed')
-            .map(s => (s as any).result),
+            .filter((s) => s.status === "completed")
+            .map((s) => (s as any).result),
         },
       };
 
@@ -501,15 +516,15 @@ export class ShadowDryRunService {
       const result = await sandbox.execute(executionCode, context);
 
       if (!result.success) {
-        throw new Error(result.error || 'Sandbox execution failed');
+        throw new Error(result.error || "Sandbox execution failed");
       }
 
       return result.output;
     } catch (error) {
       console.warn(
         `[ShadowDryRun] WASM sandbox execution failed for ${step.tool_name}, ` +
-        `falling back to heuristic simulation:`,
-        error instanceof Error ? error.message : String(error)
+          `falling back to heuristic simulation:`,
+        error instanceof Error ? error.message : String(error),
       );
 
       // Fallback to heuristic simulation if WASM fails
@@ -528,7 +543,7 @@ export class ShadowDryRunService {
     const params = step.parameters;
 
     // Booking/Reservation simulation
-    if (toolType.includes('book') || toolType.includes('reserve')) {
+    if (toolType.includes("book") || toolType.includes("reserve")) {
       return `
         (function(context) {
           const { step, state, __readData } = context;
@@ -559,7 +574,7 @@ export class ShadowDryRunService {
     }
 
     // Cancellation simulation
-    if (toolType.includes('cancel')) {
+    if (toolType.includes("cancel")) {
       return `
         (function(context) {
           const { step, state, __readData } = context;
@@ -592,7 +607,7 @@ export class ShadowDryRunService {
     }
 
     // Payment simulation
-    if (toolType.includes('payment') || toolType.includes('charge')) {
+    if (toolType.includes("payment") || toolType.includes("charge")) {
       return `
         (function(context) {
           const { step, state, __readData } = context;
@@ -623,7 +638,11 @@ export class ShadowDryRunService {
     }
 
     // Search/Lookup simulation
-    if (toolType.includes('search') || toolType.includes('get') || toolType.includes('find')) {
+    if (
+      toolType.includes("search") ||
+      toolType.includes("get") ||
+      toolType.includes("find")
+    ) {
       return `
         (function(context) {
           const { step, state, __readData } = context;
@@ -670,7 +689,7 @@ export class ShadowDryRunService {
    */
   private heuristicSimulation(
     step: PlanStep,
-    stateSnapshot: ExecutionState
+    stateSnapshot: ExecutionState,
   ): unknown {
     // PHASE 3: Schema-driven mock generation (PRIMARY PATH)
     // Try to get the tool's return schema from the registry
@@ -687,7 +706,7 @@ export class ShadowDryRunService {
       };
 
       // Only spread if mockData is an object
-      if (typeof mockData === 'object' && mockData !== null) {
+      if (typeof mockData === "object" && mockData !== null) {
         return { ...baseResult, ...(mockData as Record<string, unknown>) };
       }
 
@@ -708,36 +727,40 @@ export class ShadowDryRunService {
     };
 
     // Add tool-specific fields based on common patterns
-    if (toolType.includes('book') || toolType.includes('reserve')) {
+    if (toolType.includes("book") || toolType.includes("reserve")) {
       return {
         ...contextMock,
         bookingId: `simulated_${crypto.randomUUID()}`,
-        status: 'confirmed',
-        partySize: inputSchema?.partySize as number || 2,
+        status: "confirmed",
+        partySize: (inputSchema?.partySize as number) || 2,
         confirmationCode: `SIM-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
       };
     }
 
-    if (toolType.includes('cancel')) {
+    if (toolType.includes("cancel")) {
       return {
         ...contextMock,
         cancelled: true,
         refundAmount: 0,
-        cancellationReason: 'Simulated cancellation',
+        cancellationReason: "Simulated cancellation",
       };
     }
 
-    if (toolType.includes('payment') || toolType.includes('charge')) {
+    if (toolType.includes("payment") || toolType.includes("charge")) {
       return {
         ...contextMock,
         transactionId: `simulated_txn_${crypto.randomUUID()}`,
-        status: 'processed',
+        status: "processed",
         amount: (step.parameters.amount as number) || 0,
-        currency: (step.parameters.currency as string) || 'USD',
+        currency: (step.parameters.currency as string) || "USD",
       };
     }
 
-    if (toolType.includes('search') || toolType.includes('get') || toolType.includes('find')) {
+    if (
+      toolType.includes("search") ||
+      toolType.includes("get") ||
+      toolType.includes("find")
+    ) {
       return {
         ...contextMock,
         results: [],
@@ -746,7 +769,7 @@ export class ShadowDryRunService {
       };
     }
 
-    if (toolType.includes('availability') || toolType.includes('check')) {
+    if (toolType.includes("availability") || toolType.includes("check")) {
       return {
         ...contextMock,
         available: true,
@@ -793,7 +816,12 @@ export class ShadowDryRunService {
     }
 
     // Check for critical field differences
-    const criticalFields = ['status', 'bookingId', 'transactionId', 'cancelled'];
+    const criticalFields = [
+      "status",
+      "bookingId",
+      "transactionId",
+      "cancelled",
+    ];
     for (const field of criticalFields) {
       if (field in sim && field in exp && sim[field] !== exp[field]) {
         return true;
@@ -806,10 +834,7 @@ export class ShadowDryRunService {
   /**
    * Get divergence reason
    */
-  private getDivergenceReason(
-    simulation: unknown,
-    expected: unknown
-  ): string {
+  private getDivergenceReason(simulation: unknown, expected: unknown): string {
     const sim = simulation as Record<string, unknown>;
     const exp = expected as Record<string, unknown>;
 
@@ -817,14 +842,19 @@ export class ShadowDryRunService {
       return `Success status mismatch: expected ${exp?.success}, got ${sim?.success}`;
     }
 
-    const criticalFields = ['status', 'bookingId', 'transactionId', 'cancelled'];
+    const criticalFields = [
+      "status",
+      "bookingId",
+      "transactionId",
+      "cancelled",
+    ];
     for (const field of criticalFields) {
       if (field in sim && field in exp && sim[field] !== exp[field]) {
         return `Field '${field}' mismatch: expected ${JSON.stringify(exp[field])}, got ${JSON.stringify(sim[field])}`;
       }
     }
 
-    return 'Unknown divergence detected';
+    return "Unknown divergence detected";
   }
 
   // ========================================================================
@@ -836,17 +866,17 @@ export class ShadowDryRunService {
    */
   async getResult(executionId: string): Promise<DryRunResult | null> {
     const data = await this.config.redis.get<any>(
-      this.buildResultKey(executionId)
+      this.buildResultKey(executionId),
     );
 
     if (!data) return null;
 
     try {
-      return typeof data === 'string' ? JSON.parse(data) : data;
+      return typeof data === "string" ? JSON.parse(data) : data;
     } catch (error) {
       console.error(
         `[ShadowDryRun] Failed to parse result for ${executionId}:`,
-        error instanceof Error ? error.message : String(error)
+        error instanceof Error ? error.message : String(error),
       );
       return null;
     }
@@ -872,7 +902,7 @@ export class ShadowDryRunService {
 let defaultService: ShadowDryRunService | null = null;
 
 export function getShadowDryRunService(
-  config?: ShadowDryRunConfig
+  config?: ShadowDryRunConfig,
 ): ShadowDryRunService {
   if (!defaultService) {
     const redis = config?.redis || getRedisClient(ServiceNamespace.SHARED);
@@ -882,7 +912,7 @@ export function getShadowDryRunService(
 }
 
 export function createShadowDryRunService(
-  config?: ShadowDryRunConfig
+  config?: ShadowDryRunConfig,
 ): ShadowDryRunService {
   const redis = config?.redis || getRedisClient(ServiceNamespace.SHARED);
   return new ShadowDryRunService({ redis, ...config });

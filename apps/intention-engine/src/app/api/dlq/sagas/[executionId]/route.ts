@@ -12,11 +12,68 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getRedisClient, ServiceNamespace } from "@repo/shared";
-const redis = getRedisClient(ServiceNamespace.IE);;
+const redis = getRedisClient(ServiceNamespace.IE);
 import { createDLQMonitoringService } from "@repo/shared";
 import { getEventSchemaRegistry, NervousSystemEvent } from "@repo/mcp-protocol";
 import { Tracer } from "@/lib/engine/tracing";
 import { RealtimeService } from "@repo/shared";
+
+// ============================================================================
+// SCHEMAS
+// ============================================================================
+
+const ResumeSagaBodySchema = z.object({
+  fixedParameters: z.record(z.string(), z.unknown()).optional(),
+  skipSteps: z.array(z.string()).optional(),
+  resumeFromStep: z.string().uuid().optional(),
+  reason: z.string().min(10),
+  adminUserId: z.string(),
+});
+
+const CancelSagaBodySchema = z.object({
+  reason: z.string().min(10),
+  adminUserId: z.string(),
+  attemptCompensation: z.boolean().default(true),
+});
+
+/**
+ * Schema for saga data stored in Redis DLQ
+ */
+const DLQSagaDataSchema = z
+  .object({
+    executionId: z.string(),
+    status: z.string(),
+    inactiveDurationMs: z.number().default(0),
+    segmentNumber: z.number().optional().default(0),
+    requiresHumanIntervention: z.boolean().optional().default(false),
+    compensationsRegistered: z.array(z.unknown()).optional().default([]),
+    stepStates: z
+      .array(
+        z.object({
+          step_id: z.string(),
+          status: z.string(),
+          error: z.unknown().optional(),
+        }),
+      )
+      .default([]),
+  })
+  .passthrough();
+
+type DLQSagaData = z.infer<typeof DLQSagaDataSchema>;
+
+/**
+ * Safely parse saga data from Redis JSON
+ */
+function parseSagaData(raw: string | null): DLQSagaData | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    const result = DLQSagaDataSchema.safeParse(parsed);
+    return result.success ? result.data : null;
+  } catch {
+    return null;
+  }
+}
 
 // ============================================================================
 // GET /api/dlq/sagas/[executionId] - Get Saga Details
@@ -24,7 +81,7 @@ import { RealtimeService } from "@repo/shared";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ executionId: string }> }
+  { params }: { params: Promise<{ executionId: string }> },
 ) {
   const { executionId } = await params;
 
@@ -32,29 +89,34 @@ export async function GET(
     try {
       // Get saga from DLQ
       const dlqKey = `dlq:saga:${executionId}`;
-      const sagaData = await redis?.get(dlqKey);
-      
+      const rawSagaData = await redis?.get(dlqKey);
+      const sagaData = parseSagaData(rawSagaData);
+
       if (!sagaData) {
         // Check if it's still in zombie state (not yet moved to DLQ)
         const dlqService = createDLQMonitoringService(redis!);
         const zombieSagas = await dlqService.scanForZombieSagas();
-        const zombieSaga = zombieSagas.find(s => s.executionId === executionId);
-        
+        const zombieSaga = zombieSagas.find(
+          (s) => s.executionId === executionId,
+        );
+
         if (zombieSaga) {
           return NextResponse.json({
             saga: {
               ...zombieSaga,
-              inactiveDurationHuman: formatDuration(zombieSaga.inactiveDurationMs),
+              inactiveDurationHuman: formatDuration(
+                zombieSaga.inactiveDurationMs,
+              ),
             },
           });
         }
-        
+
         return NextResponse.json(
           { error: "Saga not found in DLQ" },
-          { status: 404 }
+          { status: 404 },
         );
       }
-      
+
       // Load execution trace for additional context
       const traceKey = `trace:${executionId}`;
       const traceData = await redis?.get(traceKey);
@@ -66,23 +128,23 @@ export async function GET(
         : [];
 
       const saga = {
-        ...(sagaData as any),
-        inactiveDurationHuman: formatDuration((sagaData as any).inactiveDurationMs),
+        ...sagaData,
+        inactiveDurationHuman: formatDuration(sagaData.inactiveDurationMs),
         trace: traceData,
-        snapshots: snapshots.slice(0, 10), // Limit to 10 most recent
+        snapshots: snapshots.slice(0, 10),
       };
-      
+
       span.setAttributes({
         "dlq.execution_id": executionId,
         "dlq.saga_status": saga.status,
       });
-      
+
       return NextResponse.json({ saga });
     } catch (error) {
       console.error("[DLQ API] Failed to get saga details:", error);
       return NextResponse.json(
         { error: "Failed to get saga details" },
-        { status: 500 }
+        { status: 500 },
       );
     }
   });
@@ -94,7 +156,7 @@ export async function GET(
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ executionId: string }> }
+  { params }: { params: Promise<{ executionId: string }> },
 ) {
   const { executionId } = await params;
   const { searchParams } = new URL(req.url);
@@ -120,20 +182,27 @@ async function handleResume(req: NextRequest, executionId: string) {
       if (!result.success) {
         return NextResponse.json(
           { error: "Invalid request body", details: result.error.format() },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
-      const { fixedParameters, skipSteps, resumeFromStep, reason, adminUserId } = result.data;
+      const {
+        fixedParameters,
+        skipSteps,
+        resumeFromStep,
+        reason,
+        adminUserId,
+      } = result.data;
 
       // Get saga from DLQ
       const dlqKey = `dlq:saga:${executionId}`;
-      const sagaData = await redis?.get(dlqKey) as any;
+      const rawSagaData = await redis?.get(dlqKey);
+      const sagaData = parseSagaData(rawSagaData);
 
       if (!sagaData) {
         return NextResponse.json(
           { error: "Saga not found in DLQ" },
-          { status: 404 }
+          { status: 404 },
         );
       }
 
@@ -144,10 +213,10 @@ async function handleResume(req: NextRequest, executionId: string) {
             error: "Saga requires parameter fixes before resuming",
             requiresFix: true,
             currentParameters: sagaData.stepStates
-              .filter((s: any) => s.status === "failed")
-              .map((s: any) => ({ stepId: s.step_id, error: s.error })),
+              .filter((s) => s.status === "failed")
+              .map((s) => ({ stepId: s.step_id, error: s.error })),
           },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
@@ -165,33 +234,33 @@ async function handleResume(req: NextRequest, executionId: string) {
         },
         payload: {
           executionId,
-          segmentNumber: (sagaData.segmentNumber || 0) + 1,
+          segmentNumber: (sagaData.segmentNumber ?? 0) + 1,
           resumedFrom: dlqKey,
           elapsedMs: sagaData.inactiveDurationMs,
-        } as any,
+        },
       };
 
       // Validate event
       const validation = registry.validate("saga_resumed", resumeEvent);
       if (!validation.success) {
-        console.error("[DLQ API] Resume event validation failed:", validation.error);
+        console.error(
+          "[DLQ API] Resume event validation failed:",
+          validation.error,
+        );
       }
 
       // Publish to Nervous System
-      await RealtimeService.publishNervousSystemEvent(
-        "SAGA_MANUAL_RESUME",
-        {
-          executionId,
-          resumeConfig: {
-            fixedParameters,
-            skipSteps,
-            resumeFromStep,
-          },
-          reason,
-          adminUserId,
-          resumedAt: new Date().toISOString(),
-        }
-      );
+      await RealtimeService.publishNervousSystemEvent("SAGA_MANUAL_RESUME", {
+        executionId,
+        resumeConfig: {
+          fixedParameters,
+          skipSteps,
+          resumeFromStep,
+        },
+        reason,
+        adminUserId,
+        resumedAt: new Date().toISOString(),
+      });
 
       // Remove from DLQ
       await redis?.del(dlqKey);
@@ -207,7 +276,7 @@ async function handleResume(req: NextRequest, executionId: string) {
           triggeredBy: "manual",
           adminUserId,
           reason,
-        })
+        }),
       );
 
       span.setAttributes({
@@ -225,7 +294,7 @@ async function handleResume(req: NextRequest, executionId: string) {
       console.error("[DLQ API] Failed to resume saga:", error);
       return NextResponse.json(
         { error: "Failed to resume saga" },
-        { status: 500 }
+        { status: 500 },
       );
     }
   });
@@ -240,7 +309,7 @@ async function handleCancel(req: NextRequest, executionId: string) {
       if (!result.success) {
         return NextResponse.json(
           { error: "Invalid request body", details: result.error.format() },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
@@ -248,17 +317,18 @@ async function handleCancel(req: NextRequest, executionId: string) {
 
       // Get saga from DLQ
       const dlqKey = `dlq:saga:${executionId}`;
-      const sagaData = await redis?.get(dlqKey) as any;
+      const rawSagaData = await redis?.get(dlqKey);
+      const sagaData = parseSagaData(rawSagaData);
 
       if (!sagaData) {
         return NextResponse.json(
           { error: "Saga not found in DLQ" },
-          { status: 404 }
+          { status: 404 },
         );
       }
 
       // If compensation requested, trigger compensation workflow
-      if (attemptCompensation && sagaData.compensationsRegistered?.length > 0) {
+      if (attemptCompensation && sagaData.compensationsRegistered.length > 0) {
         await RealtimeService.publishNervousSystemEvent(
           "SAGA_MANUAL_COMPENSATION",
           {
@@ -266,7 +336,7 @@ async function handleCancel(req: NextRequest, executionId: string) {
             compensations: sagaData.compensationsRegistered,
             reason,
             adminUserId,
-          }
+          },
         );
       }
 
@@ -281,7 +351,7 @@ async function handleCancel(req: NextRequest, executionId: string) {
           adminUserId,
           attemptCompensation,
           previousStatus: sagaData.status,
-        })
+        }),
       );
 
       // Remove from DLQ
@@ -303,7 +373,7 @@ async function handleCancel(req: NextRequest, executionId: string) {
       console.error("[DLQ API] Failed to cancel saga:", error);
       return NextResponse.json(
         { error: "Failed to cancel saga" },
-        { status: 500 }
+        { status: 500 },
       );
     }
   });
@@ -313,7 +383,7 @@ function formatDuration(ms: number): string {
   const minutes = Math.floor(ms / 60000);
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
-  
+
   if (days > 0) {
     return `${days}d ${hours % 24}h`;
   }
@@ -322,21 +392,3 @@ function formatDuration(ms: number): string {
   }
   return `${minutes}m`;
 }
-
-// ============================================================================
-// SCHEMAS
-// ============================================================================
-
-const ResumeSagaBodySchema = z.object({
-  fixedParameters: z.record(z.string(), z.unknown()).optional(),
-  skipSteps: z.array(z.string()).optional(),
-  resumeFromStep: z.string().uuid().optional(),
-  reason: z.string().min(10),
-  adminUserId: z.string(),
-});
-
-const CancelSagaBodySchema = z.object({
-  reason: z.string().min(10),
-  adminUserId: z.string(),
-  attemptCompensation: z.boolean().default(true),
-});

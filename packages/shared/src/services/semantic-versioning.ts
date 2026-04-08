@@ -16,7 +16,7 @@
  * Usage:
  * ```typescript
  * const semver = createSemanticVersioningService();
- * 
+ *
  * // Register a compatibility adapter
  * semver.registerAdapter({
  *   toolName: 'createReservation',
@@ -24,14 +24,14 @@
  *   toVersion: '2.0.0',
  *   adapter: (params) => ({ ...params, partySize: params.partySize || 2 })
  * });
- * 
+ *
  * // Check compatibility and apply adapter
  * const result = await semver.checkCompatibility(
  *   'createReservation',
  *   checkpointToolVersions,
  *   currentToolVersions
  * );
- * 
+ *
  * if (result.requiresAdapter && result.adapterAvailable) {
  *   const adaptedParams = result.applyAdapter(oldParams);
  * }
@@ -62,11 +62,11 @@ export interface SemVer {
 /**
  * Schema change classification
  */
-export type ChangeType = 
-  | "BREAKING"      // Required field added/removed, type changed
-  | "MAJOR"         // Multiple fields changed
-  | "MINOR"         // Optional field added
-  | "PATCH"         // No functional change
+export type ChangeType =
+  | "BREAKING" // Required field added/removed, type changed
+  | "MAJOR" // Multiple fields changed
+  | "MINOR" // Optional field added
+  | "PATCH" // No functional change
   | "UNKNOWN";
 
 /**
@@ -106,7 +106,7 @@ export interface SchemaDiff {
  */
 export type CompatibilityAdapter = (
   params: Record<string, unknown>,
-  context?: Record<string, unknown>
+  context?: Record<string, unknown>,
 ) => Record<string, unknown>;
 
 /**
@@ -269,7 +269,7 @@ export const SchemaAnalyzer = {
   compareSchemas(
     toolName: string,
     oldSchema: z.ZodSchema,
-    newSchema: z.ZodSchema
+    newSchema: z.ZodSchema,
   ): SchemaDiff {
     const oldShape = this.extractShape(oldSchema);
     const newShape = this.extractShape(newSchema);
@@ -366,7 +366,7 @@ export const SchemaAnalyzer = {
 // ============================================================================
 
 export interface SemanticVersioningConfig {
-  redis: Redis;
+  redis: Redis | null;
   // TTL for adapter registry entries (default: 30 days)
   adapterTtlSeconds?: number;
   // Enable debug logging
@@ -374,7 +374,7 @@ export interface SemanticVersioningConfig {
 }
 
 const DEFAULT_CONFIG: Required<SemanticVersioningConfig> = {
-  redis: null as any, // Must be provided
+  redis: null,
   adapterTtlSeconds: 30 * 24 * 60 * 60, // 30 days
   debug: false,
 };
@@ -392,7 +392,11 @@ export class SemanticVersioningService {
   // KEY HELPERS
   // ========================================================================
 
-  private buildAdapterKey(toolName: string, fromVersion: string, toVersion: string): string {
+  private buildAdapterKey(
+    toolName: string,
+    fromVersion: string,
+    toVersion: string,
+  ): string {
     return `semver:adapter:${toolName}:${fromVersion}:${toVersion}`;
   }
 
@@ -408,8 +412,12 @@ export class SemanticVersioningService {
    * Register a compatibility adapter
    */
   async registerAdapter(adapter: RegisteredAdapter): Promise<void> {
-    const key = this.buildAdapterKey(adapter.toolName, adapter.fromVersion, adapter.toVersion);
-    
+    const key = this.buildAdapterKey(
+      adapter.toolName,
+      adapter.fromVersion,
+      adapter.toVersion,
+    );
+
     // Store in Redis
     await this.config.redis.setex(
       key,
@@ -417,12 +425,15 @@ export class SemanticVersioningService {
       JSON.stringify({
         ...adapter,
         registeredAt: new Date().toISOString(),
-      })
+      }),
     );
 
     // Add to tool's adapter index
     const indexKey = this.buildAdapterIndexKey(adapter.toolName);
-    await this.config.redis.sadd(indexKey, `${adapter.fromVersion}:${adapter.toVersion}`);
+    await this.config.redis.sadd(
+      indexKey,
+      `${adapter.fromVersion}:${adapter.toVersion}`,
+    );
     await this.config.redis.expire(indexKey, this.config.adapterTtlSeconds);
 
     // Add to in-memory cache
@@ -432,7 +443,7 @@ export class SemanticVersioningService {
     if (this.config.debug) {
       console.log(
         `[SemanticVersioning] Registered adapter: ${adapter.toolName} ` +
-        `${adapter.fromVersion} -> ${adapter.toVersion}`
+          `${adapter.fromVersion} -> ${adapter.toVersion}`,
       );
     }
   }
@@ -443,10 +454,10 @@ export class SemanticVersioningService {
   async getAdapter(
     toolName: string,
     fromVersion: string,
-    toVersion: string
+    toVersion: string,
   ): Promise<CompatibilityAdapter | null> {
     const cacheKey = `${toolName}:${fromVersion}:${toVersion}`;
-    
+
     // Check in-memory cache first
     const cached = this.adapterCache.get(cacheKey);
     if (cached) {
@@ -460,13 +471,12 @@ export class SemanticVersioningService {
     if (!data) return null;
 
     try {
-      const adapter: RegisteredAdapter = typeof data === 'string' 
-        ? JSON.parse(data) 
-        : data;
-      
+      const adapter: RegisteredAdapter =
+        typeof data === "string" ? JSON.parse(data) : data;
+
       // Cache it
       this.adapterCache.set(cacheKey, adapter);
-      
+
       return adapter.adapter;
     } catch (error) {
       console.error(`[SemanticVersioning] Failed to parse adapter:`, error);
@@ -479,13 +489,15 @@ export class SemanticVersioningService {
    */
   async listAdapters(toolName: string): Promise<RegisteredAdapter[]> {
     const indexKey = this.buildAdapterIndexKey(toolName);
-    const versionPairs = await this.config.redis.smembers(indexKey) as string[];
+    const versionPairs = (await this.config.redis.smembers(
+      indexKey,
+    )) as string[];
 
     const adapters: RegisteredAdapter[] = [];
     for (const pair of versionPairs) {
       const [fromVersion, toVersion] = pair.split(":");
       const adapter = await this.getAdapter(toolName, fromVersion, toVersion);
-      
+
       if (adapter) {
         // Get full adapter info from cache
         const cacheKey = `${toolName}:${fromVersion}:${toVersion}`;
@@ -505,14 +517,18 @@ export class SemanticVersioningService {
   async findBestAdapter(
     toolName: string,
     fromVersion: string,
-    toVersion: string
+    toVersion: string,
   ): Promise<{
     found: boolean;
     adapter?: CompatibilityAdapter;
     chain?: Array<{ from: string; to: string }>;
   }> {
     // Direct adapter?
-    const directAdapter = await this.getAdapter(toolName, fromVersion, toVersion);
+    const directAdapter = await this.getAdapter(
+      toolName,
+      fromVersion,
+      toVersion,
+    );
     if (directAdapter) {
       return {
         found: true,
@@ -544,10 +560,12 @@ export class SemanticVersioningService {
   private async findAdapterChain(
     toolName: string,
     fromVersion: string,
-    toVersion: string
+    toVersion: string,
   ): Promise<Array<{ from: string; to: string }>> {
     const indexKey = this.buildAdapterIndexKey(toolName);
-    const versionPairs = await this.config.redis.smembers(indexKey) as string[];
+    const versionPairs = (await this.config.redis.smembers(
+      indexKey,
+    )) as string[];
 
     // Build adjacency list
     const graph = new Map<string, string[]>();
@@ -560,9 +578,10 @@ export class SemanticVersioningService {
     }
 
     // BFS to find shortest path
-    const queue: Array<{ version: string; path: Array<{ from: string; to: string }> }> = [
-      { version: fromVersion, path: [] },
-    ];
+    const queue: Array<{
+      version: string;
+      path: Array<{ from: string; to: string }>;
+    }> = [{ version: fromVersion, path: [] }];
     const visited = new Set<string>([fromVersion]);
 
     while (queue.length > 0) {
@@ -592,7 +611,7 @@ export class SemanticVersioningService {
    */
   private async composeAdapterChain(
     toolName: string,
-    chain: Array<{ from: string; to: string }>
+    chain: Array<{ from: string; to: string }>,
   ): Promise<CompatibilityAdapter | null> {
     if (chain.length === 0) return null;
 
@@ -604,7 +623,10 @@ export class SemanticVersioningService {
     }
 
     // Return composed adapter
-    return (params: Record<string, unknown>, context?: Record<string, unknown>) => {
+    return (
+      params: Record<string, unknown>,
+      context?: Record<string, unknown>,
+    ) => {
       let result = params;
       for (const adapter of adapters) {
         result = adapter(result, context);
@@ -625,10 +647,10 @@ export class SemanticVersioningService {
     checkpointVersion: { version: string; schemaHash: string },
     currentVersion: { version: string; schemaHash: string },
     oldSchema?: z.ZodSchema,
-    newSchema?: z.ZodSchema
+    newSchema?: z.ZodSchema,
   ): Promise<CompatibilityResult> {
     const warnings: string[] = [];
-    
+
     // Same version - compatible
     if (checkpointVersion.schemaHash === currentVersion.schemaHash) {
       return {
@@ -647,19 +669,23 @@ export class SemanticVersioningService {
     let changeType: ChangeType = "UNKNOWN";
 
     if (oldSchema && newSchema) {
-      schemaDiff = SchemaAnalyzer.compareSchemas(toolName, oldSchema, newSchema);
+      schemaDiff = SchemaAnalyzer.compareSchemas(
+        toolName,
+        oldSchema,
+        newSchema,
+      );
       changeType = schemaDiff.changeType;
     } else {
       // Fallback to semver comparison
       const isBreaking = SemanticVersionUtils.isBreakingChange(
         checkpointVersion.version,
-        currentVersion.version
+        currentVersion.version,
       );
       changeType = isBreaking ? "BREAKING" : "MINOR";
     }
 
     const requiresAdapter = changeType === "BREAKING" || changeType === "MAJOR";
-    
+
     // Find adapter if needed
     let adapterAvailable = false;
     let applyAdapter: CompatibilityAdapter = (p) => p;
@@ -668,7 +694,7 @@ export class SemanticVersioningService {
       const adapterResult = await this.findBestAdapter(
         toolName,
         checkpointVersion.version,
-        currentVersion.version
+        currentVersion.version,
       );
 
       if (adapterResult.found && adapterResult.adapter) {
@@ -677,7 +703,7 @@ export class SemanticVersioningService {
       } else {
         warnings.push(
           `No compatibility adapter found for ${toolName} ` +
-          `${checkpointVersion.version} -> ${currentVersion.version}`
+            `${checkpointVersion.version} -> ${currentVersion.version}`,
         );
       }
     }
@@ -698,8 +724,14 @@ export class SemanticVersioningService {
    * Check compatibility for all tools in a plan
    */
   async checkAllToolsCompatibility(
-    checkpointToolVersions: Record<string, { version: string; schemaHash: string }>,
-    currentToolVersions: Record<string, { version: string; schemaHash: string }>
+    checkpointToolVersions: Record<
+      string,
+      { version: string; schemaHash: string }
+    >,
+    currentToolVersions: Record<
+      string,
+      { version: string; schemaHash: string }
+    >,
   ): Promise<{
     allCompatible: boolean;
     results: Record<string, CompatibilityResult>;
@@ -711,9 +743,11 @@ export class SemanticVersioningService {
     let requiresIntervention = false;
     const breakingTools: string[] = [];
 
-    for (const [toolName, checkpointVersion] of Object.entries(checkpointToolVersions)) {
+    for (const [toolName, checkpointVersion] of Object.entries(
+      checkpointToolVersions,
+    )) {
       const currentVersion = currentToolVersions[toolName];
-      
+
       if (!currentVersion) {
         // Tool no longer exists - breaking
         results[toolName] = {
@@ -734,7 +768,7 @@ export class SemanticVersioningService {
       const result = await this.checkCompatibility(
         toolName,
         checkpointVersion,
-        currentVersion
+        currentVersion,
       );
 
       results[toolName] = result;
@@ -750,10 +784,12 @@ export class SemanticVersioningService {
 
     let recommendation = "All tools compatible - safe to resume";
     if (requiresIntervention) {
-      recommendation = `Breaking changes detected in: ${breakingTools.join(", ")}. ` +
+      recommendation =
+        `Breaking changes detected in: ${breakingTools.join(", ")}. ` +
         "Manual intervention required or register compatibility adapters.";
     } else if (!allCompatible) {
-      recommendation = "Minor incompatibilities detected - adapters available, can resume with caution";
+      recommendation =
+        "Minor incompatibilities detected - adapters available, can resume with caution";
     }
 
     return {
@@ -772,15 +808,16 @@ export class SemanticVersioningService {
    * Generate a default adapter for simple field mappings
    * Uses heuristics to map removed fields to added fields
    */
-  generateDefaultAdapter(
-    schemaDiff: SchemaDiff
-  ): CompatibilityAdapter {
+  generateDefaultAdapter(schemaDiff: SchemaDiff): CompatibilityAdapter {
     const fieldMappings: Record<string, string> = {};
 
     // Try to match removed fields to added fields by name similarity
     for (const removed of schemaDiff.removedFields) {
       for (const added of schemaDiff.addedFields) {
-        if (added.required && this.nameSimilarity(removed.name, added.name) > 0.7) {
+        if (
+          added.required &&
+          this.nameSimilarity(removed.name, added.name) > 0.7
+        ) {
           fieldMappings[removed.name] = added.name;
           break;
         }
@@ -813,12 +850,18 @@ export class SemanticVersioningService {
    */
   private getDefaultValueForType(type: string): unknown {
     switch (type) {
-      case "string": return "";
-      case "number": return 0;
-      case "boolean": return false;
-      case "array": return [];
-      case "object": return {};
-      default: return null;
+      case "string":
+        return "";
+      case "number":
+        return 0;
+      case "boolean":
+        return false;
+      case "array":
+        return [];
+      case "object":
+        return {};
+      default:
+        return null;
     }
   }
 
@@ -856,7 +899,7 @@ export class SemanticVersioningService {
           matrix[i][j] = Math.min(
             matrix[i - 1][j - 1] + 1,
             matrix[i][j - 1] + 1,
-            matrix[i - 1][j] + 1
+            matrix[i - 1][j] + 1,
           );
         }
       }

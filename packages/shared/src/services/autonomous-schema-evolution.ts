@@ -26,10 +26,13 @@
  * @since 1.0.0
  */
 
-import { Redis } from '@upstash/redis';
-import { getRedisClient, ServiceNamespace } from '../redis';
-import { getParameterAliaserService, type ParameterAlias } from './parameter-aliaser';
-import { Octokit } from '@octokit/rest';
+import { Redis } from "@upstash/redis";
+import { getRedisClient, ServiceNamespace } from "../redis";
+import {
+  getParameterAliaserService,
+  type ParameterAlias,
+} from "./parameter-aliaser";
+import { Octokit } from "@octokit/rest";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -61,7 +64,7 @@ export interface AliasUsageRecord {
 }
 
 export interface SchemaHotPatchConfig {
-  redis: Redis;
+  redis: Redis | null;
   /** Usage count threshold before generating PR (default: 100) */
   usageThreshold?: number;
   /** GitHub repository owner */
@@ -76,13 +79,16 @@ export interface SchemaHotPatchConfig {
   octokit?: Octokit;
 }
 
-const DEFAULT_CONFIG: Omit<Required<SchemaHotPatchConfig>, 'octokit'> & { octokit?: Octokit } = {
-  redis: null as any,
+const DEFAULT_CONFIG: Omit<
+  Required<SchemaHotPatchConfig>,
+  "redis" | "octokit"
+> & { redis: Redis | null; octokit?: Octokit } = {
+  redis: null,
   usageThreshold: 100,
-  githubOwner: '',
-  githubRepo: '',
-  githubToken: '',
-  branchPrefix: 'schema-hotfix/',
+  githubOwner: "",
+  githubRepo: "",
+  githubToken: "",
+  branchPrefix: "schema-hotfix/",
   octokit: undefined,
 };
 
@@ -108,7 +114,7 @@ export class AliasUsageTracker {
   }
 
   private buildPendingPRsKey(): string {
-    return 'alias_usage:pending_prs';
+    return "alias_usage:pending_prs";
   }
 
   // ========================================================================
@@ -127,7 +133,7 @@ export class AliasUsageTracker {
   async recordUsage(
     toolName: string,
     aliasField: string,
-    primaryField: string
+    primaryField: string,
   ): Promise<AliasUsageRecord> {
     const usageKey = this.buildUsageKey(toolName, aliasField);
     const now = new Date().toISOString();
@@ -137,7 +143,10 @@ export class AliasUsageTracker {
     let record: AliasUsageRecord;
 
     if (existingData) {
-      record = typeof existingData === 'string' ? JSON.parse(existingData) : existingData;
+      record =
+        typeof existingData === "string"
+          ? JSON.parse(existingData)
+          : existingData;
       record.usageCount++;
       record.lastUsedAt = now;
     } else {
@@ -157,7 +166,7 @@ export class AliasUsageTracker {
     await this.config.redis.setex(
       usageKey,
       30 * 24 * 60 * 60, // 30 days TTL
-      JSON.stringify(record)
+      JSON.stringify(record),
     );
 
     // Update local cache
@@ -169,7 +178,10 @@ export class AliasUsageTracker {
   /**
    * Get usage record for an alias
    */
-  async getUsage(toolName: string, aliasField: string): Promise<AliasUsageRecord | null> {
+  async getUsage(
+    toolName: string,
+    aliasField: string,
+  ): Promise<AliasUsageRecord | null> {
     const cacheKey = `${toolName}:${aliasField}`;
     const cached = this.localCache.get(cacheKey);
     if (cached) {
@@ -183,7 +195,7 @@ export class AliasUsageTracker {
       return null;
     }
 
-    const record = typeof data === 'string' ? JSON.parse(data) : data;
+    const record = typeof data === "string" ? JSON.parse(data) : data;
     this.localCache.set(cacheKey, record);
     return record;
   }
@@ -193,8 +205,9 @@ export class AliasUsageTracker {
    * These should have PRs generated
    */
   async getExceedingAliases(threshold?: number): Promise<AliasUsageRecord[]> {
-    const thresholdToUse = threshold ?? this.config.usageThreshold ?? DEFAULT_CONFIG.usageThreshold;
-    const pattern = 'alias_usage:*';
+    const thresholdToUse =
+      threshold ?? this.config.usageThreshold ?? DEFAULT_CONFIG.usageThreshold;
+    const pattern = "alias_usage:*";
     const keys = await this.config.redis.keys(pattern);
 
     const exceeding: AliasUsageRecord[] = [];
@@ -203,7 +216,7 @@ export class AliasUsageTracker {
       const data = await this.config.redis.get<any>(key);
       if (!data) continue;
 
-      const record = typeof data === 'string' ? JSON.parse(data) : data;
+      const record = typeof data === "string" ? JSON.parse(data) : data;
 
       if (record.usageCount >= thresholdToUse && !record.prGenerated) {
         exceeding.push(record);
@@ -220,7 +233,7 @@ export class AliasUsageTracker {
     toolName: string,
     aliasField: string,
     prNumber: number,
-    prUrl: string
+    prUrl: string,
   ): Promise<void> {
     const usageKey = this.buildUsageKey(toolName, aliasField);
     const record = await this.getUsage(toolName, aliasField);
@@ -236,13 +249,13 @@ export class AliasUsageTracker {
     await this.config.redis.setex(
       usageKey,
       30 * 24 * 60 * 60,
-      JSON.stringify(record)
+      JSON.stringify(record),
     );
 
     // Add to pending PRs set
     await this.config.redis.sadd(
       this.buildPendingPRsKey(),
-      `${toolName}:${aliasField}`
+      `${toolName}:${aliasField}`,
     );
 
     this.localCache.set(`${toolName}:${aliasField}`, record);
@@ -265,13 +278,13 @@ export class AliasUsageTracker {
     await this.config.redis.setex(
       usageKey,
       30 * 24 * 60 * 60,
-      JSON.stringify(record)
+      JSON.stringify(record),
     );
 
     // Remove from pending PRs
     await this.config.redis.srem(
       this.buildPendingPRsKey(),
-      `${toolName}:${aliasField}`
+      `${toolName}:${aliasField}`,
     );
 
     this.localCache.set(`${toolName}:${aliasField}`, record);
@@ -281,11 +294,13 @@ export class AliasUsageTracker {
    * Get pending PRs
    */
   async getPendingPRs(): Promise<AliasUsageRecord[]> {
-    const pendingKeys = await this.config.redis.smembers(this.buildPendingPRsKey());
+    const pendingKeys = await this.config.redis.smembers(
+      this.buildPendingPRsKey(),
+    );
     const records: AliasUsageRecord[] = [];
 
     for (const key of pendingKeys) {
-      const [toolName, aliasField] = key.split(':');
+      const [toolName, aliasField] = key.split(":");
       const record = await this.getUsage(toolName, aliasField);
       if (record && record.prGenerated && !record.prMerged) {
         records.push(record);
@@ -309,7 +324,7 @@ export class AliasUsageTracker {
       usageCount: number;
     }>;
   }> {
-    const pattern = 'alias_usage:*';
+    const pattern = "alias_usage:*";
     const keys = await this.config.redis.keys(pattern);
 
     let totalTrackedAliases = 0;
@@ -326,10 +341,11 @@ export class AliasUsageTracker {
       const data = await this.config.redis.get<any>(key);
       if (!data) continue;
 
-      const record = typeof data === 'string' ? JSON.parse(data) : data;
+      const record = typeof data === "string" ? JSON.parse(data) : data;
       totalTrackedAliases++;
 
-      const thresholdToUse = this.config.usageThreshold ?? DEFAULT_CONFIG.usageThreshold;
+      const thresholdToUse =
+        this.config.usageThreshold ?? DEFAULT_CONFIG.usageThreshold;
       if (record.usageCount >= thresholdToUse) {
         exceedingThreshold++;
       }
@@ -340,7 +356,7 @@ export class AliasUsageTracker {
         prsMerged++;
       }
 
-      const [toolName, aliasField] = key.replace('alias_usage:', '').split(':');
+      const [toolName, aliasField] = key.replace("alias_usage:", "").split(":");
       allAliases.push({ toolName, aliasField, usageCount: record.usageCount });
     }
 
@@ -370,18 +386,18 @@ export class SchemaHotPatcher {
   constructor(config: SchemaHotPatchConfig, usageTracker: AliasUsageTracker) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.usageTracker = usageTracker;
-    
+
     // Initialize Octokit
     if (config.octokit) {
       this.octokit = config.octokit;
     } else if (config.githubToken) {
       this.octokit = new Octokit({
         auth: config.githubToken,
-        baseUrl: 'https://api.github.com',
+        baseUrl: "https://api.github.com",
       });
     } else {
       throw new Error(
-        'GitHub token not provided. Set GITHUB_TOKEN or provide octokit instance.'
+        "GitHub token not provided. Set GITHUB_TOKEN or provide octokit instance.",
       );
     }
   }
@@ -406,14 +422,18 @@ export class SchemaHotPatcher {
     const { toolName, aliasField, primaryField } = record;
 
     console.log(
-      `[SchemaHotPatcher] Generating PR for ${toolName}: ${aliasField} -> ${primaryField}`
+      `[SchemaHotPatcher] Generating PR for ${toolName}: ${aliasField} -> ${primaryField}`,
     );
 
     // Generate branch name
     const branchName = `${this.config.branchPrefix}${toolName}-${aliasField}-to-${primaryField}`;
 
     // Generate file changes
-    const filesChanged = await this.generateFileChanges(toolName, aliasField, primaryField);
+    const filesChanged = await this.generateFileChanges(
+      toolName,
+      aliasField,
+      primaryField,
+    );
 
     // Create PR via GitHub API
     const prDetails = await this.createGitHubPR({
@@ -428,18 +448,18 @@ export class SchemaHotPatcher {
       toolName,
       aliasField,
       prDetails.number,
-      prDetails.url
+      prDetails.url,
     );
 
     console.log(
-      `[SchemaHotPatcher] Created PR #${prDetails.number}: ${prDetails.url}`
+      `[SchemaHotPatcher] Created PR #${prDetails.number}: ${prDetails.url}`,
     );
 
     return {
       prNumber: prDetails.number,
       prUrl: prDetails.url,
       branchName,
-      filesChanged: filesChanged.map(f => f.path),
+      filesChanged: filesChanged.map((f) => f.path),
     };
   }
 
@@ -449,28 +469,44 @@ export class SchemaHotPatcher {
   private async generateFileChanges(
     toolName: string,
     aliasField: string,
-    primaryField: string
+    primaryField: string,
   ): Promise<Array<{ path: string; content: string }>> {
     const files: Array<{ path: string; content: string }> = [];
 
     // 1. Update Zod schema in @repo/mcp-protocol
     const schemaPath = `packages/mcp-protocol/src/schemas/${toolName}.ts`;
-    const schemaContent = this.generateSchemaUpdate(toolName, aliasField, primaryField);
+    const schemaContent = this.generateSchemaUpdate(
+      toolName,
+      aliasField,
+      primaryField,
+    );
     files.push({ path: schemaPath, content: schemaContent });
 
     // 2. Update tool definition
     const toolDefPath = `packages/mcp-protocol/src/tools/${toolName}.ts`;
-    const toolDefContent = this.generateToolDefinitionUpdate(toolName, aliasField, primaryField);
+    const toolDefContent = this.generateToolDefinitionUpdate(
+      toolName,
+      aliasField,
+      primaryField,
+    );
     files.push({ path: toolDefPath, content: toolDefContent });
 
     // 3. Add backward compatibility layer
     const compatPath = `packages/mcp-protocol/src/compat/${toolName}-alias.ts`;
-    const compatContent = this.generateCompatibilityLayer(toolName, aliasField, primaryField);
+    const compatContent = this.generateCompatibilityLayer(
+      toolName,
+      aliasField,
+      primaryField,
+    );
     files.push({ path: compatPath, content: compatContent });
 
     // 4. Update migration guide (note: append logic would be handled by GitHub API)
     const migrationPath = `packages/mcp-protocol/MIGRATION.md`;
-    const migrationContent = this.generateMigrationGuideEntry(toolName, aliasField, primaryField);
+    const migrationContent = this.generateMigrationGuideEntry(
+      toolName,
+      aliasField,
+      primaryField,
+    );
     files.push({ path: migrationPath, content: migrationContent });
 
     return files;
@@ -482,7 +518,7 @@ export class SchemaHotPatcher {
   private generateSchemaUpdate(
     toolName: string,
     aliasField: string,
-    primaryField: string
+    primaryField: string,
   ): string {
     return `/**
  * Auto-generated schema update by SchemaHotPatcher
@@ -525,7 +561,7 @@ export const ${toolName}SchemaWithAlias = z.object({
   private generateToolDefinitionUpdate(
     toolName: string,
     aliasField: string,
-    primaryField: string
+    primaryField: string,
   ): string {
     return `/**
  * Auto-generated tool definition update by SchemaHotPatcher
@@ -558,7 +594,7 @@ export const ${toolName}Tool = {
   private generateCompatibilityLayer(
     toolName: string,
     aliasField: string,
-    primaryField: string
+    primaryField: string,
   ): string {
     return `/**
  * Backward Compatibility Layer for ${toolName}
@@ -600,9 +636,9 @@ export const DEPRECATED_FIELDS = {
   private generateMigrationGuideEntry(
     toolName: string,
     aliasField: string,
-    primaryField: string
+    primaryField: string,
   ): string {
-    const date = new Date().toISOString().split('T')[0];
+    const date = new Date().toISOString().split("T")[0];
 
     return `
 ## ${date} - ${toolName}: ${aliasField} → ${primaryField}
@@ -684,7 +720,7 @@ This change was auto-generated by the **SchemaHotPatcher** service after detecti
 
     if (!githubOwner || !githubRepo) {
       throw new Error(
-        'GitHub credentials not configured. Set GITHUB_OWNER and GITHUB_REPO.'
+        "GitHub credentials not configured. Set GITHUB_OWNER and GITHUB_REPO.",
       );
     }
 
@@ -694,7 +730,7 @@ This change was auto-generated by the **SchemaHotPatcher** service after detecti
         owner: githubOwner,
         repo: githubRepo,
       });
-      const defaultBranch = repo.default_branch || 'main';
+      const defaultBranch = repo.default_branch || "main";
 
       // Step 2: Check if branch already exists
       let branchExists = false;
@@ -715,7 +751,7 @@ This change was auto-generated by the **SchemaHotPatcher** service after detecti
         const { data: defaultBranchData } = await this.octokit.repos.getBranch({
           owner: githubOwner,
           repo: githubRepo,
-          branch: 'main',
+          branch: "main",
         });
 
         await this.octokit.git.createRef({
@@ -741,16 +777,16 @@ This change was auto-generated by the **SchemaHotPatcher** service after detecti
             owner: githubOwner,
             repo: githubRepo,
             content: file.content,
-            encoding: 'utf-8',
+            encoding: "utf-8",
           });
 
           return {
             path: file.path,
-            mode: '100644' as const,
-            type: 'blob' as const,
+            mode: "100644" as const,
+            type: "blob" as const,
             sha: blob.sha,
           };
-        })
+        }),
       );
 
       // Step 6: Create a new tree
@@ -783,7 +819,7 @@ This change was auto-generated by the **SchemaHotPatcher** service after detecti
         owner: githubOwner,
         repo: githubRepo,
         head: `${githubOwner}:${details.branchName}`,
-        state: 'open',
+        state: "open",
       });
 
       if (existingPRs.length > 0) {
@@ -809,7 +845,7 @@ This change was auto-generated by the **SchemaHotPatcher** service after detecti
         owner: githubOwner,
         repo: githubRepo,
         issue_number: pr.number,
-        labels: ['schema-evolution', 'automated-pr', 'awaiting-review'],
+        labels: ["schema-evolution", "automated-pr", "awaiting-review"],
       });
 
       return {
@@ -817,9 +853,9 @@ This change was auto-generated by the **SchemaHotPatcher** service after detecti
         url: pr.html_url,
       };
     } catch (error) {
-      console.error('[SchemaHotPatcher] Failed to create GitHub PR:', error);
+      console.error("[SchemaHotPatcher] Failed to create GitHub PR:", error);
       throw new Error(
-        `GitHub PR creation failed: ${error instanceof Error ? error.message : String(error)}`
+        `GitHub PR creation failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -847,11 +883,16 @@ export class AutonomousSchemaEvolutionService {
   async recordAliasUsage(
     toolName: string,
     aliasField: string,
-    primaryField: string
+    primaryField: string,
   ): Promise<{ shouldGeneratePR: boolean; record?: AliasUsageRecord }> {
-    const record = await this.usageTracker.recordUsage(toolName, aliasField, primaryField);
+    const record = await this.usageTracker.recordUsage(
+      toolName,
+      aliasField,
+      primaryField,
+    );
 
-    const thresholdToUse = this.config.usageThreshold ?? DEFAULT_CONFIG.usageThreshold;
+    const thresholdToUse =
+      this.config.usageThreshold ?? DEFAULT_CONFIG.usageThreshold;
     if (record.usageCount >= thresholdToUse && !record.prGenerated) {
       // Generate PR automatically
       await this.hotPatcher.generateHotPatchPR(record);
@@ -864,7 +905,10 @@ export class AutonomousSchemaEvolutionService {
   /**
    * Manually trigger PR generation for an alias
    */
-  async generatePR(toolName: string, aliasField: string): Promise<{
+  async generatePR(
+    toolName: string,
+    aliasField: string,
+  ): Promise<{
     prNumber: number;
     prUrl: string;
     branchName: string;
@@ -928,10 +972,11 @@ export class AutonomousSchemaEvolutionService {
 // FACTORY
 // ============================================================================
 
-let defaultAutonomousSchemaEvolution: AutonomousSchemaEvolutionService | null = null;
+let defaultAutonomousSchemaEvolution: AutonomousSchemaEvolutionService | null =
+  null;
 
 export function getAutonomousSchemaEvolutionService(
-  config?: SchemaHotPatchConfig
+  config?: SchemaHotPatchConfig,
 ): AutonomousSchemaEvolutionService {
   if (!defaultAutonomousSchemaEvolution) {
     const redis = config?.redis || getRedisClient(ServiceNamespace.SHARED);
@@ -944,7 +989,7 @@ export function getAutonomousSchemaEvolutionService(
 }
 
 export function createAutonomousSchemaEvolutionService(
-  config?: SchemaHotPatchConfig
+  config?: SchemaHotPatchConfig,
 ): AutonomousSchemaEvolutionService {
   const redis = config?.redis || getRedisClient(ServiceNamespace.SHARED);
   return new AutonomousSchemaEvolutionService({ redis, ...config });

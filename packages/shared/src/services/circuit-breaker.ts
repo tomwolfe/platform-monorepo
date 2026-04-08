@@ -13,14 +13,22 @@
  * @since 1.0.0
  */
 
-import { EventEmitter } from 'events';
-import { Redis } from '@upstash/redis';
+/**
+ * Extended error type with error codes
+ */
+interface ErrorWithCode extends Error {
+  code?: string;
+  errorCode?: string;
+}
+
+import { EventEmitter } from "events";
+import { Redis } from "@upstash/redis";
 
 // ============================================================================
 // CIRCUIT BREAKER STATE
 // ============================================================================
 
-export type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+export type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
 export interface CircuitBreakerStats {
   /** Total requests */
@@ -70,7 +78,7 @@ const DEFAULT_CONFIG: CircuitBreakerConfig = {
   successThreshold: 3,
   requestTimeoutMs: 10000,
   monitorHalfOpenRequests: true,
-  ignoredErrors: ['CLIENT_ERROR', 'VALIDATION_ERROR', 'NOT_FOUND'],
+  ignoredErrors: ["CLIENT_ERROR", "VALIDATION_ERROR", "NOT_FOUND"],
   debug: false,
 };
 
@@ -91,7 +99,7 @@ export interface CircuitBreakerEvents {
 // ============================================================================
 
 export class CircuitBreaker extends EventEmitter {
-  private state: CircuitState = 'CLOSED';
+  private state: CircuitState = "CLOSED";
   private failureCount = 0;
   private consecutiveSuccesses = 0;
   private lastFailureTime = 0;
@@ -100,10 +108,7 @@ export class CircuitBreaker extends EventEmitter {
   private config: CircuitBreakerConfig;
   private name: string;
 
-  constructor(
-    name: string,
-    config: Partial<CircuitBreakerConfig> = {}
-  ) {
+  constructor(name: string, config: Partial<CircuitBreakerConfig> = {}) {
     super();
     this.name = name;
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -138,23 +143,23 @@ export class CircuitBreaker extends EventEmitter {
     // Check if we should allow the request
     if (!this.allowRequest()) {
       this.stats.rejectedRequests++;
-      this.emit('reject');
-      
+      this.emit("reject");
+
       throw new CircuitBreakerOpenError(
         `Circuit breaker '${this.name}' is OPEN`,
-        this.getNextRetryTime()
+        this.getNextRetryTime(),
       );
     }
 
     // Track half-open requests
-    if (this.state === 'HALF_OPEN') {
-      this.emit('halfOpenRequest');
+    if (this.state === "HALF_OPEN") {
+      this.emit("halfOpenRequest");
     }
 
     try {
       // Execute with timeout
       const result = await this.executeWithTimeout(fn);
-      
+
       // Record success
       this.onSuccess(startTime);
       return result;
@@ -172,7 +177,11 @@ export class CircuitBreaker extends EventEmitter {
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => {
         this.stats.timeoutRequests++;
-        reject(new TimeoutError(`Request timed out after ${this.config.requestTimeoutMs}ms`));
+        reject(
+          new TimeoutError(
+            `Request timed out after ${this.config.requestTimeoutMs}ms`,
+          ),
+        );
       }, this.config.requestTimeoutMs);
     });
 
@@ -183,14 +192,14 @@ export class CircuitBreaker extends EventEmitter {
    * Check if request should be allowed
    */
   private allowRequest(): boolean {
-    if (this.state === 'CLOSED') {
+    if (this.state === "CLOSED") {
       return true;
     }
 
-    if (this.state === 'OPEN') {
+    if (this.state === "OPEN") {
       const now = Date.now();
       if (now >= this.nextAttempt) {
-        this.transitionTo('HALF_OPEN', 'Reset timeout elapsed');
+        this.transitionTo("HALF_OPEN", "Reset timeout elapsed");
         return true;
       }
       return false;
@@ -208,12 +217,12 @@ export class CircuitBreaker extends EventEmitter {
     this.stats.successfulRequests++;
     this.stats.consecutiveSuccesses++;
     this.consecutiveSuccesses++;
-    
+
     this.updateStateTime(this.state, endTime - startTime);
 
-    if (this.state === 'HALF_OPEN') {
+    if (this.state === "HALF_OPEN") {
       if (this.consecutiveSuccesses >= this.config.successThreshold) {
-        this.transitionTo('CLOSED', 'Success threshold reached');
+        this.transitionTo("CLOSED", "Success threshold reached");
       }
     } else {
       // Reset failure count on success in CLOSED state
@@ -222,10 +231,12 @@ export class CircuitBreaker extends EventEmitter {
       }
     }
 
-    this.emit('success');
-    
+    this.emit("success");
+
     if (this.config.debug) {
-      console.log(`[CircuitBreaker:${this.name}] Success (consecutive: ${this.consecutiveSuccesses})`);
+      console.log(
+        `[CircuitBreaker:${this.name}] Success (consecutive: ${this.consecutiveSuccesses})`,
+      );
     }
   }
 
@@ -237,13 +248,15 @@ export class CircuitBreaker extends EventEmitter {
     this.stats.failedRequests++;
     this.stats.currentFailures++;
     this.lastFailureTime = Date.now();
-    
+
     this.updateStateTime(this.state, endTime - startTime);
 
     // Check if error should be ignored
     if (this.shouldIgnoreError(error)) {
       if (this.config.debug) {
-        console.log(`[CircuitBreaker:${this.name}] Ignored error: ${error.message}`);
+        console.log(
+          `[CircuitBreaker:${this.name}] Ignored error: ${error.message}`,
+        );
       }
       return;
     }
@@ -251,15 +264,20 @@ export class CircuitBreaker extends EventEmitter {
     this.consecutiveSuccesses = 0;
     this.failureCount++;
 
-    this.emit('failure', error, this.failureCount);
+    this.emit("failure", error, this.failureCount);
 
     if (this.config.debug) {
-      console.log(`[CircuitBreaker:${this.name}] Failure (count: ${this.failureCount}/${this.config.failureThreshold})`);
+      console.log(
+        `[CircuitBreaker:${this.name}] Failure (count: ${this.failureCount}/${this.config.failureThreshold})`,
+      );
     }
 
     // Check if we should open the circuit
     if (this.shouldOpenCircuit()) {
-      this.transitionTo('OPEN', `Failure threshold reached (${this.failureCount}/${this.config.failureThreshold})`);
+      this.transitionTo(
+        "OPEN",
+        `Failure threshold reached (${this.failureCount}/${this.config.failureThreshold})`,
+      );
     }
   }
 
@@ -268,7 +286,8 @@ export class CircuitBreaker extends EventEmitter {
    */
   private shouldIgnoreError(error: Error): boolean {
     // Check by error code
-    const errorCode = (error as any).code || (error as any).errorCode;
+    const errorCode =
+      (error as ErrorWithCode).code || (error as ErrorWithCode).errorCode;
     if (errorCode && this.config.ignoredErrors.includes(errorCode)) {
       return true;
     }
@@ -295,7 +314,7 @@ export class CircuitBreaker extends EventEmitter {
    */
   private transitionTo(newState: CircuitState, reason: string): void {
     const oldState = this.state;
-    
+
     if (oldState === newState) {
       return;
     }
@@ -304,20 +323,22 @@ export class CircuitBreaker extends EventEmitter {
     this.stats.lastStateChange = Date.now();
 
     // Reset counters based on new state
-    if (newState === 'CLOSED') {
+    if (newState === "CLOSED") {
       this.failureCount = 0;
       this.consecutiveSuccesses = 0;
-    } else if (newState === 'OPEN') {
+    } else if (newState === "OPEN") {
       this.nextAttempt = Date.now() + this.config.resetTimeoutMs;
       this.consecutiveSuccesses = 0;
-    } else if (newState === 'HALF_OPEN') {
+    } else if (newState === "HALF_OPEN") {
       this.consecutiveSuccesses = 0;
     }
 
-    this.emit('stateChange', oldState, newState, reason);
+    this.emit("stateChange", oldState, newState, reason);
 
     if (this.config.debug) {
-      console.log(`[CircuitBreaker:${this.name}] State change: ${oldState} -> ${newState} (${reason})`);
+      console.log(
+        `[CircuitBreaker:${this.name}] State change: ${oldState} -> ${newState} (${reason})`,
+      );
     }
   }
 
@@ -325,14 +346,15 @@ export class CircuitBreaker extends EventEmitter {
    * Update time spent in state
    */
   private updateStateTime(state: CircuitState, duration: number): void {
-    this.stats.timeInState[state] = (this.stats.timeInState[state] || 0) + duration;
+    this.stats.timeInState[state] =
+      (this.stats.timeInState[state] || 0) + duration;
   }
 
   /**
    * Get next retry time
    */
   private getNextRetryTime(): number {
-    if (this.state !== 'OPEN') {
+    if (this.state !== "OPEN") {
       return 0;
     }
     return Math.max(0, this.nextAttempt - Date.now());
@@ -365,15 +387,19 @@ export class CircuitBreaker extends EventEmitter {
     failureRate: number;
     nextRetryInMs?: number;
   } {
-    const failureRate = this.stats.totalRequests > 0
-      ? this.stats.failedRequests / this.stats.totalRequests
-      : 0;
+    const failureRate =
+      this.stats.totalRequests > 0
+        ? this.stats.failedRequests / this.stats.totalRequests
+        : 0;
 
     return {
       state: this.state,
-      isHealthy: this.state === 'CLOSED' || (this.state === 'HALF_OPEN' && failureRate < 0.5),
+      isHealthy:
+        this.state === "CLOSED" ||
+        (this.state === "HALF_OPEN" && failureRate < 0.5),
       failureRate,
-      nextRetryInMs: this.state === 'OPEN' ? this.getNextRetryTime() : undefined,
+      nextRetryInMs:
+        this.state === "OPEN" ? this.getNextRetryTime() : undefined,
     };
   }
 
@@ -381,14 +407,14 @@ export class CircuitBreaker extends EventEmitter {
    * Manually reset the circuit breaker
    */
   reset(): void {
-    this.transitionTo('CLOSED', 'Manual reset');
+    this.transitionTo("CLOSED", "Manual reset");
   }
 
   /**
    * Force open the circuit breaker
    */
   forceOpen(): void {
-    this.transitionTo('OPEN', 'Manual force open');
+    this.transitionTo("OPEN", "Manual force open");
   }
 }
 
@@ -397,22 +423,22 @@ export class CircuitBreaker extends EventEmitter {
 // ============================================================================
 
 export class CircuitBreakerOpenError extends Error {
-  code = 'CIRCUIT_BREAKER_OPEN';
+  code = "CIRCUIT_BREAKER_OPEN";
   retryAfter: number;
 
   constructor(message: string, retryAfter: number) {
     super(message);
-    this.name = 'CircuitBreakerOpenError';
+    this.name = "CircuitBreakerOpenError";
     this.retryAfter = retryAfter;
   }
 }
 
 export class TimeoutError extends Error {
-  code = 'TIMEOUT';
+  code = "TIMEOUT";
 
   constructor(message: string) {
     super(message);
-    this.name = 'TimeoutError';
+    this.name = "TimeoutError";
   }
 }
 
@@ -450,13 +476,13 @@ export class CircuitBreakerRegistry {
   /**
    * Get health summary
    */
-  getHealthSummary(): Record<string, ReturnType<CircuitBreaker['getHealth']>> {
-    const summary: Record<string, ReturnType<CircuitBreaker['getHealth']>> = {};
-    
+  getHealthSummary(): Record<string, ReturnType<CircuitBreaker["getHealth"]>> {
+    const summary: Record<string, ReturnType<CircuitBreaker["getHealth"]>> = {};
+
     for (const [name, breaker] of this.breakers) {
       summary[name] = breaker.getHealth();
     }
-    
+
     return summary;
   }
 
@@ -483,13 +509,13 @@ export class CircuitBreakerRegistry {
 
 export function createCircuitBreaker(
   name: string,
-  config?: Partial<CircuitBreakerConfig>
+  config?: Partial<CircuitBreakerConfig>,
 ): CircuitBreaker {
   return new CircuitBreaker(name, config);
 }
 
 export function createCircuitBreakerRegistry(
-  config?: Partial<CircuitBreakerConfig>
+  config?: Partial<CircuitBreakerConfig>,
 ): CircuitBreakerRegistry {
   return new CircuitBreakerRegistry(config);
 }
@@ -513,9 +539,9 @@ export interface CostCircuitBreakerConfig {
 }
 
 const DEFAULT_COST_CONFIG: CostCircuitBreakerConfig = {
-  maxCostPerExecution: 1.00, // $1.00 per execution
-  maxCostPerUserPerDay: 5.00, // $5.00 per user per day
-  warningThreshold: 0.80, // 80% of limit
+  maxCostPerExecution: 1.0, // $1.00 per execution
+  maxCostPerUserPerDay: 5.0, // $5.00 per user per day
+  warningThreshold: 0.8, // 80% of limit
   blacklistDurationHours: 24,
   debug: false,
 };
@@ -542,7 +568,7 @@ export class CostCircuitBreaker {
    * Build Redis key for user daily cost
    */
   private buildUserDailyCostKey(userId: string): string {
-    const today = new Date().toISOString().split('T')[0];
+    const today = new Date().toISOString().split("T")[0];
     return `cost:daily:${userId}:${today}`;
   }
 
@@ -566,7 +592,7 @@ export class CostCircuitBreaker {
   async isUserBlacklisted(userId: string): Promise<boolean> {
     const blacklistKey = this.buildUserBlacklistKey(userId);
     const blacklisted = await this.redis.get<string>(blacklistKey);
-    return blacklisted === 'true';
+    return blacklisted === "true";
   }
 
   /**
@@ -589,7 +615,7 @@ export class CostCircuitBreaker {
 
   /**
    * Assert that adding a cost won't exceed budget
-   * 
+   *
    * @param executionId - Execution identifier
    * @param userId - User identifier
    * @param additionalCost - Cost to add in USD
@@ -598,7 +624,7 @@ export class CostCircuitBreaker {
   async assertBudgetSafety(
     executionId: string,
     userId: string,
-    additionalCost: number
+    additionalCost: number,
   ): Promise<{
     allowed: boolean;
     reason?: string;
@@ -606,11 +632,12 @@ export class CostCircuitBreaker {
     currentDailyCost: number;
     projectedDailyCost: number;
   }> {
-    const [currentExecutionCost, currentDailyCost, isBlacklisted] = await Promise.all([
-      this.getExecutionCost(executionId),
-      this.getUserDailyCost(userId),
-      this.isUserBlacklisted(userId),
-    ]);
+    const [currentExecutionCost, currentDailyCost, isBlacklisted] =
+      await Promise.all([
+        this.getExecutionCost(executionId),
+        this.getUserDailyCost(userId),
+        this.isUserBlacklisted(userId),
+      ]);
 
     // Check if user is blacklisted
     if (isBlacklisted) {
@@ -649,11 +676,14 @@ export class CostCircuitBreaker {
     }
 
     // Check warning threshold
-    if (projectedDailyCost > this.config.maxCostPerUserPerDay * this.config.warningThreshold) {
+    if (
+      projectedDailyCost >
+      this.config.maxCostPerUserPerDay * this.config.warningThreshold
+    ) {
       console.warn(
         `[CostCircuitBreaker] User ${userId} approaching daily budget: ` +
-        `$${projectedDailyCost.toFixed(4)} / $${this.config.maxCostPerUserPerDay.toFixed(2)} ` +
-        `(${((projectedDailyCost / this.config.maxCostPerUserPerDay) * 100).toFixed(1)}%)`
+          `$${projectedDailyCost.toFixed(4)} / $${this.config.maxCostPerUserPerDay.toFixed(2)} ` +
+          `(${((projectedDailyCost / this.config.maxCostPerUserPerDay) * 100).toFixed(1)}%)`,
       );
     }
 
@@ -671,7 +701,7 @@ export class CostCircuitBreaker {
   async trackCost(
     executionId: string,
     userId: string,
-    cost: number
+    cost: number,
   ): Promise<void> {
     const executionKey = this.buildExecutionCostKey(executionId);
     const userDailyKey = this.buildUserDailyCostKey(userId);
@@ -693,7 +723,7 @@ export class CostCircuitBreaker {
     if (this.config.debug) {
       console.log(
         `[CostCircuitBreaker] Tracked $${cost.toFixed(4)} for execution ${executionId}, ` +
-        `user daily: $${newDailyCost.toFixed(4)}`
+          `user daily: $${newDailyCost.toFixed(4)}`,
       );
     }
   }
@@ -705,24 +735,24 @@ export class CostCircuitBreaker {
     const blacklistKey = this.buildUserBlacklistKey(userId);
     const ttlSeconds = this.config.blacklistDurationHours * 60 * 60;
 
-    await this.redis.setex(blacklistKey, ttlSeconds, 'true');
+    await this.redis.setex(blacklistKey, ttlSeconds, "true");
 
     console.warn(
       `[CostCircuitBreaker] User ${userId} blacklisted for ${this.config.blacklistDurationHours}h ` +
-      `due to exceeding daily budget`
+        `due to exceeding daily budget`,
     );
 
     // Emit alert to Ably for monitoring
     try {
-      const { RealtimeService } = require('../realtime');
-      await RealtimeService.publish('system:alerts', 'cost_budget_exceeded', {
+      const { RealtimeService } = require("../realtime");
+      await RealtimeService.publish("system:alerts", "cost_budget_exceeded", {
         userId,
         blacklistDurationHours: this.config.blacklistDurationHours,
         maxDailyCost: this.config.maxCostPerUserPerDay,
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
-      console.error('[CostCircuitBreaker] Failed to emit alert:', error);
+      console.error("[CostCircuitBreaker] Failed to emit alert:", error);
     }
   }
 
@@ -756,7 +786,10 @@ export class CostCircuitBreaker {
       dailyCost,
       isBlacklisted,
       blacklistExpiresIn: ttl > 0 ? ttl : undefined,
-      budgetRemaining: Math.max(0, this.config.maxCostPerUserPerDay - dailyCost),
+      budgetRemaining: Math.max(
+        0,
+        this.config.maxCostPerUserPerDay - dailyCost,
+      ),
       budgetUsedPercent: (dailyCost / this.config.maxCostPerUserPerDay) * 100,
     };
   }
@@ -764,14 +797,17 @@ export class CostCircuitBreaker {
   /**
    * Manual blacklist (for admin intervention)
    */
-  async manualBlacklist(userId: string, durationHours: number = 24): Promise<void> {
+  async manualBlacklist(
+    userId: string,
+    durationHours: number = 24,
+  ): Promise<void> {
     const blacklistKey = this.buildUserBlacklistKey(userId);
     const ttlSeconds = durationHours * 60 * 60;
 
-    await this.redis.setex(blacklistKey, ttlSeconds, 'true');
+    await this.redis.setex(blacklistKey, ttlSeconds, "true");
 
     console.warn(
-      `[CostCircuitBreaker] User ${userId} manually blacklisted for ${durationHours}h`
+      `[CostCircuitBreaker] User ${userId} manually blacklisted for ${durationHours}h`,
     );
   }
 
@@ -792,7 +828,7 @@ export class CostCircuitBreaker {
 
 export function createCostCircuitBreaker(
   redis: Redis,
-  config?: Partial<CostCircuitBreakerConfig>
+  config?: Partial<CostCircuitBreakerConfig>,
 ): CostCircuitBreaker {
   return new CostCircuitBreaker(redis, config);
 }

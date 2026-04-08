@@ -36,11 +36,11 @@ export enum LogLevel {
  * Map log levels to string representations
  */
 export const LogLevelString: Record<LogLevel, string> = {
-  [LogLevel.DEBUG]: 'DEBUG',
-  [LogLevel.INFO]: 'INFO',
-  [LogLevel.WARN]: 'WARN',
-  [LogLevel.ERROR]: 'ERROR',
-  [LogLevel.FATAL]: 'FATAL',
+  [LogLevel.DEBUG]: "DEBUG",
+  [LogLevel.INFO]: "INFO",
+  [LogLevel.WARN]: "WARN",
+  [LogLevel.ERROR]: "ERROR",
+  [LogLevel.FATAL]: "FATAL",
 };
 
 // ============================================================================
@@ -144,8 +144,9 @@ export interface LoggerOptions {
  * Default logger options
  */
 const DEFAULT_OPTIONS: Partial<LoggerOptions> = {
-  minLevel: process.env.NODE_ENV === 'production' ? LogLevel.INFO : LogLevel.DEBUG,
-  prettyPrint: process.env.NODE_ENV !== 'production',
+  minLevel:
+    process.env.NODE_ENV === "production" ? LogLevel.INFO : LogLevel.DEBUG,
+  prettyPrint: process.env.NODE_ENV !== "production",
   debugSampleRate: 0.1, // Sample 10% of debug logs
   enableRequestLogging: true,
   enableQueryLogging: false, // Disable by default for performance
@@ -154,6 +155,9 @@ const DEFAULT_OPTIONS: Partial<LoggerOptions> = {
 // ============================================================================
 // LOGGER CLASS
 // ============================================================================
+
+/** Module-level timer storage to avoid globalThis type assertions */
+const loggerTimers = new Map<string, number>();
 
 export class Logger {
   private readonly serviceName: string;
@@ -187,8 +191,8 @@ export class Logger {
     this.debugSampleRate = debugSampleRate;
     this.enableRequestLogging = enableRequestLogging;
     this.enableQueryLogging = enableQueryLogging;
-    this.environment = process.env.NODE_ENV || 'development';
-    this.version = process.env.npm_package_version || 'unknown';
+    this.environment = process.env.NODE_ENV || "development";
+    this.version = process.env.npm_package_version || "unknown";
   }
 
   /**
@@ -199,10 +203,10 @@ export class Logger {
       const color = this.getLogLevelColor(entry.level);
       console.log(
         `${color}[${entry.timestamp}]${this.reset()} ` +
-        `${color}${entry.level}${this.reset()} ` +
-        `[${entry.service}] ` +
-        `${entry.message}` +
-        (entry.data ? ` ${JSON.stringify(entry.data, null, 2)}` : '')
+          `${color}${entry.level}${this.reset()} ` +
+          `[${entry.service}] ` +
+          `${entry.message}` +
+          (entry.data ? ` ${JSON.stringify(entry.data, null, 2)}` : ""),
       );
     } else {
       console.log(JSON.stringify(entry));
@@ -214,20 +218,20 @@ export class Logger {
    */
   private getLogLevelColor(level: string): string {
     const colors: Record<string, string> = {
-      DEBUG: '\x1b[36m', // Cyan
-      INFO: '\x1b[32m',  // Green
-      WARN: '\x1b[33m',  // Yellow
-      ERROR: '\x1b[31m', // Red
-      FATAL: '\x1b[35m', // Magenta
+      DEBUG: "\x1b[36m", // Cyan
+      INFO: "\x1b[32m", // Green
+      WARN: "\x1b[33m", // Yellow
+      ERROR: "\x1b[31m", // Red
+      FATAL: "\x1b[35m", // Magenta
     };
-    return colors[level] || '\x1b[0m';
+    return colors[level] || "\x1b[0m";
   }
 
   /**
    * Reset ANSI color
    */
   private reset(): string {
-    return '\x1b[0m';
+    return "\x1b[0m";
   }
 
   /**
@@ -250,7 +254,7 @@ export class Logger {
   private createEntry(
     level: LogLevel,
     message: string,
-    data?: Record<string, unknown>
+    data?: Record<string, unknown>,
   ): LogEntry {
     return {
       timestamp: new Date().toISOString(),
@@ -272,7 +276,7 @@ export class Logger {
       this.output(entry);
     } catch (error) {
       // Fallback to basic console.log if output fails
-      console.error('Logger output failed:', error);
+      console.error("Logger output failed:", error);
     }
   }
 
@@ -310,16 +314,21 @@ export class Logger {
   /**
    * Error level logging
    */
-  error(message: string | { message: string; code?: string; stack?: string }, data?: Record<string, unknown>): void {
+  error(
+    message: string | { message: string; code?: string; stack?: string },
+    data?: Record<string, unknown>,
+  ): void {
     if (this.shouldLog(LogLevel.ERROR)) {
-      if (typeof message === 'string') {
+      if (typeof message === "string") {
         this.write(this.createEntry(LogLevel.ERROR, message, data));
       } else {
         const errorData: Record<string, unknown> = {};
         if (message.code) errorData.code = message.code;
         if (message.stack) errorData.stack = message.stack;
         if (data) Object.assign(errorData, data);
-        this.write(this.createEntry(LogLevel.ERROR, message.message, errorData));
+        this.write(
+          this.createEntry(LogLevel.ERROR, message.message, errorData),
+        );
       }
     }
   }
@@ -348,14 +357,15 @@ export class Logger {
     userAgent?: string;
   }): string {
     if (!this.enableRequestLogging) {
-      return '';
+      return "";
     }
 
     const requestId = this.generateRequestId();
-    const traceId = request.headers?.get?.('x-trace-id') || requestId;
-    const correlationId = request.headers?.get?.('x-correlation-id') || requestId;
+    const traceId = request.headers?.get?.("x-trace-id") || requestId;
+    const correlationId =
+      request.headers?.get?.("x-correlation-id") || requestId;
 
-    this.info('Request started', {
+    this.info("Request started", {
       requestId,
       traceId,
       correlationId,
@@ -371,24 +381,31 @@ export class Logger {
   /**
    * Log HTTP request completion
    */
-  requestEnd(requestId: string, response: {
-    statusCode: number;
-    durationMs: number;
-    responseSize?: number;
-  }): void {
+  requestEnd(
+    requestId: string,
+    response: {
+      statusCode: number;
+      durationMs: number;
+      responseSize?: number;
+    },
+  ): void {
     if (!this.enableRequestLogging || !requestId) {
       return;
     }
 
-    const level = response.statusCode >= 500 ? LogLevel.ERROR :
-                  response.statusCode >= 400 ? LogLevel.WARN : LogLevel.INFO;
+    const level =
+      response.statusCode >= 500
+        ? LogLevel.ERROR
+        : response.statusCode >= 400
+          ? LogLevel.WARN
+          : LogLevel.INFO;
 
     const { responseSize } = response;
 
     this.write({
-      ...this.createEntry(level, 'Request completed', {
+      ...this.createEntry(level, "Request completed", {
         requestId,
-        method: response.statusCode >= 400 ? 'FAILED' : 'SUCCESS',
+        method: response.statusCode >= 400 ? "FAILED" : "SUCCESS",
         statusCode: response.statusCode,
         responseTimeMs: response.durationMs,
         ...(responseSize && { responseSize }),
@@ -415,7 +432,7 @@ export class Logger {
     const level = durationMs > 1000 ? LogLevel.WARN : LogLevel.DEBUG;
 
     this.write({
-      ...this.createEntry(level, 'Database query', {
+      ...this.createEntry(level, "Database query", {
         query: sanitizedQuery,
         durationMs,
         ...(rows !== undefined && { rows }),
@@ -429,11 +446,20 @@ export class Logger {
    */
   private sanitizeQuery(query: string): string {
     // Remove password values
-    let sanitized = query.replace(/password\s*=\s*'[^']*'/gi, "password = '[REDACTED]'");
+    let sanitized = query.replace(
+      /password\s*=\s*'[^']*'/gi,
+      "password = '[REDACTED]'",
+    );
     // Remove token values
-    sanitized = sanitized.replace(/token\s*=\s*'[^']*'/gi, "token = '[REDACTED]'");
+    sanitized = sanitized.replace(
+      /token\s*=\s*'[^']*'/gi,
+      "token = '[REDACTED]'",
+    );
     // Remove API key values
-    sanitized = sanitized.replace(/api_key\s*=\s*'[^']*'/gi, "api_key = '[REDACTED]'");
+    sanitized = sanitized.replace(
+      /api_key\s*=\s*'[^']*'/gi,
+      "api_key = '[REDACTED]'",
+    );
     return sanitized;
   }
 
@@ -456,7 +482,7 @@ export class Logger {
    */
   startTimer(label: string): string {
     const timerId = `${label}-${Date.now()}`;
-    (globalThis as any)[`__logger_timer_${timerId}`] = Date.now();
+    loggerTimers.set(timerId, Date.now());
     return timerId;
   }
 
@@ -467,13 +493,13 @@ export class Logger {
    * @param data - Additional data to log
    */
   endTimer(timerId: string, data?: Record<string, unknown>): void {
-    const startTime = (globalThis as any)[`__logger_timer_${timerId}`];
+    const startTime = loggerTimers.get(timerId);
     if (!startTime) {
       return;
     }
 
     const durationMs = Date.now() - startTime;
-    delete (globalThis as any)[`__logger_timer_${timerId}`];
+    loggerTimers.delete(timerId);
 
     this.debug(`Timer completed: ${timerId}`, {
       durationMs,
@@ -537,9 +563,9 @@ export class Logger {
  */
 export function withRequestLogging<T extends (...args: any[]) => Promise<any>>(
   handler: T,
-  logger?: Logger
+  logger?: Logger,
 ) {
-  const log = logger || new Logger({ serviceName: 'api' });
+  const log = logger || new Logger({ serviceName: "api" });
 
   return async (...args: Parameters<T>): Promise<ReturnType<T>> => {
     const req = args[0] as Request & { headers?: Headers };
@@ -547,10 +573,10 @@ export function withRequestLogging<T extends (...args: any[]) => Promise<any>>(
     // Extract request info
     const requestInfo = {
       method: req.method,
-      path: req.url || 'unknown',
+      path: req.url || "unknown",
       headers: req.headers,
-      ip: req.headers?.get?.('x-forwarded-for') || undefined,
-      userAgent: req.headers?.get?.('user-agent') || undefined,
+      ip: req.headers?.get?.("x-forwarded-for") || undefined,
+      userAgent: req.headers?.get?.("user-agent") || undefined,
     };
 
     // Log request start
@@ -596,11 +622,11 @@ let globalLogger: Logger | undefined;
 /**
  * Get or create global logger instance
  */
-export function getGlobalLogger(serviceName: string = 'app'): Logger {
+export function getGlobalLogger(serviceName: string = "app"): Logger {
   if (!globalLogger) {
     globalLogger = new Logger({
       serviceName,
-      prettyPrint: process.env.NODE_ENV !== 'production',
+      prettyPrint: process.env.NODE_ENV !== "production",
     });
   }
   return globalLogger;

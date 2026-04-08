@@ -20,14 +20,14 @@
  * ```typescript
  * // In CI/CD pipeline
  * const cdcTester = createContractTester();
- * 
+ *
  * const result = await cdcTester.testSchemaChange({
  *   toolName: 'createReservation',
  *   currentSchema: currentTool.schema,
  *   proposedSchema: newTool.schema,
  *   minSuccessRate: 0.90, // 90% of historical traces must pass
  * });
- * 
+ *
  * if (!result.passed) {
  *   console.error('Breaking change detected:', result.breakingChanges);
  *   process.exit(1); // Fail CI
@@ -84,16 +84,22 @@ export interface ToolContract {
     // Optional parameters (sometimes present)
     optional: string[];
     // Parameter type observations
-    types: Record<string, {
-      observedTypes: string[];
-      mostCommonType: string;
-      sampleValues: unknown[];
-    }>;
+    types: Record<
+      string,
+      {
+        observedTypes: string[];
+        mostCommonType: string;
+        sampleValues: unknown[];
+      }
+    >;
     // Parameter value constraints observed
-    constraints: Record<string, {
-      type: "range" | "enum" | "pattern" | "length";
-      value: unknown;
-    }>;
+    constraints: Record<
+      string,
+      {
+        type: "range" | "enum" | "pattern" | "length";
+        value: unknown;
+      }
+    >;
   };
   // Sample successful invocations
   successfulExecutions: ToolExecutionTrace[];
@@ -135,7 +141,7 @@ export interface ContractTestResult {
  * Contract testing configuration
  */
 export interface ContractTesterConfig {
-  redis: Redis;
+  redis: Redis | null;
   /** Minimum success rate to pass (default: 0.90 = 90%) */
   minSuccessRate: number;
   /** Number of traces to sample per tool (default: 1000) */
@@ -146,9 +152,11 @@ export interface ContractTesterConfig {
   debug: boolean;
 }
 
-const DEFAULT_CONFIG: Required<ContractTesterConfig> = {
-  redis: null as any,
-  minSuccessRate: 0.90,
+const DEFAULT_CONFIG: Omit<Required<ContractTesterConfig>, "redis"> & {
+  redis: Redis | null;
+} = {
+  redis: null,
+  minSuccessRate: 0.9,
   maxTracesToSample: 1000,
   traceTtlDays: 30,
   debug: false,
@@ -200,7 +208,7 @@ export class ContractTester {
     await this.config.redis.setex(
       traceKey,
       this.config.traceTtlDays * 24 * 60 * 60,
-      JSON.stringify(traceData)
+      JSON.stringify(traceData),
     );
 
     // Add to tool's trace index (sorted set by timestamp)
@@ -216,13 +224,13 @@ export class ContractTester {
       await this.config.redis.zremrangebyrank(
         indexKey,
         0,
-        -(this.config.maxTracesToSample * 2) - 1
+        -(this.config.maxTracesToSample * 2) - 1,
       );
     }
 
     if (this.config.debug) {
       console.log(
-        `[ContractTester] Recorded trace ${trace.traceId} for ${trace.toolName}`
+        `[ContractTester] Recorded trace ${trace.traceId} for ${trace.toolName}`,
       );
     }
   }
@@ -232,16 +240,16 @@ export class ContractTester {
    */
   async getRecentTraces(
     toolName: string,
-    limit: number = 100
+    limit: number = 100,
   ): Promise<ToolExecutionTrace[]> {
     const indexKey = this.buildTraceIndexKey(toolName);
 
     // Get most recent trace IDs (Upstash uses zrange with negative indices for reverse)
-    const traceIds = await this.config.redis.zrange(
+    const traceIds = (await this.config.redis.zrange(
       indexKey,
       -limit,
-      -1
-    ) as string[];
+      -1,
+    )) as string[];
 
     // Fetch all traces in parallel
     const tracePromises = traceIds.map(async (traceId) => {
@@ -256,7 +264,7 @@ export class ContractTester {
         // CRITICAL: Include toolName and traceId for debugging malformed traces
         console.warn(
           `[ContractTester] Failed to parse trace for tool=${toolName}, traceId=${traceId}:`,
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
         );
         return null;
       }
@@ -274,34 +282,40 @@ export class ContractTester {
    * Generate contract from historical traces
    */
   async generateContract(toolName: string): Promise<ToolContract | null> {
-    const traces = await this.getRecentTraces(toolName, this.config.maxTracesToSample);
+    const traces = await this.getRecentTraces(
+      toolName,
+      this.config.maxTracesToSample,
+    );
 
     if (traces.length === 0) {
       return null;
     }
 
     // Analyze parameter patterns
-    const parameterUsage = new Map<string, {
-      count: number;
-      types: Map<string, number>;
-      values: unknown[];
-    }>();
+    const parameterUsage = new Map<
+      string,
+      {
+        count: number;
+        types: Map<string, number>;
+        values: unknown[];
+      }
+    >();
 
     for (const trace of traces) {
       const params = trace.inputParameters;
-      
+
       for (const [key, value] of Object.entries(params)) {
         if (!parameterUsage.has(key)) {
           parameterUsage.set(key, { count: 0, types: new Map(), values: [] });
         }
-        
+
         const usage = parameterUsage.get(key)!;
         usage.count++;
-        
+
         // Track type
         const type = typeof value;
         usage.types.set(type, (usage.types.get(type) || 0) + 1);
-        
+
         // Sample values (keep up to 10)
         if (usage.values.length < 10) {
           usage.values.push(value);
@@ -318,7 +332,7 @@ export class ContractTester {
 
     for (const [param, usage] of parameterUsage.entries()) {
       const presenceRate = usage.count / totalTraces;
-      
+
       // Required if present in >95% of executions
       if (presenceRate >= 0.95) {
         requiredParams.push(param);
@@ -362,13 +376,13 @@ export class ContractTester {
     await this.config.redis.setex(
       contractKey,
       7 * 24 * 60 * 60, // 7 days
-      JSON.stringify(contract)
+      JSON.stringify(contract),
     );
 
     if (this.config.debug) {
       console.log(
         `[ContractTester] Generated contract for ${toolName} ` +
-        `(${requiredParams.length} required, ${optionalParams.length} optional params)`
+          `(${requiredParams.length} required, ${optionalParams.length} optional params)`,
       );
     }
 
@@ -414,12 +428,15 @@ export class ContractTester {
     if (this.config.debug) {
       console.log(
         `[ContractTester] Testing schema change for ${toolName} ` +
-        `(min success rate: ${(minSuccessRate * 100).toFixed(0)}%)`
+          `(min success rate: ${(minSuccessRate * 100).toFixed(0)}%)`,
       );
     }
 
     // Get historical traces
-    const traces = await this.getRecentTraces(toolName, this.config.maxTracesToSample);
+    const traces = await this.getRecentTraces(
+      toolName,
+      this.config.maxTracesToSample,
+    );
 
     if (traces.length === 0) {
       return {
@@ -429,21 +446,30 @@ export class ContractTester {
         totalTraces: 0,
         failingTraces: [],
         breakingChanges: [],
-        recommendations: ["No historical traces found - cannot validate compatibility"],
+        recommendations: [
+          "No historical traces found - cannot validate compatibility",
+        ],
       };
     }
 
     // Analyze schema diff
-    const schemaDiff = SchemaAnalyzer.compareSchemas(toolName, currentSchema, proposedSchema);
+    const schemaDiff = SchemaAnalyzer.compareSchemas(
+      toolName,
+      currentSchema,
+      proposedSchema,
+    );
 
     // Test each trace against proposed schema
     const failingTraces: ContractTestResult["failingTraces"] = [];
-    const breakingChangesSet = new Map<string, ContractTestResult["breakingChanges"][0]>();
+    const breakingChangesSet = new Map<
+      string,
+      ContractTestResult["breakingChanges"][0]
+    >();
 
     for (const trace of traces) {
       const validationResult = this.validateParameters(
         proposedSchema,
-        trace.inputParameters
+        trace.inputParameters,
       );
 
       if (!validationResult.valid) {
@@ -456,15 +482,17 @@ export class ContractTester {
         // Categorize breaking change
         const breakingChange = this.categorizeBreakingChange(
           validationResult.error || "Unknown error",
-          validationResult.parameter || "unknown"
+          validationResult.parameter || "unknown",
         );
-        
+
         if (!breakingChangesSet.has(breakingChange.type)) {
           breakingChangesSet.set(breakingChange.type, breakingChange);
         } else {
           // Add affected parameter to existing breaking change
           const existing = breakingChangesSet.get(breakingChange.type)!;
-          if (!existing.affectedParameters.includes(validationResult.parameter!)) {
+          if (
+            !existing.affectedParameters.includes(validationResult.parameter!)
+          ) {
             existing.affectedParameters.push(validationResult.parameter!);
           }
         }
@@ -479,14 +507,14 @@ export class ContractTester {
     const recommendations = this.generateRecommendations(
       schemaDiff,
       breakingChanges,
-      successRate
+      successRate,
     );
 
     if (this.config.debug) {
       console.log(
         `[ContractTester] Schema change test: ` +
-        `${(successRate * 100).toFixed(1)}% success rate ` +
-        `(${failingTraces.length}/${traces.length} failing)`
+          `${(successRate * 100).toFixed(1)}% success rate ` +
+          `(${failingTraces.length}/${traces.length} failing)`,
       );
     }
 
@@ -507,11 +535,11 @@ export class ContractTester {
    */
   private validateParameters(
     schema: z.ZodSchema,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
   ): { valid: boolean; error?: string; parameter?: string } {
     try {
       const result = schema.safeParse(params);
-      
+
       if (!result.success) {
         const firstError = result.error.errors[0];
         return {
@@ -535,7 +563,7 @@ export class ContractTester {
    */
   private categorizeBreakingChange(
     error: string,
-    parameter?: string
+    parameter?: string,
   ): ContractTestResult["breakingChanges"][0] {
     const errorLower = error.toLowerCase();
 
@@ -580,7 +608,7 @@ export class ContractTester {
   private generateRecommendations(
     schemaDiff: SchemaDiff,
     breakingChanges: ContractTestResult["breakingChanges"],
-    successRate: number
+    successRate: number,
   ): string[] {
     const recommendations: string[] = [];
 
@@ -589,17 +617,17 @@ export class ContractTester {
       switch (change.type) {
         case "REQUIRED_FIELD_ADDED":
           recommendations.push(
-            `Add optional default value for new required field(s): ${change.affectedParameters.join(", ")}`
+            `Add optional default value for new required field(s): ${change.affectedParameters.join(", ")}`,
           );
           break;
         case "TYPE_CHANGED":
           recommendations.push(
-            `Consider using union type to support both old and new types during migration`
+            `Consider using union type to support both old and new types during migration`,
           );
           break;
         case "VALIDATION_STRICTENED":
           recommendations.push(
-            `Add migration layer to transform old values to new format`
+            `Add migration layer to transform old values to new format`,
           );
           break;
       }
@@ -608,19 +636,19 @@ export class ContractTester {
     // Based on success rate
     if (successRate < 0.5) {
       recommendations.push(
-        "CRITICAL: Less than 50% compatibility - consider versioning the tool instead of breaking change"
+        "CRITICAL: Less than 50% compatibility - consider versioning the tool instead of breaking change",
       );
     } else if (successRate < 0.9) {
       recommendations.push(
-        "WARNING: Significant compatibility issues - plan gradual rollout with feature flag"
+        "WARNING: Significant compatibility issues - plan gradual rollout with feature flag",
       );
     }
 
     // Based on schema diff
     if (schemaDiff.removedFields.length > 0) {
       recommendations.push(
-        `Deprecated fields (${schemaDiff.removedFields.map(f => f.name).join(", ")}) ` +
-        "should have deprecation period before removal"
+        `Deprecated fields (${schemaDiff.removedFields.map((f) => f.name).join(", ")}) ` +
+          "should have deprecation period before removal",
       );
     }
 
@@ -651,12 +679,13 @@ export class ContractTester {
         `  Breaking Changes: ${result.breakingChanges.length}`,
         "",
         "Breaking Changes:",
-        ...result.breakingChanges.map(bc => 
-          `  - ${bc.type}: ${bc.description} (affects: ${bc.affectedParameters.join(", ")})`
+        ...result.breakingChanges.map(
+          (bc) =>
+            `  - ${bc.type}: ${bc.description} (affects: ${bc.affectedParameters.join(", ")})`,
         ),
         "",
         "Recommendations:",
-        ...result.recommendations.map(r => `  - ${r}`),
+        ...result.recommendations.map((r) => `  - ${r}`),
       ].join("\n");
 
       throw new Error(errorMessage);
@@ -664,7 +693,7 @@ export class ContractTester {
 
     console.log(
       `[CDC] ✅ Schema change passed for ${result.toolName} ` +
-      `(${(result.successRate * 100).toFixed(1)}% compatibility)`
+        `(${(result.successRate * 100).toFixed(1)}% compatibility)`,
     );
   }
 
@@ -676,9 +705,7 @@ export class ContractTester {
    * Clean up old traces
    */
   async cleanupOldTraces(toolName?: string): Promise<number> {
-    const pattern = toolName 
-      ? `cdc:trace:${toolName}:*`
-      : "cdc:trace:*:*";
+    const pattern = toolName ? `cdc:trace:${toolName}:*` : "cdc:trace:*:*";
 
     const keys = await this.config.redis.keys(pattern);
     let deleted = 0;
@@ -714,7 +741,7 @@ export function createContractTester(options?: {
 
   return new ContractTester({
     redis,
-    minSuccessRate: options?.minSuccessRate || 0.90,
+    minSuccessRate: options?.minSuccessRate || 0.9,
     maxTracesToSample: options?.maxTracesToSample || 1000,
     traceTtlDays: options?.traceTtlDays || 30,
     debug: options?.debug || false,

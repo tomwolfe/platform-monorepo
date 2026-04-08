@@ -341,6 +341,152 @@ export function createWebhookDispatcherService(
 }
 
 // ============================================================================
+// SIMPLE INTERNAL WEBHOOK AUTH WRAPPER
+// For routes that need internal system authentication without full dispatcher
+// ============================================================================
+
+import { verifySignature as verifySignatureFromAuth } from "@repo/auth";
+import { AppConfig } from "../config";
+import crypto from "crypto";
+
+export interface InternalWebhookContext {
+  rawBody: string;
+  parsedBody: unknown;
+  traceId?: string | null;
+}
+
+export type InternalWebhookHandler<T> = (
+  context: InternalWebhookContext,
+) => Promise<T>;
+
+/**
+ * withInternalWebhookAuth - Wraps a Next.js API route with internal system authentication
+ *
+ * This wrapper:
+ * 1. Reads and caches the raw body
+ * 2. Verifies the HMAC signature using INTERNAL_SYSTEM_KEY
+ * 3. Checks idempotency if a key is provided
+ * 4. Calls the handler with parsed body and context
+ *
+ * @param handler - Your async handler function
+ * @param options - Configuration options
+ * @returns Wrapped handler for Next.js API route
+ *
+ * @example
+ * ```typescript
+ * export const POST = withInternalWebhookAuth(async (req, context) => {
+ *   const { parsedBody } = context;
+ *   // Your business logic here
+ *   return NextResponse.json({ success: true });
+ * });
+ * ```
+ */
+export function withInternalWebhookAuth<T>(
+  handler: InternalWebhookHandler<T>,
+  options: {
+    idempotencyKeyHeader?: string;
+    idempotencyService?: IdempotencyService;
+    signatureHeader?: string;
+    timestampHeader?: string;
+  } = {},
+) {
+  const {
+    idempotencyKeyHeader = "x-idempotency-key",
+    idempotencyService,
+    signatureHeader = "x-signature",
+    timestampHeader = "x-timestamp",
+  } = options;
+
+  return async function wrappedHandler(
+    req: NextRequest,
+  ): Promise<NextResponse> {
+    try {
+      const rawBody = await req.text();
+      const signature = req.headers.get(signatureHeader);
+      const timestampHeaderVal = req.headers.get(timestampHeader);
+      const timestamp = timestampHeaderVal ? Number(timestampHeaderVal) : null;
+      const traceId = req.headers.get("x-trace-id");
+
+      // Verify INTERNAL_SYSTEM_KEY is configured
+      const internalKey = AppConfig.getInternalSystemKey();
+      if (!internalKey) {
+        throw new Error(
+          "CRITICAL: INTERNAL_SYSTEM_KEY environment variable is not configured. " +
+            "Cannot verify webhook signatures without this key. " +
+            "Please set INTERNAL_SYSTEM_KEY in your environment.",
+        );
+      }
+
+      // Verify signature
+      if (!signature || !timestamp || isNaN(timestamp)) {
+        return NextResponse.json(
+          { message: "Invalid signature or missing timestamp" },
+          { status: 401 },
+        );
+      }
+
+      const isValid = await verifySignatureFromAuth(
+        rawBody,
+        signature,
+        timestamp,
+      );
+      if (!isValid) {
+        return NextResponse.json(
+          { message: "Invalid signature or expired request" },
+          { status: 401 },
+        );
+      }
+
+      // Idempotency check if service provided
+      if (idempotencyService) {
+        const bodyHash = crypto
+          .createHash("sha256")
+          .update(rawBody)
+          .digest("hex");
+        const isDuplicate = await idempotencyService.isDuplicate(
+          bodyHash,
+          "webhook",
+        );
+        if (isDuplicate) {
+          return NextResponse.json(
+            { message: "Event already processed" },
+            { status: 200, headers: { "x-idempotency-duplicate": "true" } },
+          );
+        }
+      }
+
+      // Parse body
+      let parsedBody: unknown;
+      try {
+        parsedBody = JSON.parse(rawBody);
+      } catch {
+        return NextResponse.json(
+          { message: "Invalid JSON body" },
+          { status: 400 },
+        );
+      }
+
+      // Call handler
+      const result = await handler({
+        rawBody,
+        parsedBody,
+        traceId,
+      });
+
+      return result instanceof NextResponse
+        ? result
+        : NextResponse.json(result);
+    } catch (error) {
+      console.error("[withInternalWebhookAuth] Error:", error);
+      return NextResponse.json(
+        { message: "Internal server error" },
+        { status: 500 },
+      );
+    }
+  };
+}
+
+// ============================================================================
 // ERROR HANDLER WRAPPER
 // ============================================================================
 

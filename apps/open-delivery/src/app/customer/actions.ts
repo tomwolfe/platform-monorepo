@@ -308,12 +308,14 @@ export async function placeRealOrder(
     // This prevents race conditions where the same paymentTxHash could be
     // submitted to multiple orders before the UNIQUE constraint locks it down
     const result = await getDb().transaction(async (tx) => {
-      let userRecord = await tx
+      // Get or create user record
+      const existingUsers = await tx
         .select()
         .from(users)
         .where(sql`${users.clerkId} = ${user.id}`)
-        .limit(1)
-        .then((rows: (typeof users.$inferSelect)[]) => rows[0]);
+        .limit(1);
+
+      let userRecord = existingUsers[0];
 
       if (!userRecord) {
         const [newUser] = await tx
@@ -341,13 +343,13 @@ export async function placeRealOrder(
       // CRITICAL: Check for duplicate payment hash within transaction
       // This prevents replay attacks where the same USDC tx is used for multiple orders
       if (paymentParams?.txHash) {
-        const existingOrder = await tx
+        const existingOrders = await tx
           .select({ id: orders.id })
           .from(orders)
           .where(sql`${orders.paymentTxHash} = ${paymentParams.txHash}`)
-          .limit(1)
-          .then((rows: Array<{ id: string }>) => rows[0]);
+          .limit(1);
 
+        const existingOrder = existingOrders[0];
         if (existingOrder) {
           throw new Error(
             `Payment transaction ${paymentParams.txHash} already used for order ${existingOrder.id}`,
@@ -360,7 +362,7 @@ export async function placeRealOrder(
         .values({
           id: orderId,
           userId: userRecord?.id,
-          storeId: vendorId as any,
+          storeId: vendorId,
           status: "pending_verification",
           subtotal: subtotalCrypto as CryptoAmount,
           tip: tipCrypto as CryptoAmount,

@@ -4,6 +4,8 @@ import {
   ServiceNamespace,
   Logger,
   AppConfig,
+  CircuitBreaker,
+  CircuitBreakerOpenError,
 } from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.IE);
 import { env } from "../config";
@@ -20,6 +22,30 @@ import {
 } from "@repo/shared/tracing";
 
 const logger = new Logger({ serviceName: "location-search" });
+
+/**
+ * Circuit breakers for external geocoding and search providers
+ */
+const photonBreaker = new CircuitBreaker("photon-geocoding", {
+  failureThreshold: 3,
+  resetTimeoutMs: 30000,
+  successThreshold: 2,
+  requestTimeoutMs: 8000,
+});
+
+const nominatimBreaker = new CircuitBreaker("nominatim-geocoding", {
+  failureThreshold: 3,
+  resetTimeoutMs: 30000,
+  successThreshold: 2,
+  requestTimeoutMs: 8000,
+});
+
+const overpassBreaker = new CircuitBreaker("overpass-api", {
+  failureThreshold: 3,
+  resetTimeoutMs: 60000,
+  successThreshold: 2,
+  requestTimeoutMs: 5000,
+});
 
 /**
  * PhotonLocation - Standardized location response from Photon API
@@ -94,12 +120,14 @@ export async function geocode_location_photon(
     const timeoutId = setTimeout(() => controller.abort(), 8000);
 
     return await withNervousSystemTracing(async ({ correlationId }) => {
-      const response = await fetch(url, {
-        headers: {
-          "User-Agent": "IntentionEngine/1.0",
-          ...injectTracingHeaders({}, correlationId),
-        },
-        signal: controller.signal,
+      const response = await photonBreaker.execute(async () => {
+        return await fetch(url, {
+          headers: {
+            "User-Agent": "IntentionEngine/1.0",
+            ...injectTracingHeaders({}, correlationId),
+          },
+          signal: controller.signal,
+        });
       });
 
       clearTimeout(timeoutId);
@@ -132,10 +160,16 @@ export async function geocode_location_photon(
       return await geocode_location_nominatim(params);
     });
   } catch (error: unknown) {
-    logger.warn({
-      message: "Photon geocoding failed, falling back to Nominatim",
-      error: (error as Error).message,
-    });
+    if (error instanceof CircuitBreakerOpenError) {
+      logger.warn({
+        message: "Photon circuit breaker open, falling back to Nominatim",
+      });
+    } else {
+      logger.warn({
+        message: "Photon geocoding failed, falling back to Nominatim",
+        error: (error as Error).message,
+      });
+    }
     // Fallback to Nominatim on error
     return await geocode_location_nominatim(params);
   }
@@ -191,12 +225,14 @@ export async function geocode_location_nominatim(
     const timeoutId = setTimeout(() => controller.abort(), 8000);
 
     return await withNervousSystemTracing(async ({ correlationId }) => {
-      const response = await fetch(url, {
-        headers: {
-          "User-Agent": "IntentionEngine/1.0",
-          ...injectTracingHeaders({}, correlationId),
-        },
-        signal: controller.signal,
+      const response = await nominatimBreaker.execute(async () => {
+        return await fetch(url, {
+          headers: {
+            "User-Agent": "IntentionEngine/1.0",
+            ...injectTracingHeaders({}, correlationId),
+          },
+          signal: controller.signal,
+        });
       });
 
       clearTimeout(timeoutId);
@@ -311,17 +347,33 @@ export async function search_restaurant(
       let overpassRes: Response;
 
       try {
-        overpassRes = await fetch(overpassUrl, {
-          headers: injectTracingHeaders({}, correlationId),
-          signal: controller.signal,
+        overpassRes = await overpassBreaker.execute(async () => {
+          return await fetch(overpassUrl, {
+            headers: injectTracingHeaders({}, correlationId),
+            signal: controller.signal,
+          });
         });
-      } catch (fetchError: any) {
+      } catch (fetchError: unknown) {
         clearTimeout(timeoutId);
+
+        // Handle circuit breaker open
+        if (fetchError instanceof CircuitBreakerOpenError) {
+          logger.warn({
+            message:
+              "Overpass API circuit breaker open, returning graceful fallback",
+          });
+          return {
+            success: true,
+            result: [],
+            warning:
+              "Restaurant search is temporarily unavailable. Please try again later.",
+          };
+        }
 
         // Handle AbortError (timeout) or network errors
         if (
-          fetchError.name === "AbortError" ||
-          fetchError.message?.includes("fetch")
+          (fetchError instanceof Error && fetchError.name === "AbortError") ||
+          (fetchError instanceof Error && fetchError.message?.includes("fetch"))
         ) {
           logger.warn({
             message:

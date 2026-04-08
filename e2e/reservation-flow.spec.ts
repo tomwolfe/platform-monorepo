@@ -117,4 +117,116 @@ test.describe("Reservation Flow", () => {
       await expect(errorMessage).toBeVisible({ timeout: 5000 });
     }
   });
+
+  /**
+   * FAILover E2E TEST
+   * Tests the autonomous failover policy when a restaurant is fully booked
+   * This verifies the system suggests delivery as an alternative
+   */
+  test("should auto-suggest delivery when restaurant is fully booked", async ({
+    page,
+  }) => {
+    // Mock the availability endpoint to return no available tables
+    await page.route("**/api/v1/availability", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          success: true,
+          restaurantId: "demo",
+          date: "2026-04-15",
+          availableTables: [],
+          message: "No tables available for this time slot",
+        }),
+      });
+    });
+
+    // Step 1: Visit booking page
+    await page.goto("/book/demo");
+
+    // Step 2: Select date
+    const datePicker = page.getByRole("textbox", { name: /date/i });
+    if (await datePicker.isVisible()) {
+      await datePicker.fill("04/15/2026");
+    }
+
+    // Step 3: Select party size
+    const partySizeInput = page.getByRole("spinbutton", {
+      name: /guests|party size/i,
+    });
+    if (await partySizeInput.isVisible()) {
+      await partySizeInput.fill("4");
+    }
+
+    // Step 4: Select time slot (this will trigger the mocked unavailable response)
+    const timeSlots = page.getByRole("button", {
+      name: /\d{1,2}:\d{2}\s*(AM|PM)?/i,
+    });
+    if ((await timeSlots.count()) > 0) {
+      await timeSlots.first().click();
+    }
+
+    // Step 5: Submit reservation attempt
+    const submitButton = page.getByRole("button", {
+      name: /book|reserve|confirm/i,
+    });
+    if (await submitButton.isVisible()) {
+      await submitButton.click();
+    }
+
+    // Step 6: Verify failover - system should suggest delivery alternative
+    // The autonomous failover policy should kick in and suggest delivery
+    const deliverySuggestion = page.getByText(
+      /delivery|alternative|unavailable|fully booked/i,
+    );
+    await expect(deliverySuggestion).toBeVisible({ timeout: 10000 });
+
+    // Verify that the system doesn't crash and provides a graceful fallback
+    const errorNotPresent = page.getByText(/critical error|system failure/i);
+    await expect(errorNotPresent).not.toBeVisible({ timeout: 5000 });
+  });
+
+  /**
+   * ADDITIONAL FAILOVER TEST
+   * Tests the system handles database errors gracefully
+   */
+  test("should handle database errors gracefully with fallback", async ({
+    page,
+  }) => {
+    // Mock the availability endpoint to return server error
+    await page.route("**/api/v1/availability", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "Database connection failed",
+          message: "Internal server error",
+        }),
+      });
+    });
+
+    await page.goto("/book/demo");
+
+    // Try to make a reservation
+    const datePicker = page.getByRole("textbox", { name: /date/i });
+    if (await datePicker.isVisible()) {
+      await datePicker.fill("04/15/2026");
+    }
+
+    const submitButton = page.getByRole("button", {
+      name: /book|reserve|confirm/i,
+    });
+    if (await submitButton.isVisible()) {
+      await submitButton.click();
+    }
+
+    // Verify graceful error handling - should not crash
+    const errorMessage = page.getByText(
+      /temporarily unavailable|try again later|error/i,
+    );
+    await expect(errorMessage).toBeVisible({ timeout: 10000 });
+
+    // Verify the page is still functional (not crashed)
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  });
 });

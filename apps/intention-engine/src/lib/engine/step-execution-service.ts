@@ -16,11 +16,20 @@
 
 import { NextRequest } from "next/server";
 import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
-const redis = getRedisClient(ServiceNamespace.IE);;
+const redis = getRedisClient(ServiceNamespace.IE);
 import { getToolRegistry } from "@/lib/engine/tools/registry";
 import { loadExecutionState, saveExecutionState } from "@/lib/engine/memory";
-import { RealtimeService, QStashService, FailoverPolicyEngine, type PolicyEvaluationContext } from "@repo/shared";
-import { createRepairAgent, type ZombieSaga, type RepairResult } from "@repo/shared";
+import {
+  RealtimeService,
+  QStashService,
+  FailoverPolicyEngine,
+  type PolicyEvaluationContext,
+} from "@repo/shared";
+import {
+  createRepairAgent,
+  type ZombieSaga,
+  type RepairResult,
+} from "@repo/shared";
 import { getParameterAliaserService } from "@repo/shared/services/parameter-aliaser";
 import { getSchemaEvolutionService } from "@repo/shared/services/schema-evolution";
 import { ExecutionState } from "@/lib/engine/types";
@@ -31,7 +40,7 @@ import type { ToolExecutor as WorkflowToolExecutor } from "@/lib/engine/workflow
 import { LockingService } from "@/lib/engine/locking";
 import { verifyServiceToken } from "@repo/auth";
 
-const logger = new Logger({ serviceName: 'intention-engine' });
+const logger = new Logger({ serviceName: "intention-engine" });
 
 // ============================================================================
 // TYPES
@@ -71,7 +80,7 @@ export class StepExecutionService {
   async execute(
     executionId: string,
     startStepIndex: number,
-    request: NextRequest
+    request: NextRequest,
   ): Promise<StepExecutionResult> {
     const startTime = performance.now();
 
@@ -89,7 +98,10 @@ export class StepExecutionService {
       await this.verifyAuthToken(request, executionId, traceId);
 
       // Check idempotency lock
-      const isIdempotent = await this.checkIdempotency(executionId, startStepIndex);
+      const isIdempotent = await this.checkIdempotency(
+        executionId,
+        startStepIndex,
+      );
       if (!isIdempotent) {
         return this.handleIdempotentSkip(executionId, startStepIndex);
       }
@@ -125,21 +137,30 @@ export class StepExecutionService {
           startStepIndex,
           state,
           plan,
-          { traceId, correlationId }
+          { traceId, correlationId },
         );
 
         // Handle failover policy if step failed
         if (!result.success && result.stepState.status === "failed") {
-          await this.handleFailoverPolicy(executionId, plan, result, state, { traceId, correlationId });
+          await this.handleFailoverPolicy(executionId, plan, result, state, {
+            traceId,
+            correlationId,
+          });
         }
 
         // Trigger next step if successful
         if (result.success && !result.isComplete) {
-          await this.triggerNextStep(executionId, result.completedSteps, { traceId, correlationId });
+          await this.triggerNextStep(executionId, result.completedSteps, {
+            traceId,
+            correlationId,
+          });
         }
 
         // Check for replanning marker
-        await this.checkAndExecuteReplanning(executionId, state, { traceId, correlationId });
+        await this.checkAndExecuteReplanning(executionId, state, {
+          traceId,
+          correlationId,
+        });
 
         return {
           success: result.success,
@@ -157,7 +178,7 @@ export class StepExecutionService {
       }
     } catch (error) {
       logger.error({
-        message: '[StepExecutionService] Unhandled error',
+        message: "[StepExecutionService] Unhandled error",
         error: error instanceof Error ? error.message : String(error),
       });
 
@@ -183,7 +204,7 @@ export class StepExecutionService {
   private async verifyAuthToken(
     request: NextRequest,
     executionId: string,
-    traceId: string
+    traceId: string,
   ): Promise<void> {
     const authHeader = request.headers.get("authorization");
     const hasAuthToken = authHeader?.startsWith("Bearer ");
@@ -224,12 +245,12 @@ export class StepExecutionService {
 
   private async checkIdempotency(
     executionId: string,
-    stepIndex: number
+    stepIndex: number,
   ): Promise<boolean> {
     const result = await LockingService.acquireStepIdempotencyLock(
       executionId,
       stepIndex,
-      3600 // 1 hour TTL
+      3600, // 1 hour TTL
     );
 
     return result.acquired;
@@ -239,7 +260,7 @@ export class StepExecutionService {
     const lockKey = `exec:${executionId}:lock`;
     return await LockingService.acquire(lockKey, {
       ttlSeconds: 30,
-      operation: 'execute-step',
+      operation: "execute-step",
     });
   }
 
@@ -256,14 +277,15 @@ export class StepExecutionService {
       isComplete: false,
       error: {
         code: "LOCK_HELD",
-        message: "Execution lock already held, skipping to prevent double execution",
+        message:
+          "Execution lock already held, skipping to prevent double execution",
       },
     };
   }
 
   private async handleIdempotentSkip(
     executionId: string,
-    stepIndex: number
+    stepIndex: number,
   ): Promise<StepExecutionResult> {
     logger.warn({
       message: `[StepExecutionService] Step ${stepIndex} already executed for ${executionId}, skipping (idempotent)`,
@@ -339,13 +361,13 @@ export class StepExecutionService {
     const plan = state.plan;
     if (!plan) return false;
 
-    const completedStepIds = getCompletedSteps(state).map(s => s.step_id);
-    return plan.steps.every(step => completedStepIds.includes(step.id));
+    const completedStepIds = getCompletedSteps(state).map((s) => s.step_id);
+    return plan.steps.every((step) => completedStepIds.includes(step.id));
   }
 
   private handleAllStepsComplete(state: ExecutionState): StepExecutionResult {
     const completedCount = getCompletedSteps(state).length;
-    const hasFailedSteps = state.step_states.some(s => s.status === "failed");
+    const hasFailedSteps = state.step_states.some((s) => s.status === "failed");
     const plan = state.plan;
 
     return {
@@ -369,7 +391,7 @@ export class StepExecutionService {
     startStepIndex: number,
     state: ExecutionState,
     plan: any,
-    traceContext: { traceId: string; correlationId: string }
+    traceContext: { traceId: string; correlationId: string },
   ) {
     const toolExecutor = this.createToolExecutor(executionId);
     const machine = new WorkflowMachine(executionId, toolExecutor, {
@@ -385,12 +407,7 @@ export class StepExecutionService {
     // SELF-HEALING LOOP: Close the Schema Evolution Loop
     // If step failed with TOOL_VALIDATION_FAILED, trigger schema evolution
     if (!result.success && result.stepState.status === "failed") {
-      await this.handleSchemaEvolutionLoop(
-        executionId,
-        result,
-        plan,
-        state
-      );
+      await this.handleSchemaEvolutionLoop(executionId, result, plan, state);
     }
 
     // Save updated state
@@ -416,20 +433,24 @@ export class StepExecutionService {
     executionId: string,
     result: any,
     plan: any,
-    state: ExecutionState
+    state: ExecutionState,
   ): Promise<void> {
     const errorMessage = result.stepState.error?.message || "";
 
     // Only handle validation failures
-    if (!errorMessage.toLowerCase().includes("validation") &&
-        !errorMessage.toLowerCase().includes("schema") &&
-        !errorMessage.toLowerCase().includes("invalid")) {
+    if (
+      !errorMessage.toLowerCase().includes("validation") &&
+      !errorMessage.toLowerCase().includes("schema") &&
+      !errorMessage.toLowerCase().includes("invalid")
+    ) {
       return;
     }
 
     try {
       // Extract tool name and parameters from the failed step
-      const executedStep = plan.steps.find((step: any) => step.id === result.stepId);
+      const executedStep = plan.steps.find(
+        (step: any) => step.id === result.stepId,
+      );
       if (!executedStep) {
         logger.warn({
           message: `[SchemaEvolution] Step ${result.stepId} not found in plan, skipping evolution`,
@@ -442,8 +463,14 @@ export class StepExecutionService {
 
       // Extract expected vs unexpected fields from error message
       // Error format: "Validation failed: unexpected fields: [user_notes], missing fields: [notes]"
-      const unexpectedFields = this.extractFieldsFromError(errorMessage, "unexpected");
-      const missingFields = this.extractFieldsFromError(errorMessage, "missing");
+      const unexpectedFields = this.extractFieldsFromError(
+        errorMessage,
+        "unexpected",
+      );
+      const missingFields = this.extractFieldsFromError(
+        errorMessage,
+        "missing",
+      );
 
       // Record mismatch via SchemaEvolutionService
       const schemaEvolution = getSchemaEvolutionService(redis);
@@ -451,14 +478,17 @@ export class StepExecutionService {
         intentType: state.intent?.type || "unknown",
         toolName,
         llmParameters,
-        expectedFields: missingFields.length > 0 ? missingFields : Object.keys(llmParameters),
+        expectedFields:
+          missingFields.length > 0 ? missingFields : Object.keys(llmParameters),
         unexpectedFields,
         missingFields,
-        errors: [{
-          field: unexpectedFields.join(", "),
-          message: result.stepState.error?.message || "Validation failed",
-          code: "SCHEMA_MISMATCH",
-        }],
+        errors: [
+          {
+            field: unexpectedFields.join(", "),
+            message: result.stepState.error?.message || "Validation failed",
+            code: "SCHEMA_MISMATCH",
+          },
+        ],
       });
 
       logger.info({
@@ -481,13 +511,15 @@ export class StepExecutionService {
             toolName,
             unexpectedField,
             canonicalField,
-            llmParameters
+            llmParameters,
           );
 
           // Get current mismatch count
           const aliases = await parameterAliaser.getAllAliases(toolName);
           const existingAlias = aliases.find(
-            (a) => a.aliasField === unexpectedField && a.primaryField === canonicalField
+            (a) =>
+              a.aliasField === unexpectedField &&
+              a.primaryField === canonicalField,
           );
 
           const mismatchCount = existingAlias?.mismatchCount || 1;
@@ -498,7 +530,7 @@ export class StepExecutionService {
               toolName,
               unexpectedField,
               canonicalField,
-              mismatchCount
+              mismatchCount,
             );
 
             logger.info({
@@ -510,7 +542,7 @@ export class StepExecutionService {
     } catch (error) {
       // Do not let schema evolution failures break the main execution flow
       logger.error({
-        message: '[SchemaEvolution] Failed to handle schema evolution loop',
+        message: "[SchemaEvolution] Failed to handle schema evolution loop",
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -522,8 +554,14 @@ export class StepExecutionService {
    * Parses error messages to identify which fields were unexpected or missing
    * Example: "Validation failed: unexpected fields: [user_notes], missing fields: [notes]"
    */
-  private extractFieldsFromError(errorMessage: string, fieldType: "unexpected" | "missing"): string[] {
-    const pattern = new RegExp(`${fieldType}\\s+fields?:\\s*\\[([^\\]]+)\\]`, "i");
+  private extractFieldsFromError(
+    errorMessage: string,
+    fieldType: "unexpected" | "missing",
+  ): string[] {
+    const pattern = new RegExp(
+      `${fieldType}\\s+fields?:\\s*\\[([^\\]]+)\\]`,
+      "i",
+    );
     const match = errorMessage.match(pattern);
 
     if (!match) return [];
@@ -576,13 +614,21 @@ export class StepExecutionService {
     plan: any,
     result: any,
     state: ExecutionState,
-    traceContext: { traceId: string; correlationId: string }
+    traceContext: { traceId: string; correlationId: string },
   ) {
-    const executedStep = plan.steps.find((step: any) => step.id === result.stepId);
+    const executedStep = plan.steps.find(
+      (step: any) => step.id === result.stepId,
+    );
 
     // Track failed bookings
-    if (executedStep && (executedStep.tool_name.includes("book") || executedStep.tool_name.includes("reserve"))) {
-      const restaurantId = executedStep.parameters?.restaurantId as string | undefined;
+    if (
+      executedStep &&
+      (executedStep.tool_name.includes("book") ||
+        executedStep.tool_name.includes("reserve"))
+    ) {
+      const restaurantId = executedStep.parameters?.restaurantId as
+        | string
+        | undefined;
       if (restaurantId) {
         const userId = (state.context?.userId as string) || undefined;
         const clerkId = (state.context?.clerkId as string) || undefined;
@@ -605,13 +651,15 @@ export class StepExecutionService {
       intent_type: (state.intent?.type as any) || "BOOKING",
       failure_reason: this.mapFailureReason(result.stepState.error?.message),
       confidence: state.intent?.confidence || 0.8,
-      attempt_count: state.step_states.filter(s => s.status === "failed").length,
+      attempt_count: state.step_states.filter((s) => s.status === "failed")
+        .length,
       party_size: (executedStep?.parameters?.partySize as number) || undefined,
       requested_time: (executedStep?.parameters?.time as string) || undefined,
       metadata: {
         executionId,
         stepId: result.stepId,
-        restaurantId: (executedStep?.parameters?.restaurantId as string) || undefined,
+        restaurantId:
+          (executedStep?.parameters?.restaurantId as string) || undefined,
       },
     };
 
@@ -623,7 +671,12 @@ export class StepExecutionService {
         message: `[StepExecutionService] Matched policy "${failoverResult.policy?.name}" for failed step ${result.stepId}`,
       });
 
-      await this.storeFailoverState(executionId, failoverResult, failoverEngine, failoverContext);
+      await this.storeFailoverState(
+        executionId,
+        failoverResult,
+        failoverEngine,
+        failoverContext,
+      );
       await this.publishFailoverEvent(executionId, failoverResult);
 
       // SELF-HEALING LOOP: Invoke RepairAgent for autonomous repair
@@ -632,7 +685,7 @@ export class StepExecutionService {
         state,
         result,
         executedStep,
-        traceContext
+        traceContext,
       );
 
       // If repair was successful, skip replanning (saga will resume with fixed params)
@@ -644,7 +697,13 @@ export class StepExecutionService {
       }
 
       // Repair failed or not attempted - trigger automatic replanning
-      await this.triggerAutomaticReplanning(executionId, failoverResult, failoverEngine, failoverContext, state);
+      await this.triggerAutomaticReplanning(
+        executionId,
+        failoverResult,
+        failoverEngine,
+        failoverContext,
+        state,
+      );
     }
   }
 
@@ -667,7 +726,7 @@ export class StepExecutionService {
     state: ExecutionState,
     result: any,
     executedStep: any,
-    traceContext: { traceId: string; correlationId: string }
+    traceContext: { traceId: string; correlationId: string },
   ): Promise<boolean> {
     try {
       // Build ZombieSaga from failed execution
@@ -692,7 +751,9 @@ export class StepExecutionService {
         failureContext: {
           errorCode: result.stepState.error?.code,
           errorMessage: result.stepState.error?.message,
-          failedStepIndex: state.step_states.findIndex((s) => s.step_id === result.stepId),
+          failedStepIndex: state.step_states.findIndex(
+            (s) => s.step_id === result.stepId,
+          ),
           failedTool: executedStep?.tool_name,
         },
       };
@@ -707,7 +768,8 @@ export class StepExecutionService {
         });
 
         // Extract adapted parameters if provided
-        const adaptedParams = repairResult.repairAnalysis?.suggestedFix.parameters;
+        const adaptedParams =
+          repairResult.repairAnalysis?.suggestedFix.parameters;
 
         if (adaptedParams && result.stepId) {
           // Update step parameters in Redis for retry
@@ -715,7 +777,7 @@ export class StepExecutionService {
             executionId,
             result.stepId,
             adaptedParams,
-            traceContext
+            traceContext,
           );
           return true;
         }
@@ -724,7 +786,7 @@ export class StepExecutionService {
       return false;
     } catch (error) {
       logger.error({
-        message: '[StepExecutionService] RepairAgent invocation failed',
+        message: "[StepExecutionService] RepairAgent invocation failed",
         error: error instanceof Error ? error.message : String(error),
       });
       return false;
@@ -741,7 +803,7 @@ export class StepExecutionService {
     executionId: string,
     stepId: string,
     adaptedParams: Record<string, unknown>,
-    traceContext: { traceId: string; correlationId: string }
+    traceContext: { traceId: string; correlationId: string },
   ): Promise<void> {
     try {
       // Load current state
@@ -763,7 +825,9 @@ export class StepExecutionService {
       };
 
       // Reset step state to pending for retry
-      const stepStateIndex = state.step_states.findIndex((s) => s.step_id === stepId);
+      const stepStateIndex = state.step_states.findIndex(
+        (s) => s.step_id === stepId,
+      );
       if (stepStateIndex !== -1) {
         state.step_states[stepStateIndex] = {
           step_id: stepId,
@@ -786,7 +850,7 @@ export class StepExecutionService {
           retryCount: 1,
           timestamp: new Date().toISOString(),
           reason: "REPAIR_AGENT_MODIFIED_PARAMS",
-        })
+        }),
       );
 
       // Re-trigger the step via QStash
@@ -801,23 +865,32 @@ export class StepExecutionService {
 
       logger.info({
         message: `[StepExecutionService] Re-triggering step ${stepId} with adapted parameters`,
-        details: { messageId: messageId || "fallback", traceId: traceContext.traceId },
+        details: {
+          messageId: messageId || "fallback",
+          traceId: traceContext.traceId,
+        },
       });
     } catch (error) {
       logger.error({
-        message: '[StepExecutionService] Failed to update parameters for retry',
+        message: "[StepExecutionService] Failed to update parameters for retry",
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
     }
   }
 
-  private mapFailureReason(errorMessage?: string): PolicyEvaluationContext["failure_reason"] {
+  private mapFailureReason(
+    errorMessage?: string,
+  ): PolicyEvaluationContext["failure_reason"] {
     if (!errorMessage) return "SERVICE_ERROR";
 
     const errorLower = errorMessage.toLowerCase();
 
-    if (errorLower.includes("full") || errorLower.includes("no tables") || errorLower.includes("unavailable")) {
+    if (
+      errorLower.includes("full") ||
+      errorLower.includes("no tables") ||
+      errorLower.includes("unavailable")
+    ) {
       return "RESTAURANT_FULL";
     }
     if (errorLower.includes("party size") || errorLower.includes("too large")) {
@@ -843,7 +916,7 @@ export class StepExecutionService {
     executionId: string,
     failoverResult: any,
     failoverEngine: FailoverPolicyEngine,
-    failoverContext: PolicyEvaluationContext
+    failoverContext: PolicyEvaluationContext,
   ) {
     const failoverKey = `exec:${executionId}:failover`;
     await redis.setex(
@@ -854,9 +927,12 @@ export class StepExecutionService {
         policyId: failoverResult.policy?.id,
         policyName: failoverResult.policy?.name,
         recommendedAction: failoverResult.recommended_action,
-        suggestions: failoverEngine.getAlternativeSuggestions(failoverContext, failoverResult),
+        suggestions: failoverEngine.getAlternativeSuggestions(
+          failoverContext,
+          failoverResult,
+        ),
         evaluatedAt: new Date().toISOString(),
-      })
+      }),
     );
   }
 
@@ -872,11 +948,12 @@ export class StepExecutionService {
           message: failoverResult.recommended_action.message_template,
           timestamp: new Date().toISOString(),
         },
-        {}
+        {},
       );
     } catch (err) {
       logger.warn({
-        message: '[StepExecutionService] Failed to publish failover event to Ably',
+        message:
+          "[StepExecutionService] Failed to publish failover event to Ably",
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -887,16 +964,18 @@ export class StepExecutionService {
     failoverResult: any,
     failoverEngine: FailoverPolicyEngine,
     failoverContext: PolicyEvaluationContext,
-    state: ExecutionState
+    state: ExecutionState,
   ) {
-    const shouldReplan = failoverResult.recommended_action && [
-      "SUGGEST_ALTERNATIVE_TIME",
-      "SUGGEST_ALTERNATIVE_RESTAURANT",
-      "SUGGEST_ALTERNATIVE_DATE",
-      "TRIGGER_DELIVERY",
-      "TRIGGER_WAITLIST",
-      "ESCALATE_TO_HUMAN",
-    ].includes(failoverResult.recommended_action.type);
+    const shouldReplan =
+      failoverResult.recommended_action &&
+      [
+        "SUGGEST_ALTERNATIVE_TIME",
+        "SUGGEST_ALTERNATIVE_RESTAURANT",
+        "SUGGEST_ALTERNATIVE_DATE",
+        "TRIGGER_DELIVERY",
+        "TRIGGER_WAITLIST",
+        "ESCALATE_TO_HUMAN",
+      ].includes(failoverResult.recommended_action.type);
 
     if (shouldReplan && redis) {
       try {
@@ -908,10 +987,13 @@ export class StepExecutionService {
             shouldReplan: true,
             reason: failoverResult.policy?.name || "Failover policy triggered",
             suggestedAction: failoverResult.recommended_action,
-            suggestions: failoverEngine.getAlternativeSuggestions(failoverContext, failoverResult),
+            suggestions: failoverEngine.getAlternativeSuggestions(
+              failoverContext,
+              failoverResult,
+            ),
             originalIntent: state.intent,
             triggeredAt: new Date().toISOString(),
-          })
+          }),
         );
 
         logger.info({
@@ -921,8 +1003,11 @@ export class StepExecutionService {
         await this.publishReplanEvent(executionId, failoverResult);
       } catch (replanError) {
         logger.warn({
-          message: '[StepExecutionService] Failed to mark for replanning',
-          error: replanError instanceof Error ? replanError.message : String(replanError),
+          message: "[StepExecutionService] Failed to mark for replanning",
+          error:
+            replanError instanceof Error
+              ? replanError.message
+              : String(replanError),
         });
       }
     }
@@ -940,11 +1025,12 @@ export class StepExecutionService {
           message: `Your request needs adjustment. ${failoverResult.recommended_action?.message_template}`,
           timestamp: new Date().toISOString(),
         },
-        {}
+        {},
       );
     } catch (err) {
       logger.warn({
-        message: '[StepExecutionService] Failed to publish replan event to Ably',
+        message:
+          "[StepExecutionService] Failed to publish replan event to Ably",
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -957,10 +1043,10 @@ export class StepExecutionService {
   private async triggerNextStep(
     executionId: string,
     currentStepIndex: number,
-    traceContext: { traceId: string; correlationId: string }
+    traceContext: { traceId: string; correlationId: string },
   ) {
     const INTERNAL_SYSTEM_KEY = process.env.INTERNAL_SYSTEM_KEY || "";
-    
+
     const messageId = await QStashService.triggerNextStep({
       executionId,
       stepIndex: currentStepIndex + 1,
@@ -984,13 +1070,14 @@ export class StepExecutionService {
   private async checkAndExecuteReplanning(
     executionId: string,
     state: ExecutionState,
-    traceContext: { traceId: string; correlationId: string }
+    traceContext: { traceId: string; correlationId: string },
   ) {
     if (!redis) return;
 
     try {
       const replanKey = `exec:${executionId}:replan`;
-      const replanData = await redis.get<any>(replanKey);
+      const replanDataRaw = await redis.get<string>(replanKey);
+      const replanData = replanDataRaw ? JSON.parse(replanDataRaw) : null;
 
       if (!replanData || !replanData.shouldReplan) return;
 
@@ -1003,7 +1090,7 @@ export class StepExecutionService {
 
       const suggestions = replanData.suggestions || [];
       const suggestionText = suggestions
-        .map((s: any) => {
+        .map((s: Record<string, unknown>) => {
           if (s.type === "alternative_time") {
             return `Try at ${s.value}`;
           }
@@ -1013,11 +1100,12 @@ export class StepExecutionService {
           if (s.type === "waitlist_alternative") {
             return "Join the waitlist";
           }
-          return s.message || JSON.stringify(s.value);
+          return (s.message as string) || JSON.stringify(s.value);
         })
         .join(". ");
 
-      const newRawText = `${replanData.originalIntent?.rawText || ""}. ${suggestionText}`.trim();
+      const newRawText =
+        `${replanData.originalIntent?.rawText || ""}. ${suggestionText}`.trim();
 
       const { hypotheses } = await inferIntent(newRawText, []);
       const newIntent = hypotheses.primary;
@@ -1050,12 +1138,18 @@ export class StepExecutionService {
 
       logger.info({
         message: `[StepExecutionService] Replanning complete for ${executionId}`,
-        details: { stepCount: newPlan.steps.length, traceId: traceContext.traceId },
+        details: {
+          stepCount: newPlan.steps.length,
+          traceId: traceContext.traceId,
+        },
       });
     } catch (replanError) {
       logger.warn({
-        message: '[StepExecutionService] Failed to execute replanning',
-        error: replanError instanceof Error ? replanError.message : String(replanError),
+        message: "[StepExecutionService] Failed to execute replanning",
+        error:
+          replanError instanceof Error
+            ? replanError.message
+            : String(replanError),
       });
     }
   }

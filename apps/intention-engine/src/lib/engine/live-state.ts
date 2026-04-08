@@ -15,10 +15,13 @@
  */
 
 import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
-const redis = getRedisClient(ServiceNamespace.IE);;
-import { FailoverPolicyEngine, type PolicyEvaluationContext } from "@repo/shared";
+const redis = getRedisClient(ServiceNamespace.IE);
+import {
+  FailoverPolicyEngine,
+  type PolicyEvaluationContext,
+} from "@repo/shared";
 
-const logger = new Logger({ serviceName: 'intention-engine' });
+const logger = new Logger({ serviceName: "intention-engine" });
 
 // ============================================================================
 // TYPES
@@ -102,7 +105,7 @@ interface UserLocation {
 export async function fetchLiveOperationalState(
   messages: any[],
   userLocation?: UserLocation,
-  intentContext?: IntentContext
+  intentContext?: IntentContext,
 ): Promise<LiveOperationalStateResult> {
   try {
     // Extract restaurant mentions from conversation history
@@ -134,7 +137,7 @@ export async function fetchLiveOperationalState(
       // Pattern 2: Common restaurant names (would need NLP in production)
       // For now, look for capitalized multi-word phrases that might be restaurant names
       const nameMatches = content.match(
-        /at\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/g
+        /at\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/g,
       );
       if (nameMatches) {
         nameMatches.forEach((m: string) => {
@@ -160,15 +163,20 @@ export async function fetchLiveOperationalState(
       // Try to fetch from Redis cache
       // Key pattern: restaurant_state:{id|slug}
       const stateKey = `restaurant_state:${restaurantRef}`;
-      const cachedState = await redis?.get<any>(stateKey);
+      const cachedStateRaw = await redis?.get<string>(stateKey);
+      const cachedState = cachedStateRaw ? JSON.parse(cachedStateRaw) : null;
 
       // Also check for failed bookings
       // Key pattern: failed_bookings:{restaurantId} - Redis Set with recent failures
       const failedBookingsKey = `failed_bookings:${restaurantRef}`;
-      const recentFailures = await redis?.get<any[]>(failedBookingsKey);
+      const recentFailuresRaw = await redis?.get<string>(failedBookingsKey);
+      const recentFailures = recentFailuresRaw
+        ? JSON.parse(recentFailuresRaw)
+        : null;
       const hasRecentFailures =
         recentFailures !== null &&
         recentFailures !== undefined &&
+        Array.isArray(recentFailures) &&
         recentFailures.length > 0;
 
       if (cachedState) {
@@ -200,7 +208,7 @@ export async function fetchLiveOperationalState(
             });
 
             const availableTables = tables.filter(
-              (t: any) => t.status === "available"
+              (t: any) => t.status === "available",
             ).length;
             const totalTables = tables.length;
 
@@ -214,9 +222,7 @@ export async function fetchLiveOperationalState(
                     ? "limited"
                     : "available",
               nextAvailableSlot:
-                availableTables === 0
-                  ? "Unknown - try waitlist"
-                  : undefined,
+                availableTables === 0 ? "Unknown - try waitlist" : undefined,
               hasRecentFailures,
             });
 
@@ -258,12 +264,12 @@ export async function fetchLiveOperationalState(
 
     // Hard constraint: Block full restaurants from planning
     const fullRestaurants = restaurantStates.filter(
-      (r) => r.tableAvailability === "full"
+      (r) => r.tableAvailability === "full",
     );
     if (fullRestaurants.length > 0) {
       hardConstraints.push(
         `CRITICAL: DO NOT attempt to book at these restaurants (they are full): ${fullRestaurants.map((r) => r.name).join(", ")}. ` +
-          `Instead, suggest: (1) alternative times, (2) joining waitlist, or (3) delivery options.`
+          `Instead, suggest: (1) alternative times, (2) joining waitlist, or (3) delivery options.`,
       );
     }
 
@@ -275,22 +281,19 @@ export async function fetchLiveOperationalState(
 
       hardConstraints.push(
         `CRITICAL: These restaurants have recent booking failures - DO NOT attempt booking: ${failedRestaurantNames.join(", ")}. ` +
-          `Explain the issue to the user and offer alternatives immediately.`
+          `Explain the issue to the user and offer alternatives immediately.`,
       );
     }
 
     // Evaluate failover policies if we have failures and intent context
-    if (
-      (failedBookings?.length || fullRestaurants.length) &&
-      intentContext
-    ) {
+    if ((failedBookings?.length || fullRestaurants.length) && intentContext) {
       try {
         const policyEngine = new FailoverPolicyEngine();
 
         // Map intent type to policy format
         const policyIntentType =
           intentContext.intentType?.includes("BOOKING") ||
-            intentContext.intentType?.includes("RESERVATION")
+          intentContext.intentType?.includes("RESERVATION")
             ? "BOOKING"
             : intentContext.intentType?.includes("DELIVERY")
               ? "DELIVERY"
@@ -325,9 +328,8 @@ export async function fetchLiveOperationalState(
             result.recommended_action.type === "SUGGEST_ALTERNATIVE_TIME" &&
             intentContext.requestedTime
           ) {
-            const offsets =
-              (result.recommended_action.parameters
-                ?.time_offset_minutes as number[]) || [-30, 30];
+            const offsets = (result.recommended_action.parameters
+              ?.time_offset_minutes as number[]) || [-30, 30];
             const [hours, mins] = intentContext.requestedTime
               .split(":")
               .map(Number);
@@ -354,8 +356,8 @@ export async function fetchLiveOperationalState(
               value: {
                 estimated_time: "30-45 minutes",
                 min_order:
-                  (result.recommended_action.parameters?.min_order_amount as number) ||
-                  1500,
+                  (result.recommended_action.parameters
+                    ?.min_order_amount as number) || 1500,
               },
               confidence: 0.85,
               message:
@@ -378,8 +380,11 @@ export async function fetchLiveOperationalState(
         }
       } catch (policyError) {
         logger.warn({
-          message: '[FailoverPolicy] Failed to evaluate policies',
-          error: policyError instanceof Error ? policyError.message : String(policyError),
+          message: "[FailoverPolicy] Failed to evaluate policies",
+          error:
+            policyError instanceof Error
+              ? policyError.message
+              : String(policyError),
         });
         // Continue without failover suggestions
       }
@@ -394,18 +399,18 @@ export async function fetchLiveOperationalState(
 
       const [pendingCountResult, activeDriversResult] = await Promise.all([
         db.execute(
-          sql`SELECT COUNT(*) as count FROM orders WHERE status = 'pending' AND driver_id IS NULL`
+          sql`SELECT COUNT(*) as count FROM orders WHERE status = 'pending' AND driver_id IS NULL`,
         ),
         db.execute(
-          sql`SELECT COUNT(*) as count FROM drivers WHERE is_active = true`
+          sql`SELECT COUNT(*) as count FROM drivers WHERE is_active = true`,
         ),
       ]);
 
       const pendingOrders = parseInt(
-        (pendingCountResult.rows[0] as any)?.count || "0"
+        (pendingCountResult.rows[0] as any)?.count || "0",
       );
       const activeDrivers = parseInt(
-        (activeDriversResult.rows[0] as any)?.count || "0"
+        (activeDriversResult.rows[0] as any)?.count || "0",
       );
 
       // Calculate load ratio and determine if high load
@@ -439,10 +444,7 @@ export async function fetchLiveOperationalState(
       };
 
       // Add tip boost suggestion if high load
-      if (
-        isHighLoad &&
-        intentContext?.intentType?.includes("DELIVERY")
-      ) {
+      if (isHighLoad && intentContext?.intentType?.includes("DELIVERY")) {
         failoverSuggestions.push({
           type: "tip_boost_recommendation",
           value: {
@@ -457,7 +459,7 @@ export async function fetchLiveOperationalState(
       }
     } catch (error) {
       logger.warn({
-        message: '[DeliveryLoadState] Failed to fetch delivery load state',
+        message: "[DeliveryLoadState] Failed to fetch delivery load state",
         error: error instanceof Error ? error.message : String(error),
       });
       // Continue without delivery load state
@@ -467,14 +469,13 @@ export async function fetchLiveOperationalState(
       restaurantStates,
       failedBookings: failedBookings?.length ? failedBookings : undefined,
       deliveryLoadState,
-      hardConstraints:
-        hardConstraints.length > 0 ? hardConstraints : undefined,
+      hardConstraints: hardConstraints.length > 0 ? hardConstraints : undefined,
       failoverSuggestions:
         failoverSuggestions.length > 0 ? failoverSuggestions : undefined,
     };
   } catch (error) {
     logger.error({
-      message: '[LiveOperationalState] Failed to fetch operational state',
+      message: "[LiveOperationalState] Failed to fetch operational state",
       error: error instanceof Error ? error.message : String(error),
     });
     return { rawText: "Unable to fetch live restaurant states" };

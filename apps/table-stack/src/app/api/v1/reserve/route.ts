@@ -1,39 +1,75 @@
-export const dynamic = 'force-dynamic';
-import { NextRequest, NextResponse } from 'next/server';
+export const dynamic = "force-dynamic";
+import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@repo/database";
-import { restaurants, restaurantReservations, guestProfiles, restaurantTables } from "@repo/database";
-import { and, eq, gte, lte, or, sql } from '@repo/database';
-import { addMinutes, parseISO } from 'date-fns';
-import { NotifyService } from '@tablestack/lib/notifications';
-import { validateRequest } from '@tablestack/lib/auth';
-import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, getRedisClient, ServiceNamespace, withApiErrorHandler, Logger } from '@repo/shared';
-import { withNervousSystemTracing, injectTracingHeaders } from '@repo/shared/tracing';
-import { formatApiError, formatApiSuccess, type EngineErrorCode, ReserveRequestSchema, validateRequest as validateZodRequest } from '@repo/shared';
-import { ConflictError } from '@repo/shared/errors';
-import crypto from 'crypto';
+import {
+  restaurants,
+  restaurantReservations,
+  guestProfiles,
+  restaurantTables,
+} from "@repo/database";
+import { and, eq, gte, lte, or, sql } from "@repo/database";
+import { addMinutes, parseISO } from "date-fns";
+import { NotifyService } from "@tablestack/lib/notifications";
+import { validateRequest } from "@tablestack/lib/auth";
+import {
+  IdempotencyService,
+  IDEMPOTENCY_KEY_HEADER,
+  getRedisClient,
+  ServiceNamespace,
+  withApiErrorHandler,
+  Logger,
+} from "@repo/shared";
+import {
+  withNervousSystemTracing,
+  injectTracingHeaders,
+} from "@repo/shared/tracing";
+import {
+  formatApiError,
+  formatApiSuccess,
+  type EngineErrorCode,
+  ReserveRequestSchema,
+  validateRequest as validateZodRequest,
+} from "@repo/shared";
+import { ConflictError } from "@repo/shared/errors";
+import crypto from "crypto";
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 
 const redis = getRedisClient(ServiceNamespace.TS);
-const logger = new Logger({ serviceName: 'table-stack' });
+const logger = new Logger({ serviceName: "table-stack" });
 
 async function postHandler(req: NextRequest) {
   const { error, status, context } = await validateRequest(req);
-  if (error) return NextResponse.json(formatApiError(new Error(error), 'UNAUTHORIZED'), { status });
+  if (error)
+    return NextResponse.json(formatApiError(new Error(error), "UNAUTHORIZED"), {
+      status,
+    });
 
   // SECURITY: Idempotency key is required for mutative operations
   const idempotencyKey = req.headers.get(IDEMPOTENCY_KEY_HEADER);
   if (!idempotencyKey) {
     return NextResponse.json(
-      formatApiError(new Error('Idempotency key is required for mutative operations.'), 'VALIDATION_ERROR'),
-      { status: 400 }
+      formatApiError(
+        new Error("Idempotency key is required for mutative operations."),
+        "VALIDATION_ERROR",
+      ),
+      { status: 400 },
     );
   }
 
   const idempotencyService = new IdempotencyService(redis);
-  const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey, 'reserve_api');
+  const isDuplicate = await idempotencyService.isDuplicate(
+    idempotencyKey,
+    "reserve_api",
+  );
   if (isDuplicate) {
-    return NextResponse.json(formatApiSuccess({ message: 'Reservation already processed' }, { traceId: req.headers.get('x-trace-id') || undefined }), { status: 200, headers: { 'x-idempotency-duplicate': 'true' } });
+    return NextResponse.json(
+      formatApiSuccess(
+        { message: "Reservation already processed" },
+        { traceId: req.headers.get("x-trace-id") || undefined },
+      ),
+      { status: 200, headers: { "x-idempotency-duplicate": "true" } },
+    );
   }
 
   let targetRestaurantId: string | undefined;
@@ -63,7 +99,7 @@ async function postHandler(req: NextRequest) {
     startTime: bodyStartTime,
     metadata,
     specialRequests,
-    occasion
+    occasion,
   } = validation.data;
 
   guestEmail = bodyGuestEmail;
@@ -73,41 +109,70 @@ async function postHandler(req: NextRequest) {
   targetRestaurantId = context!.restaurantId;
 
   // Handle Internal/Shadow discovery
-  if (context!.isInternal && !targetRestaurantId && discoveryName && discoveryEmail) {
+  if (
+    context!.isInternal &&
+    !targetRestaurantId &&
+    discoveryName &&
+    discoveryEmail
+  ) {
     // Find or create shadow restaurant
     restaurant = await getDb().query.restaurants.findFirst({
       where: or(
         eq(restaurants.ownerEmail, discoveryEmail),
-        eq(restaurants.name, discoveryName)
+        eq(restaurants.name, discoveryName),
       ),
     });
 
     if (!restaurant) {
-      const slug = discoveryName.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
-      const [newShadow] = await getDb().insert(restaurants).values({
-        name: discoveryName,
-        slug: `${slug}-${crypto.randomBytes(3).toString('hex')}`,
-        ownerEmail: discoveryEmail,
-        ownerId: 'shadow', // Placeholder for unclaimed
-        apiKey: `ts_shadow_${crypto.randomBytes(8).toString('hex')}`,
-        isShadow: true,
-        isClaimed: false,
-      }).returning();
+      const slug = discoveryName
+        .toLowerCase()
+        .replace(/ /g, "-")
+        .replace(/[^\w-]+/g, "");
+      const [newShadow] = await getDb()
+        .insert(restaurants)
+        .values({
+          name: discoveryName,
+          slug: `${slug}-${crypto.randomBytes(3).toString("hex")}`,
+          ownerEmail: discoveryEmail,
+          ownerId: "shadow", // Placeholder for unclaimed
+          apiKey: `ts_shadow_${crypto.randomBytes(8).toString("hex")}`,
+          isShadow: true,
+          isClaimed: false,
+        })
+        .returning();
       restaurant = newShadow;
     }
     targetRestaurantId = restaurant.id;
   }
 
   if (!targetRestaurantId) {
-    return NextResponse.json(formatApiError(new Error('Restaurant identifier missing'), 'VALIDATION_ERROR'), { status: 400 });
+    return NextResponse.json(
+      formatApiError(
+        new Error("Restaurant identifier missing"),
+        "VALIDATION_ERROR",
+      ),
+      { status: 400 },
+    );
   }
 
   if (restaurantId && restaurantId !== targetRestaurantId) {
-    return NextResponse.json(formatApiError(new Error('Unauthorized access to this restaurant'), 'FORBIDDEN'), { status: 403 });
+    return NextResponse.json(
+      formatApiError(
+        new Error("Unauthorized access to this restaurant"),
+        "FORBIDDEN",
+      ),
+      { status: 403 },
+    );
   }
 
   if (!guestName || !guestEmail || !partySize || !startTime) {
-    return NextResponse.json(formatApiError(new Error('Missing required guest or time fields'), 'VALIDATION_ERROR'), { status: 400 });
+    return NextResponse.json(
+      formatApiError(
+        new Error("Missing required guest or time fields"),
+        "VALIDATION_ERROR",
+      ),
+      { status: 400 },
+    );
   }
 
   // Verify Restaurant exists
@@ -116,15 +181,18 @@ async function postHandler(req: NextRequest) {
   });
 
   if (!restaurant) {
-    return NextResponse.json(formatApiError(new Error('Restaurant not found'), 'NOT_FOUND'), { status: 404 });
+    return NextResponse.json(
+      formatApiError(new Error("Restaurant not found"), "NOT_FOUND"),
+      { status: 404 },
+    );
   }
 
   // Fetch guest profile for metadata propagation
   existingProfile = await getDb().query.guestProfiles.findFirst({
     where: and(
       eq(guestProfiles.restaurantId, targetRestaurantId),
-      eq(guestProfiles.email, guestEmail)
-    )
+      eq(guestProfiles.email, guestEmail),
+    ),
   });
 
   // For shadow restaurants, we skip table conflict checks and just allow the booking
@@ -139,9 +207,15 @@ async function postHandler(req: NextRequest) {
   // ATOMIC TRANSACTION: Wrap all operations in a single transaction
   // This prevents race conditions by locking rows during the transaction
   // ============================================================================
-  const result = await getDb().transaction(async (tx: any) => {
+  const result = await getDb().transaction(async (tx) => {
     // Auto-assign logic with row-level locking (FOR UPDATE SKIP LOCKED)
-    if (!isShadow && !assignedTableId && (!combinedTableIds || !Array.isArray(combinedTableIds) || combinedTableIds.length === 0)) {
+    if (
+      !isShadow &&
+      !assignedTableId &&
+      (!combinedTableIds ||
+        !Array.isArray(combinedTableIds) ||
+        combinedTableIds.length === 0)
+    ) {
       // CRITICAL FIX: Use raw SQL with FOR UPDATE SKIP LOCKED to prevent race conditions
       // Drizzle ORM doesn't support FOR UPDATE directly, so we use raw SQL
       const availableTable = await tx.execute(sql`
@@ -164,17 +238,21 @@ async function postHandler(req: NextRequest) {
 
       if (!availableTable || availableTable.length === 0) {
         // Rollback will happen automatically
-        throw new ConflictError('No suitable tables available for this time and party size');
+        throw new ConflictError(
+          "No suitable tables available for this time and party size",
+        );
       }
       const lockedTableId = availableTable[0]?.id;
       if (!lockedTableId) {
-        throw new ConflictError('No tables locked successfully');
+        throw new ConflictError("No tables locked successfully");
       }
       assignedTableId = lockedTableId;
     }
 
     if (!isShadow) {
-      const tablesToCheck = assignedTableId ? [assignedTableId] : combinedTableIds;
+      const tablesToCheck = assignedTableId
+        ? [assignedTableId]
+        : combinedTableIds;
 
       // Enhanced Conflict Detection for both single and combined tables
       // Check for conflicts within the same transaction (isolated view)
@@ -182,62 +260,80 @@ async function postHandler(req: NextRequest) {
         where: and(
           eq(restaurantReservations.restaurantId, targetRestaurantId),
           or(
-            eq(restaurantReservations.status, 'confirmed'),
+            eq(restaurantReservations.status, "confirmed"),
             and(
               eq(restaurantReservations.isVerified, false),
-              gte(restaurantReservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
-            )
+              gte(
+                restaurantReservations.createdAt,
+                new Date(Date.now() - 15 * 60 * 1000),
+              ),
+            ),
           ),
           // Use overlap logic with parameterized placeholders
           sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${start.toISOString()}, ${end.toISOString()})`,
           // Check if ANY of the tables we want are occupied
           or(
             // Check if it matches our single tableId
-            assignedTableId ? eq(restaurantReservations.tableId, assignedTableId) : undefined,
+            assignedTableId
+              ? eq(restaurantReservations.tableId, assignedTableId)
+              : undefined,
             // OR if our tableId is part of someone else's combinedTables
-            assignedTableId ? sql`${restaurantReservations.combinedTableIds} @> ${JSON.stringify([assignedTableId])}::jsonb` : undefined,
+            assignedTableId
+              ? sql`${restaurantReservations.combinedTableIds} @> ${JSON.stringify([assignedTableId])}::jsonb`
+              : undefined,
             // OR if our combinedTableIds contains a tableId that is someone's single tableId - PARAMETERIZED
-            combinedTableIds ? sql`${restaurantReservations.tableId} = ANY(${tablesToCheck}::uuid[])` : undefined,
+            combinedTableIds
+              ? sql`${restaurantReservations.tableId} = ANY(${tablesToCheck}::uuid[])`
+              : undefined,
             // OR if our combinedTableIds overlap with someone else's combinedTableIds using PostgreSQL array overlap operator
-            combinedTableIds ? sql`${restaurantReservations.combinedTableIds} && ${tablesToCheck}::uuid[]` : undefined
-          )
+            combinedTableIds
+              ? sql`${restaurantReservations.combinedTableIds} && ${tablesToCheck}::uuid[]`
+              : undefined,
+          ),
         ),
       });
 
       if (conflict) {
         // Rollback will happen automatically
-        throw new ConflictError('One or more tables are no longer available');
+        throw new ConflictError("One or more tables are no longer available");
       }
     }
 
     // Insert reservation (within transaction)
-    const [newReservation] = await tx.insert(restaurantReservations).values({
-      restaurantId: targetRestaurantId,
-      tableId: assignedTableId || null,
-      combinedTableIds: combinedTableIds || null,
-      guestName,
-      guestEmail,
-      partySize,
-      startTime: start,
-      endTime: end,
-      isVerified: isShadow ? true : false,
-      metadata: metadata || null,
-    }).returning();
+    const [newReservation] = await tx
+      .insert(restaurantReservations)
+      .values({
+        restaurantId: targetRestaurantId,
+        tableId: assignedTableId || null,
+        combinedTableIds: combinedTableIds || null,
+        guestName,
+        guestEmail,
+        partySize,
+        startTime: start,
+        endTime: end,
+        isVerified: isShadow ? true : false,
+        metadata: metadata || null,
+      })
+      .returning();
 
     // Upsert Guest Profile (within same transaction)
-    const [profile] = await tx.insert(guestProfiles).values({
-      restaurantId: targetRestaurantId,
-      email: guestEmail,
-      name: guestName,
-      visitCount: 1,
-    }).onConflictDoUpdate({
-      target: [guestProfiles.restaurantId, guestProfiles.email],
-      set: {
-        name: guestName, // Update name if it changed
-        visitCount: sql.raw(`${guestProfiles.visitCount} + 1`),
-        updatedAt: new Date(),
-      }
-    }).returning();
+    const [profile] = await tx
+      .insert(guestProfiles)
+      .values({
+        restaurantId: targetRestaurantId,
+        email: guestEmail,
+        name: guestName,
+        visitCount: 1,
+      })
+      .onConflictDoUpdate({
+        target: [guestProfiles.restaurantId, guestProfiles.email],
+        set: {
+          name: guestName, // Update name if it changed
+          visitCount: sql.raw(`${guestProfiles.visitCount} + 1`),
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
 
     return { newReservation, profile };
   });
@@ -247,15 +343,15 @@ async function postHandler(req: NextRequest) {
   // High-Value Guest Hook: Trigger logistics if guest is frequent
   // Note: This is outside the transaction since it's a side effect (publishing to Redis)
   if ((profile.visitCount ?? 0) >= 5) {
-    const { RealtimeService } = await import('@repo/shared');
-    const mcpProtocol = await import('@repo/mcp-protocol');
+    const { RealtimeService } = await import("@repo/shared");
+    const mcpProtocol = await import("@repo/mcp-protocol");
 
     // Extract trace ID from request headers if available
-    const traceId = req.headers.get('x-trace-id') || undefined;
+    const traceId = req.headers.get("x-trace-id") || undefined;
 
     // Phase 2: Use structured SystemEvent schema
     const event = mcpProtocol.createTypedSystemEvent(
-      'HighValueGuestReservation',
+      "HighValueGuestReservation",
       {
         guest: {
           name: profile.name,
@@ -271,33 +367,47 @@ async function postHandler(req: NextRequest) {
           partySize: newReservation.partySize,
         },
       },
-      'table-stack',
-      { traceId }
+      "table-stack",
+      { traceId },
     );
 
     // Publish to Nervous System mesh with trace ID propagation (Phase 5)
     await RealtimeService.publishNervousSystemEvent(
       event.type,
       event.payload,
-      event.traceId
-    ).catch(err => logger.error('Nervous System Event failed', { error: err instanceof Error ? err.message : String(err) }));
+      event.traceId,
+    ).catch((err) =>
+      logger.error("Nervous System Event failed", {
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
   }
 
   if (isShadow) {
     // Send Claim Invitation to Owner
-    await NotifyService.sendClaimInvitation(restaurant.ownerEmail, restaurant.name, restaurant.claimToken!);
+    await NotifyService.sendClaimInvitation(
+      restaurant.ownerEmail,
+      restaurant.name,
+      restaurant.claimToken!,
+    );
 
     // Notify owner of the "Passive Booking"
-    await NotifyService.notifyOwner(restaurant.ownerEmail, {
-      guestName,
-      partySize,
-      startTime: start,
-    }, true);
+    await NotifyService.notifyOwner(
+      restaurant.ownerEmail,
+      {
+        guestName,
+        partySize,
+        startTime: start,
+      },
+      true,
+    );
 
-    return NextResponse.json(formatApiSuccess({
-      message: 'Shadow reservation created. Restaurant has been notified.',
-      bookingId: newReservation.id,
-    }));
+    return NextResponse.json(
+      formatApiSuccess({
+        message: "Shadow reservation created. Restaurant has been notified.",
+        bookingId: newReservation.id,
+      }),
+    );
   }
 
   // Send Verification Notification
@@ -314,13 +424,15 @@ async function postHandler(req: NextRequest) {
     `,
   });
 
-  return NextResponse.json(formatApiSuccess({
-    message: 'Reservation created. Please check your email to verify.',
-    bookingId: newReservation.id,
-  }));
+  return NextResponse.json(
+    formatApiSuccess({
+      message: "Reservation created. Please check your email to verify.",
+      bookingId: newReservation.id,
+    }),
+  );
 }
 
 export const POST = withApiErrorHandler(postHandler, {
-  serviceName: 'reserve-api',
-  includeStackTrace: process.env.NODE_ENV !== 'production',
+  serviceName: "reserve-api",
+  includeStackTrace: process.env.NODE_ENV !== "production",
 });

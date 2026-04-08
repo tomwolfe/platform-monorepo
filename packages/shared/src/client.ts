@@ -21,41 +21,41 @@
 // ============================================================================
 // ERROR CLASSES & HANDLING (Browser-safe)
 // ============================================================================
-export * from './errors';
+export * from "./errors";
 export {
   ApiError,
   withApiErrorHandler,
   type ApiErrorOptions,
   type ApiErrorResponse,
   type ErrorCategory,
-} from './error-handler';
+} from "./error-handler";
 
 // ============================================================================
 // LOGGER (Browser-safe structured logging)
 // ============================================================================
-export { Logger, type LogContext, type LogLevel } from './logger';
+export { Logger, type LogContext, type LogLevel } from "./logger";
 
 // ============================================================================
 // SCHEMAS & VALIDATION (Browser-safe Zod schemas)
 // ============================================================================
-export * from './api-schemas';
-export * from './api-response';
+export * from "./api-schemas";
+export * from "./api-response";
 export {
   createValidationMiddleware,
   type ValidationMiddleware,
   type ValidationMiddlewareResult,
-} from './validation-middleware';
+} from "./validation-middleware";
 
 // ============================================================================
 // SECURITY (Browser-safe headers & audit)
 // ============================================================================
-export * from './security-middleware';
-export * from './security-audit';
+export * from "./security-middleware";
+export * from "./security-audit";
 export {
   generateSecurityHeaders,
   type SecurityHeadersConfig,
   type SecurityHeaderPreset,
-} from './security-headers';
+} from "./security-headers";
 
 // ============================================================================
 // TRACING TYPES & UTILITIES (Browser-safe subset)
@@ -81,27 +81,27 @@ export {
   emitTrace,
   getGlobalTraceEmitter,
   setGlobalTraceEmitter,
-} from './tracing';
+} from "./tracing";
 
 // ============================================================================
 // RUNTIME REGISTRY (Browser-safe registry types)
 // ============================================================================
-export * from './runtime-registry';
+export * from "./runtime-registry";
 
 // ============================================================================
 // TOOL TYPES (Browser-safe)
 // ============================================================================
-export * from './types/tool';
+export * from "./types/tool";
 
 // ============================================================================
 // STATE MACHINE (Browser-safe)
 // ============================================================================
-export * from './state-machine';
+export * from "./state-machine";
 
 // ============================================================================
 // NORMALIZATION (Browser-safe)
 // ============================================================================
-export * from './normalization';
+export * from "./normalization";
 
 // ============================================================================
 // CONFIGURATION SCHEMAS (Browser-safe Zod schemas only)
@@ -110,14 +110,72 @@ export {
   BaseConfigSchema,
   ServiceUrlsSchema,
   FullConfigSchema,
-} from './config';
-export type { FullConfig } from './config';
+} from "./config";
+export type { FullConfig } from "./config";
+
+// ============================================================================
+// BROWSER-SAFE CONFIG ACCESSORS (For Client Components)
+// These safely access NEXT_PUBLIC_* environment variables in browser context
+// ============================================================================
+export const BrowserConfig = {
+  /**
+   * Get ESCROW contract address
+   */
+  getEscrowContractAddress(): string | null {
+    return process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || null;
+  },
+
+  /**
+   * Get USDC contract address
+   */
+  getUsdcContractAddress(): string | null {
+    return process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS || null;
+  },
+
+  /**
+   * Get platform fee wallet address
+   */
+  getPlatformFeeWallet(): string | null {
+    return process.env.NEXT_PUBLIC_PLATFORM_FEE_WALLET || null;
+  },
+
+  /**
+   * Get Base RPC URL
+   */
+  getBaseRpcUrl(): string {
+    return process.env.NEXT_PUBLIC_BASE_RPC_URL || "https://mainnet.base.org";
+  },
+
+  /**
+   * Get Polygon RPC URL
+   */
+  getPolygonRpcUrl(): string {
+    return process.env.NEXT_PUBLIC_POLYGON_RPC_URL || "https://polygon-rpc.com";
+  },
+
+  /**
+   * Get Ethereum RPC URL
+   */
+  getEthRpcUrl(): string {
+    return process.env.NEXT_PUBLIC_ETH_RPC_URL || "https://eth.llamarpc.com";
+  },
+
+  /**
+   * Check if Web3 is configured (all required vars present)
+   */
+  isWeb3Configured(): boolean {
+    return !!(
+      process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS &&
+      process.env.NEXT_PUBLIC_PLATFORM_FEE_WALLET
+    );
+  },
+};
 
 // ============================================================================
 // TYPE DEFINITIONS (Browser-safe)
 // ============================================================================
-export * from './types/execution';
-export type { DatabaseSchema } from './types/database';
+export * from "./types/execution";
+export type { DatabaseSchema } from "./types/database";
 
 // ============================================================================
 // CIRCUIT BREAKER TYPES (Browser-safe types only)
@@ -127,13 +185,13 @@ export {
   type CircuitBreakerConfig,
   type CircuitBreakerStats,
   type CircuitEvent,
-} from './services/circuit-breaker';
-export type { CircuitState } from './services/circuit-breaker';
+} from "./services/circuit-breaker";
+export type { CircuitState } from "./services/circuit-breaker";
 
 // ============================================================================
 // PRIVACY & PII SCRUBBING (Browser-safe)
 // ============================================================================
-export * from './services/privacy-gateway';
+export * from "./services/privacy-gateway";
 
 // ============================================================================
 // ACCESSIBILITY (React client components)

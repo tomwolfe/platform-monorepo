@@ -8,17 +8,16 @@ import { base, polygon, mainnet } from "wagmi/chains";
 import { coinbaseWallet, metaMask } from "wagmi/connectors";
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { createStorage, fallback } from "wagmi";
+import { BrowserConfig } from "@repo/shared/client";
 
 // ============================================================================
 // CONFIGURATION
-// Default to Base for low fees and fast transactions
+// Using centralized BrowserConfig from @repo/shared/client
 // ============================================================================
 
-const ESCROW_CONTRACT_ADDRESS =
-  process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || null;
-const USDC_CONTRACT_ADDRESS =
-  process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS || null;
-const PLATFORM_FEE_WALLET = process.env.NEXT_PUBLIC_PLATFORM_FEE_WALLET || null;
+const ESCROW_CONTRACT_ADDRESS = BrowserConfig.getEscrowContractAddress();
+const USDC_CONTRACT_ADDRESS = BrowserConfig.getUsdcContractAddress();
+const PLATFORM_FEE_WALLET = BrowserConfig.getPlatformFeeWallet();
 
 // Warn if critical env vars are missing
 if (!ESCROW_CONTRACT_ADDRESS) {
@@ -43,26 +42,15 @@ const storage = createStorage({
 });
 
 // Create wagmi config with client auto-detection
-// RPC URLs are configurable via environment variables, with public defaults as fallback
+// RPC URLs are fetched from centralized BrowserConfig with public defaults as fallback
 const config = createConfig({
   chains: [defaultChain, ...chains],
   ssr: true, // Enable SSR compatibility for Next.js
   storage,
   transports: {
-    [base.id]: fallback([
-      http(),
-      http(process.env.NEXT_PUBLIC_BASE_RPC_URL || "https://mainnet.base.org"),
-    ]),
-    [polygon.id]: fallback([
-      http(),
-      http(
-        process.env.NEXT_PUBLIC_POLYGON_RPC_URL || "https://polygon-rpc.com",
-      ),
-    ]),
-    [mainnet.id]: fallback([
-      http(),
-      http(process.env.NEXT_PUBLIC_ETH_RPC_URL || "https://eth.llamarpc.com"),
-    ]),
+    [base.id]: fallback([http(), http(BrowserConfig.getBaseRpcUrl())]),
+    [polygon.id]: fallback([http(), http(BrowserConfig.getPolygonRpcUrl())]),
+    [mainnet.id]: fallback([http(), http(BrowserConfig.getEthRpcUrl())]),
   },
   connectors: [
     coinbaseWallet({
@@ -111,7 +99,7 @@ export function Web3Provider({ children }: Web3ProviderProps) {
   const queryClient = getQueryClient();
   const [escrowContractAddress] = useState(ESCROW_CONTRACT_ADDRESS);
 
-  const isConfigured = !!(ESCROW_CONTRACT_ADDRESS && PLATFORM_FEE_WALLET);
+  const isConfigured = BrowserConfig.isWeb3Configured();
 
   const web3ContextValue: Web3ContextType = {
     escrowContractAddress,

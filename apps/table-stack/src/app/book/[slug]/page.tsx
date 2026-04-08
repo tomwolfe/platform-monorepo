@@ -15,6 +15,7 @@ import {
 import { createReservation } from "../actions";
 import Link from "next/link";
 import ReservationForm from "@/components/ReservationForm";
+import { useApiError } from "@repo/ui-theme";
 
 interface Table {
   id: string;
@@ -47,7 +48,7 @@ export default function BookingPage({
   params: Promise<{ slug: string }>;
 }) {
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { handleApiError } = useApiError({ defaultTitle: "Booking Error" });
 
   const { slug } = React.use(params);
 
@@ -60,11 +61,11 @@ export default function BookingPage({
       .then((data) => {
         setRestaurant(data);
       })
-      .catch((err) => {
-        setError(err.message);
+      .catch(async (err) => {
+        await handleApiError(err, "Failed to load restaurant");
         setRestaurant(null);
       });
-  }, [slug]);
+  }, [slug, handleApiError]);
 
   const handleBook = async (data: {
     date: Date;
@@ -93,11 +94,16 @@ export default function BookingPage({
       throw new Error("Fully booked for this time. Please try another slot.");
     }
 
+    const selectedTable = availData.availableTables[0];
+    if (!selectedTable) {
+      throw new Error("No tables available for this time");
+    }
+
     // 2. Create reservation
     const duration = restaurant.defaultDurationMinutes || 90;
     const res = await createReservation({
       restaurantId: restaurant.id,
-      tableId: availData.availableTables[0].id,
+      tableId: selectedTable.id,
       guestName: data.guestInfo.name,
       guestEmail: data.guestInfo.email,
       partySize: data.partySize,
@@ -106,21 +112,17 @@ export default function BookingPage({
     });
 
     if (!res.success) throw new Error(res.error);
-    return res.data.id;
+    return res.data?.id;
   };
 
   if (!restaurant) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        {error ? (
-          <div className="text-center">
-            <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-            <h1 className="text-xl font-bold text-gray-900">Error</h1>
-            <p className="text-gray-500">{error}</p>
-          </div>
-        ) : (
-          "Loading restaurant..."
-        )}
+        <div className="text-center">
+          <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <h1 className="text-xl font-bold text-gray-900">Loading...</h1>
+          <p className="text-gray-500">Fetching restaurant details</p>
+        </div>
       </div>
     );
   }

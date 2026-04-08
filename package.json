@@ -25,6 +25,9 @@
     "test:performance:load": "k6 run k6/scripts/load-test.js",
     "test:performance:stress": "k6 run k6/scripts/stress-test.js",
     "test:performance:all": "k6 run k6/scripts/performance-budgets.js",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
     "preflight": "tsx scripts/preflight-check.ts",
     "validate:env": "tsx scripts/validate-env.ts",
     "validate:env:strict": "tsx scripts/validate-env.ts --strict",
@@ -63,7 +66,9 @@
     }
   },
   "devDependencies": {
+    "@mswjs/data": "^0.16.2",
     "@neondatabase/serverless": "^1.0.2",
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^20.17.16",
     "dotenv": "^16.4.7",
@@ -71,6 +76,7 @@
     "husky": "^9.1.7",
     "jsdom": "^28.1.0",
     "lint-staged": "^15.4.3",
+    "msw": "^2.13.1",
     "postcss": "^8.5.1",
     "prettier": "^3.8.1",
     "tsx": "^4.19.3",

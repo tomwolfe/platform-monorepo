@@ -1,11 +1,12 @@
 "use client";
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { WagmiProvider, createConfig, http } from "wagmi";
 import { base, polygon, mainnet } from "wagmi/chains";
 import { coinbaseWallet, metaMask } from "wagmi/connectors";
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { createStorage, fallback } from "wagmi";
+import { getQueryClient } from "@repo/ui-theme";
 
 // ============================================================================
 // CONFIGURATION
@@ -59,42 +60,6 @@ const config = createConfig({
 });
 
 // ============================================================================
-// QUERY CLIENT
-// Singleton pattern to avoid creating multiple instances
-// ============================================================================
-
-let queryClientSingleton: QueryClient | undefined;
-
-function getQueryClient() {
-  if (typeof window === "undefined") {
-    // Server: always create a new query client
-    return new QueryClient({
-      defaultOptions: {
-        queries: {
-          staleTime: 60 * 1000, // 1 minute
-          retry: 2,
-          refetchOnWindowFocus: false,
-        },
-      },
-    });
-  }
-
-  // Browser: use singleton
-  if (!queryClientSingleton) {
-    queryClientSingleton = new QueryClient({
-      defaultOptions: {
-        queries: {
-          staleTime: 60 * 1000, // 1 minute
-          retry: 2,
-          refetchOnWindowFocus: false,
-        },
-      },
-    });
-  }
-  return queryClientSingleton;
-}
-
-// ============================================================================
 // WEB3 CONTEXT
 // For accessing Web3 state throughout the app
 // ============================================================================
@@ -119,6 +84,7 @@ export function useWeb3() {
 // ============================================================================
 // WEB3 PROVIDER
 // Wraps the app with Wagmi and React Query providers
+// Uses centralized QueryClient from @repo/ui-theme
 // ============================================================================
 
 interface Web3ProviderProps {

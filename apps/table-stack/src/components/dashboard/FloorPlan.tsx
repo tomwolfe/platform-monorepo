@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -11,16 +11,28 @@ import {
   DragStartEvent,
   useDraggable,
   useDroppable,
-} from '@dnd-kit/core';
-import { CSS } from '@dnd-kit/utilities';
-import { IconAfterMount } from '@/components/ui/IconWrapper';
-import { Table, Trash2, CheckCircle, AlertCircle, LucideIcon, Plus, Settings2, X, Save } from 'lucide-react';
-import Ably from 'ably';
-import { useRouter } from 'next/navigation';
-import { Logger } from '@repo/shared/logger';
-import { ABLY_TABLE_EVENTS } from '@repo/mcp-protocol';
+} from "@dnd-kit/core";
+import { CSS } from "@dnd-kit/utilities";
+import { IconAfterMount } from "@/components/ui/IconWrapper";
+import {
+  Table,
+  Trash2,
+  CheckCircle,
+  AlertCircle,
+  LucideIcon,
+  Plus,
+  Settings2,
+  X,
+  Save,
+} from "lucide-react";
+import Ably from "ably";
+import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
+import { Logger } from "@repo/shared/logger";
+import { ABLY_TABLE_EVENTS } from "@repo/mcp-protocol";
+import { useApiError } from "@repo/ui-theme";
 
-const logger = new Logger({ serviceName: 'table-stack' });
+const logger = new Logger({ serviceName: "table-stack" });
 
 interface RestaurantTable {
   id: string;
@@ -51,7 +63,14 @@ interface DraggableTableProps {
   onEdit?: (table: RestaurantTable) => void;
 }
 
-function DraggableTable({ table, reservation, isSelected, onSelect, onDelete, onEdit }: DraggableTableProps) {
+function DraggableTable({
+  table,
+  reservation,
+  isSelected,
+  onSelect,
+  onDelete,
+  onEdit,
+}: DraggableTableProps) {
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: table.id,
     data: table,
@@ -61,15 +80,18 @@ function DraggableTable({ table, reservation, isSelected, onSelect, onDelete, on
     transform: CSS.Translate.toString(transform),
     left: `${table.xPos}px`,
     top: `${table.yPos}px`,
-    position: 'absolute' as const,
+    position: "absolute" as const,
   };
 
   const getStatusColor = () => {
-    if (reservation) return 'border-purple-500 bg-purple-50';
+    if (reservation) return "border-purple-500 bg-purple-50";
     switch (table.status) {
-      case 'occupied': return 'border-red-500 bg-red-50';
-      case 'dirty': return 'border-yellow-500 bg-yellow-50';
-      default: return 'border-gray-200 bg-white';
+      case "occupied":
+        return "border-red-500 bg-red-50";
+      case "dirty":
+        return "border-yellow-500 bg-yellow-50";
+      default:
+        return "border-gray-200 bg-white";
     }
   };
 
@@ -77,12 +99,19 @@ function DraggableTable({ table, reservation, isSelected, onSelect, onDelete, on
     <div
       ref={setNodeRef}
       style={style}
-      onClick={(e) => { e.stopPropagation(); onSelect?.(table.id); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect?.(table.id);
+      }}
       className={`group p-4 border-2 rounded-lg shadow-md flex flex-col items-center justify-center w-24 h-24 cursor-pointer transition-all ${getStatusColor()} ${
-        table.tableType === 'round' ? 'rounded-full' : ''
-      } ${isSelected ? 'ring-4 ring-blue-500 border-blue-500' : ''}`}
+        table.tableType === "round" ? "rounded-full" : ""
+      } ${isSelected ? "ring-4 ring-blue-500 border-blue-500" : ""}`}
     >
-      <div {...listeners} {...attributes} className="cursor-move flex flex-col items-center justify-center">
+      <div
+        {...listeners}
+        {...attributes}
+        className="cursor-move flex flex-col items-center justify-center"
+      >
         <IconAfterMount>
           <Table className="w-6 h-6 mb-1" />
         </IconAfterMount>
@@ -92,13 +121,18 @@ function DraggableTable({ table, reservation, isSelected, onSelect, onDelete, on
             {reservation.guestName}
           </span>
         ) : (
-          <span className="text-xs text-gray-500">{table.minCapacity}-{table.maxCapacity}</span>
+          <span className="text-xs text-gray-500">
+            {table.minCapacity}-{table.maxCapacity}
+          </span>
         )}
       </div>
 
       <div className="absolute -top-2 -right-2 hidden group-hover:flex gap-1">
         <button
-          onClick={(e) => { e.stopPropagation(); onEdit?.(table); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit?.(table);
+          }}
           className="p-1 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700"
         >
           <IconAfterMount>
@@ -106,7 +140,10 @@ function DraggableTable({ table, reservation, isSelected, onSelect, onDelete, on
           </IconAfterMount>
         </button>
         <button
-          onClick={(e) => { e.stopPropagation(); onDelete?.(table.id); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete?.(table.id);
+          }}
           className="p-1 bg-red-600 text-white rounded-full shadow-lg hover:bg-red-700"
         >
           <IconAfterMount>
@@ -118,33 +155,35 @@ function DraggableTable({ table, reservation, isSelected, onSelect, onDelete, on
   );
 }
 
-function StatusZone({ 
-  id, 
-  label, 
-  icon: Icon, 
-  colorClass, 
-  onClick, 
-  disabled 
-}: { 
-  id: string, 
-  label: string, 
-  icon: LucideIcon, 
-  colorClass: string,
-  onClick?: () => void,
-  disabled?: boolean
+function StatusZone({
+  id,
+  label,
+  icon: Icon,
+  colorClass,
+  onClick,
+  disabled,
+}: {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  colorClass: string;
+  onClick?: () => void;
+  disabled?: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id });
-  
+
   return (
     <button
       ref={setNodeRef}
       onClick={onClick}
       disabled={disabled}
       className={`flex-1 p-4 rounded-xl border-2 border-dashed flex items-center justify-center gap-2 transition-colors ${
-        isOver ? colorClass :
-        disabled ? 'border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed' :
-        'border-gray-200 bg-white text-gray-400 hover:border-gray-300 hover:bg-gray-50'
-      } ${!disabled && !isOver && onClick ? 'cursor-pointer' : ''}`}
+        isOver
+          ? colorClass
+          : disabled
+            ? "border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed"
+            : "border-gray-200 bg-white text-gray-400 hover:border-gray-300 hover:bg-gray-50"
+      } ${!disabled && !isOver && onClick ? "cursor-pointer" : ""}`}
     >
       <IconAfterMount>
         <Icon className="w-5 h-5" />
@@ -152,6 +191,23 @@ function StatusZone({
       <span className="font-medium">{label}</span>
     </button>
   );
+}
+
+interface FloorPlanProps {
+  initialTables: RestaurantTable[];
+  restaurantReservations?: Reservation[];
+  onSave: (tables: RestaurantTable[]) => Promise<void>;
+  onStatusChange: (
+    tableId: string,
+    status: "vacant" | "occupied" | "dirty",
+  ) => Promise<void>;
+  onAdd: () => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  onUpdateDetails: (
+    id: string,
+    details: { tableNumber: string; minCapacity: number; maxCapacity: number },
+  ) => Promise<void>;
+  restaurantId?: string;
 }
 
 export default function FloorPlan({
@@ -162,23 +218,18 @@ export default function FloorPlan({
   onAdd,
   onDelete,
   onUpdateDetails,
-  restaurantId
-}: {
-  initialTables: RestaurantTable[],
-  restaurantReservations?: Reservation[],
-  onSave: (tables: RestaurantTable[]) => Promise<void>,
-  onStatusChange: (tableId: string, status: 'vacant' | 'occupied' | 'dirty') => Promise<void>,
-  onAdd: () => Promise<void>,
-  onDelete: (id: string) => Promise<void>,
-  onUpdateDetails: (id: string, details: { tableNumber: string, minCapacity: number, maxCapacity: number }) => Promise<void>,
-  restaurantId?: string
-}) {
+  restaurantId,
+}: FloorPlanProps) {
   const [tables, setTables] = useState(initialTables);
   const [activeTable, setActiveTable] = useState<RestaurantTable | null>(null);
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
-  const [editingTable, setEditingTable] = useState<RestaurantTable | null>(null);
+  const [editingTable, setEditingTable] = useState<RestaurantTable | null>(
+    null,
+  );
   const [listMode, setListMode] = useState(false);
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const { handleApiError } = useApiError({ defaultTitle: "Floor Plan Error" });
 
   useEffect(() => {
     setTables(initialTables);
@@ -187,30 +238,39 @@ export default function FloorPlan({
   useEffect(() => {
     if (!restaurantId) return;
 
-    const ably = new Ably.Realtime({ authUrl: '/api/ably/auth' });
+    const ably = new Ably.Realtime({ authUrl: "/api/ably/auth" });
     const channel = ably.channels.get(`restaurant:${restaurantId}`);
 
-    const newReservationListener = (message: { data: unknown }) => {
-      logger.info({ message: 'New reservation received', data: message.data });
+    const newReservationListener = (message: Ably.InboundMessage) => {
+      logger.info("New reservation received", { data: message.data });
       router.refresh();
     };
 
-    const reservationCancelledListener = (message: { data: unknown }) => {
-      logger.info({ message: 'Reservation cancelled received', data: message.data });
+    const reservationCancelledListener = (message: Ably.InboundMessage) => {
+      logger.info("Reservation cancelled received", { data: message.data });
       router.refresh();
     };
 
     channel.subscribe(ABLY_TABLE_EVENTS.NewReservation, newReservationListener);
-    channel.subscribe(ABLY_TABLE_EVENTS.ReservationCancelled, reservationCancelledListener);
+    channel.subscribe(
+      ABLY_TABLE_EVENTS.ReservationCancelled,
+      reservationCancelledListener,
+    );
 
     return () => {
       try {
-        channel.unsubscribe(ABLY_TABLE_EVENTS.NewReservation, newReservationListener);
+        channel.unsubscribe(
+          ABLY_TABLE_EVENTS.NewReservation,
+          newReservationListener,
+        );
       } catch {
         // Ignore cleanup errors
       }
       try {
-        channel.unsubscribe(ABLY_TABLE_EVENTS.ReservationCancelled, reservationCancelledListener);
+        channel.unsubscribe(
+          ABLY_TABLE_EVENTS.ReservationCancelled,
+          reservationCancelledListener,
+        );
       } catch {
         // Ignore cleanup errors
       }
@@ -223,7 +283,7 @@ export default function FloorPlan({
       activationConstraint: {
         distance: 5,
       },
-    })
+    }),
   );
 
   function handleDragStart(event: DragStartEvent) {
@@ -234,13 +294,26 @@ export default function FloorPlan({
   function handleDragEnd(event: DragEndEvent) {
     const { active, delta, over } = event;
 
-    if (over &&['vacant', 'occupied', 'dirty'].includes(over.id as string)) {
-      const newStatus = over.id as 'vacant' | 'occupied' | 'dirty';
+    if (over && ["vacant", "occupied", "dirty"].includes(over.id as string)) {
+      const newStatus = over.id as "vacant" | "occupied" | "dirty";
+
+      // Optimistic update
       setTables((prev) =>
-        prev.map((t) => (t.id === active.id ? { ...t, status: newStatus } : t))
+        prev.map((t) => (t.id === active.id ? { ...t, status: newStatus } : t)),
       );
-      onStatusChange(active.id as string, newStatus);
+
+      // Server mutation with error handling
+      onStatusChange(active.id as string, newStatus).catch(async (err) => {
+        await handleApiError(err, "Failed to update table status");
+        // Revert on error
+        setTables((prev) =>
+          prev.map((t) =>
+            t.id === active.id ? { ...t, status: t.status } : t,
+          ),
+        );
+      });
     } else {
+      // Optimistic position update
       setTables((prev) =>
         prev.map((t) => {
           if (t.id === active.id) {
@@ -251,7 +324,7 @@ export default function FloorPlan({
             };
           }
           return t;
-        })
+        }),
       );
     }
     setActiveTable(null);
@@ -260,20 +333,67 @@ export default function FloorPlan({
   const handleUpdateDetails = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingTable) return;
-    await onUpdateDetails(editingTable.id, {
-      tableNumber: editingTable.tableNumber,
-      minCapacity: editingTable.minCapacity,
-      maxCapacity: editingTable.maxCapacity,
-    });
-    setEditingTable(null);
+
+    try {
+      await onUpdateDetails(editingTable.id, {
+        tableNumber: editingTable.tableNumber,
+        minCapacity: editingTable.minCapacity,
+        maxCapacity: editingTable.maxCapacity,
+      });
+      setEditingTable(null);
+      // Invalidate and refetch
+      queryClient.invalidateQueries({ queryKey: ["tables", restaurantId] });
+    } catch (err) {
+      await handleApiError(err, "Failed to update table details");
+    }
   };
 
-  const handleStatusClick = async (status: 'vacant' | 'occupied' | 'dirty') => {
+  const handleStatusClick = async (status: "vacant" | "occupied" | "dirty") => {
     if (!selectedTableId) return;
+
+    // Optimistic update
     setTables((prev) =>
-      prev.map((t) => (t.id === selectedTableId ? { ...t, status } : t))
+      prev.map((t) => (t.id === selectedTableId ? { ...t, status } : t)),
     );
-    await onStatusChange(selectedTableId, status);
+
+    try {
+      await onStatusChange(selectedTableId, status);
+    } catch (err) {
+      await handleApiError(err, "Failed to update table status");
+      // Revert on error - we need to fetch fresh data
+      router.refresh();
+    }
+  };
+
+  const handleSaveLayout = async () => {
+    try {
+      await onSave(tables);
+      // Invalidate queries to ensure cache is fresh
+      queryClient.invalidateQueries({ queryKey: ["tables", restaurantId] });
+    } catch (err) {
+      await handleApiError(err, "Failed to save layout");
+    }
+  };
+
+  const handleAddTable = async () => {
+    try {
+      await onAdd();
+      // Refresh data after adding
+      router.refresh();
+    } catch (err) {
+      await handleApiError(err, "Failed to add table");
+    }
+  };
+
+  const handleDeleteTable = async (id: string) => {
+    try {
+      await onDelete(id);
+      // Update local state
+      setTables((prev) => prev.filter((t) => t.id !== id));
+      queryClient.invalidateQueries({ queryKey: ["tables", restaurantId] });
+    } catch (err) {
+      await handleApiError(err, "Failed to delete table");
+    }
   };
 
   return (
@@ -285,7 +405,7 @@ export default function FloorPlan({
             label="Set Vacant"
             icon={CheckCircle}
             colorClass="border-green-500 bg-green-50 text-green-700"
-            onClick={() => handleStatusClick('vacant')}
+            onClick={() => handleStatusClick("vacant")}
             disabled={!selectedTableId}
           />
           <StatusZone
@@ -293,7 +413,7 @@ export default function FloorPlan({
             label="Set Occupied"
             icon={AlertCircle}
             colorClass="border-red-500 bg-red-50 text-red-700"
-            onClick={() => handleStatusClick('occupied')}
+            onClick={() => handleStatusClick("occupied")}
             disabled={!selectedTableId}
           />
           <StatusZone
@@ -301,11 +421,11 @@ export default function FloorPlan({
             label="Set Dirty"
             icon={Trash2}
             colorClass="border-yellow-500 bg-yellow-50 text-yellow-700"
-            onClick={() => handleStatusClick('dirty')}
+            onClick={() => handleStatusClick("dirty")}
             disabled={!selectedTableId}
           />
           <button
-            onClick={() => onAdd()}
+            onClick={handleAddTable}
             className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition"
           >
             <IconAfterMount>
@@ -322,7 +442,7 @@ export default function FloorPlan({
             <IconAfterMount>
               <Table className="w-4 h-4" />
             </IconAfterMount>
-            {listMode ? 'Canvas Mode' : 'List Mode'}
+            {listMode ? "Canvas Mode" : "List Mode"}
           </button>
         </div>
       </div>
@@ -332,35 +452,65 @@ export default function FloorPlan({
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Table #</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Capacity</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Table #
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Capacity
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Status
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Type
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {tables.map((table) => (
-                <tr key={table.id} className={selectedTableId === table.id ? 'bg-blue-50' : ''} onClick={() => setSelectedTableId(table.id)}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">#{table.tableNumber}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{table.minCapacity}-{table.maxCapacity}</td>
+                <tr
+                  key={table.id}
+                  className={selectedTableId === table.id ? "bg-blue-50" : ""}
+                  onClick={() => setSelectedTableId(table.id)}
+                >
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
+                    #{table.tableNumber}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {table.minCapacity}-{table.maxCapacity}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-2 py-1 text-xs font-semibold rounded-full capitalize ${
-                      table.status === 'occupied' ? 'bg-red-100 text-red-700' :
-                      table.status === 'dirty' ? 'bg-yellow-100 text-yellow-700' :
-                      'bg-green-100 text-green-700'
-                    }`}>
-                      {table.status || 'vacant'}
+                    <span
+                      className={`px-2 py-1 text-xs font-semibold rounded-full capitalize ${
+                        table.status === "occupied"
+                          ? "bg-red-100 text-red-700"
+                          : table.status === "dirty"
+                            ? "bg-yellow-100 text-yellow-700"
+                            : "bg-green-100 text-green-700"
+                      }`}
+                    >
+                      {table.status || "vacant"}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">{table.tableType || 'square'}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">
+                    {table.tableType || "square"}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                    <button onClick={() => setEditingTable(table)} className="text-blue-600 hover:text-blue-900">
+                    <button
+                      onClick={() => setEditingTable(table)}
+                      className="text-blue-600 hover:text-blue-900"
+                    >
                       <IconAfterMount>
                         <Settings2 className="w-4 h-4" />
                       </IconAfterMount>
                     </button>
-                    <button onClick={() => onDelete(table.id)} className="text-red-600 hover:text-red-900">
+                    <button
+                      onClick={() => handleDeleteTable(table.id)}
+                      className="text-red-600 hover:text-red-900"
+                    >
                       <IconAfterMount>
                         <Trash2 className="w-4 h-4" />
                       </IconAfterMount>
@@ -381,13 +531,19 @@ export default function FloorPlan({
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
           >
-            <div className="absolute inset-0" style={{
-              backgroundImage: 'radial-gradient(#e5e7eb 1px, transparent 1px)',
-              backgroundSize: '20px 20px'
-            }} />
+            <div
+              className="absolute inset-0"
+              style={{
+                backgroundImage:
+                  "radial-gradient(#e5e7eb 1px, transparent 1px)",
+                backgroundSize: "20px 20px",
+              }}
+            />
 
             {tables.map((table) => {
-              const tableReservation = restaurantReservations.find(r => r.tableId === table.id);
+              const tableReservation = restaurantReservations.find(
+                (r) => r.tableId === table.id,
+              );
               return (
                 <DraggableTable
                   key={table.id}
@@ -395,7 +551,7 @@ export default function FloorPlan({
                   reservation={tableReservation}
                   isSelected={selectedTableId === table.id}
                   onSelect={(id) => setSelectedTableId(id)}
-                  onDelete={onDelete}
+                  onDelete={handleDeleteTable}
                   onEdit={setEditingTable}
                 />
               );
@@ -403,9 +559,11 @@ export default function FloorPlan({
 
             <DragOverlay>
               {activeTable ? (
-                <div className={`p-4 border-2 border-blue-500 rounded-lg bg-white shadow-xl flex flex-col items-center justify-center w-24 h-24 opacity-80 ${
-                  activeTable.tableType === 'round' ? 'rounded-full' : ''
-                }`}>
+                <div
+                  className={`p-4 border-2 border-blue-500 rounded-lg bg-white shadow-xl flex flex-col items-center justify-center w-24 h-24 opacity-80 ${
+                    activeTable.tableType === "round" ? "rounded-full" : ""
+                  }`}
+                >
                   <IconAfterMount>
                     <Table className="w-6 h-6 mb-1" />
                   </IconAfterMount>
@@ -416,7 +574,7 @@ export default function FloorPlan({
           </DndContext>
 
           <button
-            onClick={() => onSave(tables)}
+            onClick={handleSaveLayout}
             className="absolute bottom-4 right-4 bg-blue-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-blue-700 transition shadow-lg flex items-center gap-2"
           >
             <IconAfterMount>
@@ -431,40 +589,66 @@ export default function FloorPlan({
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-sm">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold">Edit Table #{editingTable.tableNumber}</h3>
-              <button onClick={() => setEditingTable(null)} className="text-gray-400 hover:text-gray-600">
+              <h3 className="text-xl font-bold">
+                Edit Table #{editingTable.tableNumber}
+              </h3>
+              <button
+                onClick={() => setEditingTable(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
                 <IconAfterMount>
                   <X className="w-6 h-6" />
                 </IconAfterMount>
               </button>
             </div>
-            
+
             <form onSubmit={handleUpdateDetails} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Table Number</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Table Number
+                </label>
                 <input
                   type="text"
                   value={editingTable.tableNumber}
-                  onChange={(e) => setEditingTable({ ...editingTable, tableNumber: e.target.value })}
+                  onChange={(e) =>
+                    setEditingTable({
+                      ...editingTable,
+                      tableNumber: e.target.value,
+                    })
+                  }
                   className="w-full px-4 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Min Capacity</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Min Capacity
+                  </label>
                   <input
                     type="number"
                     value={editingTable.minCapacity}
-                    onChange={(e) => setEditingTable({ ...editingTable, minCapacity: parseInt(e.target.value) })}
+                    onChange={(e) =>
+                      setEditingTable({
+                        ...editingTable,
+                        minCapacity: parseInt(e.target.value),
+                      })
+                    }
                     className="w-full px-4 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Max Capacity</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Max Capacity
+                  </label>
                   <input
                     type="number"
                     value={editingTable.maxCapacity}
-                    onChange={(e) => setEditingTable({ ...editingTable, maxCapacity: parseInt(e.target.value) })}
+                    onChange={(e) =>
+                      setEditingTable({
+                        ...editingTable,
+                        maxCapacity: parseInt(e.target.value),
+                      })
+                    }
                     className="w-full px-4 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>

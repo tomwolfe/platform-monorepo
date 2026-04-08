@@ -1,17 +1,30 @@
-import { NextRequest, NextResponse } from 'next/server';
-export const dynamic = 'force-dynamic';
+import { NextRequest, NextResponse } from "next/server";
+export const dynamic = "force-dynamic";
+export const revalidate = 30; // ISR: Revalidate every 30 seconds
 import { getDb } from "@repo/database";
-import { restaurantTables, restaurantReservations, restaurants } from "@repo/database";
-import type { InferSelectModel } from 'drizzle-orm';
-import { and, eq, gte, or, sql } from '@repo/database';
-import { addMinutes, parseISO } from 'date-fns';
-import { toZonedTime, format } from 'date-fns-tz';
-import { validateRequest } from '@tablestack/lib/auth';
-import { formatApiError, formatApiSuccess, withApiErrorHandler, withCache, getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
+import {
+  restaurantTables,
+  restaurantReservations,
+  restaurants,
+} from "@repo/database";
+import type { InferSelectModel } from "drizzle-orm";
+import { and, eq, gte, or, sql } from "@repo/database";
+import { addMinutes, parseISO } from "date-fns";
+import { toZonedTime, format } from "date-fns-tz";
+import { validateRequest } from "@tablestack/lib/auth";
+import {
+  formatApiError,
+  formatApiSuccess,
+  withApiErrorHandler,
+  withCache,
+  getRedisClient,
+  ServiceNamespace,
+  Logger,
+} from "@repo/shared";
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 
-const logger = new Logger({ serviceName: 'table-stack-availability' });
+const logger = new Logger({ serviceName: "table-stack-availability" });
 
 // Type aliases for Drizzle query results
 type RestaurantTable = typeof restaurantTables.$inferSelect;
@@ -43,26 +56,49 @@ export const GET = withApiErrorHandler(
   withCache(
     async (req: NextRequest) => {
       const { searchParams } = new URL(req.url);
-      const restaurantId = searchParams.get('restaurantId');
-      const date = searchParams.get('date');
-      const partySize = parseInt(searchParams.get('partySize') || '0');
+      const restaurantId = searchParams.get("restaurantId");
+      const date = searchParams.get("date");
+      const partySize = parseInt(searchParams.get("partySize") || "0");
 
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-      if (!restaurantId || restaurantId === 'undefined' || !uuidRegex.test(restaurantId) || !date || isNaN(partySize)) {
-        return NextResponse.json(formatApiError(new Error('Missing or invalid parameters'), 'VALIDATION_ERROR'), { status: 400 });
+      if (
+        !restaurantId ||
+        restaurantId === "undefined" ||
+        !uuidRegex.test(restaurantId) ||
+        !date ||
+        isNaN(partySize)
+      ) {
+        return NextResponse.json(
+          formatApiError(
+            new Error("Missing or invalid parameters"),
+            "VALIDATION_ERROR",
+          ),
+          { status: 400 },
+        );
       }
 
       // Determine target restaurant ID
       let targetRestaurantId: string;
 
-      const apiKey = req.headers.get('x-api-key');
+      const apiKey = req.headers.get("x-api-key");
       if (apiKey) {
         const { error, status, context } = await validateRequest(req);
-        if (error) return NextResponse.json(formatApiError(new Error(error), 'UNAUTHORIZED'), { status });
+        if (error)
+          return NextResponse.json(
+            formatApiError(new Error(error), "UNAUTHORIZED"),
+            { status },
+          );
 
         if (restaurantId !== context!.restaurantId) {
-          return NextResponse.json(formatApiError(new Error('Unauthorized access to this restaurant data'), 'FORBIDDEN'), { status: 403 });
+          return NextResponse.json(
+            formatApiError(
+              new Error("Unauthorized access to this restaurant data"),
+              "FORBIDDEN",
+            ),
+            { status: 403 },
+          );
         }
         targetRestaurantId = context!.restaurantId;
       } else {
@@ -75,42 +111,81 @@ export const GET = withApiErrorHandler(
       });
 
       if (!restaurant) {
-        return NextResponse.json(formatApiError(new Error('Restaurant not found'), 'NOT_FOUND'), { status: 404 });
+        return NextResponse.json(
+          formatApiError(new Error("Restaurant not found"), "NOT_FOUND"),
+          { status: 404 },
+        );
       }
 
       const requestedDate = parseISO(date);
-      const timezone = restaurant.timezone || 'UTC';
+      const timezone = restaurant.timezone || "UTC";
       const restaurantTime = toZonedTime(requestedDate, timezone);
 
-      const dayOfWeek = format(restaurantTime, 'eeee', { timeZone: timezone }).toLowerCase();
-      const openDays = restaurant.daysOpen?.split(',').map((d: unknown) => String(d).trim().toLowerCase()) || [];
+      const dayOfWeek = format(restaurantTime, "eeee", {
+        timeZone: timezone,
+      }).toLowerCase();
+      const openDays =
+        restaurant.daysOpen
+          ?.split(",")
+          .map((d: unknown) => String(d).trim().toLowerCase()) || [];
 
       if (!openDays.includes(dayOfWeek)) {
-        return NextResponse.json(formatApiSuccess({ message: 'Restaurant is closed on this day', availableTables: [] }));
+        return NextResponse.json(
+          formatApiSuccess({
+            message: "Restaurant is closed on this day",
+            availableTables: [],
+          }),
+        );
       }
 
-      const timeStr = format(restaurantTime, 'HH:mm', { timeZone: timezone });
-      if (timeStr < (restaurant.openingTime || '00:00') || timeStr > (restaurant.closingTime || '23:59')) {
-        return NextResponse.json(formatApiSuccess({ message: 'Restaurant is closed at this time', availableTables: [] }));
+      const timeStr = format(restaurantTime, "HH:mm", { timeZone: timezone });
+      if (
+        timeStr < (restaurant.openingTime || "00:00") ||
+        timeStr > (restaurant.closingTime || "23:59")
+      ) {
+        return NextResponse.json(
+          formatApiSuccess({
+            message: "Restaurant is closed at this time",
+            availableTables: [],
+          }),
+        );
       }
 
       const duration = restaurant.defaultDurationMinutes || 90;
-      const availableTables = await getAvailableTables(targetRestaurantId, requestedDate, partySize, duration);
+      const availableTables = await getAvailableTables(
+        targetRestaurantId,
+        requestedDate,
+        partySize,
+        duration,
+      );
 
-      const suggestedSlots: { time: string, availableTables: typeof availableTables }[] = [];
+      const suggestedSlots: {
+        time: string;
+        availableTables: typeof availableTables;
+      }[] = [];
 
       if (availableTables.length === 0) {
         const offsets = [-30, 30, -60, 60];
         for (const offset of offsets) {
           const suggestedTime = addMinutes(requestedDate, offset);
           const suggestedZonedTime = toZonedTime(suggestedTime, timezone);
-          const suggestedTimeStr = format(suggestedZonedTime, 'HH:mm', { timeZone: timezone });
+          const suggestedTimeStr = format(suggestedZonedTime, "HH:mm", {
+            timeZone: timezone,
+          });
 
-          if (suggestedTimeStr < (restaurant.openingTime || '00:00') || suggestedTimeStr > (restaurant.closingTime || '23:59')) {
+          if (
+            suggestedTimeStr < (restaurant.openingTime || "00:00") ||
+            suggestedTimeStr > (restaurant.closingTime || "23:59")
+          ) {
             continue;
           }
 
-          const tables = await getAvailableTables(targetRestaurantId, suggestedTime, partySize, duration);
+          const tables = await getAvailableTables(
+            targetRestaurantId,
+            suggestedTime,
+            partySize,
+            duration,
+          );
           if (tables.length > 0) {
             suggestedSlots.push({
               time: suggestedTime.toISOString(),
@@ -120,31 +195,44 @@ export const GET = withApiErrorHandler(
         }
       }
 
-      return NextResponse.json(formatApiSuccess({
-        restaurantId: targetRestaurantId,
-        requestedTime: requestedDate.toISOString(),
-        partySize,
-        availableTables,
-        suggestedSlots: suggestedSlots.length > 0 ? suggestedSlots : undefined,
-      }));
+      return NextResponse.json(
+        formatApiSuccess({
+          restaurantId: targetRestaurantId,
+          requestedTime: requestedDate.toISOString(),
+          partySize,
+          availableTables,
+          suggestedSlots:
+            suggestedSlots.length > 0 ? suggestedSlots : undefined,
+        }),
+        {
+          headers: {
+            "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60",
+          },
+        },
+      );
     },
     {
       ttl: 30, // 30 second cache for availability
-      tags: ['availability'],
-      keyPrefix: 'availability',
+      tags: ["availability"],
+      keyPrefix: "availability",
       generateKey: (req: NextRequest) => {
         const { searchParams } = new URL(req.url);
-        const restaurantId = searchParams.get('restaurantId');
-        const date = searchParams.get('date');
-        const partySize = searchParams.get('partySize');
+        const restaurantId = searchParams.get("restaurantId");
+        const date = searchParams.get("date");
+        const partySize = searchParams.get("partySize");
         return `availability:${restaurantId}:${date}:${partySize}`;
       },
-    }
+    },
   ),
-  'EXECUTION_FAILED'
+  "EXECUTION_FAILED",
 );
 
-async function getAvailableTables(restaurantId: string, startTime: Date, partySize: number, duration: number) {
+async function getAvailableTables(
+  restaurantId: string,
+  startTime: Date,
+  partySize: number,
+  duration: number,
+) {
   const endTime = addMinutes(startTime, duration);
   const db = getDb();
 
@@ -155,14 +243,17 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
       and(
         eq(restaurantReservations.restaurantId, restaurantId),
         or(
-          eq(restaurantReservations.status, 'confirmed'),
+          eq(restaurantReservations.status, "confirmed"),
           and(
             eq(restaurantReservations.isVerified, false),
-            gte(restaurantReservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
-          )
+            gte(
+              restaurantReservations.createdAt,
+              new Date(Date.now() - 15 * 60 * 1000),
+            ),
+          ),
         ),
-        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(startTime.toISOString())}::timestamptz, ${sql.placeholder(endTime.toISOString())}::timestamptz)`
-      )
+        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(startTime.toISOString())}::timestamptz, ${sql.placeholder(endTime.toISOString())}::timestamptz)`,
+      ),
     );
 
   const occupiedTableIdsResult = await occupiedTableIdsQuery;
@@ -178,21 +269,26 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
       and(
         eq(restaurantReservations.restaurantId, restaurantId),
         or(
-          eq(restaurantReservations.status, 'confirmed'),
+          eq(restaurantReservations.status, "confirmed"),
           and(
             eq(restaurantReservations.isVerified, false),
-            gte(restaurantReservations.createdAt, new Date(Date.now() - 15 * 60 * 1000))
-          )
+            gte(
+              restaurantReservations.createdAt,
+              new Date(Date.now() - 15 * 60 * 1000),
+            ),
+          ),
         ),
-        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(startTime.toISOString())}::timestamptz, ${sql.placeholder(endTime.toISOString())}::timestamptz)`
-      )
+        sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${sql.placeholder(startTime.toISOString())}::timestamptz, ${sql.placeholder(endTime.toISOString())}::timestamptz)`,
+      ),
     );
 
-  occupiedCombinedTableIdsQuery.forEach((r: { combinedTableIds: RestaurantReservation['combinedTableIds'] }) => {
-    if (r.combinedTableIds) {
-      occupiedTableIds.push(...r.combinedTableIds);
-    }
-  });
+  occupiedCombinedTableIdsQuery.forEach(
+    (r: { combinedTableIds: RestaurantReservation["combinedTableIds"] }) => {
+      if (r.combinedTableIds) {
+        occupiedTableIds.push(...r.combinedTableIds);
+      }
+    },
+  );
 
   const allTables = await db
     .select()
@@ -201,21 +297,27 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
       and(
         eq(restaurantTables.restaurantId, restaurantId),
         eq(restaurantTables.isActive, true),
-        eq(restaurantTables.status, 'vacant')
-      )
+        eq(restaurantTables.status, "vacant"),
+      ),
     );
 
-  const availableIndividualTables = allTables.filter((t: RestaurantTable) =>
-    !occupiedTableIds.includes(t.id) && t.maxCapacity >= partySize
+  const availableIndividualTables = allTables.filter(
+    (t: RestaurantTable) =>
+      !occupiedTableIds.includes(t.id) && t.maxCapacity >= partySize,
   );
 
   if (availableIndividualTables.length > 0) {
-    return availableIndividualTables.map((t: RestaurantTable) => ({ ...t, isCombined: false }));
+    return availableIndividualTables.map((t: RestaurantTable) => ({
+      ...t,
+      isCombined: false,
+    }));
   }
 
   // If no individual table fits, try joining two tables
   // OPTIMIZATION: Only attempt combinations when individual tables are insufficient
-  const vacantTables = allTables.filter((t: RestaurantTable) => !occupiedTableIds.includes(t.id));
+  const vacantTables = allTables.filter(
+    (t: RestaurantTable) => !occupiedTableIds.includes(t.id),
+  );
   const suggestedCombos: Array<{
     id: string;
     tableNumber: string;
@@ -232,15 +334,17 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
 
   // PERFORMANCE OPTIMIZATION: Pre-filter and early-exit to avoid wasteful comparisons
   // 1. Find the largest table capacity to filter impossible combinations
-  const MAX_KNOWN_TABLE_CAPACITY = vacantTables.length > 0
-    ? Math.max(...vacantTables.map(t => t.maxCapacity))
-    : 0;
+  const MAX_KNOWN_TABLE_CAPACITY =
+    vacantTables.length > 0
+      ? Math.max(...vacantTables.map((t) => t.maxCapacity))
+      : 0;
 
   // 2. Pre-filter: exclude tables that cannot possibly satisfy partySize even when combined
-  const feasibleTables = vacantTables.filter(t => t.maxCapacity + MAX_KNOWN_TABLE_CAPACITY >= partySize);
+  const feasibleTables = vacantTables.filter(
+    (t) => t.maxCapacity + MAX_KNOWN_TABLE_CAPACITY >= partySize,
+  );
 
-  comboSearch:
-  for (let i = 0; i < feasibleTables.length; i++) {
+  comboSearch: for (let i = 0; i < feasibleTables.length; i++) {
     const t1 = feasibleTables[i];
     if (!t1) continue;
 
@@ -259,10 +363,11 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
       // Check adjacency (distance formula with threshold)
       const distance = Math.sqrt(
         Math.pow((t1.xPos || 0) - (t2.xPos || 0), 2) +
-        Math.pow((t1.yPos || 0) - (t2.yPos || 0), 2)
+          Math.pow((t1.yPos || 0) - (t2.yPos || 0), 2),
       );
 
-      if (distance < 120) { // Adjacency threshold in floor plan units
+      if (distance < 120) {
+        // Adjacency threshold in floor plan units
         suggestedCombos.push({
           id: `${t1.id}+${t2.id}`,
           tableNumber: `${t1.tableNumber}+${t2.tableNumber}`,
@@ -278,11 +383,14 @@ async function getAvailableTables(restaurantId: string, startTime: Date, partySi
   }
 
   // Log when circuit breaker limits combinations — ops teams need visibility
-  if (comboCount >= MAX_COMBOS && vacantTables.length * (vacantTables.length - 1) / 2 > MAX_COMBOS) {
-    logger.info('Table combination search capped by circuit breaker', {
+  if (
+    comboCount >= MAX_COMBOS &&
+    (vacantTables.length * (vacantTables.length - 1)) / 2 > MAX_COMBOS
+  ) {
+    logger.info("Table combination search capped by circuit breaker", {
       maxCombos: MAX_COMBOS,
       vacantTableCount: vacantTables.length,
-      possibleCombos: vacantTables.length * (vacantTables.length - 1) / 2,
+      possibleCombos: (vacantTables.length * (vacantTables.length - 1)) / 2,
     });
   }
 

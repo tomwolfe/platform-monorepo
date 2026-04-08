@@ -12,5 +12,7 @@ export * from "./components/ProductList";
 export * from "./components/StreamingProgressStepper";
 export * from "./components/NervousSystemPulse";
 export * from "./hooks/use-toast";
+export * from "./hooks/use-api-error";
 export * from "./hooks/useNervousSystem";
 export * from "./lib/utils";
+export * from "./lib/query-client";

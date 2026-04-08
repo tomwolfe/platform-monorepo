@@ -654,6 +654,93 @@ jobs:
           fi
 
   # ============================================================================
+  # E2E TESTS
+  # Tests critical user journeys with Playwright
+  # ============================================================================
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.15.9
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps
+
+      - name: Setup environment
+        run: |
+          cp .env.local.example .env.local
+          cat >> .env.local << EOF
+          DATABASE_URL=postgresql://apps:apps@localhost:5432/apps_test
+          TEST_DATABASE_URL=postgresql://apps:apps@localhost:5432/apps_test
+          UPSTASH_REDIS_REST_URL=redis://localhost:6379
+          UPSTASH_REDIS_REST_TOKEN=test
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_ci_test_key
+          CLERK_SECRET_KEY=sk_test_ci_test_secret
+          INTERNAL_SYSTEM_KEY=test-key
+          LLM_API_KEY=test_llm_key
+          LLM_BASE_URL=http://localhost:9999
+          LLM_MODEL=test-model
+          RESEND_API_KEY=re_test_ci_key
+          NEXT_PUBLIC_APP_URL=http://localhost:3000
+          ABLY_API_KEY=local:appkey
+          ABLY_REST_HOST=localhost
+          ABLY_REALTIME_HOST=localhost
+          ABLY_REST_PORT=5000
+          ABLY_REALTIME_PORT=5000
+          ABLY_TLS=false
+          EOF
+
+      - name: Generate database schema
+        run: pnpm db:generate
+
+      - name: Build application
+        run: pnpm build --filter=@repo/table-stack
+
+      - name: Start application and run E2E tests
+        run: |
+          # Start the app in background
+          pnpm start --filter=@repo/table-stack &
+          APP_PID=$!
+
+          # Wait for app to be ready
+          npx wait-on http://localhost:3000 --timeout 60000
+
+          # Run E2E tests
+          pnpm exec playwright test
+          TEST_EXIT_CODE=$?
+
+          # Clean up
+          kill $APP_PID
+
+          exit $TEST_EXIT_CODE
+
+      - name: Upload E2E test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-test-results
+          path: |
+            e2e-results/
+            playwright-report/
+          retention-days: 30
+
+  # ============================================================================
   # SUMMARY
   # ============================================================================
   ci-summary:
@@ -670,6 +757,7 @@ jobs:
       - build-verification
       - validate-environment
       - check-migrations
+      - e2e-tests
     if: always()
 
     steps:
@@ -685,13 +773,15 @@ jobs:
           echo "Build Verification: ${{ needs.build-verification.result }}"
           echo "Validate Environment: ${{ needs.validate-environment.result }}"
           echo "Check Migrations: ${{ needs.check-migrations.result }}"
+          echo "E2E Tests: ${{ needs.e2e-tests.result }}"
 
           # Fail if any critical jobs failed
           if [[ "${{ needs.schema-validation.result }}" == "failure" ]] || \
              [[ "${{ needs.unit-tests.result }}" == "failure" ]] || \
              [[ "${{ needs.integration-tests.result }}" == "failure" ]] || \
              [[ "${{ needs.coverage-check.result }}" == "failure" ]] || \
-             [[ "${{ needs.build-verification.result }}" == "failure" ]]; then
+             [[ "${{ needs.build-verification.result }}" == "failure" ]] || \
+             [[ "${{ needs.e2e-tests.result }}" == "failure" ]]; then
             echo "❌ CI checks failed"
             exit 1
           fi

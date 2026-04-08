@@ -54,6 +54,8 @@
     "db:generate": "turbo run db:generate --filter=@repo/database",
     "db:migrate": "turbo run db:migrate --filter=@repo/database",
     "db:studio": "turbo run db:studio --filter=@repo/database",
+    "db:check": "pnpm --filter @repo/database exec drizzle-kit check",
+    "db:validate": "tsx scripts/validate-drizzle-migrations.ts",
     "dev:minimal": "pnpm container:up && ENABLE_AUTONOMOUS_FEATURES=false turbo dev --filter=@repo/intention-engine --filter=@repo/table-stack --filter=@repo/open-delivery",
     "setup": "pnpm setup:local && pnpm container:up"
   },
@@ -91,6 +93,9 @@
     ],
     "*.{json,md}": [
       "prettier --write"
+    ],
+    "packages/database/src/schema/**/*.ts": [
+      "pnpm db:check"
     ]
   },
   "dependencies": {

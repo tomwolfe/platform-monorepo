@@ -1,20 +1,34 @@
 /**
  * Prompt Versioning System
- * 
+ *
  * Purpose: Track and manage prompt versions for reproducibility and rollback.
- * 
+ *
  * Usage:
  * ```typescript
  * import { prompts, getCurrentVersion } from '@/lib/engine/prompts';
- * 
+ *
  * const prompt = prompts.planning.v2;
  * const version = getCurrentVersion('planning'); // 'v2.1.0'
  * ```
  */
 
+import crypto from "node:crypto";
+
 // ============================================================================
 // PROMPT VERSIONS
 // ============================================================================
+
+/**
+ * Helper to compute a short hash for a prompt template.
+ * Used for observability tracing and version fingerprinting.
+ */
+function hashPrompt(template: string): string {
+  return crypto
+    .createHash("sha256")
+    .update(template)
+    .digest("hex")
+    .slice(0, 16);
+}
 
 /**
  * Planning Prompt v1.0.0
@@ -165,25 +179,36 @@ const CURRENT_VERSIONS = {
   intent_parsing: "v2.0.0",
 } as const;
 
-export function getCurrentVersion(promptType: keyof typeof CURRENT_VERSIONS): string {
+export function getCurrentVersion(
+  promptType: keyof typeof CURRENT_VERSIONS,
+): string {
   return CURRENT_VERSIONS[promptType];
 }
 
 /**
- * Get prompt by type and version
+ * Get prompt by type and version, including hash for observability.
  */
 export function getPrompt(
   promptType: keyof typeof prompts,
-  version?: string
-): string {
+  version?: string,
+): { template: string; version: string; promptHash: string } | null {
   const v = version || getCurrentVersion(promptType);
-  return prompts[promptType][v as keyof typeof prompts[typeof promptType]];
+  const template =
+    prompts[promptType][v as keyof (typeof prompts)[typeof promptType]];
+  if (!template) return null;
+  return {
+    template,
+    version: v,
+    promptHash: hashPrompt(template),
+  };
 }
 
 /**
  * Get all available versions for a prompt type
  */
-export function getAvailableVersions(promptType: keyof typeof prompts): string[] {
+export function getAvailableVersions(
+  promptType: keyof typeof prompts,
+): string[] {
   return Object.keys(prompts[promptType]);
 }
 
@@ -192,6 +217,7 @@ export function getAvailableVersions(promptType: keyof typeof prompts): string[]
  */
 export interface PromptMetadata {
   version: string;
+  promptHash: string;
   created_at: string;
   updated_at: string;
   author: string;
@@ -202,6 +228,7 @@ export interface PromptMetadata {
 export const PROMPT_METADATA: Record<string, PromptMetadata> = {
   "planning:v2.1.0": {
     version: "v2.1.0",
+    promptHash: hashPrompt(PLANNING_PROMPT_V2_1),
     created_at: "2026-03-22T00:00:00Z",
     updated_at: "2026-03-22T00:00:00Z",
     author: "system",
@@ -213,6 +240,7 @@ export const PROMPT_METADATA: Record<string, PromptMetadata> = {
   },
   "planning:v2.0.0": {
     version: "v2.0.0",
+    promptHash: hashPrompt(PLANNING_PROMPT_V2),
     created_at: "2026-03-15T00:00:00Z",
     updated_at: "2026-03-15T00:00:00Z",
     author: "system",
@@ -225,6 +253,7 @@ export const PROMPT_METADATA: Record<string, PromptMetadata> = {
   },
   "planning:v1.0.0": {
     version: "v1.0.0",
+    promptHash: hashPrompt(PLANNING_PROMPT_V1),
     created_at: "2026-03-01T00:00:00Z",
     updated_at: "2026-03-01T00:00:00Z",
     author: "system",
@@ -233,6 +262,7 @@ export const PROMPT_METADATA: Record<string, PromptMetadata> = {
   },
   "intent_parsing:v2.0.0": {
     version: "v2.0.0",
+    promptHash: hashPrompt(INTENT_PARSING_PROMPT_V2),
     created_at: "2026-03-20T00:00:00Z",
     updated_at: "2026-03-20T00:00:00Z",
     author: "system",
@@ -244,6 +274,7 @@ export const PROMPT_METADATA: Record<string, PromptMetadata> = {
   },
   "intent_parsing:v1.0.0": {
     version: "v1.0.0",
+    promptHash: hashPrompt(INTENT_PARSING_PROMPT_V1),
     created_at: "2026-03-01T00:00:00Z",
     updated_at: "2026-03-01T00:00:00Z",
     author: "system",
@@ -255,20 +286,42 @@ export const PROMPT_METADATA: Record<string, PromptMetadata> = {
 /**
  * Get metadata for a specific prompt version
  */
-export function getPromptMetadata(promptType: string, version: string): PromptMetadata | undefined {
+export function getPromptMetadata(
+  promptType: string,
+  version: string,
+): PromptMetadata | undefined {
   return PROMPT_METADATA[`${promptType}:${version}`];
 }
 
 /**
- * Log prompt version used in execution
+ * Log prompt version used in execution (includes promptHash for observability).
  */
 export function logPromptUsage(
   promptType: string,
   version: string,
-  executionId: string
+  executionId: string,
+  model?: string,
 ): void {
-  console.log(`[PromptVersion] ${promptType}:${version} used in execution ${executionId}`);
-  
+  const metadata = PROMPT_METADATA[`${promptType}:${version}`];
+  console.log(
+    `[PromptVersion] ${promptType}:${version} used in execution ${executionId}`,
+  );
+
+  // P4: Enhanced logging with promptHash and model
+  if (metadata) {
+    console.log(
+      JSON.stringify({
+        event: "prompt_used",
+        promptType,
+        version,
+        promptHash: metadata.promptHash,
+        model: model ?? "unknown",
+        executionId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+
   // In production, this would publish to an observability system
   // e.g., RealtimeService.publishNervousSystemEvent("prompt_used", {...})
 }

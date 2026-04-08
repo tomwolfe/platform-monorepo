@@ -18,6 +18,7 @@
     "./utils/crypto-price": "./src/utils/crypto-price.ts",
     "./utils/escrow-abi": "./src/utils/escrow-abi.ts",
     "./utils/wallet-provider": "./src/utils/wallet-provider.ts",
+    "./utils/nonce-tracker": "./src/utils/nonce-tracker.ts",
     "./utils/web3-verification": "./src/utils/web3-verification.ts",
     "./utils/treasury": "./src/utils/treasury.ts",
     "./services": "./src/services.ts",

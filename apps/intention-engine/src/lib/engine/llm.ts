@@ -9,6 +9,7 @@
  * - Independent from planner/executor
  */
 
+import crypto from "node:crypto";
 import { z } from "zod";
 import { generateObject, generateText as aiGenerateText } from "ai";
 import { openai } from "@ai-sdk/openai";
@@ -265,6 +266,34 @@ function parseJsonWithFallback(content: string): Record<string, unknown> {
 }
 
 // ============================================================================
+// LLM OBSERVABILITY
+// Structured logging for all LLM I/O with traceability
+// ============================================================================
+
+interface LLMObservabilityLog {
+  traceId: string;
+  model: string;
+  promptHash: string;
+  inputTokens: number;
+  outputTokens: number;
+  latencyMs: number;
+  fallbackUsed: boolean;
+}
+
+function logLLMObservability(log: LLMObservabilityLog): void {
+  logger.info("LLM Observability", {
+    traceId: log.traceId,
+    model: log.model,
+    promptHash: log.promptHash,
+    inputTokens: log.inputTokens,
+    outputTokens: log.outputTokens,
+    latencyMs: log.latencyMs,
+    fallbackUsed: log.fallbackUsed,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+// ============================================================================
 // GENERATE STRUCTURED OUTPUT
 // Returns Zod-validated structured data with retry on schema failure
 // ============================================================================
@@ -278,6 +307,8 @@ export interface GenerateStructuredOptions<T> {
   maxTokens?: number;
   timeoutMs?: number;
   maxRetries?: number; // Default: 1 (max 1 retry as per constraints)
+  traceId?: string; // P4: Trace correlation ID for observability
+  fallbackModel?: string; // P4: Optional fallback model on retryable errors
 }
 
 export interface GenerateStructuredResult<T> {
@@ -297,7 +328,17 @@ export async function generateStructured<T>(
     maxTokens,
     timeoutMs,
     maxRetries = 1,
+    traceId: providedTraceId,
+    fallbackModel,
   } = options;
+
+  // P4: Generate or use provided traceId for observability correlation
+  const traceId = providedTraceId ?? crypto.randomUUID();
+  const promptHash = crypto
+    .createHash("sha256")
+    .update(prompt)
+    .digest("hex")
+    .slice(0, 16);
 
   // Validate model type
   LLMModelTypeSchema.parse(modelType);
@@ -392,6 +433,17 @@ export async function generateStructured<T>(
       if (cached) {
         logger.info({ message: `LLM cache hit for model ${modelType}` });
         const latencyMs = Math.round(performance.now() - cacheCheckStartTime);
+
+        // P4: Log cache hit observability
+        logLLMObservability({
+          traceId,
+          model: cached.modelId,
+          promptHash,
+          inputTokens: cached.tokenUsage?.prompt_tokens ?? 0,
+          outputTokens: cached.tokenUsage?.completion_tokens ?? 0,
+          latencyMs,
+          fallbackUsed: false,
+        });
 
         return {
           data: JSON.parse(cached.content) as T,
@@ -496,6 +548,17 @@ export async function generateStructured<T>(
         }
       }
 
+      // P4: Log structured observability
+      logLLMObservability({
+        traceId,
+        model: config.modelId,
+        promptHash,
+        inputTokens: response.token_usage.prompt_tokens,
+        outputTokens: response.token_usage.completion_tokens,
+        latencyMs: latencyMs,
+        fallbackUsed: false,
+      });
+
       return {
         data: result.object as T,
         response,
@@ -570,16 +633,31 @@ export interface GenerateTextOptions {
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
+  traceId?: string; // P4: Trace correlation ID
 }
 
 export async function generateText(
   options: GenerateTextOptions,
 ): Promise<LLMResponse> {
-  const { modelType, prompt, systemPrompt, temperature, maxTokens, timeoutMs } =
-    options;
+  const {
+    modelType,
+    prompt,
+    systemPrompt,
+    temperature,
+    maxTokens,
+    timeoutMs,
+    traceId: providedTraceId,
+  } = options;
 
   // Validate model type
   LLMModelTypeSchema.parse(modelType);
+
+  const traceId = providedTraceId ?? crypto.randomUUID();
+  const promptHash = crypto
+    .createHash("sha256")
+    .update(prompt)
+    .digest("hex")
+    .slice(0, 16);
 
   const config = MODEL_ROUTING[modelType];
   const effectiveTimeout = timeoutMs ?? config.defaultTimeoutMs;
@@ -623,6 +701,17 @@ export async function generateText(
 
     // Validate response schema
     LLMResponseSchema.parse(response);
+
+    // P4: Log observability
+    logLLMObservability({
+      traceId,
+      model: config.modelId,
+      promptHash,
+      inputTokens: response.token_usage.prompt_tokens,
+      outputTokens: response.token_usage.completion_tokens,
+      latencyMs: latencyMs,
+      fallbackUsed: false,
+    });
 
     return response;
   } catch (error) {
@@ -727,6 +816,179 @@ export function aggregateTokenUsage(
       callCount: 0,
     },
   );
+}
+
+// ============================================================================
+// GENERATE TEXT WITH FALLBACK
+// Automatic fallback routing on retryable LLM errors (429, 500, timeout)
+// ============================================================================
+
+const FALLBACK_MODEL = process.env.LLM_FALLBACK_MODEL || "gpt-4o-mini";
+
+export interface FallbackOptions {
+  fallbackModel?: string;
+  maxRetries?: number;
+  retryableStatusCodes?: string[];
+  traceId?: string;
+}
+
+export interface GenerateTextWithFallbackResult {
+  text: string;
+  model: string;
+  fallbackUsed: boolean;
+  latencyMs: number;
+  traceId: string;
+}
+
+/**
+ * Check if an error is retryable for fallback routing.
+ */
+function isRetryableLLMError(error: Error): boolean {
+  const msg = error.message.toUpperCase();
+  const retryableCodes = [
+    "RATE_LIMIT",
+    "CONTEXT_LENGTH",
+    "TIMEOUT",
+    "429",
+    "500",
+    "503",
+  ];
+  return (
+    retryableCodes.some((code) => msg.includes(code)) ||
+    error.name === "TimeoutError" ||
+    error.name === "AbortError" ||
+    ((error as any).status !== undefined &&
+      ((error as any).status === 429 || (error as any).status >= 500))
+  );
+}
+
+/**
+ * Generate text with automatic fallback routing on retryable errors.
+ * Tries the primary model first, then falls back to a secondary model on 429/5xx/timeout.
+ */
+export async function generateTextWithFallback(
+  modelType: LLMModelType,
+  prompt: string,
+  systemPrompt?: string,
+  options?: FallbackOptions,
+): Promise<GenerateTextWithFallbackResult> {
+  const traceId = options?.traceId ?? crypto.randomUUID();
+  const promptHash = crypto
+    .createHash("sha256")
+    .update(prompt)
+    .digest("hex")
+    .slice(0, 16);
+  const maxFallbackRetries = options?.maxRetries ?? 1;
+  const fallbackModel = options?.fallbackModel ?? FALLBACK_MODEL;
+  const primaryConfig = MODEL_ROUTING[modelType];
+  const startTime = performance.now();
+
+  // Try primary model
+  try {
+    const result = await generateText({
+      modelType,
+      prompt,
+      systemPrompt,
+      traceId,
+    });
+
+    const latencyMs = Math.round(performance.now() - startTime);
+    logLLMObservability({
+      traceId,
+      model: primaryConfig.modelId,
+      promptHash,
+      inputTokens: result.token_usage.prompt_tokens,
+      outputTokens: result.token_usage.completion_tokens,
+      latencyMs,
+      fallbackUsed: false,
+    });
+
+    return {
+      text: result.content,
+      model: primaryConfig.modelId,
+      fallbackUsed: false,
+      latencyMs,
+      traceId,
+    };
+  } catch (primaryError) {
+    const error =
+      primaryError instanceof Error
+        ? primaryError
+        : new Error(String(primaryError));
+
+    if (!isRetryableLLMError(error)) {
+      throw primaryError;
+    }
+
+    // Try fallback model with retries
+    for (let attempt = 0; attempt <= maxFallbackRetries; attempt++) {
+      try {
+        logger.info("LLM fallback triggered", {
+          traceId,
+          primaryModel: primaryConfig.modelId,
+          fallbackModel,
+          error: error.message,
+          attempt: attempt + 1,
+        });
+
+        const fallbackStartTime = performance.now();
+        const abortController = new AbortController();
+        const timeoutId = setTimeout(
+          () => abortController.abort(),
+          primaryConfig.defaultTimeoutMs,
+        );
+
+        const fallbackResult = await aiGenerateText({
+          model: openai(fallbackModel),
+          prompt,
+          system: systemPrompt,
+          temperature: primaryConfig.defaultTemperature,
+          abortSignal: abortController.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        const totalLatencyMs = Math.round(performance.now() - startTime);
+        const fallbackLatencyMs = Math.round(
+          performance.now() - fallbackStartTime,
+        );
+        const tokenUsage = extractTokenUsage(fallbackResult.usage);
+
+        logLLMObservability({
+          traceId,
+          model: fallbackModel,
+          promptHash,
+          inputTokens: tokenUsage.promptTokens,
+          outputTokens: tokenUsage.completionTokens,
+          latencyMs: totalLatencyMs,
+          fallbackUsed: true,
+        });
+
+        return {
+          text: fallbackResult.text,
+          model: fallbackModel,
+          fallbackUsed: true,
+          latencyMs: totalLatencyMs,
+          traceId,
+        };
+      } catch (fallbackError) {
+        if (attempt < maxFallbackRetries) {
+          const delay = Math.random() * 500 * Math.pow(2, attempt);
+          logger.warn("LLM fallback retry", {
+            traceId,
+            attempt: attempt + 1,
+            delay,
+          });
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        // Re-throw primary error after fallback exhausted
+        throw primaryError;
+      }
+    }
+  }
+
+  throw new Error("generateTextWithFallback: unexpected code path");
 }
 
 // ============================================================================

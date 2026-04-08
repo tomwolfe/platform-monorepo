@@ -58,6 +58,20 @@ jobs:
           pnpm validate:schema-sync:strict --json schema-sync-report.json
         continue-on-error: true
 
+      - name: Check Drizzle Migrations
+        run: |
+          pnpm install
+          cd packages/database
+          npx drizzle-kit check --diagnose
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/test' }}
+        continue-on-error: false
+
+      - name: Run Drizzle Schema Validation Script
+        run: |
+          pnpm db:validate
+        continue-on-error: false
+
       - name: Upload validation report
         uses: actions/upload-artifact@v4
         if: always()

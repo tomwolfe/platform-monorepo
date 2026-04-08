@@ -13,6 +13,8 @@ import {
   ReserveRequestSchema,
   validateRequest as validateZodRequest,
 } from "@repo/shared";
+import { withServerlessTimeout } from "@repo/shared/middleware/serverless-timeout";
+import { withRetry } from "@repo/shared/middleware/retry-with-backoff";
 import { reservationService } from "@tablestack/lib/reservation-service";
 import { NotifyService } from "@tablestack/lib/notifications";
 import { ConflictError } from "@repo/shared/errors";
@@ -114,8 +116,14 @@ async function postHandler(req: NextRequest) {
       );
     }
 
-    // Create reservation via service
-    const result = await reservationService.createReservation({
+    // Create reservation via service (with retry for transient failures)
+    const createReservationWithRetry = withRetry(
+      (payload: Parameters<typeof reservationService.createReservation>[0]) =>
+        reservationService.createReservation(payload),
+      { maxAttempts: 2, baseDelay: 500 },
+    );
+
+    const result = await createReservationWithRetry({
       restaurantId: targetRestaurantId,
       tableId,
       combinedTableIds,
@@ -179,7 +187,10 @@ async function postHandler(req: NextRequest) {
   }
 }
 
-export const POST = withApiErrorHandler(postHandler, {
-  serviceName: "reserve-api",
-  includeStackTrace: process.env.NODE_ENV !== "production",
-});
+export const POST = withServerlessTimeout(
+  withApiErrorHandler(postHandler, {
+    serviceName: "reserve-api",
+    includeStackTrace: process.env.NODE_ENV !== "production",
+  }),
+  8000,
+);

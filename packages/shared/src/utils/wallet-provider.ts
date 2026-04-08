@@ -28,9 +28,10 @@ import {
   type Transport,
   type Account,
   type CustomTransport,
-} from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
-import { base, polygon, mainnet } from 'viem/chains';
+} from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { base, polygon, mainnet } from "viem/chains";
+import { getNextNonce, peekNonce, resetNonce } from "./nonce-tracker";
 
 // ============================================================================
 // CONFIGURATION
@@ -45,23 +46,24 @@ const CHAIN_CONFIG: Record<number, ChainConfig> = {
   [base.id]: {
     chain: base,
     rpcUrls: [
-      process.env.BASE_RPC_URL || 'https://mainnet.base.org',
-      'https://base.llamarpc.com',
-      'https://base.publicnode.com',
+      process.env.BASE_RPC_URL || "https://mainnet.base.org",
+      "https://base.llamarpc.com",
+      "https://base.publicnode.com",
     ],
   },
   [polygon.id]: {
     chain: polygon,
     rpcUrls: [
-      process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com',
-      'https://polygon.llamarpc.com',
+      process.env.POLYGON_RPC_URL || "https://polygon-rpc.com",
+      "https://polygon.llamarpc.com",
     ],
   },
   [mainnet.id]: {
     chain: mainnet,
     rpcUrls: [
-      process.env.ETHEREUM_RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo',
-      'https://eth.llamarpc.com',
+      process.env.ETHEREUM_RPC_URL ||
+        "https://eth-mainnet.g.alchemy.com/v2/demo",
+      "https://eth.llamarpc.com",
     ],
   },
 };
@@ -84,7 +86,7 @@ export type PublicClientInstance = ReturnType<typeof createPublicClient>;
 
 /**
  * Get an escrow resolver wallet client
- * 
+ *
  * This is the ONLY function that should be used to create wallet clients for
  * escrow-related operations. It centralizes private key handling and makes
  * it easy to swap in AWS KMS, Fireblocks, or other HSM solutions later.
@@ -100,19 +102,21 @@ export type PublicClientInstance = ReturnType<typeof createPublicClient>;
  * ```
  */
 export async function getEscrowResolverWalletClient(
-  chainId: number = base.id
+  chainId: number = base.id,
 ): Promise<WalletClient> {
   const chainConfig = CHAIN_CONFIG[chainId];
   if (!chainConfig) {
-    throw new Error(`Unsupported chain ID: ${chainId}. Supported chains: ${Object.keys(CHAIN_CONFIG).join(', ')}`);
+    throw new Error(
+      `Unsupported chain ID: ${chainId}. Supported chains: ${Object.keys(CHAIN_CONFIG).join(", ")}`,
+    );
   }
 
   // Get private key from centralized config (already has validation)
   const privateKey = process.env.ESCROW_RESOLVER_PRIVATE_KEY;
   if (!privateKey) {
     throw new Error(
-      'ESCROW_RESOLVER_PRIVATE_KEY environment variable is not configured. ' +
-      'This is required for escrow contract interactions.'
+      "ESCROW_RESOLVER_PRIVATE_KEY environment variable is not configured. " +
+        "This is required for escrow contract interactions.",
     );
   }
 
@@ -133,7 +137,7 @@ export async function getEscrowResolverWalletClient(
 
 /**
  * Get a public client for blockchain reads
- * 
+ *
  * @param chainId - The chain ID to connect to (defaults to Base)
  * @returns PublicClient for reading blockchain state
  *
@@ -144,11 +148,13 @@ export async function getEscrowResolverWalletClient(
  * ```
  */
 export async function getPublicClient(
-  chainId: number = base.id
+  chainId: number = base.id,
 ): Promise<PublicClient> {
   const chainConfig = CHAIN_CONFIG[chainId];
   if (!chainConfig) {
-    throw new Error(`Unsupported chain ID: ${chainId}. Supported chains: ${Object.keys(CHAIN_CONFIG).join(', ')}`);
+    throw new Error(
+      `Unsupported chain ID: ${chainId}. Supported chains: ${Object.keys(CHAIN_CONFIG).join(", ")}`,
+    );
   }
 
   const publicClient = createPublicClient({
@@ -161,7 +167,7 @@ export async function getPublicClient(
 
 /**
  * Get wallet client with custom private key
- * 
+ *
  * Use this for operations that need a different key than the escrow resolver.
  * WARNING: This bypasses the centralized private key management. Use with caution.
  *
@@ -176,11 +182,13 @@ export async function getPublicClient(
  */
 export async function getCustomWalletClient(
   privateKey: string,
-  chainId: number = base.id
+  chainId: number = base.id,
 ): Promise<WalletClient> {
   const chainConfig = CHAIN_CONFIG[chainId];
   if (!chainConfig) {
-    throw new Error(`Unsupported chain ID: ${chainId}. Supported chains: ${Object.keys(CHAIN_CONFIG).join(', ')}`);
+    throw new Error(
+      `Unsupported chain ID: ${chainId}. Supported chains: ${Object.keys(CHAIN_CONFIG).join(", ")}`,
+    );
   }
 
   const account = privateKeyToAccount(privateKey as `0x${string}`);
@@ -196,7 +204,7 @@ export async function getCustomWalletClient(
 
 /**
  * Get the address of the escrow resolver wallet
- * 
+ *
  * Useful for displaying or logging the resolver address without
  * creating a full wallet client.
  *
@@ -212,7 +220,7 @@ export async function getEscrowResolverAddress(): Promise<Address> {
   const privateKey = process.env.ESCROW_RESOLVER_PRIVATE_KEY;
   if (!privateKey) {
     throw new Error(
-      'ESCROW_RESOLVER_PRIVATE_KEY environment variable is not configured'
+      "ESCROW_RESOLVER_PRIVATE_KEY environment variable is not configured",
     );
   }
 
@@ -222,7 +230,7 @@ export async function getEscrowResolverAddress(): Promise<Address> {
 
 /**
  * Validate that the escrow resolver private key is properly configured
- * 
+ *
  * Call this during application startup to fail fast if the key is missing.
  *
  * @returns true if configuration is valid
@@ -232,23 +240,70 @@ export function validateEscrowResolverConfig(): boolean {
   const privateKey = process.env.ESCROW_RESOLVER_PRIVATE_KEY;
   if (!privateKey) {
     throw new Error(
-      'CRITICAL: ESCROW_RESOLVER_PRIVATE_KEY is not configured. ' +
-      'This is required for Web3 escrow operations. ' +
-      'Set a 0x-prefixed hex private key in your environment variables.'
+      "CRITICAL: ESCROW_RESOLVER_PRIVATE_KEY is not configured. " +
+        "This is required for Web3 escrow operations. " +
+        "Set a 0x-prefixed hex private key in your environment variables.",
     );
   }
 
-  if (!privateKey.startsWith('0x')) {
+  if (!privateKey.startsWith("0x")) {
     throw new Error(
-      'ESCROW_RESOLVER_PRIVATE_KEY must be a 0x-prefixed hex string'
+      "ESCROW_RESOLVER_PRIVATE_KEY must be a 0x-prefixed hex string",
     );
   }
 
   if (privateKey.length !== 66) {
     throw new Error(
-      `ESCROW_RESOLVER_PRIVATE_KEY has invalid length: ${privateKey.length} (expected 66)`
+      `ESCROW_RESOLVER_PRIVATE_KEY has invalid length: ${privateKey.length} (expected 66)`,
     );
   }
 
   return true;
 }
+
+// ============================================================================
+// GAS & NONCE UTILITIES
+// ============================================================================
+
+/**
+ * Get dynamic gas price with a 10% safety buffer.
+ * @param publicClient - Viem public client
+ * @returns Gas price with safety buffer
+ */
+export async function getDynamicGasPrice<
+  T extends { getGasPrice: () => Promise<bigint> },
+>(publicClient: T): Promise<{ gasPrice: bigint }> {
+  const gasPrice = await publicClient.getGasPrice();
+  // Apply 10% safety buffer: gasPrice * 110 / 100
+  const bufferedGasPrice = (gasPrice * 110n) / 100n;
+  return { gasPrice: bufferedGasPrice };
+}
+
+/**
+ * Estimate transaction gas with a 20% safety buffer.
+ * @param params - Estimation parameters
+ * @returns Estimated gas limit with buffer
+ */
+export async function estimateTransactionGas(params: {
+  publicClient: { estimateGas: (args: any) => Promise<bigint> };
+  account: { address: `0x${string}` };
+  to: `0x${string}`;
+  data: `0x${string}`;
+}): Promise<bigint> {
+  const estimated = await params.publicClient.estimateGas({
+    account: params.account.address,
+    to: params.to,
+    data: params.data,
+  });
+  // Apply 20% safety buffer
+  return (estimated * 120n) / 100n;
+}
+
+/**
+ * Nonce management helpers integrated with the wallet client.
+ */
+export const nonceManager = {
+  getNextNonce,
+  peekNonce,
+  resetNonce,
+};

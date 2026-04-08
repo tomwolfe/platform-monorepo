@@ -22,7 +22,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { withQStashAuth } from "@repo/shared";
-import { StepExecutionService, createStepExecutionService } from "@/lib/engine/step-execution-service";
+import { withServerlessTimeout } from "@repo/shared/middleware/serverless-timeout";
+import { withRetry } from "@repo/shared/middleware/retry-with-backoff";
+import {
+  StepExecutionService,
+  createStepExecutionService,
+} from "@/lib/engine/step-execution-service";
 
 // Idempotency: acquireStepIdempotencyLock uses Redis SETNX with nx: true
 // Distributed Tracing: x-trace-id header extracted and propagated
@@ -43,15 +48,19 @@ const ExecuteStepResponseSchema = z.object({
   success: z.boolean(),
   executionId: z.string(),
   stepExecuted: z.string().optional(),
-  stepStatus: z.enum(["completed", "failed", "pending", "no_steps_remaining"]).optional(),
+  stepStatus: z
+    .enum(["completed", "failed", "pending", "no_steps_remaining"])
+    .optional(),
   completedSteps: z.number(),
   totalSteps: z.number(),
   isComplete: z.boolean(),
   nextStepTriggered: z.boolean().optional(),
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
-  }).optional(),
+  error: z
+    .object({
+      code: z.string(),
+      message: z.string(),
+    })
+    .optional(),
 });
 
 // ============================================================================
@@ -66,17 +75,28 @@ const stepExecutionService = createStepExecutionService();
 
 async function executeStepHandler(
   request: NextRequest,
-  body: z.infer<typeof ExecuteStepRequestSchema>
+  body: z.infer<typeof ExecuteStepRequestSchema>,
 ): Promise<NextResponse> {
   const startTime = performance.now();
   const { executionId, startStepIndex } = body;
+
+  // Wrap step execution with retry for transient failures
+  const executeStepWithRetry = withRetry(
+    (execId: string, stepIndex?: number, req?: NextRequest) =>
+      stepExecutionService.execute(execId, stepIndex, req),
+    { maxAttempts: 2, baseDelay: 1000 },
+  );
 
   try {
     // DISTRIBUTED TRACING: Extract trace context from headers
     const traceId = request.headers.get("x-trace-id");
     const correlationId = request.headers.get("x-correlation-id");
 
-    const result = await stepExecutionService.execute(executionId, startStepIndex, request);
+    const result = await executeStepWithRetry(
+      executionId,
+      startStepIndex,
+      request,
+    );
     return NextResponse.json(ExecuteStepResponseSchema.parse(result));
   } catch (error) {
     console.error("[ExecuteStep] Unhandled error:", error);
@@ -89,9 +109,12 @@ async function executeStepHandler(
           message: error instanceof Error ? error.message : String(error),
         },
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
-export const POST = withQStashAuth(executeStepHandler);
+export const POST = withServerlessTimeout(
+  withQStashAuth(executeStepHandler),
+  8000,
+);

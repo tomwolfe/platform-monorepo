@@ -51,22 +51,44 @@ vi.mock("@repo/shared", async () => {
     expire: vi.fn().mockResolvedValue(1),
   };
 
+  const mockMemoryClient = {
+    saveStateWithOCC: vi
+      .fn()
+      .mockResolvedValue({ success: true, version: 2, attempts: 0 }),
+  };
+
+  const mockFailoverPolicyEngine = {
+    evaluate: vi.fn().mockResolvedValue({ action: "continue" }),
+  };
+
+  const mockLLMTriageService = {
+    triage: vi.fn().mockResolvedValue({ action: "retry", confidence: 0.8 }),
+  };
+
   return {
     ...actual,
     getRedisClient: vi.fn(() => mockRedisClient),
     ServiceNamespace: {
-      IE: 'ie',
-      CACHE: 'cache',
-      SHARED: 'shared',
+      IE: "ie",
+      CACHE: "cache",
+      SHARED: "shared",
     },
     QStashService: {
       triggerNextStep: mockTriggerNextStep,
     },
+    getMemoryClient: vi.fn(() => mockMemoryClient),
+    createFailoverPolicyEngine: vi.fn(() => mockFailoverPolicyEngine),
+    FailoverPolicyEngine: class MockFailoverPolicyEngine {},
+    getLLMFailureTriageService: vi.fn(() => mockLLMTriageService),
+    NormalizationService: class MockNormalizationService {},
   };
 });
 
 import { parseIntent } from "@/lib/engine/intent";
-import { generatePlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/unified-planner";
+import {
+  generatePlan,
+  DEFAULT_SAFETY_POLICY,
+} from "@/lib/engine/unified-planner";
 import { verifyPlan } from "@/lib/engine/verifier";
 import { WorkflowMachine } from "@/lib/engine/workflow-machine";
 import { loadExecutionState, saveExecutionState } from "@/lib/engine/memory";
@@ -93,12 +115,14 @@ function createMockToolExecutor(config?: { shouldFailOnStep?: number }) {
       toolName: string,
       parameters: Record<string, unknown>,
       timeoutMs: number,
-      signal?: AbortSignal
+      signal?: AbortSignal,
     ): Promise<MockToolResponse> {
       const startTime = Date.now();
 
       // Simulate tool execution
-      await new Promise(resolve => setTimeout(resolve, Math.min(100, timeoutMs / 10)));
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(100, timeoutMs / 10)),
+      );
 
       // Check for abort
       if (signal?.aborted) {
@@ -153,7 +177,9 @@ function createMockToolExecutor(config?: { shouldFailOnStep?: number }) {
 
 // ============================================================================
 // AUDIT LOG VERIFIER
+/**
  * Validates that all expected steps were logged with metrics
+ */
 // ============================================================================
 
 interface AuditLogEntry {
@@ -167,7 +193,7 @@ interface AuditLogEntry {
 
 function verifyAuditLogCompleteness(
   state: Awaited<ReturnType<typeof loadExecutionState>>,
-  expectedSteps: number
+  expectedSteps: number,
 ): { valid: boolean; issues: string[] } {
   const issues: string[] = [];
 
@@ -175,12 +201,14 @@ function verifyAuditLogCompleteness(
     return { valid: false, issues: ["State is undefined"] };
   }
 
-  const completedSteps = state.step_states.filter(s => s.status === "completed");
-  const failedSteps = state.step_states.filter(s => s.status === "failed");
+  const completedSteps = state.step_states.filter(
+    (s) => s.status === "completed",
+  );
+  const failedSteps = state.step_states.filter((s) => s.status === "failed");
 
   if (completedSteps.length + failedSteps.length !== expectedSteps) {
     issues.push(
-      `Expected ${expectedSteps} steps, found ${completedSteps.length + failedSteps.length}`
+      `Expected ${expectedSteps} steps, found ${completedSteps.length + failedSteps.length}`,
     );
   }
 
@@ -218,11 +246,12 @@ describe("Golden Path - Restaurant Booking", () => {
       // STEP 1: Parse User Intent
       // =========================================================================
 
-      const userInput = "Book a table for 4 people at The Italian Place tonight at 7pm";
+      const userInput =
+        "Book a table for 4 people at The Italian Place tonight at 7pm";
 
       const parseResult = await parseIntent(userInput, {
         lat: 40.7128,
-        lng: -74.0060,
+        lng: -74.006,
       });
 
       const intent = parseResult.intent;
@@ -278,7 +307,9 @@ describe("Golden Path - Restaurant Booking", () => {
       expect(planResult.plan.steps.length).toBeGreaterThan(0);
       expect(planResult.plan.steps.length).toBeLessThanOrEqual(10);
 
-      console.log(`[GoldenPath] ✓ Plan generated: ${planResult.plan.steps.length} steps`);
+      console.log(
+        `[GoldenPath] ✓ Plan generated: ${planResult.plan.steps.length} steps`,
+      );
 
       // =========================================================================
       // STEP 3: Verify Plan (Deterministic Safety Check)
@@ -324,7 +355,9 @@ describe("Golden Path - Restaurant Booking", () => {
       expect(executeResult.failedSteps).toBe(0);
       expect(executeResult.state.status).toBe("COMPLETED");
 
-      console.log(`[GoldenPath] ✓ Execution completed: ${executeResult.completedSteps}/${executeResult.totalSteps} steps`);
+      console.log(
+        `[GoldenPath] ✓ Execution completed: ${executeResult.completedSteps}/${executeResult.totalSteps} steps`,
+      );
 
       // =========================================================================
       // STEP 6: Verify State Persistence and Transitions
@@ -334,9 +367,10 @@ describe("Golden Path - Restaurant Booking", () => {
 
       expect(persistedState).toBeDefined();
       expect(persistedState?.status).toBe("COMPLETED");
-      expect(persistedState?.step_states.filter(s => s.status === "completed").length).toBe(
-        planResult.plan.steps.length
-      );
+      expect(
+        persistedState?.step_states.filter((s) => s.status === "completed")
+          .length,
+      ).toBe(planResult.plan.steps.length);
 
       console.log(`[GoldenPath] ✓ State persisted to Redis`);
 
@@ -347,11 +381,13 @@ describe("Golden Path - Restaurant Booking", () => {
       expect(executeResult.state.trace).toBeDefined();
       expect(executeResult.state.trace?.length).toBeGreaterThan(0);
 
-      const traceEvents = executeResult.state.trace?.map(t => t.event) || [];
+      const traceEvents = executeResult.state.trace?.map((t) => t.event) || [];
       expect(traceEvents).toContain("plan_generated");
       expect(traceEvents).toContain("step_executed");
 
-      console.log(`[GoldenPath] ✓ Trace complete: ${traceEvents.length} events`);
+      console.log(
+        `[GoldenPath] ✓ Trace complete: ${traceEvents.length} events`,
+      );
 
       // =========================================================================
       // STEP 8: Verify Audit Log
@@ -359,7 +395,7 @@ describe("Golden Path - Restaurant Booking", () => {
 
       const auditVerification = verifyAuditLogCompleteness(
         persistedState,
-        planResult.plan.steps.length
+        planResult.plan.steps.length,
       );
 
       expect(auditVerification.valid).toBe(true);
@@ -371,9 +407,13 @@ describe("Golden Path - Restaurant Booking", () => {
       // GOLDEN PATH COMPLETE
       // =========================================================================
 
-      console.log("[GoldenPath] ================================================");
+      console.log(
+        "[GoldenPath] ================================================",
+      );
       console.log("[GoldenPath] GOLDEN PATH COMPLETE: All checks passed ✓");
-      console.log("[GoldenPath] ================================================");
+      console.log(
+        "[GoldenPath] ================================================",
+      );
     });
 
     it("should validate ExecutionState transitions match expected saga lifecycle", async () => {
@@ -389,8 +429,11 @@ describe("Golden Path - Restaurant Booking", () => {
         "COMPLETED",
       ] as const;
 
-      const machine = new WorkflowMachine(executionId, createMockToolExecutor());
-      
+      const machine = new WorkflowMachine(
+        executionId,
+        createMockToolExecutor(),
+      );
+
       // Verify initial state
       expect(machine.state.status).toBe("RECEIVED");
 
@@ -398,15 +441,17 @@ describe("Golden Path - Restaurant Booking", () => {
       const transitions: string[] = ["RECEIVED"];
       machine.state = transitionState(machine.state, "PARSING");
       transitions.push(machine.state.status);
-      
+
       machine.state = transitionState(machine.state, "PARSED");
       transitions.push(machine.state.status);
-      
+
       machine.state = transitionState(machine.state, "PLANNING");
       transitions.push(machine.state.status);
 
       // Verify we hit the expected states
-      expect(transitions).toEqual(expectedTransitions.slice(0, transitions.length));
+      expect(transitions).toEqual(
+        expectedTransitions.slice(0, transitions.length),
+      );
     });
   });
 
@@ -419,7 +464,7 @@ describe("Golden Path - Restaurant Booking", () => {
       const userInput = "Book a table for 4 at The Italian Place";
       const parseResult = await parseIntent(userInput, {
         lat: 40.7128,
-        lng: -74.0060,
+        lng: -74.006,
       });
 
       const planResult = await generatePlan(parseResult.intent, {
@@ -467,36 +512,45 @@ describe("Golden Path - Restaurant Booking", () => {
       // 1. Transition to FAILED state, OR
       // 2. Attempt compensation if step 1 registered a compensation
       const isFailed = result.state.status === "FAILED";
-      const isCompensated = result.state.status === "COMPENSATED" || 
-                            result.state.status === "COMPENSATING";
-      
+      const isCompensated =
+        result.state.status === "COMPENSATED" ||
+        result.state.status === "COMPENSATING";
+
       // At minimum, we expect the execution to not be marked as COMPLETED
       expect(result.state.status).not.toBe("COMPLETED");
-      
+
       // Verify error was logged in trace
       const errorTraces = result.state.trace?.filter(
-        t => t.event === "step_failed" || t.event === "error"
+        (t) => t.event === "step_failed" || t.event === "error",
       );
       expect(errorTraces.length).toBeGreaterThan(0);
 
       // Verify the failed step has error details
       const persistedState = await loadExecutionState(executionId);
-      const failedSteps = persistedState?.step_states.filter(s => s.status === "failed") || [];
-      
+      const failedSteps =
+        persistedState?.step_states.filter((s) => s.status === "failed") || [];
+
       if (failedSteps.length > 0) {
         const failedStep = failedSteps[0];
         expect(failedStep.error).toBeDefined();
         expect(failedStep.latency_ms).toBeDefined();
-        
-        console.log(`[GoldenPath-Failure] ✓ Step ${failedStep.step_number} failed as expected: ${failedStep.error}`);
+
+        console.log(
+          `[GoldenPath-Failure] ✓ Step ${failedStep.step_number} failed as expected: ${failedStep.error}`,
+        );
       }
 
-      console.log(`[GoldenPath-Failure] ✓ Execution handled failure correctly (${result.state.status})`);
+      console.log(
+        `[GoldenPath-Failure] ✓ Execution handled failure correctly (${result.state.status})`,
+      );
     });
 
     it("should reject invalid state transitions from terminal states", async () => {
       const executionId = randomUUID();
-      const machine = new WorkflowMachine(executionId, createMockToolExecutor());
+      const machine = new WorkflowMachine(
+        executionId,
+        createMockToolExecutor(),
+      );
 
       // Transition to a terminal state
       machine.state = transitionState(machine.state, "PARSING");
@@ -511,7 +565,9 @@ describe("Golden Path - Restaurant Booking", () => {
         transitionState(machine.state, "EXECUTING");
       }).toThrow();
 
-      console.log(`[GoldenPath-InvalidTransition] ✓ Terminal state transition correctly rejected`);
+      console.log(
+        `[GoldenPath-InvalidTransition] ✓ Terminal state transition correctly rejected`,
+      );
     });
   });
 });

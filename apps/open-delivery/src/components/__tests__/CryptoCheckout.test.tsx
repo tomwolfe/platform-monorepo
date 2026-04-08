@@ -13,6 +13,107 @@ import { CryptoCheckout } from "../CryptoCheckout";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Web3Provider } from "../Web3Provider";
 
+// Mock @repo/database to avoid bridge schema initialization
+// Provide minimal drizzle table definitions with Zod column shapes
+vi.mock("@repo/database", async () => {
+  const { z } = await import("zod");
+
+  // Mock column schema that drizzle-zod expects
+  const mockPgColumn = (name: string, schema: any) => ({
+    name,
+    get nameCamelCase() {
+      return name;
+    },
+    primary: false,
+    notNull: false,
+    _zodType: schema,
+  });
+
+  // Mock table definitions with shapes that drizzle-zod expects (Zod schemas)
+  const createMockTable = (tableName: string, shape: Record<string, any>) => ({
+    name: tableName,
+    schema: "public",
+    get shape() {
+      return shape;
+    },
+    $inferInsert: {} as any,
+    $inferSelect: {} as any,
+  });
+
+  const commonColumns = {
+    id: mockPgColumn("id", z.string().uuid()),
+    createdAt: mockPgColumn("createdAt", z.date()),
+    updatedAt: mockPgColumn("updatedAt", z.date()),
+  };
+
+  return {
+    getDb: vi.fn(),
+    restaurants: createMockTable("restaurants", {
+      ...commonColumns,
+      name: mockPgColumn("name", z.string()),
+      slug: mockPgColumn("slug", z.string()),
+      ownerEmail: mockPgColumn("ownerEmail", z.string()),
+      ownerId: mockPgColumn("ownerId", z.string()),
+      apiKey: mockPgColumn("apiKey", z.string()),
+      timezone: mockPgColumn("timezone", z.string()),
+      openingTime: mockPgColumn("openingTime", z.string()),
+      closingTime: mockPgColumn("closingTime", z.string()),
+      daysOpen: mockPgColumn("daysOpen", z.string()),
+    }),
+    restaurantTables: createMockTable("restaurant_tables", {
+      ...commonColumns,
+      restaurantId: mockPgColumn("restaurantId", z.string()),
+      tableNumber: mockPgColumn("tableNumber", z.string()),
+      minCapacity: mockPgColumn("minCapacity", z.number()),
+      maxCapacity: mockPgColumn("maxCapacity", z.number()),
+      status: mockPgColumn("status", z.string()),
+      xPos: mockPgColumn("xPos", z.number()),
+      yPos: mockPgColumn("yPos", z.number()),
+      tableType: mockPgColumn("tableType", z.string()),
+    }),
+    restaurantReservations: createMockTable("restaurant_reservations", {
+      ...commonColumns,
+      restaurantId: mockPgColumn("restaurantId", z.string()),
+      tableId: mockPgColumn("tableId", z.string()),
+      guestName: mockPgColumn("guestName", z.string()),
+      guestEmail: mockPgColumn("guestEmail", z.string()),
+      partySize: mockPgColumn("partySize", z.number()),
+      startTime: mockPgColumn("startTime", z.date()),
+      endTime: mockPgColumn("endTime", z.date()),
+      status: mockPgColumn("status", z.string()),
+      verificationToken: mockPgColumn("verificationToken", z.string()),
+      isVerified: mockPgColumn("isVerified", z.boolean()),
+    }),
+    restaurantWaitlist: createMockTable("restaurant_waitlist", {
+      ...commonColumns,
+      restaurantId: mockPgColumn("restaurantId", z.string()),
+      guestName: mockPgColumn("guestName", z.string()),
+      guestEmail: mockPgColumn("guestEmail", z.string()),
+      partySize: mockPgColumn("partySize", z.number()),
+      status: mockPgColumn("status", z.string()),
+    }),
+    restaurantProducts: createMockTable("restaurant_products", {
+      ...commonColumns,
+      restaurantId: mockPgColumn("restaurantId", z.string()),
+      name: mockPgColumn("name", z.string()),
+      price: mockPgColumn("price", z.number()),
+      description: mockPgColumn("description", z.string()),
+    }),
+    inventoryLevels: createMockTable("inventory_levels", {
+      ...commonColumns,
+      productId: mockPgColumn("productId", z.string()),
+      quantity: mockPgColumn("quantity", z.number()),
+    }),
+    guestProfiles: createMockTable("guest_profiles", {
+      ...commonColumns,
+      guestName: mockPgColumn("guestName", z.string()),
+      guestEmail: mockPgColumn("guestEmail", z.string()),
+      preferences: mockPgColumn("preferences", z.string().optional()),
+    }),
+    eq: vi.fn(),
+  };
+});
+
 // Mock wagmi hooks - MUST come before imports
 vi.mock("wagmi", async () => {
   const actual = await vi.importActual("wagmi");
@@ -74,7 +175,7 @@ vi.mock("viem", async () => {
       return BigInt(parseFloat(value) * Math.pow(10, decimals));
     }),
     stringToHex: vi.fn((str) => {
-      return `0x${Buffer.from(str, 'utf-8').toString('hex')}`;
+      return `0x${Buffer.from(str, "utf-8").toString("hex")}`;
     }),
   };
 });
@@ -93,9 +194,7 @@ const createTestWrapper = () => {
 
   return ({ children }: { children: React.ReactNode }) => (
     <Web3Provider>
-      <QueryClientProvider client={queryClient}>
-        {children}
-      </QueryClientProvider>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     </Web3Provider>
   );
 };
@@ -193,11 +292,14 @@ describe("CryptoCheckout Integration", () => {
 
   it("should call onCheckoutComplete when payment succeeds", async () => {
     // Mock successful transaction
-    vi.mocked(await import("wagmi")).useWaitForTransactionReceipt.mockReturnValue({
+    vi.mocked(
+      await import("wagmi"),
+    ).useWaitForTransactionReceipt.mockReturnValue({
       isLoading: false,
       isSuccess: true,
       data: {
-        transactionHash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+        transactionHash:
+          "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
         status: "success",
         blockNumber: BigInt(1000),
       } as any,
@@ -216,7 +318,7 @@ describe("CryptoCheckout Integration", () => {
         expect.objectContaining({
           orderId: expect.any(String),
           txHash: expect.any(String),
-        })
+        }),
       );
     });
   });

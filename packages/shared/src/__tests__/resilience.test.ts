@@ -299,8 +299,9 @@ describe("IdempotencyService", () => {
       const result = await service.isDuplicate("key1", "action1");
 
       expect(result).toBe(false);
+      // Key format is idempotency:{routeName}:{key} (routeName defaults to "unknown")
       expect(mockRedis.set).toHaveBeenCalledWith(
-        expect.stringContaining("idempotency:key1"),
+        expect.stringContaining("idempotency:unknown:key1"),
         "processed",
         { nx: true, ex: 86400 },
       );
@@ -345,7 +346,8 @@ describe("IdempotencyService", () => {
       const key = await service.getKey("key1", "action1");
 
       expect(typeof key).toBe("string");
-      expect(key).toContain("idempotency:key1");
+      // Key format is idempotency:{routeName}:{key} (routeName defaults to "unknown")
+      expect(key).toContain("idempotency:unknown:key1");
     });
   });
 

@@ -1,9 +1,9 @@
 /**
  * E2E Test - Delivery Flow
- * 
+ *
  * Tests the complete delivery ordering flow:
  * User Input → Intent → Plan → Verify → Execute → Delivery Dispatched
- * 
+ *
  * Focus: Web3 payments, driver dispatch, real-time tracking
  */
 
@@ -24,7 +24,7 @@ vi.mock("@/lib/redis-client", () => ({
 // Mock @repo/shared to avoid requiring live Redis and other services
 vi.mock("@repo/shared", async () => {
   const actual = await vi.importActual("@repo/shared");
-  
+
   const mockRedisClient = {
     keys: vi.fn().mockResolvedValue([]),
     del: vi.fn().mockResolvedValue(1),
@@ -37,27 +37,49 @@ vi.mock("@repo/shared", async () => {
     hgetall: vi.fn().mockResolvedValue({}),
     expire: vi.fn().mockResolvedValue(1),
   };
-  
+
+  const mockMemoryClient = {
+    saveStateWithOCC: vi
+      .fn()
+      .mockResolvedValue({ success: true, version: 2, attempts: 0 }),
+  };
+
+  const mockFailoverPolicyEngine = {
+    evaluate: vi.fn().mockResolvedValue({ action: "continue" }),
+  };
+
+  const mockLLMTriageService = {
+    triage: vi.fn().mockResolvedValue({ action: "retry", confidence: 0.8 }),
+  };
+
   return {
     ...actual,
     getRedisClient: vi.fn(() => mockRedisClient),
     ServiceNamespace: {
-      IE: 'ie',
-      CACHE: 'cache',
-      SHARED: 'shared',
+      IE: "ie",
+      CACHE: "cache",
+      SHARED: "shared",
     },
+    getMemoryClient: vi.fn(() => mockMemoryClient),
+    createFailoverPolicyEngine: vi.fn(() => mockFailoverPolicyEngine),
+    FailoverPolicyEngine: class MockFailoverPolicyEngine {},
+    getLLMFailureTriageService: vi.fn(() => mockLLMTriageService),
+    NormalizationService: class MockNormalizationService {},
   };
 });
 
 import { parseIntent } from "@/lib/engine/intent";
-import { generatePlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/unified-planner";
+import {
+  generatePlan,
+  DEFAULT_SAFETY_POLICY,
+} from "@/lib/engine/unified-planner";
 import { verifyPlan } from "@/lib/engine/verifier";
 import { WorkflowMachine } from "@/lib/engine/workflow-machine";
 import { loadExecutionState } from "@/lib/engine/memory";
 import { transitionState } from "@/lib/engine/state-machine";
 
 import { getRedisClient, ServiceNamespace } from "@repo/shared";
-const redis = getRedisClient(ServiceNamespace.IE);;
+const redis = getRedisClient(ServiceNamespace.IE);
 
 // ============================================================================
 // MOCK TOOL EXECUTOR FOR DELIVERY
@@ -69,12 +91,14 @@ function createDeliveryMockToolExecutor() {
       toolName: string,
       parameters: Record<string, unknown>,
       timeoutMs: number,
-      signal?: AbortSignal
+      signal?: AbortSignal,
     ) {
       const startTime = Date.now();
-      
-      await new Promise(resolve => setTimeout(resolve, Math.min(150, timeoutMs / 10)));
-      
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(150, timeoutMs / 10)),
+      );
+
       if (signal?.aborted) {
         return {
           success: false,
@@ -82,12 +106,22 @@ function createDeliveryMockToolExecutor() {
           latency_ms: Date.now() - startTime,
         };
       }
-      
+
       const mockResponses: Record<string, any> = {
         search_restaurants: {
           restaurants: [
-            { id: "rest_1", name: "Pizza Palace", cuisine: "Italian", rating: 4.5 },
-            { id: "rest_2", name: "Burger Barn", cuisine: "American", rating: 4.2 },
+            {
+              id: "rest_1",
+              name: "Pizza Palace",
+              cuisine: "Italian",
+              rating: 4.5,
+            },
+            {
+              id: "rest_2",
+              name: "Burger Barn",
+              cuisine: "American",
+              rating: 4.2,
+            },
           ],
         },
         calculate_delivery_quote: {
@@ -99,7 +133,7 @@ function createDeliveryMockToolExecutor() {
         create_order: {
           order_id: `order_${randomUUID().slice(0, 8)}`,
           status: "confirmed",
-          total: 42.50,
+          total: 42.5,
         },
         process_crypto_payment: {
           transaction_hash: `0x${randomUUID().replace(/-/g, "")}`,
@@ -114,21 +148,24 @@ function createDeliveryMockToolExecutor() {
         },
         track_delivery: {
           status: "in_transit",
-          driver_location: { lat: 40.7200, lng: -74.0100 },
+          driver_location: { lat: 40.72, lng: -74.01 },
           eta_minutes: 12,
         },
       };
-      
+
       const output = mockResponses[toolName] || { success: true };
-      
+
       return {
         success: true,
         output,
         latency_ms: Date.now() - startTime,
-        compensation: toolName === "create_order" ? {
-          toolName: "cancel_order",
-          parameters: { order_id: output.order_id },
-        } : undefined,
+        compensation:
+          toolName === "create_order"
+            ? {
+                toolName: "cancel_order",
+                parameters: { order_id: output.order_id },
+              }
+            : undefined,
       };
     },
   };
@@ -151,11 +188,12 @@ describe("E2E - OpenDelivery Flow", () => {
     // STEP 1: Parse User Intent
     // =========================================================================
 
-    const userInput = "Order pizza from Pizza Palace and deliver to 123 Main St";
+    const userInput =
+      "Order pizza from Pizza Palace and deliver to 123 Main St";
 
     const parseResult = await parseIntent(userInput, {
       lat: 40.7128,
-      lng: -74.0060,
+      lng: -74.006,
     });
 
     const intent = parseResult.intent;
@@ -167,11 +205,11 @@ describe("E2E - OpenDelivery Flow", () => {
     expect(typeof intent.parameters).toBe("object");
 
     console.log(`[DeliveryE2E] ✓ Intent parsed: ${intent.type}`);
-    
+
     // =========================================================================
     // STEP 2: Generate Plan
     // =========================================================================
-    
+
     const planResult = await generatePlan(intent, {
       available_tools: [
         {
@@ -219,22 +257,24 @@ describe("E2E - OpenDelivery Flow", () => {
         },
       ],
     });
-    
+
     expect(planResult.plan).toBeDefined();
     expect(planResult.plan.steps.length).toBeGreaterThanOrEqual(1);
     expect(planResult.plan.steps.length).toBeLessThanOrEqual(10);
-    
-    console.log(`[DeliveryE2E] ✓ Plan generated: ${planResult.plan.steps.length} steps`);
-    
+
+    console.log(
+      `[DeliveryE2E] ✓ Plan generated: ${planResult.plan.steps.length} steps`,
+    );
+
     // =========================================================================
     // STEP 3: Verify Plan
     // =========================================================================
-    
+
     const verification = verifyPlan(planResult.plan, DEFAULT_SAFETY_POLICY);
     expect(verification.valid).toBe(true);
-    
+
     console.log(`[DeliveryE2E] ✓ Plan verified`);
-    
+
     // =========================================================================
     // STEP 4: Execute Plan
     // =========================================================================
@@ -243,53 +283,59 @@ describe("E2E - OpenDelivery Flow", () => {
     const toolExecutor = createDeliveryMockToolExecutor();
 
     const machine = new WorkflowMachine(executionId, toolExecutor);
-    
+
     // Transition state machine properly: RECEIVED -> PARSING -> PARSED -> PLANNING -> PLANNED
     machine.state = transitionState(machine.state, "PARSING");
     machine.state = transitionState(machine.state, "PARSED");
     machine.state = transitionState(machine.state, "PLANNING");
     machine.setPlan(planResult.plan); // This will transition to PLANNED
-    
+
     const result = await machine.execute();
-    
+
     // =========================================================================
     // STEP 5: Verify Results
     // =========================================================================
-    
+
     expect(result.success).toBe(true);
     expect(result.completedSteps).toBe(planResult.plan.steps.length);
     expect(result.failedSteps).toBe(0);
     expect(result.state.status).toBe("COMPLETED");
-    
-    console.log(`[DeliveryE2E] ✓ Execution completed: ${result.completedSteps}/${result.totalSteps}`);
-    
+
+    console.log(
+      `[DeliveryE2E] ✓ Execution completed: ${result.completedSteps}/${result.totalSteps}`,
+    );
+
     // =========================================================================
     // STEP 6: Verify State
     // =========================================================================
-    
+
     const persistedState = await loadExecutionState(executionId);
     expect(persistedState?.status).toBe("COMPLETED");
-    
+
     // Verify compensation was registered for order creation
     const compensations = result.compensatedSteps || 0;
     console.log(`[DeliveryE2E] ✓ Compensations registered: ${compensations}`);
-    
+
     // =========================================================================
     // STEP 7: Verify Key Events
     // =========================================================================
-    
-    const traceEvents = result.state.trace?.map(t => t.event) || [];
+
+    const traceEvents = result.state.trace?.map((t) => t.event) || [];
     expect(traceEvents).toContain("plan_generated");
     expect(traceEvents).toContain("step_executed");
-    
+
     console.log(`[DeliveryE2E] ✓ Trace complete: ${traceEvents.length} events`);
-    
+
     // =========================================================================
     // DELIVERY FLOW COMPLETE
     // =========================================================================
-    
-    console.log("[DeliveryE2E] ================================================");
+
+    console.log(
+      "[DeliveryE2E] ================================================",
+    );
     console.log("[DeliveryE2E] DELIVERY FLOW COMPLETE: All checks passed ✓");
-    console.log("[DeliveryE2E] ================================================");
+    console.log(
+      "[DeliveryE2E] ================================================",
+    );
   });
 });

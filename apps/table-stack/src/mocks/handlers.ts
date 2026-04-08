@@ -56,7 +56,7 @@ const mockTables = [
 
 export const handlers = [
   // GET /api/v1/restaurant
-  http.get("/api/v1/restaurant", ({ request }) => {
+  http.get("http://localhost:3000/api/v1/restaurant", ({ request }) => {
     const url = new URL(request.url);
     const slug = url.searchParams.get("slug");
 
@@ -74,7 +74,7 @@ export const handlers = [
   }),
 
   // GET /api/v1/availability
-  http.get("/api/v1/availability", ({ request }) => {
+  http.get("http://localhost:3000/api/v1/availability", ({ request }) => {
     const url = new URL(request.url);
     const restaurantId = url.searchParams.get("restaurantId");
     const date = url.searchParams.get("date");
@@ -103,7 +103,7 @@ export const handlers = [
   }),
 
   // POST /api/v1/reserve
-  http.post("/api/v1/reserve", async ({ request }) => {
+  http.post("http://localhost:3000/api/v1/reserve", async ({ request }) => {
     const apiKey = request.headers.get("x-api-key");
 
     if (!apiKey) {
@@ -160,7 +160,7 @@ export const handlers = [
   }),
 
   // GET /api/v1/verify
-  http.get("/api/v1/verify", ({ request }) => {
+  http.get("http://localhost:3000/api/v1/verify", ({ request }) => {
     const url = new URL(request.url);
     const token = url.searchParams.get("token");
 
@@ -184,7 +184,7 @@ export const handlers = [
   }),
 
   // POST /api/v1/verify
-  http.post("/api/v1/verify", async ({ request }) => {
+  http.post("http://localhost:3000/api/v1/verify", async ({ request }) => {
     const body = await request.json();
     const parsed = body as { token?: string };
 

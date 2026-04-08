@@ -27,9 +27,17 @@ import {
  */
 export const GetTableAvailabilitySchema = z.object({
   restaurantId: z.string().uuid().describe("The internal ID of the restaurant"),
-  date: z.string().datetime().describe("ISO 8601 date/time for the reservation"),
+  date: z
+    .string()
+    .datetime()
+    .describe("ISO 8601 date/time for the reservation"),
   partySize: z.number().int().positive().describe("Number of guests"),
-  durationMinutes: z.number().int().positive().optional().describe("Duration of the reservation in minutes (default: 90)"),
+  durationMinutes: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Duration of the reservation in minutes (default: 90)"),
 });
 
 /**
@@ -37,7 +45,10 @@ export const GetTableAvailabilitySchema = z.object({
  */
 export const GetTableLayoutSchema = z.object({
   restaurantId: z.string().uuid().describe("The internal ID of the restaurant"),
-  includeInactive: z.boolean().default(false).describe("Whether to include inactive tables"),
+  includeInactive: z
+    .boolean()
+    .default(false)
+    .describe("Whether to include inactive tables"),
 });
 
 /**
@@ -45,7 +56,10 @@ export const GetTableLayoutSchema = z.object({
  * Derived from the auto-generated ReservationSchema (Drizzle select schema)
  */
 export const GetReservationSchema = z.object({
-  reservationId: z.string().uuid().describe("The unique identifier of the reservation"),
+  reservationId: z
+    .string()
+    .uuid()
+    .describe("The unique identifier of the reservation"),
 });
 
 /**
@@ -53,11 +67,30 @@ export const GetReservationSchema = z.object({
  */
 export const ListReservationsSchema = z.object({
   restaurantId: z.string().uuid().describe("The internal ID of the restaurant"),
-  startDate: z.string().datetime().optional().describe("Filter reservations from this date"),
-  endDate: z.string().datetime().optional().describe("Filter reservations until this date"),
-  status: ReservationSchema.shape.status.optional().describe("Filter by reservation status"),
-  limit: z.number().int().positive().max(100).default(20).describe("Maximum number of results"),
-  offset: z.number().int().nonnegative().default(0).describe("Pagination offset"),
+  startDate: z
+    .string()
+    .datetime()
+    .optional()
+    .describe("Filter reservations from this date"),
+  endDate: z
+    .string()
+    .datetime()
+    .optional()
+    .describe("Filter reservations until this date"),
+  status: z.string().optional().describe("Filter by reservation status"),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(100)
+    .default(20)
+    .describe("Maximum number of results"),
+  offset: z
+    .number()
+    .int()
+    .nonnegative()
+    .default(0)
+    .describe("Pagination offset"),
 });
 
 /**
@@ -68,7 +101,11 @@ export const CheckTableConflictsSchema = z.object({
   tableId: z.string().uuid().describe("The ID of the table to check"),
   startTime: z.string().datetime().describe("Proposed reservation start time"),
   endTime: z.string().datetime().describe("Proposed reservation end time"),
-  excludeReservationId: z.string().uuid().optional().describe("Exclude this reservation ID from conflict check (for updates)"),
+  excludeReservationId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe("Exclude this reservation ID from conflict check (for updates)"),
 });
 
 // ============================================================================
@@ -82,14 +119,36 @@ export const CheckTableConflictsSchema = z.object({
  * Derived from CreateReservationDBSchema (Drizzle insert schema) with
  * MCP-specific field descriptions and validation constraints.
  */
-export const CreateReservationSchema = createMcpToolInputSchema(CreateReservationDBSchema, {
-  required: ['restaurantId', 'tableId', 'guestName', 'guestEmail', 'partySize', 'startTime'],
-}).extend({
+export const CreateReservationSchema = createMcpToolInputSchema(
+  CreateReservationDBSchema,
+  {
+    required: [
+      "restaurantId",
+      "tableId",
+      "guestName",
+      "guestEmail",
+      "partySize",
+      "startTime",
+    ],
+  },
+).extend({
   guestName: z.string().min(1).max(100).describe("Name for the reservation"),
   guestEmail: z.string().email().describe("Email for the reservation"),
-  specialRequests: z.string().max(500).optional().describe("Any special requests"),
-  depositAmount: z.number().int().nonnegative().optional().describe("Deposit amount in cents"),
-  metadata: z.record(z.string(), z.unknown()).optional().describe("Additional metadata"),
+  specialRequests: z
+    .string()
+    .max(500)
+    .optional()
+    .describe("Any special requests"),
+  depositAmount: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe("Deposit amount in cents"),
+  metadata: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe("Additional metadata"),
 });
 
 /**
@@ -98,13 +157,28 @@ export const CreateReservationSchema = createMcpToolInputSchema(CreateReservatio
  *
  * Derived from UpdateReservationDBSchema (Drizzle partial insert schema)
  */
-export const UpdateReservationSchema = createMcpToolInputSchema(UpdateReservationDBSchema, {
-  required: ['reservationId'],
-}).extend({
-  reservationId: z.string().uuid().describe("The unique identifier of the reservation"),
-  guestName: z.string().min(1).max(100).optional().describe("Updated guest name"),
+export const UpdateReservationSchema = createMcpToolInputSchema(
+  UpdateReservationDBSchema,
+  {
+    required: ["reservationId"],
+  },
+).extend({
+  reservationId: z
+    .string()
+    .uuid()
+    .describe("The unique identifier of the reservation"),
+  guestName: z
+    .string()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Updated guest name"),
   guestEmail: z.string().email().optional().describe("Updated guest email"),
-  specialRequests: z.string().max(500).optional().describe("Updated special requests"),
+  specialRequests: z
+    .string()
+    .max(500)
+    .optional()
+    .describe("Updated special requests"),
 });
 
 /**
@@ -112,9 +186,15 @@ export const UpdateReservationSchema = createMcpToolInputSchema(UpdateReservatio
  * REQUIRES CONFIRMATION
  */
 export const CancelReservationSchema = z.object({
-  reservationId: z.string().uuid().describe("The unique identifier of the reservation"),
+  reservationId: z
+    .string()
+    .uuid()
+    .describe("The unique identifier of the reservation"),
   reason: z.string().max(200).optional().describe("Reason for cancellation"),
-  refundDeposit: z.boolean().default(true).describe("Whether to refund any deposit"),
+  refundDeposit: z
+    .boolean()
+    .default(true)
+    .describe("Whether to refund any deposit"),
 });
 
 // ============================================================================
@@ -129,7 +209,11 @@ export const AddToWaitlistSchema = z.object({
   guestName: z.string().min(1).max(100).describe("Name of the guest"),
   guestEmail: z.string().email().describe("Email of the guest"),
   partySize: z.number().int().positive().max(100).describe("Number of guests"),
-  preferredTime: z.string().datetime().optional().describe("Preferred reservation time"),
+  preferredTime: z
+    .string()
+    .datetime()
+    .optional()
+    .describe("Preferred reservation time"),
 });
 
 /**
@@ -137,7 +221,10 @@ export const AddToWaitlistSchema = z.object({
  * Uses the status enum from the auto-generated WaitlistSchema
  */
 export const UpdateWaitlistStatusSchema = z.object({
-  waitlistId: z.string().uuid().describe("The unique identifier of the waitlist entry"),
+  waitlistId: z
+    .string()
+    .uuid()
+    .describe("The unique identifier of the waitlist entry"),
   status: WaitlistSchema.shape.status.describe("New status"),
 });
 
@@ -153,8 +240,16 @@ export const ValidateReservationSchema = z.object({
   tableId: z.string().uuid().describe("The ID of the table to validate"),
   guestEmail: z.string().email().describe("Email for the reservation"),
   partySize: z.number().int().positive().max(100).describe("Number of guests"),
-  startTime: z.string().datetime().describe("ISO 8601 start time for the reservation"),
-  durationMinutes: z.number().int().positive().optional().describe("Duration of the reservation"),
+  startTime: z
+    .string()
+    .datetime()
+    .describe("ISO 8601 start time for the reservation"),
+  durationMinutes: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Duration of the reservation"),
 });
 
 /**
@@ -162,18 +257,28 @@ export const ValidateReservationSchema = z.object({
  */
 export const ReservationValidationResultSchema = z.object({
   valid: z.boolean().describe("Whether the reservation is valid"),
-  conflicts: z.array(z.object({
-    reservationId: z.string().uuid(),
-    guestName: z.string(),
-    startTime: z.string().datetime(),
-    endTime: z.string().datetime(),
-  })).optional().describe("Conflicting reservations if any"),
+  conflicts: z
+    .array(
+      z.object({
+        reservationId: z.string().uuid(),
+        guestName: z.string(),
+        startTime: z.string().datetime(),
+        endTime: z.string().datetime(),
+      }),
+    )
+    .optional()
+    .describe("Conflicting reservations if any"),
   warnings: z.array(z.string()).optional().describe("Validation warnings"),
-  suggestedAlternatives: z.array(z.object({
-    tableId: z.string().uuid(),
-    tableNumber: z.string(),
-    startTime: z.string().datetime(),
-  })).optional().describe("Alternative options if validation fails"),
+  suggestedAlternatives: z
+    .array(
+      z.object({
+        tableId: z.string().uuid(),
+        tableNumber: z.string(),
+        startTime: z.string().datetime(),
+      }),
+    )
+    .optional()
+    .describe("Alternative options if validation fails"),
 });
 
 // ============================================================================
@@ -187,7 +292,10 @@ export const ReservationValidationResultSchema = z.object({
  */
 export const CheckAvailabilitySchema = z.object({
   restaurantId: z.string().uuid().describe("The internal ID of the restaurant"),
-  date: z.string().datetime().describe("ISO 8601 date/time for the reservation"),
+  date: z
+    .string()
+    .datetime()
+    .describe("ISO 8601 date/time for the reservation"),
   partySize: z.number().int().positive().describe("Number of guests"),
 });
 
@@ -197,19 +305,32 @@ export const CheckAvailabilitySchema = z.object({
  */
 export const BookTablestackReservationSchema = z.object({
   restaurantId: z.string().uuid().describe("The internal ID of the restaurant"),
-  tableId: z.string().uuid().describe("The ID of the table to book (can be combined like 'table1+table2')"),
+  tableId: z
+    .string()
+    .uuid()
+    .describe(
+      "The ID of the table to book (can be combined like 'table1+table2')",
+    ),
   guestName: z.string().min(1).max(100).describe("Name of the guest"),
   guestEmail: z.string().email().describe("Email address of the guest"),
   partySize: z.number().int().positive().max(100).describe("Number of guests"),
-  startTime: z.string().datetime().describe("ISO 8601 date/time for the reservation"),
-  is_confirmed: z.boolean().optional().describe("Whether the booking has been confirmed"),
+  startTime: z
+    .string()
+    .datetime()
+    .describe("ISO 8601 date/time for the reservation"),
+  is_confirmed: z
+    .boolean()
+    .optional()
+    .describe("Whether the booking has been confirmed"),
 });
 
 /**
  * DiscoverRestaurantSchema - TableStack MCP server tool
  */
 export const DiscoverRestaurantSchema = z.object({
-  restaurant_slug: z.string().describe("The slug/URL-friendly name of the restaurant"),
+  restaurant_slug: z
+    .string()
+    .describe("The slug/URL-friendly name of the restaurant"),
 });
 
 // ============================================================================
@@ -227,8 +348,12 @@ export type CancelReservation = z.infer<typeof CancelReservationSchema>;
 export type AddToWaitlist = z.infer<typeof AddToWaitlistSchema>;
 export type UpdateWaitlistStatus = z.infer<typeof UpdateWaitlistStatusSchema>;
 export type ValidateReservation = z.infer<typeof ValidateReservationSchema>;
-export type ReservationValidationResult = z.infer<typeof ReservationValidationResultSchema>;
+export type ReservationValidationResult = z.infer<
+  typeof ReservationValidationResultSchema
+>;
 // TableStack MCP server specific types
 export type CheckAvailability = z.infer<typeof CheckAvailabilitySchema>;
-export type BookTablestackReservation = z.infer<typeof BookTablestackReservationSchema>;
+export type BookTablestackReservation = z.infer<
+  typeof BookTablestackReservationSchema
+>;
 export type DiscoverRestaurant = z.infer<typeof DiscoverRestaurantSchema>;

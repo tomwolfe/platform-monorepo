@@ -6,7 +6,7 @@
  * @see Phase 1.1: Testing Infrastructure
  */
 
-import { vi, beforeEach, afterEach, afterAll } from 'vitest';
+import { vi, beforeEach, afterEach, afterAll } from "vitest";
 
 // ============================================================================
 // MOCKS - MUST BE HOISTED BEFORE IMPORTS
@@ -15,12 +15,12 @@ import { vi, beforeEach, afterEach, afterAll } from 'vitest';
 /**
  * Mock Next.js server modules
  */
-vi.mock('next/server', async (importActual) => {
+vi.mock("next/server", async (importActual) => {
   const actual = await importActual();
   return {
     ...(actual as any),
-    NextRequest: function(url: string | URL, init?: RequestInit) {
-      return new Request(typeof url === 'string' ? url : url.toString(), init);
+    NextRequest: function (url: string | URL, init?: RequestInit) {
+      return new Request(typeof url === "string" ? url : url.toString(), init);
     },
     NextResponse: {
       json: vi.fn((data: any, init?: ResponseInit) => {
@@ -28,7 +28,7 @@ vi.mock('next/server', async (importActual) => {
           ...init,
           headers: {
             ...init?.headers,
-            'content-type': 'application/json',
+            "content-type": "application/json",
           },
         });
       }),
@@ -47,16 +47,25 @@ vi.mock('next/server', async (importActual) => {
 /**
  * Mock @tablestack/lib/auth for integration tests
  */
-vi.mock('@tablestack/lib/auth', () => ({
-  validateRequest: vi.fn(() => Promise.resolve({
-    context: { restaurantId: 'test-restaurant', isInternal: true }
-  })),
+vi.mock("@tablestack/lib/auth", () => ({
+  validateRequest: vi.fn(() =>
+    Promise.resolve({
+      context: { restaurantId: "test-restaurant", isInternal: true },
+    }),
+  ),
+}));
+
+/**
+ * Mock @repo/shared/middleware/serverless-timeout to avoid next/server import issues
+ */
+vi.mock("@repo/shared/middleware/serverless-timeout", () => ({
+  withServerlessTimeout: vi.fn((handler: any) => handler),
 }));
 
 /**
  * Mock @tablestack/lib/notifications for integration tests
  */
-vi.mock('@tablestack/lib/notifications', () => ({
+vi.mock("@tablestack/lib/notifications", () => ({
   NotifyService: {
     broadcast: vi.fn(() => Promise.resolve()),
     notifyExternalDelivery: vi.fn(() => Promise.resolve()),
@@ -68,11 +77,11 @@ vi.mock('@tablestack/lib/notifications', () => ({
 /**
  * Mock @tablestack/lib/redis for integration tests
  */
-vi.mock('@tablestack/lib/redis', () => ({
+vi.mock("@tablestack/lib/redis", () => ({
   redis: {
     get: vi.fn(() => Promise.resolve(null)),
-    set: vi.fn(() => Promise.resolve('OK')),
-    setex: vi.fn(() => Promise.resolve('OK')),
+    set: vi.fn(() => Promise.resolve("OK")),
+    setex: vi.fn(() => Promise.resolve("OK")),
     del: vi.fn(() => Promise.resolve(0)),
     lpush: vi.fn(() => Promise.resolve(1)),
     rpush: vi.fn(() => Promise.resolve(1)),
@@ -85,25 +94,25 @@ vi.mock('@tablestack/lib/redis', () => ({
  * Mock @repo/database for integration tests
  * FIX: Properly mock Drizzle's transaction pattern
  */
-vi.mock('@repo/database', async () => {
-  const actual = await vi.importActual('@repo/database');
-  
+vi.mock("@repo/database", async () => {
+  const actual = await vi.importActual("@repo/database");
+
   // Create mock query objects
   const mockRestaurantsQuery = {
     findFirst: vi.fn(),
     findMany: vi.fn(),
   };
-  
+
   const mockRestaurantReservationsQuery = {
     findFirst: vi.fn(),
     findMany: vi.fn(),
   };
-  
+
   const mockRestaurantTablesQuery = {
     findFirst: vi.fn(),
     findMany: vi.fn(),
   };
-  
+
   const mockGuestProfilesQuery = {
     findFirst: vi.fn(),
     findMany: vi.fn(),
@@ -171,12 +180,12 @@ vi.mock('@repo/database', async () => {
       }),
     })),
     restaurants: {
-      apiKey: 'apiKey',
-      id: 'id',
+      apiKey: "apiKey",
+      id: "id",
     },
     restaurantReservations: {
-      verificationToken: 'verificationToken',
-      id: 'id',
+      verificationToken: "verificationToken",
+      id: "id",
     },
     eq: vi.fn(),
   };
@@ -186,7 +195,7 @@ vi.mock('@repo/database', async () => {
 // IMPORTS (after mocks)
 // ============================================================================
 
-import { cleanupTestDatabase } from '../test/setup';
+import { cleanupTestDatabase } from "../test/setup";
 
 // ============================================================================
 // GLOBAL TIMEOUT CONFIGURATION
@@ -203,15 +212,17 @@ vi.setConfig({
 // ============================================================================
 
 // Set test environment variables
-process.env.NODE_ENV = 'test';
-process.env.TEST_DATABASE_URL = process.env.TEST_DATABASE_URL || 'postgresql://test:test@localhost:5432/test_db';
-process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
-process.env.REDIS_URL = process.env.REDIS_URL || 'http://localhost:6379';
+process.env.NODE_ENV = "test";
+process.env.TEST_DATABASE_URL =
+  process.env.TEST_DATABASE_URL ||
+  "postgresql://test:test@localhost:5432/test_db";
+process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
+process.env.REDIS_URL = process.env.REDIS_URL || "http://localhost:6379";
 
 // Mock sensitive environment variables for tests
-process.env.INTERNAL_SYSTEM_KEY = 'test-system-key';
-process.env.UPSTASH_REDIS_REST_URL = 'http://localhost:6379';
-process.env.UPSTASH_REDIS_REST_TOKEN = 'test-token';
+process.env.INTERNAL_SYSTEM_KEY = "test-system-key";
+process.env.UPSTASH_REDIS_REST_URL = "http://localhost:6379";
+process.env.UPSTASH_REDIS_REST_TOKEN = "test-token";
 
 // ============================================================================
 // TEST CLEANUP
@@ -233,7 +244,7 @@ afterAll(async () => {
     await cleanupTestDatabase();
   } catch (error) {
     // Ignore cleanup errors in test environment
-    console.warn('Test database cleanup skipped:', error);
+    console.warn("Test database cleanup skipped:", error);
   }
 });
 

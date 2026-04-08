@@ -21,7 +21,6 @@
 export * from "./errors";
 export {
   ApiError,
-  withApiErrorHandler,
   type ApiErrorOptions,
   type ApiErrorResponse,
   type ErrorCategory,
@@ -107,6 +106,7 @@ export {
   BaseConfigSchema,
   ServiceUrlsSchema,
   FullConfigSchema,
+  AppConfig,
 } from "./config";
 export type { FullConfig } from "./config";
 
@@ -120,6 +120,7 @@ export type { DatabaseSchema } from "./types/database";
 // CIRCUIT BREAKER (Isomorphic types & error classes)
 // ============================================================================
 export {
+  CircuitBreaker,
   CircuitBreakerOpenError,
   type CircuitBreakerConfig,
   type CircuitBreakerStats,
@@ -128,9 +129,29 @@ export {
 export type { CircuitState } from "./services/circuit-breaker";
 
 // ============================================================================
+// REDIS (Client & utilities)
+// ============================================================================
+export {
+  getRedisClient,
+  getRedisConfig,
+  ServiceNamespace,
+  getNamespacePrefix,
+} from "./redis";
+export { getMemoryClient, MemoryClient } from "./redis/memory";
+
+// ============================================================================
 // PRIVACY & PII SCRUBBING (Isomorphic)
 // ============================================================================
 export * from "./services/privacy-gateway";
+
+// ============================================================================
+// MIDDLEWARE (Server-side utilities - use with care in client contexts)
+// ============================================================================
+export {
+  withCache,
+  withCacheMiddleware,
+  type CacheConfig,
+} from "./middleware/cache-middleware";
 
 // ============================================================================
 // WEB3 / CRYPTO - ISOMORPHIC SCHEMAS ONLY

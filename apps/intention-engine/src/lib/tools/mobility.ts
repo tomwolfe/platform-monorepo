@@ -616,3 +616,6 @@ export const routeEstimateToolDefinition: ToolDefinitionMetadata = {
     requests_per_hour: 1000,
   },
 };
+
+// Alias export for test compatibility
+export { mobility_request as request_ride };

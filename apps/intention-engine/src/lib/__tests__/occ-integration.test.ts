@@ -1,11 +1,11 @@
 /**
  * OCC (Optimistic Concurrency Control) Integration Tests
- * 
+ *
  * Tests the "Ghost Re-plan" race condition prevention:
  * - QStash retry and user follow-up arriving simultaneously
  * - Both lambdas read state, modify it, and write back
  * - OCC with automatic rebase prevents split-brain state
- * 
+ *
  * @package @repo/shared
  * @since 1.1.0
  */
@@ -39,12 +39,23 @@ vi.mock("@repo/shared/redis", () => {
       }
     }
 
-    async set(key: string, value: string | unknown, options?: { ex?: number }): Promise<"OK" | null> {
-      this.store.set(key, typeof value === "string" ? value : JSON.stringify(value));
+    async set(
+      key: string,
+      value: string | unknown,
+      options?: { ex?: number },
+    ): Promise<"OK" | null> {
+      this.store.set(
+        key,
+        typeof value === "string" ? value : JSON.stringify(value),
+      );
       return "OK";
     }
 
-    async setex(key: string, seconds: number, value: string): Promise<"OK" | null> {
+    async setex(
+      key: string,
+      seconds: number,
+      value: string,
+    ): Promise<"OK" | null> {
       this.store.set(key, value);
       return "OK";
     }
@@ -58,12 +69,16 @@ vi.mock("@repo/shared/redis", () => {
     }
 
     // Simplified eval: interprets Lua scripts used by OCC (CAS and delta scripts)
-    async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
+    async eval(
+      script: string,
+      keys: string[],
+      args: string[],
+    ): Promise<unknown> {
       const store = this.store;
       const key = keys[0];
 
       // Handle ATOMIC_CAS_SCRIPT (Compare-And-Swap)
-      if (script.includes('expectedVersion') && script.includes('newState')) {
+      if (script.includes("expectedVersion") && script.includes("newState")) {
         const expectedVersion = args[0];
         const newState = args[1];
         const newVersion = parseInt(args[2], 10);
@@ -77,10 +92,15 @@ vi.mock("@repo/shared/redis", () => {
             const decoded = JSON.parse(current);
             currentVersion = decoded.version ?? decoded._version ?? 0;
             currentState = current;
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
 
-        if (expectedVersion !== "any" && String(currentVersion) !== expectedVersion) {
+        if (
+          expectedVersion !== "any" &&
+          String(currentVersion) !== expectedVersion
+        ) {
           // Conflict detected - return current state for rebase
           return [0, currentVersion, currentState || "null"];
         }
@@ -90,7 +110,10 @@ vi.mock("@repo/shared/redis", () => {
           JSON.parse(newState); // Validate JSON
         } catch {
           // If newState isn't valid JSON, wrap it
-          store.set(key, JSON.stringify({ value: newState, version: newVersion }));
+          store.set(
+            key,
+            JSON.stringify({ value: newState, version: newVersion }),
+          );
           return [1, newVersion, store.get(key)!];
         }
         store.set(key, newState);
@@ -98,7 +121,7 @@ vi.mock("@repo/shared/redis", () => {
       }
 
       // Handle ATOMIC_DELTA_SCRIPT
-      if (script.includes('deltaJson')) {
+      if (script.includes("deltaJson")) {
         const deltaJson = JSON.parse(args[0]);
         const newVersion = parseInt(args[1], 10);
 
@@ -123,16 +146,50 @@ vi.mock("@repo/shared/redis", () => {
       return null;
     }
 
-    async zadd(_key: string, _member: { score: number; value: string }): Promise<number> { return 1; }
-    async zremrangebyscore(_key: string, _min: number, _max: number): Promise<number> { return 0; }
-    async zcard(_key: string): Promise<number> { return 0; }
-    async zrange(_key: string, _start: number, _end: number): Promise<string[]> { return []; }
-    async incr(_key: string): Promise<number> { return 1; }
-    async expire(_key: string, _seconds: number): Promise<number> { return 1; }
-    async keys(_pattern: string): Promise<string[]> { return Array.from(this.store.keys()); }
-    async pipeline() { return this; }
-    async multi() { return this; }
-    async scan(_cursor: number, _options?: { match?: string }): Promise<[string, string[]]> { return ["0", Array.from(this.store.keys())]; }
+    async zadd(
+      _key: string,
+      _member: { score: number; value: string },
+    ): Promise<number> {
+      return 1;
+    }
+    async zremrangebyscore(
+      _key: string,
+      _min: number,
+      _max: number,
+    ): Promise<number> {
+      return 0;
+    }
+    async zcard(_key: string): Promise<number> {
+      return 0;
+    }
+    async zrange(
+      _key: string,
+      _start: number,
+      _end: number,
+    ): Promise<string[]> {
+      return [];
+    }
+    async incr(_key: string): Promise<number> {
+      return 1;
+    }
+    async expire(_key: string, _seconds: number): Promise<number> {
+      return 1;
+    }
+    async keys(_pattern: string): Promise<string[]> {
+      return Array.from(this.store.keys());
+    }
+    async pipeline() {
+      return this;
+    }
+    async multi() {
+      return this;
+    }
+    async scan(
+      _cursor: number,
+      _options?: { match?: string },
+    ): Promise<[string, string[]]> {
+      return ["0", Array.from(this.store.keys())];
+    }
 
     // Expose store for test cleanup
     static resetStore() {
@@ -153,8 +210,17 @@ vi.mock("@repo/shared/redis", () => {
   };
 });
 
-import { getRedisClient, ServiceNamespace, getMemoryClient } from "@repo/shared";
-import { AtomicStateRebaser, createAtomicStateRebaser, atomicUpdateState, createWorkflowStateRebaser } from "@repo/shared";
+import {
+  getRedisClient,
+  ServiceNamespace,
+  getMemoryClient,
+} from "@repo/shared";
+import {
+  AtomicStateRebaser,
+  createAtomicStateRebaser,
+  atomicUpdateState,
+  createWorkflowStateRebaser,
+} from "@repo/shared/occ-rebase";
 
 // ============================================================================
 // TEST HELPERS
@@ -231,11 +297,14 @@ describe("AtomicStateRebaser", () => {
         const currentState = await redis.get<TestState>(testKey);
         if (currentState) {
           // Write with incremented version (simulating concurrent writer)
-          await redis.set(testKey, JSON.stringify({
-            ...currentState,
-            counter: currentState.counter + 100,
-            version: currentState.version! + 1,
-          }));
+          await redis.set(
+            testKey,
+            JSON.stringify({
+              ...currentState,
+              counter: currentState.counter + 100,
+              version: currentState.version! + 1,
+            }),
+          );
         }
       };
 
@@ -248,7 +317,7 @@ describe("AtomicStateRebaser", () => {
           counter: state.counter + 1,
           data: "rebased",
         }),
-        { maxRetries: 3, baseDelayMs: 50, debug: false }
+        { maxRetries: 3, baseDelayMs: 50, debug: false },
       );
 
       // Should succeed via rebase (read latest state, re-apply our delta)
@@ -267,8 +336,13 @@ describe("AtomicStateRebaser", () => {
       let conflictCount = 0;
 
       // Patch eval to always cause conflicts during retry window
-      const conflictEval = async function(this: any, script: string, keys: string[], args: string[]) {
-        if (script.includes('expectedVersion') && script.includes('newState')) {
+      const conflictEval = async function (
+        this: any,
+        script: string,
+        keys: string[],
+        args: string[],
+      ) {
+        if (script.includes("expectedVersion") && script.includes("newState")) {
           conflictCount++;
           // Force conflict on first N attempts
           if (conflictCount <= 5) {
@@ -278,7 +352,9 @@ describe("AtomicStateRebaser", () => {
               try {
                 const decoded = JSON.parse(current);
                 currentVersion = (decoded.version ?? decoded._version ?? 0) + 1; // Always ahead
-              } catch { /* ignore */ }
+              } catch {
+                /* ignore */
+              }
             }
             return [0, currentVersion, current || "null"];
           }
@@ -291,7 +367,7 @@ describe("AtomicStateRebaser", () => {
       try {
         const result = await rebaser.update(
           (state) => ({ counter: state.counter + 1 }),
-          { maxRetries: 2, baseDelayMs: 10, debug: false }
+          { maxRetries: 2, baseDelayMs: 10, debug: false },
         );
 
         // Should fail due to max retries exceeded
@@ -330,19 +406,22 @@ describe("AtomicStateRebaser", () => {
       try {
         // Force conflicts
         const conflictOnEveryAttempt = async () => {
-          await new Promise(resolve => setTimeout(resolve, 10));
+          await new Promise((resolve) => setTimeout(resolve, 10));
           const currentState = await redis.get<TestState>(testKey);
           if (currentState) {
-            await redis.set(testKey, JSON.stringify({
-              ...currentState,
-              version: currentState.version! + 1,
-            }));
+            await redis.set(
+              testKey,
+              JSON.stringify({
+                ...currentState,
+                version: currentState.version! + 1,
+              }),
+            );
           }
         };
 
         const updatePromise = rebaser.update(
           (state) => ({ counter: state.counter + 1 }),
-          { maxRetries: 3, baseDelayMs: 50 }
+          { maxRetries: 3, baseDelayMs: 50 },
         );
 
         // Trigger conflicts during retries
@@ -381,16 +460,19 @@ describe("AtomicStateRebaser", () => {
       setTimeout(async () => {
         const currentState = await redis.get<TestState>(testKey);
         if (currentState) {
-          await redis.set(testKey, JSON.stringify({
-            ...currentState,
-            version: currentState.version! + 1,
-          }));
+          await redis.set(
+            testKey,
+            JSON.stringify({
+              ...currentState,
+              version: currentState.version! + 1,
+            }),
+          );
         }
       }, 50);
 
       const result = await rebaser.applyDelta(
         { counter: 10 },
-        { maxRetries: 3, baseDelayMs: 50 }
+        { maxRetries: 3, baseDelayMs: 50 },
       );
 
       expect(result.success).toBe(true);
@@ -426,10 +508,9 @@ describe("atomicUpdateState()", () => {
   });
 
   it("should update state using convenience function", async () => {
-    const result = await atomicUpdateState<TestState>(
-      testKey,
-      (state) => ({ counter: state.counter + 5 })
-    );
+    const result = await atomicUpdateState<TestState>(testKey, (state) => ({
+      counter: state.counter + 5,
+    }));
 
     expect(result.success).toBe(true);
     expect(result.updatedState?.counter).toBe(5);
@@ -469,13 +550,10 @@ describe("MemoryClient.saveStateWithOCC()", () => {
   });
 
   it("should save state with OCC protection", async () => {
-    const result = await memory.saveStateWithOCC(
-      executionId,
-      {
-        status: "COMPLETED",
-        step_states: [{ step_id: "step1", status: "completed" }],
-      }
-    );
+    const result = await memory.saveStateWithOCC(executionId, {
+      status: "COMPLETED",
+      step_states: [{ step_id: "step1", status: "completed" }],
+    });
 
     expect(result.success).toBe(true);
     expect(result.version).toBe(2);
@@ -494,18 +572,21 @@ describe("MemoryClient.saveStateWithOCC()", () => {
       const key = `shared:task:${executionId}`;
       const currentState = await redis.get<any>(key);
       if (currentState) {
-        await redis.set(key, JSON.stringify({
-          ...currentState,
-          status: "MODIFIED_CONCURRENTLY",
-          version: currentState.version + 1,
-        }));
+        await redis.set(
+          key,
+          JSON.stringify({
+            ...currentState,
+            status: "MODIFIED_CONCURRENTLY",
+            version: currentState.version + 1,
+          }),
+        );
       }
     }, 50);
 
     const result = await memory.saveStateWithOCC(
       executionId,
       { status: "COMPLETED" },
-      { maxRetries: 3, baseDelayMs: 50, debug: false }
+      { maxRetries: 3, baseDelayMs: 50, debug: false },
     );
 
     expect(result.success).toBe(true);
@@ -514,10 +595,9 @@ describe("MemoryClient.saveStateWithOCC()", () => {
 
   it("should fail gracefully when state doesn't exist", async () => {
     const nonExistentId = crypto.randomUUID();
-    const result = await memory.saveStateWithOCC(
-      nonExistentId,
-      { status: "COMPLETED" }
-    );
+    const result = await memory.saveStateWithOCC(nonExistentId, {
+      status: "COMPLETED",
+    });
 
     expect(result.success).toBe(false);
     expect(result.error).toBe("State does not exist");
@@ -529,17 +609,20 @@ describe("MemoryClient.saveStateWithOCC()", () => {
       const key = `shared:task:${executionId}`;
       const currentState = await redis.get<any>(key);
       if (currentState) {
-        await redis.set(key, JSON.stringify({
-          ...currentState,
-          version: currentState.version + 1,
-        }));
+        await redis.set(
+          key,
+          JSON.stringify({
+            ...currentState,
+            version: currentState.version + 1,
+          }),
+        );
       }
     }, 20);
 
     const result = await memory.saveStateWithOCC(
       executionId,
       { status: "COMPLETED" },
-      { maxRetries: 2, baseDelayMs: 10 }
+      { maxRetries: 2, baseDelayMs: 10 },
     );
 
     clearInterval(interval);
@@ -584,7 +667,10 @@ describe("createWorkflowStateRebaser()", () => {
 
     const result = await rebaser.update((state) => ({
       status: "COMPLETED",
-      step_states: [...state.step_states, { step_id: "test", status: "completed" }],
+      step_states: [
+        ...state.step_states,
+        { step_id: "test", status: "completed" },
+      ],
     }));
 
     expect(result.success).toBe(true);

@@ -34,6 +34,7 @@
     "./clients": "./src/clients.ts",
     "./redis/memory": "./src/redis/memory.ts",
     "./redis": "./src/redis.ts",
+    "./occ-rebase": "./src/services/occ-rebase.ts",
     "./types/database": "./src/types/database.ts",
     "./realtime/ably-auth": "./src/realtime/ably-auth.ts",
     "./health": "./src/middleware/health-check.ts",

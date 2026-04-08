@@ -26,6 +26,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getRedisClient, ServiceNamespace, withApiErrorHandler, formatApiSuccess, formatApiError } from '@repo/shared';
+import { getDb } from '@repo/database';
 import { rateLimitMiddleware } from '@/lib/middleware/rate-limiter';
 
 const redis = getRedisClient(ServiceNamespace.IE);
@@ -92,8 +93,9 @@ async function warmCacheHandler(req: NextRequest) {
 
       // Fetch from database
       try {
-        const { db, eq, restaurants, restaurantTables } = await import('@repo/database');
+        const { eq, restaurants, restaurantTables } = await import('@repo/database');
 
+        const db = getDb();
         const [restaurant, recentFailures] = await Promise.all([
           db.query.restaurants.findFirst({
             where: eq(restaurants.slug, restaurantRef),
@@ -106,7 +108,7 @@ async function warmCacheHandler(req: NextRequest) {
         }
 
         // Fetch table availability
-        const tables = await getDb().query.restaurantTables.findMany({
+        const tables = await db.query.restaurantTables.findMany({
           where: eq(restaurantTables.restaurantId, restaurant.id),
         });
 

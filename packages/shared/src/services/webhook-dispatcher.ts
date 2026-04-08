@@ -31,11 +31,11 @@ import { z } from "zod";
 import { Redis } from "@upstash/redis";
 import {
   IdempotencyService,
-  IDEMPOTENCY_KEY_HEADER,
   RealtimeService,
   Logger,
   withApiErrorHandler,
 } from "@repo/shared";
+import { IDEMPOTENCY_KEY_HEADER } from "@repo/shared/tracing";
 import { NextRequest, NextResponse } from "next/server";
 
 // ============================================================================

@@ -112,7 +112,7 @@ export async function getRealVendors(
 
 export async function getMenu(restaurantId: string): Promise<MenuItem[]> {
   try {
-    const products = await db
+    const products = await getDb()
       .select()
       .from(restaurantProducts)
       .where(eq(restaurantProducts.restaurantId, restaurantId));

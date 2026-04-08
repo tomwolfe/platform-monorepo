@@ -9,7 +9,7 @@
 
 import { createHash } from "crypto";
 import { Redis } from "@upstash/redis";
-import { getRedisClient, ServiceNamespace } from "../redis";
+import { getRedisClient, ServiceNamespace } from "./redis";
 
 // Default TTL: 60 seconds (short to prevent stale intents during burst traffic)
 const DEFAULT_TTL_SECONDS = 60;

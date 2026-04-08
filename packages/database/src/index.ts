@@ -22,6 +22,7 @@ export {
   orders,
   orderItems,
   outbox,
+  outboxDlq,
   processed_crypto_transactions,
   crypto_transaction_speedups,
   cryptoPrices,

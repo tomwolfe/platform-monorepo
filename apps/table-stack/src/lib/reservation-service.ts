@@ -185,7 +185,7 @@ export class ReservationService {
           combinedTableIds.length === 0)
       ) {
         const availableTable = await tx.execute(sql`
-          SELECT id, restaurant_id, "minCapacity", "maxCapacity", "isActive"
+          SELECT id, restaurant_id, min_capacity as "minCapacity", max_capacity as "maxCapacity", is_active as "isActive"
           FROM ${restaurantTables}
           WHERE ${restaurantTables.restaurantId} = ${restaurantId}
             AND ${restaurantTables.isActive} = true
@@ -209,7 +209,7 @@ export class ReservationService {
         }
 
         // Parse raw SQL result through Zod schema for type safety
-        const parsedTables = LockedTableArraySchema.parse(availableTable);
+        const parsedTables = LockedTableArraySchema.parse(availableTable.rows);
         const lockedTableId = parsedTables[0]?.id;
         if (!lockedTableId) {
           throw new ConflictError("No tables locked successfully");

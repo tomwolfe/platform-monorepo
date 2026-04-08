@@ -28,6 +28,29 @@ import { isNextRedirectError } from "./utils/next-errors";
 // ============================================================================
 
 /**
+ * ApiError - A specialized AppError for API route handlers.
+ * Provides convenient error formatting for HTTP API responses.
+ */
+export class ApiError extends AppError {
+  constructor(
+    code: string,
+    message: string,
+    statusCode?: number,
+    metadata?: Record<string, unknown>,
+  ) {
+    super(code, message, statusCode, metadata);
+    this.name = "ApiError";
+  }
+}
+
+export interface ApiErrorOptions {
+  code: string;
+  message: string;
+  statusCode?: number;
+  details?: Record<string, unknown>;
+}
+
+/**
  * Standardized API error response
  */
 export interface ApiErrorResponse {

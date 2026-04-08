@@ -13,35 +13,23 @@
 /**
  * Timing-safe secret comparison to prevent timing attacks.
  *
- * Uses SHA-256 hashing to normalize input lengths before comparison,
- * preventing length-based timing attacks that affect padding-based approaches.
+ * Uses a constant-time character comparison loop to prevent
+ * timing attacks that could exploit early-exit string comparison.
  *
- * @param provided - The secret provided by the client
- * @param expected - The expected secret stored on the server
- * @returns true if secrets match, false otherwise
+ * @param a - The first string to compare
+ * @param b - The second string to compare
+ * @returns true if strings match, false otherwise
  *
  * @example
  * ```typescript
  * const isValid = isTimingSafeEqual(providedSecret, process.env.API_SECRET);
  * ```
  */
-export function isTimingSafeEqual(provided: string, expected: string): boolean {
-  // Use Web Crypto API (available in Node.js 20+, Edge, and Browsers)
-  const encoder = new TextEncoder();
-  const providedData = encoder.encode(provided);
-  const expectedData = encoder.encode(expected);
-
-  // Hash both inputs using SubtleCrypto digestSync (synchronous)
-  const providedHash = globalThis.crypto.subtle.digestSync('SHA-256', providedData);
-  const expectedHash = globalThis.crypto.subtle.digestSync('SHA-256', expectedData);
-
-  // Compare fixed-length hashes in constant time
-  const providedBytes = new Uint8Array(providedHash);
-  const expectedBytes = new Uint8Array(expectedHash);
-
+export function isTimingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
   let diff = 0;
-  for (let i = 0; i < providedBytes.length; i++) {
-    diff |= providedBytes[i] ^ expectedBytes[i];
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   }
   return diff === 0;
 }

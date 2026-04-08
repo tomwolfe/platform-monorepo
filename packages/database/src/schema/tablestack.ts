@@ -309,6 +309,37 @@ export const outbox = pgTable('outbox', {
   };
 });
 
+/**
+ * outboxDlq - Dead Letter Queue for failed outbox events
+ * Stores events that exceeded max retry attempts for manual review and replay.
+ */
+export const outboxDlq = pgTable('outbox_dlq', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  // Original outbox event ID
+  originalOutboxId: uuid('original_outbox_id').notNull(),
+  // Event type (copied from outbox)
+  eventType: text('event_type').notNull(),
+  // Payload containing event data (JSON)
+  payload: jsonb('payload').notNull(),
+  // Error message explaining why this event was moved to DLQ
+  errorMessage: text('error_message').notNull(),
+  // Number of processing attempts before DLQ
+  attempts: integer('attempts').default(0).notNull(),
+  // Whether this DLQ event has been manually retried
+  isRetried: boolean('is_retried').default(false).notNull(),
+  // When this event was moved to DLQ
+  dlqCreatedAt: timestamp('dlq_created_at').defaultNow().notNull(),
+  // Who manually retried this event (if applicable)
+  retriedBy: text('retried_by'),
+  // When this event was manually retried
+  retriedAt: timestamp('retried_at'),
+}, (table) => {
+  return {
+    // Index for polling DLQ events for manual retry
+    isRetriedCreatedAtIdx: index('outbox_dlq_is_retried_created_at_idx').on(table.isRetried, table.dlqCreatedAt),
+  };
+});
+
 // ============================================================================
 // GLOBAL CRYPTO TRANSACTION REPLAY PREVENTION
 // Prevents front-running and replay attacks across all apps

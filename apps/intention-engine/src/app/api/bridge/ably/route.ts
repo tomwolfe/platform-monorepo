@@ -3,7 +3,7 @@ const redis = getRedisClient(ServiceNamespace.IE);
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { verifySignature } from "@repo/auth";
-import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, safeParseJson, withApiErrorHandler, AppError } from "@repo/shared";
+import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, safeParseJsonSync, withApiErrorHandler, AppError } from "@repo/shared";
 
 // Schema for Ably message payloads from TableStack
 const AblyStateSchema = z.object({
@@ -26,11 +26,7 @@ async function postHandler(req: Request) {
   if (signature && timestamp) {
      const isValid = await verifySignature(rawBody, signature, timestamp);
      if (!isValid) {
-       throw new AppError({
-         code: 'UNAUTHORIZED',
-         message: 'Unauthorized',
-         statusCode: 401,
-       });
+       throw new AppError('UNAUTHORIZED', 'Unauthorized', 401);
      }
   }
 
@@ -44,13 +40,9 @@ async function postHandler(req: Request) {
   }
 
   // 3. Safe JSON parsing
-  const parseResult = safeParseJson(rawBody);
+  const parseResult = safeParseJsonSync(rawBody);
   if (!parseResult.success) {
-    throw new AppError({
-      code: 'VALIDATION_ERROR',
-      message: `Invalid request body: ${parseResult.error}`,
-      statusCode: 400,
-    });
+    throw new AppError('VALIDATION_ERROR', `Invalid request body: ${parseResult.error}`, 400);
   }
 
   const body = parseResult.data;

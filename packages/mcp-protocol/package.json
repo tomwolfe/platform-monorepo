@@ -4,7 +4,9 @@
   "private": true,
   "exports": {
     ".": "./src/index.ts",
-    "./server": "./src/server.ts"
+    "./server": "./src/server.ts",
+    "./src/schemas/state-machine": "./src/schemas/state-machine.ts",
+    "./src/schemas/events": "./src/schemas/events.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",

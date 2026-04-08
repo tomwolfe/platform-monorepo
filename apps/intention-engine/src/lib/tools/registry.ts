@@ -11,12 +11,6 @@ import {
   cancelRideReturnSchema
 } from "./mobility";
 import {
-  reserve_table,
-  reserve_restaurant,
-  tableReservationReturnSchema,
-  reserveRestaurantToolDefinition
-} from "./booking";
-import {
   send_comm,
   communicationReturnSchema
 } from "./communication";
@@ -225,42 +219,6 @@ export const TOOLS: Map<string, ToolDefinition> = new Map([
       requests_per_hour: 100
     },
     execute: cancel_ride
-  }],
-  ["book_restaurant_table", {
-    name: "book_restaurant_table",
-    version: "1.0.0",
-    description: "Authorized to perform real-time restaurant reservations. Can finalize live table bookings with confirmation codes and full reservation authority.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        restaurant_name: { type: "string", description: "The name of the restaurant." },
-        restaurant_address: { type: "string", description: "The address of the restaurant." },
-        lat: { type: "number", description: "Latitude of the restaurant." },
-        lon: { type: "number", description: "Longitude of the restaurant." },
-        date: { type: "string", description: "The date of the reservation (ISO 8601 format)." },
-        time: { type: "string", description: "The time of the reservation (e.g., '19:00')." },
-        party_size: { type: "number", description: "Number of guests." },
-        contact_name: { type: "string", description: "The name for the reservation." },
-        contact_phone: { type: "string", description: "The contact phone for the reservation." },
-        contact_email: { type: "string", description: "The contact email for the reservation." },
-        special_requests: { type: "string", description: "Any special requests." },
-        is_confirmed: { type: "boolean", description: "Set to true only if the user has explicitly confirmed these details." }
-      },
-      required: ["restaurant_name", "date", "party_size", "time", "contact_name", "contact_phone"]
-    },
-    return_schema: tableReservationReturnSchema,
-    timeout_ms: 30000,
-    requires_confirmation: true,
-    category: "action",
-    rate_limits: {
-      requests_per_minute: 10,
-      requests_per_hour: 100
-    },
-    execute: reserve_table
-  }],
-  ["reserve_restaurant", {
-    ...reserveRestaurantToolDefinition,
-    execute: reserve_restaurant
   }],
   ["send_comm", {
     name: "send_comm",

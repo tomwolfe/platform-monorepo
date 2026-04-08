@@ -453,3 +453,17 @@ parentPort.postMessage({ type: 'ready' });
 export function createToolSandbox(config?: Partial<SandboxConfig>): ToolSandbox {
   return new ToolSandbox(config);
 }
+
+/**
+ * Writes the worker script to a temporary file and returns the path.
+ * Used to spawn sandbox workers dynamically.
+ */
+export function writeWorkerScript(): string {
+  const fs = require("fs");
+  const path = require("path");
+  const os = require("os");
+  const tmpDir = os.tmpdir();
+  const workerPath = path.join(tmpDir, `tool-sandbox-worker-${Date.now()}.js`);
+  fs.writeFileSync(workerPath, workerScript, "utf-8");
+  return workerPath;
+}

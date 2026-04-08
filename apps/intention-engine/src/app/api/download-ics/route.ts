@@ -25,22 +25,13 @@ async function getHandler(req: NextRequest) {
     try {
       events = JSON.parse(eventsParam);
     } catch (e) {
-      throw new AppError({
-        code: 'VALIDATION_ERROR',
-        message: 'Invalid events JSON',
-        statusCode: 400,
-      });
+      throw new AppError('VALIDATION_ERROR', 'Invalid events JSON', 400);
     }
   } else {
     const params = Object.fromEntries(searchParams.entries());
     const validatedParams = DownloadIcsSchema.safeParse(params);
     if (!validatedParams.success) {
-      throw new AppError({
-        code: 'VALIDATION_ERROR',
-        message: 'Invalid parameters',
-        statusCode: 400,
-        details: validatedParams.error.format(),
-      });
+      throw new AppError('VALIDATION_ERROR', 'Invalid parameters', 400, validatedParams.error.format());
     }
     events = [{
       title: validatedParams.data.title,

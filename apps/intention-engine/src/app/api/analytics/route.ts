@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRedisClient, ServiceNamespace, withApiErrorHandler, safeParseJson } from "@repo/shared";
+import { getRedisClient, ServiceNamespace, withApiErrorHandler, safeParseJsonSync } from "@repo/shared";
 import { AuditLog } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -37,10 +37,11 @@ async function getHandler(req: NextRequest) {
   for (const result of rawResults) {
     if (!result) continue;
 
-    const parseResult = safeParseJson<AuditLog>(typeof result === "string" ? result : JSON.stringify(result));
+    const parseResult = safeParseJsonSync<AuditLog>(typeof result === "string" ? result : JSON.stringify(result));
     if (!parseResult.success) continue;
 
     const log = parseResult.data;
+    if (!log) continue;
     totalLogs++;
 
     // Track tool failures
@@ -71,4 +72,7 @@ async function getHandler(req: NextRequest) {
   });
 }
 
-export const GET = withApiErrorHandler(getHandler, 'EXECUTION_FAILED');
+export const GET = withApiErrorHandler(getHandler, {
+  serviceName: "analytics",
+  includeStackTrace: process.env.NODE_ENV !== "production",
+});

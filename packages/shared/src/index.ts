@@ -51,6 +51,8 @@ export {
   generateSecurityHeaders,
   type SecurityHeadersConfig,
   type SecurityHeaderPreset,
+  securityHeadersMiddleware,
+  API_SECURITY_CONFIG,
 } from "./security-headers";
 
 // ============================================================================
@@ -167,6 +169,8 @@ export {
   withCacheMiddleware,
   type CacheConfig,
 } from "./middleware/cache-middleware";
+export { withRedlock } from "./services/redlock";
+export { isReplayAllowed, rollbackReplayGuard } from "./middleware/web3-replay-guard";
 
 // ============================================================================
 // WEB3 / CRYPTO - ISOMORPHIC SCHEMAS ONLY
@@ -174,6 +178,11 @@ export {
 export * from "./utils/erc20-abi";
 export * from "./utils/escrow-abi";
 export * from "./utils/next-errors"; // Next.js redirect/notFound error detection
+
+// ============================================================================
+// REALTIME (Ably pub/sub)
+// ============================================================================
+export { RealtimeService } from "./realtime";
 
 // JSON parsing utilities (isomorphic)
 export {
@@ -194,3 +203,12 @@ export {
   installGlobalErrorHandler, // SEC-01: Global error handler
   sanitizeErrorForExternal, // SEC-01: Error sanitization
 } from "./error-handler";
+
+// Idempotency Service (isomorphic interface)
+export { IdempotencyService } from "./idempotency";
+
+// API Error Utilities (isomorphic)
+export {
+  withServerActionHandler,
+  type ServerActionResponse,
+} from "./utils/api-error";

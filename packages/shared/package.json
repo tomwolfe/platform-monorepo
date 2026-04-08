@@ -39,7 +39,10 @@
     "./realtime/ably-auth": "./src/realtime/ably-auth.ts",
     "./health": "./src/middleware/health-check.ts",
     "./security-headers": "./src/security-headers.ts",
-    "./web3-replay-guard": "./src/middleware/web3-replay-guard.ts"
+    "./web3-replay-guard": "./src/middleware/web3-replay-guard.ts",
+    "./middleware/serverless-timeout": "./src/middleware/serverless-timeout.ts",
+    "./middleware/retry-with-backoff": "./src/middleware/retry-with-backoff.ts",
+    "./llm-cache": "./src/llm-cache.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

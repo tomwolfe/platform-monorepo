@@ -114,7 +114,4 @@ async function executeStepHandler(
   }
 }
 
-export const POST = withServerlessTimeout(
-  withQStashAuth(executeStepHandler),
-  8000,
-);
+export const POST = withQStashAuth(executeStepHandler);

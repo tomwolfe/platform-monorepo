@@ -256,7 +256,21 @@ export type {
 
 // Web3 / Crypto (server-side only)
 export * from "./utils/crypto";
-export * from "./utils/api-error";
+export {
+  formatApiError,
+  createApiError,
+  formatApiSuccess,
+  EngineErrorCodes,
+  type EngineErrorCode,
+  type FormatApiErrorOptions,
+  isErrorResponse,
+  isSuccessResponse,
+  type ServerActionResponse,
+  withServerActionHandler,
+  ApiErrorResponseSchema,
+  ApiSuccessResponseSchema,
+  validateErrorResponse,
+} from "./utils/api-error";
 export * from "./middleware/web3-replay-guard";
 
 // Phase 4.1: Provider Abstractions

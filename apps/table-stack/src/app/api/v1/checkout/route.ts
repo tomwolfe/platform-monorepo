@@ -2,7 +2,13 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, restaurantReservations, eq, restaurants } from "@repo/database";
 import { NotifyService } from "@tablestack/lib/notifications";
-import { createPublicClient, http, parseUnits } from "viem";
+import {
+  createPublicClient,
+  http,
+  parseUnits,
+  verifyTypedData,
+  type Hex,
+} from "viem";
 import { base } from "viem/chains";
 import { isValidTxHash } from "@repo/shared/utils/web3-verification";
 import {
@@ -11,6 +17,7 @@ import {
 } from "@repo/shared/utils/crypto-price";
 import {
   CheckoutRequestSchema,
+  CheckoutResponseSchema,
   validateRequest as validateZodRequest,
   errorResponse,
   successResponse,
@@ -26,6 +33,24 @@ import {
 export const runtime = "nodejs";
 
 const logger = new Logger({ serviceName: "table-stack" });
+
+// EIP-712 Domain for signature verification (must match client)
+const EIP712_DOMAIN = {
+  name: "TableStack",
+  version: "1",
+  chainId: 8453, // Base mainnet
+} as const;
+
+const EIP712_TYPES = {
+  Reservation: [
+    { name: "reservationId", type: "string" },
+    { name: "amount", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+  ],
+} as const;
+
+// Maximum deadline tolerance (5 minutes past expiration)
+const DEADLINE_TOLERANCE_SECONDS = 5 * 60;
 
 /**
  * Crypto Payment Verification Endpoint
@@ -73,6 +98,10 @@ async function postHandler(req: NextRequest) {
     paymentCurrency = "USDC",
     orderId,
     reservationId,
+    signature,
+    walletAddress,
+    chainId,
+    deadline,
   } = validation.data;
 
   // Use reservationId for table-stack (orderId is for open-delivery)
@@ -81,6 +110,107 @@ async function postHandler(req: NextRequest) {
   if (!targetReservationId) {
     return NextResponse.json(
       errorResponse("VALIDATION_ERROR", "reservationId is required"),
+      { status: 400 },
+    );
+  }
+
+  // ============================================================================
+  // EIP-712 SIGNATURE & DEADLINE VALIDATION
+  // ============================================================================
+
+  // Validate deadline (prevent expired signatures)
+  if (deadline) {
+    const now = Math.floor(Date.now() / 1000);
+    if (now > deadline + DEADLINE_TOLERANCE_SECONDS) {
+      return NextResponse.json(
+        errorResponse("VALIDATION_ERROR", "Signature has expired", {
+          details: {
+            deadline: new Date(deadline * 1000).toISOString(),
+            currentTime: new Date(now * 1000).toISOString(),
+          },
+        }),
+        { status: 400 },
+      );
+    }
+  }
+
+  // Validate chain ID matches Base (8453)
+  if (chainId && chainId !== 8453) {
+    return NextResponse.json(
+      errorResponse(
+        "VALIDATION_ERROR",
+        "Invalid chain ID. Must be Base (8453)",
+        {
+          details: { received: chainId, expected: 8453 },
+        },
+      ),
+      { status: 400 },
+    );
+  }
+
+  // Verify EIP-712 signature if provided
+  if (signature && walletAddress) {
+    try {
+      // Fetch deposit amount for signature verification
+      const depositUsdCentsForSig = reservation.depositAmount || 0;
+      const pricesForSig = await getCryptoPrices();
+
+      // Calculate expected crypto amount for signature verification
+      let amountToVerify: bigint;
+      if (paymentCurrency === "ETH") {
+        amountToVerify = await usdToCryptoBigInt(
+          BigInt(depositUsdCentsForSig),
+          "ETH",
+        );
+      } else {
+        amountToVerify = parseUnits(
+          (depositUsdCentsForSig / 100).toFixed(6),
+          6,
+        );
+      }
+
+      // Use deadline from request or calculate default
+      const deadlineToVerify =
+        deadline || Math.floor(Date.now() / 1000) + 15 * 60;
+
+      // Verify EIP-712 typed data signature
+      const isValidSignature = await verifyTypedData({
+        address: walletAddress as `0x${string}`,
+        signature: signature as `0x${string}`,
+        domain: {
+          name: EIP712_DOMAIN.name,
+          version: EIP712_DOMAIN.version,
+          chainId: EIP712_DOMAIN.chainId,
+        },
+        types: EIP712_TYPES,
+        primaryType: "Reservation",
+        message: {
+          reservationId: targetReservationId,
+          amount: amountToVerify,
+          deadline: BigInt(deadlineToVerify),
+        },
+      });
+
+      if (!isValidSignature) {
+        return NextResponse.json(
+          errorResponse("VALIDATION_ERROR", "Invalid EIP-712 signature"),
+          { status: 400 },
+        );
+      }
+    } catch (sigError) {
+      return NextResponse.json(
+        errorResponse("VALIDATION_ERROR", "Signature verification failed", {
+          details: {
+            error:
+              sigError instanceof Error ? sigError.message : "Unknown error",
+          },
+        }),
+        { status: 400 },
+      );
+    }
+  } else if (!signature) {
+    return NextResponse.json(
+      errorResponse("VALIDATION_ERROR", "EIP-712 signature is required"),
       { status: 400 },
     );
   }
@@ -264,15 +394,25 @@ async function postHandler(req: NextRequest) {
     txHash,
   });
 
-  return NextResponse.json(
-    successResponse(
-      {
-        txHash,
-        confirmations,
-      },
-      { message: "Crypto payment verified successfully" },
-    ),
+  // Build response and validate with CheckoutResponseSchema
+  const responseData = successResponse(
+    {
+      txHash,
+      confirmations,
+    },
+    { message: "Crypto payment verified successfully" },
   );
+
+  // Validate response structure before returning
+  const responseValidation = CheckoutResponseSchema.safeParse(responseData);
+  if (!responseValidation.success) {
+    logger.error("Checkout response validation failed", {
+      errors: responseValidation.error.flatten(),
+    });
+    // Still return the response, but log the validation error
+  }
+
+  return NextResponse.json(responseData);
 }
 
 export const POST = withApiErrorHandler(postHandler, "EXECUTION_FAILED");

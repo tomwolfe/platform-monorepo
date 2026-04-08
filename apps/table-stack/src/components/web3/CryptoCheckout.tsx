@@ -1,10 +1,32 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useBalance, useWriteContract, useReadContract, useSignMessage } from "wagmi";
-import { parseUnits, stringToHex, type Address, formatUnits } from "viem";
+import {
+  useAccount,
+  useSendTransaction,
+  useWaitForTransactionReceipt,
+  useBalance,
+  useWriteContract,
+  useReadContract,
+  useSignTypedData,
+} from "wagmi";
+import {
+  parseUnits,
+  stringToHex,
+  type Address,
+  formatUnits,
+  type Hex,
+} from "viem";
 import { base } from "viem/chains";
-import { Loader2, CheckCircle, AlertCircle, ArrowRight, Coins, Shield, DollarSign } from "lucide-react";
+import {
+  Loader2,
+  CheckCircle,
+  AlertCircle,
+  ArrowRight,
+  Coins,
+  Shield,
+  DollarSign,
+} from "lucide-react";
 import { useWeb3 } from "./Web3Provider";
 import { ERC20_ABI } from "@repo/shared/utils/erc20-abi";
 
@@ -13,10 +35,29 @@ interface CryptoCheckoutProps {
   depositAmount: number; // in USD
   restaurantWalletAddress: string;
   guestName: string;
-  onCheckoutComplete: (result: { success: boolean; txHash?: string; signature?: `0x${string}` }) => void;
+  onCheckoutComplete: (result: {
+    success: boolean;
+    txHash?: string;
+    signature?: `0x${string}`;
+  }) => void;
   onError: (error: string) => void;
   onCancel: () => void;
 }
+
+// EIP-712 Domain and Types for typed data signing
+const EIP712_DOMAIN = {
+  name: "TableStack",
+  version: "1",
+  chainId: 8453, // Base mainnet
+} as const;
+
+const TYPES = {
+  Reservation: [
+    { name: "reservationId", type: "string" },
+    { name: "amount", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+  ],
+} as const;
 
 /**
  * CryptoCheckout Component for Restaurant Reservations
@@ -37,19 +78,31 @@ export function CryptoCheckout({
 }: CryptoCheckoutProps) {
   const { address, chain } = useAccount();
   const { defaultChainId, usdcContractAddress } = useWeb3();
-  
-  // CRITICAL: Signature hook for front-running prevention
-  const { signMessage, data: signature, error: signatureError, isPending: isSigning } = useSignMessage();
-  
+
+  // CRITICAL: EIP-712 typed data signing for front-running prevention
+  const {
+    signTypedData,
+    data: signature,
+    error: signatureError,
+    isPending: isSigning,
+  } = useSignTypedData();
+
+  // Calculate deadline (15 minutes from now in seconds)
+  const deadline = Math.floor(Date.now() / 1000) + 15 * 60;
+
   const { data: balance } = useBalance({
     address,
     chainId: chain?.id || defaultChainId,
   });
 
   // State for payment currency and dynamic pricing
-  const [paymentCurrency, setPaymentCurrency] = useState<"USDC" | "ETH">("USDC");
+  const [paymentCurrency, setPaymentCurrency] = useState<"USDC" | "ETH">(
+    "USDC",
+  );
   const [ethPrice, setEthPrice] = useState<number | null>(null); // null until fetched; fail-closed
-  const [step, setStep] = useState<"review" | "signing" | "sending" | "confirming" | "completed" | "error">("review");
+  const [step, setStep] = useState<
+    "review" | "signing" | "sending" | "confirming" | "completed" | "error"
+  >("review");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
 
@@ -71,11 +124,20 @@ export function CryptoCheckout({
   }, []);
 
   // Calculate ETH amount (correctly converted from USD)
-  const depositEth = paymentCurrency === "ETH" && ethPrice !== null ? depositAmount / ethPrice : 0;
-  const depositWei = paymentCurrency === "ETH" && ethPrice !== null ? parseUnits(depositEth.toFixed(18), 18) : BigInt(0);
-  
+  const depositEth =
+    paymentCurrency === "ETH" && ethPrice !== null
+      ? depositAmount / ethPrice
+      : 0;
+  const depositWei =
+    paymentCurrency === "ETH" && ethPrice !== null
+      ? parseUnits(depositEth.toFixed(18), 18)
+      : BigInt(0);
+
   // Convert to USDC (6 decimals)
-  const depositUSDC = paymentCurrency === "USDC" ? parseUnits(depositAmount.toFixed(6), 6) : BigInt(0);
+  const depositUSDC =
+    paymentCurrency === "USDC"
+      ? parseUnits(depositAmount.toFixed(6), 6)
+      : BigInt(0);
 
   // Send transaction hook (for native ETH)
   const {
@@ -141,7 +203,8 @@ export function CryptoCheckout({
           });
         }
       } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : "Failed to send transaction";
+        const errorMsg =
+          err instanceof Error ? err.message : "Failed to send transaction";
         setErrorMessage(errorMsg);
         setStep("error");
       }
@@ -167,7 +230,10 @@ export function CryptoCheckout({
       setIsVerifying(true);
 
       // Calculate expected amount based on currency
-      const expectedAmount = paymentCurrency === "USDC" ? depositUSDC.toString() : depositWei.toString();
+      const expectedAmount =
+        paymentCurrency === "USDC"
+          ? depositUSDC.toString()
+          : depositWei.toString();
 
       // Call backend to verify transaction - include signature for verification
       fetch("/api/v1/checkout", {
@@ -186,7 +252,11 @@ export function CryptoCheckout({
           setIsVerifying(false);
           if (data.success) {
             setStep("completed");
-            onCheckoutComplete({ success: true, txHash: receipt.transactionHash, signature });
+            onCheckoutComplete({
+              success: true,
+              txHash: receipt.transactionHash,
+              signature,
+            });
           } else {
             setErrorMessage(data.message || "Verification failed");
             setStep("error");
@@ -198,7 +268,16 @@ export function CryptoCheckout({
           setStep("error");
         });
     }
-  }, [isConfirmed, receipt, reservationId, depositWei, depositUSDC, paymentCurrency, onCheckoutComplete, signature]);
+  }, [
+    isConfirmed,
+    receipt,
+    reservationId,
+    depositWei,
+    depositUSDC,
+    paymentCurrency,
+    onCheckoutComplete,
+    signature,
+  ]);
 
   // Handle errors - include contract errors for USDC
   useEffect(() => {
@@ -220,7 +299,9 @@ export function CryptoCheckout({
     } else {
       // Fail-closed: if ethPrice is null, cannot determine balance
       if (ethPrice === null) return false;
-      const balanceEth = parseFloat(formatUnits(balance.value, balance.decimals));
+      const balanceEth = parseFloat(
+        formatUnits(balance.value, balance.decimals),
+      );
       return balanceEth >= depositEth;
     }
   })();
@@ -228,14 +309,27 @@ export function CryptoCheckout({
   // CRITICAL: Handle signature and transaction flow
   const handlePay = () => {
     if (!hasSufficientBalance) {
-      setErrorMessage(`Insufficient ${paymentCurrency} balance for this transaction`);
+      setErrorMessage(
+        `Insufficient ${paymentCurrency} balance for this transaction`,
+      );
       setStep("error");
       return;
     }
-    // First step: Request signature of the reservationId (proves wallet ownership)
+    // First step: Request EIP-712 typed data signature (proves wallet ownership + binds reservation data)
     setStep("signing");
-    signMessage({ 
-      message: `TableStack Reservation: ${reservationId}`,
+
+    // Calculate amount in smallest units for signature
+    const amountToSign = paymentCurrency === "USDC" ? depositUSDC : depositWei;
+
+    signTypedData({
+      domain: EIP712_DOMAIN,
+      types: TYPES,
+      primaryType: "Reservation",
+      message: {
+        reservationId,
+        amount: amountToSign,
+        deadline: BigInt(deadline),
+      },
     });
   };
 
@@ -312,7 +406,9 @@ export function CryptoCheckout({
           <div className="flex justify-between items-center">
             <span className="text-gray-500">Deposit Amount</span>
             <div className="text-right">
-              <p className="text-xl font-black text-blue-600">${depositAmount.toFixed(2)}</p>
+              <p className="text-xl font-black text-blue-600">
+                ${depositAmount.toFixed(2)}
+              </p>
               <p className="text-xs text-gray-400">
                 {paymentCurrency === "USDC"
                   ? `≈ ${formatUnits(depositUSDC, 6)} USDC`
@@ -323,7 +419,8 @@ export function CryptoCheckout({
             </div>
           </div>
           <p className="text-xs text-gray-500 pt-2">
-            This deposit is sent directly to the restaurant's wallet and will be deducted from your final bill.
+            This deposit is sent directly to the restaurant's wallet and will be
+            deducted from your final bill.
           </p>
         </div>
 
@@ -332,9 +429,12 @@ export function CryptoCheckout({
           <div className="flex items-start gap-3">
             <Shield className="h-5 w-5 text-blue-600 mt-0.5" />
             <div className="flex-1">
-              <p className="text-sm font-semibold text-gray-900">Secure On-Chain Payment</p>
+              <p className="text-sm font-semibold text-gray-900">
+                Secure On-Chain Payment
+              </p>
               <p className="text-xs text-gray-600 mt-1">
-                Your payment is verified on the blockchain. Your reservation ID is cryptographically bound to the transaction to prevent fraud.
+                Your payment is verified on the blockchain. Your reservation ID
+                is cryptographically bound to the transaction to prevent fraud.
               </p>
             </div>
           </div>
@@ -342,9 +442,13 @@ export function CryptoCheckout({
 
         {/* Balance Check */}
         {paymentCurrency === "USDC" && usdcBalance ? (
-          <div className={`flex justify-between items-center text-sm p-3 rounded-lg ${
-            hasSufficientBalance ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
-          }`}>
+          <div
+            className={`flex justify-between items-center text-sm p-3 rounded-lg ${
+              hasSufficientBalance
+                ? "bg-green-50 text-green-700"
+                : "bg-red-50 text-red-700"
+            }`}
+          >
             <span className="flex items-center gap-2">
               {hasSufficientBalance ? (
                 <CheckCircle className="h-4 w-4" />
@@ -357,22 +461,31 @@ export function CryptoCheckout({
               {formatUnits(usdcBalance, 6)} USDC
             </span>
           </div>
-        ) : balance && (
-          <div className={`flex justify-between items-center text-sm p-3 rounded-lg ${
-            hasSufficientBalance ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
-          }`}>
-            <span className="flex items-center gap-2">
-              {hasSufficientBalance ? (
-                <CheckCircle className="h-4 w-4" />
-              ) : (
-                <AlertCircle className="h-4 w-4" />
-              )}
-              ETH Balance
-            </span>
-            <span className="font-semibold">
-              {parseFloat(formatUnits(balance.value, balance.decimals)).toFixed(4)} {balance.symbol}
-            </span>
-          </div>
+        ) : (
+          balance && (
+            <div
+              className={`flex justify-between items-center text-sm p-3 rounded-lg ${
+                hasSufficientBalance
+                  ? "bg-green-50 text-green-700"
+                  : "bg-red-50 text-red-700"
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                {hasSufficientBalance ? (
+                  <CheckCircle className="h-4 w-4" />
+                ) : (
+                  <AlertCircle className="h-4 w-4" />
+                )}
+                ETH Balance
+              </span>
+              <span className="font-semibold">
+                {parseFloat(
+                  formatUnits(balance.value, balance.decimals),
+                ).toFixed(4)}{" "}
+                {balance.symbol}
+              </span>
+            </div>
+          )
         )}
 
         {/* Error State */}
@@ -387,26 +500,36 @@ export function CryptoCheckout({
         )}
 
         {/* ETH Price Unavailable Warning */}
-        {step === "review" && paymentCurrency === "ETH" && ethPrice === null && (
-          <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl flex items-start gap-3">
-            <AlertCircle className="h-5 w-5 mt-0.5" />
-            <div>
-              <p className="font-semibold text-sm">Price Unavailable</p>
-              <p className="text-xs mt-1">Unable to fetch live ETH price. Please try again or use USDC.</p>
+        {step === "review" &&
+          paymentCurrency === "ETH" &&
+          ethPrice === null && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 mt-0.5" />
+              <div>
+                <p className="font-semibold text-sm">Price Unavailable</p>
+                <p className="text-xs mt-1">
+                  Unable to fetch live ETH price. Please try again or use USDC.
+                </p>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
         {/* Action Buttons */}
         {step === "review" && (
           <>
             <button
               onClick={handlePay}
-              disabled={!hasSufficientBalance || !address || (paymentCurrency === "ETH" && ethPrice === null)}
+              disabled={
+                !hasSufficientBalance ||
+                !address ||
+                (paymentCurrency === "ETH" && ethPrice === null)
+              }
               className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3.5 rounded-lg font-bold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
             >
               <DollarSign className="h-5 w-5" />
-              {paymentCurrency === "ETH" && ethPrice === null ? "Price Unavailable" : `Pay Deposit with ${paymentCurrency}`}
+              {paymentCurrency === "ETH" && ethPrice === null
+                ? "Price Unavailable"
+                : `Pay Deposit with ${paymentCurrency}`}
               <ArrowRight className="h-5 w-5" />
             </button>
             <button
@@ -452,7 +575,9 @@ export function CryptoCheckout({
             className="w-full bg-blue-50 text-blue-700 py-3.5 rounded-lg font-bold flex items-center justify-center gap-2 border border-blue-200"
           >
             <Loader2 className="animate-spin h-5 w-5" />
-            {isVerifying ? "Verifying on Blockchain..." : "Waiting for Confirmation..."}
+            {isVerifying
+              ? "Verifying on Blockchain..."
+              : "Waiting for Confirmation..."}
           </button>
         )}
 

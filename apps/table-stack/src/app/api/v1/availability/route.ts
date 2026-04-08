@@ -288,7 +288,15 @@ async function getAvailableTables(
       : sql`1=1`;
 
   const availableIndividualTables = await db
-    .select()
+    .select({
+      id: restaurantTables.id,
+      tableNumber: restaurantTables.tableNumber,
+      maxCapacity: restaurantTables.maxCapacity,
+      minCapacity: restaurantTables.minCapacity,
+      tableType: restaurantTables.tableType,
+      xPos: restaurantTables.xPos,
+      yPos: restaurantTables.yPos,
+    })
     .from(restaurantTables)
     .where(
       and(
@@ -310,7 +318,12 @@ async function getAvailableTables(
   // Step 3: If no individual table fits, try joining two tables
   // OPTIMIZATION: Only fetch vacant tables with sufficient combined capacity
   const vacantTables = await db
-    .select()
+    .select({
+      id: restaurantTables.id,
+      tableNumber: restaurantTables.tableNumber,
+      maxCapacity: restaurantTables.maxCapacity,
+      minCapacity: restaurantTables.minCapacity,
+    })
     .from(restaurantTables)
     .where(
       and(

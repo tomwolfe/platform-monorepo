@@ -18,7 +18,7 @@
  * @see Phase 1.3: API Validation & Standardization
  */
 
-import { z } from 'zod';
+import { z } from "zod";
 
 // ============================================================================
 // COMMON SCHEMAS
@@ -27,22 +27,22 @@ import { z } from 'zod';
 /**
  * UUID schema for IDs
  */
-export const UUIDSchema = z.string().uuid('Invalid UUID format');
+export const UUIDSchema = z.string().uuid("Invalid UUID format");
 
 /**
  * Email schema with validation
  */
 export const EmailSchema = z
   .string()
-  .email('Invalid email format')
-  .max(255, 'Email must be less than 255 characters');
+  .email("Invalid email format")
+  .max(255, "Email must be less than 255 characters");
 
 /**
  * Phone number schema (international format)
  */
 export const PhoneSchema = z
   .string()
-  .regex(/^\+?[1-9]\d{1,14}$/, 'Invalid phone number format')
+  .regex(/^\+?[1-9]\d{1,14}$/, "Invalid phone number format")
   .optional();
 
 /**
@@ -52,7 +52,7 @@ export const DateTimeSchema = z
   .string()
   .refine(
     (val) => !isNaN(Date.parse(val)),
-    'Invalid date-time format. Use ISO 8601 format (e.g., 2024-01-15T10:30:00Z)'
+    "Invalid date-time format. Use ISO 8601 format (e.g., 2024-01-15T10:30:00Z)",
   );
 
 /**
@@ -60,16 +60,16 @@ export const DateTimeSchema = z
  */
 export const PositiveIntSchema = z
   .number()
-  .int('Must be an integer')
-  .positive('Must be a positive number');
+  .int("Must be an integer")
+  .positive("Must be a positive number");
 
 /**
  * Non-negative integer schema
  */
 export const NonNegativeIntSchema = z
   .number()
-  .int('Must be an integer')
-  .nonnegative('Must be non-negative');
+  .int("Must be an integer")
+  .nonnegative("Must be non-negative");
 
 /**
  * Pagination schema
@@ -97,18 +97,25 @@ export const ReserveRequestSchema = z.object({
   combinedTableIds: z.array(UUIDSchema).optional(),
 
   // Guest information
-  guestName: z.string().min(1).max(255, 'Guest name must be less than 255 characters'),
+  guestName: z
+    .string()
+    .min(1)
+    .max(255, "Guest name must be less than 255 characters"),
   guestEmail: EmailSchema,
   guestPhone: PhoneSchema,
 
   // Reservation details
-  partySize: z.number().int().min(1).max(50, 'Party size must be between 1 and 50'),
+  partySize: z
+    .number()
+    .int()
+    .min(1)
+    .max(50, "Party size must be between 1 and 50"),
   startTime: DateTimeSchema,
   duration: z.number().int().min(30).max(300).optional().default(90),
 
   // Special requests
   specialRequests: z.string().max(1000).optional(),
-  occasion: z.enum(['birthday', 'anniversary', 'business', 'other']).optional(),
+  occasion: z.enum(["birthday", "anniversary", "business", "other"]).optional(),
 
   // Metadata
   metadata: z.record(z.unknown()).optional(),
@@ -123,17 +130,21 @@ export const ReserveRequestSchema = z.object({
  */
 export const ReserveResponseSchema = z.object({
   success: z.boolean(),
-  data: z.object({
-    message: z.string(),
-    bookingId: UUIDSchema,
-    verificationToken: z.string().optional(),
-    verificationUrl: z.string().url().optional(),
-  }).optional(),
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
-    details: z.record(z.unknown()).optional(),
-  }).optional(),
+  data: z
+    .object({
+      message: z.string(),
+      bookingId: UUIDSchema,
+      verificationToken: z.string().optional(),
+      verificationUrl: z.string().url().optional(),
+    })
+    .optional(),
+  error: z
+    .object({
+      code: z.string(),
+      message: z.string(),
+      details: z.record(z.unknown()).optional(),
+    })
+    .optional(),
   timestamp: DateTimeSchema,
   traceId: UUIDSchema.optional(),
 });
@@ -178,20 +189,28 @@ export const TableAvailabilitySchema = z.object({
  */
 export const AvailabilityResponseSchema = z.object({
   success: z.boolean(),
-  data: z.object({
-    restaurantId: UUIDSchema,
-    requestedTime: DateTimeSchema,
-    partySize: z.number().int(),
-    availableTables: z.array(TableAvailabilitySchema),
-    suggestedSlots: z.array(z.object({
-      time: DateTimeSchema,
+  data: z
+    .object({
+      restaurantId: UUIDSchema,
+      requestedTime: DateTimeSchema,
+      partySize: z.number().int(),
       availableTables: z.array(TableAvailabilitySchema),
-    })).optional(),
-  }).optional(),
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
-  }).optional(),
+      suggestedSlots: z
+        .array(
+          z.object({
+            time: DateTimeSchema,
+            availableTables: z.array(TableAvailabilitySchema),
+          }),
+        )
+        .optional(),
+    })
+    .optional(),
+  error: z
+    .object({
+      code: z.string(),
+      message: z.string(),
+    })
+    .optional(),
   timestamp: DateTimeSchema,
 });
 
@@ -203,7 +222,7 @@ export const AvailabilityResponseSchema = z.object({
  * Reservation verification schema
  */
 export const VerifyReservationSchema = z.object({
-  token: z.string().min(1, 'Verification token is required'),
+  token: z.string().min(1, "Verification token is required"),
 });
 
 /**
@@ -211,15 +230,19 @@ export const VerifyReservationSchema = z.object({
  */
 export const VerifyResponseSchema = z.object({
   success: z.boolean(),
-  data: z.object({
-    message: z.string(),
-    reservationId: UUIDSchema.optional(),
-    status: z.enum(['confirmed', 'cancelled', 'expired']),
-  }).optional(),
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
-  }).optional(),
+  data: z
+    .object({
+      message: z.string(),
+      reservationId: UUIDSchema.optional(),
+      status: z.enum(["confirmed", "cancelled", "expired"]),
+    })
+    .optional(),
+  error: z
+    .object({
+      code: z.string(),
+      message: z.string(),
+    })
+    .optional(),
   timestamp: DateTimeSchema,
 });
 
@@ -232,54 +255,81 @@ export const VerifyResponseSchema = z.object({
  *
  * Supports both orderId (for open-delivery) and reservationId (for table-stack)
  */
-export const CheckoutRequestSchema = z.object({
-  // Transaction details
-  txHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'Invalid transaction hash format'),
-  // Support both orderId and reservationId - at least one must be provided
-  orderId: z.string().min(1, 'Order ID is required').optional(),
-  reservationId: z.string().uuid('Invalid reservation ID format').optional(),
-  amount: z.string().regex(/^\d+(\.\d+)?$/, 'Invalid amount format').optional(),
-  currency: z.enum(['ETH', 'USDC', 'USDT', 'DAI']).optional(),
+export const CheckoutRequestSchema = z
+  .object({
+    // Transaction details
+    txHash: z
+      .string()
+      .regex(/^0x[a-fA-F0-9]{64}$/, "Invalid transaction hash format"),
+    // Support both orderId and reservationId - at least one must be provided
+    orderId: z.string().min(1, "Order ID is required").optional(),
+    reservationId: z.string().uuid("Invalid reservation ID format").optional(),
+    amount: z
+      .string()
+      .regex(/^\d+(\.\d+)?$/, "Invalid amount format")
+      .optional(),
+    currency: z.enum(["ETH", "USDC", "USDT", "DAI"]).optional(),
 
-  // Chain information
-  chainId: z.number().int().positive().optional().default(8453), // Base
+    // Chain information
+    chainId: z.number().int().positive().optional().default(8453), // Base
 
-  // Wallet information
-  walletAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid wallet address format').optional(),
-  signature: z.string().regex(/^0x[a-fA-F0-9]+$/, 'Invalid signature format').optional(),
+    // Wallet information
+    walletAddress: z
+      .string()
+      .regex(/^0x[a-fA-F0-9]{40}$/, "Invalid wallet address format")
+      .optional(),
+    signature: z
+      .string()
+      .regex(/^0x[a-fA-F0-9]+$/, "Invalid signature format")
+      .optional(),
 
-  // Payment metadata
-  paymentCurrency: z.enum(['ETH', 'USDC', 'USDT', 'DAI']).optional(),
-  minConfirmations: z.number().int().min(1).max(100).optional().default(3),
-}).refine(
-  (data) => data.orderId || data.reservationId,
-  { message: 'Either orderId or reservationId must be provided' }
-);
+    // EIP-712 signature deadline (Unix timestamp in seconds)
+    deadline: z.number().int().positive().optional(),
+
+    // Payment metadata
+    paymentCurrency: z.enum(["ETH", "USDC", "USDT", "DAI"]).optional(),
+    minConfirmations: z.number().int().min(1).max(100).optional().default(3),
+  })
+  .refine((data) => data.orderId || data.reservationId, {
+    message: "Either orderId or reservationId must be provided",
+  });
 
 /**
  * Checkout response schema
  */
 export const CheckoutResponseSchema = z.object({
   success: z.boolean(),
-  data: z.object({
-    message: z.string(),
-    orderId: z.string(),
-    paymentStatus: z.enum(['pending', 'confirming', 'confirmed', 'completed', 'failed']),
-    txHash: z.string().optional(),
-    confirmations: z.number().int().optional(),
-    receipt: z.object({
-      status: z.enum(['success', 'reverted']),
-      blockNumber: z.string(),
-      from: z.string(),
-      to: z.string().nullable(),
-      value: z.string(),
-    }).optional(),
-  }).optional(),
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
-    details: z.record(z.unknown()).optional(),
-  }).optional(),
+  data: z
+    .object({
+      message: z.string(),
+      orderId: z.string(),
+      paymentStatus: z.enum([
+        "pending",
+        "confirming",
+        "confirmed",
+        "completed",
+        "failed",
+      ]),
+      txHash: z.string().optional(),
+      confirmations: z.number().int().optional(),
+      receipt: z
+        .object({
+          status: z.enum(["success", "reverted"]),
+          blockNumber: z.string(),
+          from: z.string(),
+          to: z.string().nullable(),
+          value: z.string(),
+        })
+        .optional(),
+    })
+    .optional(),
+  error: z
+    .object({
+      code: z.string(),
+      message: z.string(),
+      details: z.record(z.unknown()).optional(),
+    })
+    .optional(),
   timestamp: DateTimeSchema,
 });
 
@@ -292,26 +342,45 @@ export const CheckoutResponseSchema = z.object({
  */
 export const CreateRestaurantSchema = z.object({
   name: z.string().min(1).max(255),
-  slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'Slug must be lowercase alphanumeric with hyphens'),
+  slug: z
+    .string()
+    .regex(
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+      "Slug must be lowercase alphanumeric with hyphens",
+    ),
   ownerEmail: EmailSchema,
   ownerId: z.string().min(1),
 
   // Optional fields
   description: z.string().max(1000).optional(),
-  address: z.object({
-    street: z.string().max(255),
-    city: z.string().max(255),
-    state: z.string().max(255),
-    zipCode: z.string().max(20),
-    country: z.string().max(255),
-  }).optional(),
+  address: z
+    .object({
+      street: z.string().max(255),
+      city: z.string().max(255),
+      state: z.string().max(255),
+      zipCode: z.string().max(20),
+      country: z.string().max(255),
+    })
+    .optional(),
 
   // Operating hours
-  timezone: z.string().optional().default('UTC'),
+  timezone: z.string().optional().default("UTC"),
   daysOpen: z.string().optional(),
-  openingTime: z.string().regex(/^\d{2}:\d{2}$/, 'Use HH:MM format').optional(),
-  closingTime: z.string().regex(/^\d{2}:\d{2}$/, 'Use HH:MM format').optional(),
-  defaultDurationMinutes: z.number().int().min(30).max(300).optional().default(90),
+  openingTime: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/, "Use HH:MM format")
+    .optional(),
+  closingTime: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/, "Use HH:MM format")
+    .optional(),
+  defaultDurationMinutes: z
+    .number()
+    .int()
+    .min(30)
+    .max(300)
+    .optional()
+    .default(90),
 });
 
 /**
@@ -358,13 +427,17 @@ export const WaitlistPositionSchema = z.object({
  */
 export const DeliveryOrderSchema = z.object({
   restaurantId: UUIDSchema,
-  items: z.array(z.object({
-    menuItemId: UUIDSchema,
-    name: z.string(),
-    quantity: z.number().int().min(1),
-    price: z.number().nonnegative(),
-    specialInstructions: z.string().max(500).optional(),
-  })).min(1, 'At least one item is required'),
+  items: z
+    .array(
+      z.object({
+        menuItemId: UUIDSchema,
+        name: z.string(),
+        quantity: z.number().int().min(1),
+        price: z.number().nonnegative(),
+        specialInstructions: z.string().max(500).optional(),
+      }),
+    )
+    .min(1, "At least one item is required"),
 
   // Delivery address
   deliveryAddress: z.object({
@@ -381,8 +454,8 @@ export const DeliveryOrderSchema = z.object({
   contactEmail: EmailSchema.optional(),
 
   // Payment
-  paymentMethod: z.enum(['crypto', 'card', 'cash']),
-  paymentCurrency: z.enum(['ETH', 'USDC', 'USDT']).optional(),
+  paymentMethod: z.enum(["crypto", "card", "cash"]),
+  paymentCurrency: z.enum(["ETH", "USDC", "USDT"]).optional(),
 
   // Timing
   scheduledTime: DateTimeSchema.optional(),
@@ -399,13 +472,17 @@ export const DeliveryOrderSchema = z.object({
 export const ValidationErrorResponseSchema = z.object({
   success: z.boolean(),
   error: z.object({
-    code: z.literal('VALIDATION_ERROR'),
+    code: z.literal("VALIDATION_ERROR"),
     message: z.string(),
-    details: z.array(z.object({
-      field: z.string(),
-      message: z.string(),
-      code: z.string().optional(),
-    })).optional(),
+    details: z
+      .array(
+        z.object({
+          field: z.string(),
+          message: z.string(),
+          code: z.string().optional(),
+        }),
+      )
+      .optional(),
   }),
   timestamp: DateTimeSchema,
   traceId: UUIDSchema.optional(),
@@ -434,7 +511,7 @@ export const ApiErrorResponseSchema = z.object({
  */
 export function formatValidationError(error: z.ZodError) {
   const details = error.errors.map((err) => ({
-    field: err.path.join('.'),
+    field: err.path.join("."),
     message: err.message,
     code: err.code,
   }));
@@ -442,8 +519,8 @@ export function formatValidationError(error: z.ZodError) {
   return {
     success: false as const,
     error: {
-      code: 'VALIDATION_ERROR' as const,
-      message: 'Validation failed',
+      code: "VALIDATION_ERROR" as const,
+      message: "Validation failed",
       details,
     },
     timestamp: new Date().toISOString(),
@@ -455,8 +532,10 @@ export function formatValidationError(error: z.ZodError) {
  */
 export function validateRequest<T extends z.ZodType>(
   schema: T,
-  data: unknown
-): { success: true; data: z.infer<T> } | { success: false; error: ReturnType<typeof formatValidationError> } {
+  data: unknown,
+):
+  | { success: true; data: z.infer<T> }
+  | { success: false; error: ReturnType<typeof formatValidationError> } {
   const result = schema.safeParse(data);
 
   if (result.success) {
@@ -471,12 +550,12 @@ export function validateRequest<T extends z.ZodType>(
  */
 export function createValidationMiddleware<T extends z.ZodType>(schema: T) {
   return async (req: Request) => {
-    const contentType = req.headers.get('content-type');
+    const contentType = req.headers.get("content-type");
     let data: unknown;
 
-    if (contentType?.includes('application/json')) {
+    if (contentType?.includes("application/json")) {
       data = await req.json();
-    } else if (req.method === 'GET') {
+    } else if (req.method === "GET") {
       const url = new URL(req.url);
       data = Object.fromEntries(url.searchParams.entries());
     } else {

@@ -19,10 +19,24 @@
 import { Redis } from "@upstash/redis";
 import { getRedisClient, ServiceNamespace } from "../redis";
 import { QStashService } from "./qstash";
+import { z } from "zod";
 
 // ============================================================================
 // SCHEMAS
 // ============================================================================
+
+/** Zod schema for strict validation of heartbeat records retrieved from Redis */
+export const HeartbeatRecordSchema = z.object({
+  executionId: z.string(),
+  nextStepIndex: z.number(),
+  scheduledAt: z.string(),
+  checkScheduledAt: z.string(),
+  status: z.enum(["pending", "checked", "recovered", "escalated"]),
+  recoveryAttempts: z.number(),
+  lastKnownState: z.string().optional(),
+  traceId: z.string().optional(),
+  correlationId: z.string().optional(),
+});
 
 export interface HeartbeatConfig {
   redis: Redis | null;
@@ -223,7 +237,16 @@ export class HeartbeatService {
     if (!data) return null;
 
     try {
-      return typeof data === "string" ? JSON.parse(data) : data;
+      const parsed = typeof data === "string" ? JSON.parse(data) : data;
+      const result = HeartbeatRecordSchema.safeParse(parsed);
+      if (!result.success) {
+        console.error(
+          `[HeartbeatService] Corrupted heartbeat record for ${executionId}:`,
+          result.error.errors.map((e) => e.message).join(", "),
+        );
+        return null;
+      }
+      return result.data;
     } catch (error) {
       console.error(`[HeartbeatService] Failed to parse heartbeat:`, error);
       return null;

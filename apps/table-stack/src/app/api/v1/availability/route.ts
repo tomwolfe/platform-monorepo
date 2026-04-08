@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
-export const revalidate = 30; // ISR: Revalidate every 30 seconds
 import { restaurants } from "@repo/database";
 import type { InferSelectModel } from "drizzle-orm";
 import { eq } from "@repo/database";

@@ -219,7 +219,6 @@ export class IdempotencyService {
       : `idempotency:${effectiveRouteName}:${key}`;
 
     await this.redis.set(fullKey, "processed", {
-      xx: true, // Only update if key already exists
       ex: this.defaultTtlSeconds,
     });
   }

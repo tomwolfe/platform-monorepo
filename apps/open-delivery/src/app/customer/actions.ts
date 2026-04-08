@@ -10,10 +10,12 @@ import {
   restaurantProducts,
   eq,
   type CryptoAmount,
+  outbox,
 } from "@repo/database";
 import { currentUser } from "@clerk/nextjs/server";
 import {
-  RealtimeService,
+  OutboxService,
+  OutboxRelayService,
   isReplayAllowed,
   rollbackReplayGuard,
   AppConfig,
@@ -395,34 +397,45 @@ export async function placeRealOrder(
         })),
       );
 
+      // Write the Ably event to the Postgres Outbox table within the same transaction.
+      // This ensures the notification is durably stored even if Ably/network fails later.
+      const outboxServiceInstance = new OutboxService();
+      await outboxServiceInstance.publish(tx, {
+        eventType: "WORKFLOW_STATE_CHANGED",
+        payload: {
+          executionId: orderId,
+          timestamp: new Date().toISOString(),
+          eventType: "delivery.intent_created",
+          channel: "nervous-system:updates",
+          data: {
+            orderId: orderId,
+            fulfillmentId: orderId,
+            pickupAddress: address,
+            deliveryAddress: address,
+            price: totalCrypto,
+            priority: "standard",
+            items: items.map((item) => ({
+              name: item.name,
+              quantity: item.quantity,
+              price: item.price,
+            })),
+            payment: {
+              txHash: paymentParams?.txHash,
+              currency: paymentCurrency,
+              walletAddress: paymentParams?.walletAddress,
+            },
+          },
+        },
+      });
+
       return newOrder;
     });
 
-    // Publish Ably event AFTER transaction commits (not inside transaction)
-    await RealtimeService.publish(
-      "nervous-system:updates",
-      "delivery.intent_created",
-      {
-        orderId: result.id,
-        fulfillmentId: result.id,
-        pickupAddress: result.pickupAddress,
-        deliveryAddress: result.deliveryAddress,
-        price: result.total,
-        priority: "standard",
-        items: items.map((item) => ({
-          name: item.name,
-          quantity: item.quantity,
-          price: item.price,
-        })),
-        timestamp: new Date().toISOString(),
-        traceId: `order-${orderId}`,
-        payment: {
-          txHash: paymentParams?.txHash,
-          currency: paymentCurrency,
-          walletAddress: paymentParams?.walletAddress,
-        },
-      },
-    );
+    // Trigger the outbox relay AFTER the transaction commits.
+    // This fire-and-forget QStash call dispatches the outbox event to Ably.
+    OutboxRelayService.triggerRelay(orderId).catch((err) => {
+      console.error("[Order ${orderId}] Outbox relay trigger failed:", err);
+    });
 
     revalidatePath("/customer");
 

@@ -16,6 +16,19 @@ import { and, eq, gte, or, sql } from "@repo/database";
 import { addMinutes, parseISO } from "date-fns";
 import { ConflictError, AppError } from "@repo/shared/errors";
 import crypto from "crypto";
+import { z } from "zod";
+
+// Schema for the row-level lock query result
+// The raw SQL returns restaurant table rows with specific columns
+const LockedTableSchema = z.object({
+  id: z.string(),
+  restaurant_id: z.string(),
+  minCapacity: z.number(),
+  maxCapacity: z.number(),
+  isActive: z.boolean(),
+});
+
+const LockedTableArraySchema = z.array(LockedTableSchema);
 
 export interface CreateReservationInput {
   restaurantId: string;
@@ -195,7 +208,9 @@ export class ReservationService {
           );
         }
 
-        const lockedTableId = availableTable[0]?.id;
+        // Parse raw SQL result through Zod schema for type safety
+        const parsedTables = LockedTableArraySchema.parse(availableTable);
+        const lockedTableId = parsedTables[0]?.id;
         if (!lockedTableId) {
           throw new ConflictError("No tables locked successfully");
         }

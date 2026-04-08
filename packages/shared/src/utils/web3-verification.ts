@@ -56,11 +56,14 @@ const RPC_URLS = {
 };
 
 // Non-custodial escrow contract address (for Open-Delivery P2P payments)
-const ESCROW_CONTRACT_ADDRESS = (
-  process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || "0x0000000000000000000000000000000000000000"
-) as Address;
+const ESCROW_CONTRACT_ADDRESS = (process.env
+  .NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS ||
+  "0x0000000000000000000000000000000000000000") as Address;
 
-const MIN_CONFIRMATIONS = parseInt(process.env.NEXT_PUBLIC_MIN_CONFIRMATIONS || "3", 10);
+const MIN_CONFIRMATIONS = parseInt(
+  process.env.NEXT_PUBLIC_MIN_CONFIRMATIONS || "3",
+  10,
+);
 
 // Token decimals for common payment tokens
 export const TOKEN_DECIMALS: Record<string, number> = {
@@ -85,27 +88,21 @@ export function getPublicClient(chainId?: number) {
   if (chain === polygon.id) {
     return createPublicClient({
       chain: polygon,
-      transport: fallback(
-        RPC_URLS.polygon.map((url) => http(url))
-      ),
+      transport: fallback(RPC_URLS.polygon.map((url) => http(url))),
     }) as PublicClient;
   }
 
   if (chain === mainnet.id) {
     return createPublicClient({
       chain: mainnet,
-      transport: fallback(
-        RPC_URLS.ethereum.map((url) => http(url))
-      ),
+      transport: fallback(RPC_URLS.ethereum.map((url) => http(url))),
     }) as PublicClient;
   }
 
   // Default to Base
   return createPublicClient({
     chain: base,
-    transport: fallback(
-      RPC_URLS.base.map((url) => http(url))
-    ),
+    transport: fallback(RPC_URLS.base.map((url) => http(url))),
   }) as PublicClient;
 }
 
@@ -209,9 +206,10 @@ export async function verifyTransaction(params: {
     // STEP 0: REPLAY PREVENTION CHECK
     // Check if this transaction has already been processed (globally across all apps)
     // ============================================================================
-    const existingTx = await getDb().query.processed_crypto_transactions.findFirst({
-      where: eq(processed_crypto_transactions.txHash, txHash),
-    });
+    const existingTx =
+      await getDb().query.processed_crypto_transactions.findFirst({
+        where: eq(processed_crypto_transactions.txHash, txHash),
+      });
 
     if (existingTx) {
       return {
@@ -232,7 +230,10 @@ export async function verifyTransaction(params: {
     }
 
     // Step 3: Verify sender matches wallet address (if provided)
-    if (walletAddress && receipt.from.toLowerCase() !== walletAddress.toLowerCase()) {
+    if (
+      walletAddress &&
+      receipt.from.toLowerCase() !== walletAddress.toLowerCase()
+    ) {
       return {
         success: false,
         error: `Transaction sender mismatch. Expected: ${walletAddress}, Got: ${receipt.from}`,
@@ -241,14 +242,44 @@ export async function verifyTransaction(params: {
 
     // Step 4: Verify recipient
     // For escrow payments: recipient should be the escrow contract
-    // For direct P2P: recipient should be the restaurant wallet
-    const recipient = expectedRecipient || (isEscrowPayment ? ESCROW_CONTRACT_ADDRESS : undefined);
-    
-    if (recipient && receipt.to && receipt.to.toLowerCase() !== recipient.toLowerCase()) {
+    // For direct P2P ETH: recipient should be the restaurant wallet
+    // For ERC-20 (USDC/USDT) direct P2P: receipt.to is the TOKEN CONTRACT, not the recipient
+    //   The actual recipient is verified later via Transfer event logs
+    const recipient =
+      expectedRecipient ||
+      (isEscrowPayment ? ESCROW_CONTRACT_ADDRESS : undefined);
+
+    // For ERC-20 tokens, skip receipt.to check since it's the token contract
+    // The actual recipient will be verified when parsing Transfer events
+    const isERC20Payment =
+      (paymentCurrency === "USDC" || paymentCurrency === "USDT") &&
+      !isEscrowPayment;
+
+    if (
+      !isERC20Payment &&
+      recipient &&
+      receipt.to &&
+      receipt.to.toLowerCase() !== recipient.toLowerCase()
+    ) {
       return {
         success: false,
         error: `Transaction recipient mismatch. Expected: ${recipient}, Got: ${receipt.to}`,
       };
+    }
+
+    // For ERC20 payments, verify the transaction was sent to the correct token contract
+    if (isERC20Payment && receipt.to) {
+      const { AppConfig } = await import("../config");
+      const usdcContractAddress = AppConfig.getUsdcContractAddress();
+      if (
+        usdcContractAddress &&
+        receipt.to.toLowerCase() !== usdcContractAddress.toLowerCase()
+      ) {
+        return {
+          success: false,
+          error: `ERC-20 transaction sent to wrong contract. Expected: ${usdcContractAddress}, Got: ${receipt.to}`,
+        };
+      }
     }
 
     // Step 5: Get full transaction to verify value
@@ -282,16 +313,25 @@ export async function verifyTransaction(params: {
           };
         }
 
-        const eventArgs = matchingEvent.args as { orderId: string; subtotal: bigint; tip: bigint; platformFee: bigint };
-        actualValue = eventArgs.subtotal + eventArgs.tip + eventArgs.platformFee;
+        const eventArgs = matchingEvent.args as {
+          orderId: string;
+          subtotal: bigint;
+          tip: bigint;
+          platformFee: bigint;
+        };
+        actualValue =
+          eventArgs.subtotal + eventArgs.tip + eventArgs.platformFee;
 
-        console.log(`[verifyTransaction] Escrow OrderDeposited event verified:`, {
-          orderId: eventArgs.orderId,
-          subtotal: eventArgs.subtotal.toString(),
-          tip: eventArgs.tip.toString(),
-          platformFee: eventArgs.platformFee.toString(),
-          total: actualValue.toString(),
-        });
+        console.log(
+          `[verifyTransaction] Escrow OrderDeposited event verified:`,
+          {
+            orderId: eventArgs.orderId,
+            subtotal: eventArgs.subtotal.toString(),
+            tip: eventArgs.tip.toString(),
+            platformFee: eventArgs.platformFee.toString(),
+            total: actualValue.toString(),
+          },
+        );
       } catch (parseError) {
         return {
           success: false,
@@ -312,8 +352,15 @@ export async function verifyTransaction(params: {
 
         // Find the Transfer event matching our expected recipient
         const matchingTransfer = transferLogs.find((log: any) => {
-          const args = log.args as { from?: Address; to?: Address; value?: bigint };
-          return args.to?.toLowerCase() === recipient?.toLowerCase() && args.value !== undefined;
+          const args = log.args as {
+            from?: Address;
+            to?: Address;
+            value?: bigint;
+          };
+          return (
+            args.to?.toLowerCase() === recipient?.toLowerCase() &&
+            args.value !== undefined
+          );
         });
 
         if (!matchingTransfer) {
@@ -348,8 +395,10 @@ export async function verifyTransaction(params: {
       // Apply slippage tolerance: accept values within the specified basis points
       const BASIS_POINTS = 10_000n;
       const slippage = BigInt(slippageBps);
-      const lowerBound = (expectedValue * (BASIS_POINTS - slippage)) / BASIS_POINTS;
-      const upperBound = (expectedValue * (BASIS_POINTS + slippage)) / BASIS_POINTS;
+      const lowerBound =
+        (expectedValue * (BASIS_POINTS - slippage)) / BASIS_POINTS;
+      const upperBound =
+        (expectedValue * (BASIS_POINTS + slippage)) / BASIS_POINTS;
 
       if (actualValue < lowerBound || actualValue > upperBound) {
         return {
@@ -358,12 +407,15 @@ export async function verifyTransaction(params: {
         };
       }
 
-      console.log(`[verifyTransaction] Value within slippage tolerance (${slippageBps}bps):`, {
-        expected: expectedValue.toString(),
-        actual: actualValue.toString(),
-        lowerBound: lowerBound.toString(),
-        upperBound: upperBound.toString(),
-      });
+      console.log(
+        `[verifyTransaction] Value within slippage tolerance (${slippageBps}bps):`,
+        {
+          expected: expectedValue.toString(),
+          actual: actualValue.toString(),
+          lowerBound: lowerBound.toString(),
+          upperBound: upperBound.toString(),
+        },
+      );
     } else if (actualValue !== expectedValue) {
       // Exact match required when no slippage specified (stablecoins like USDC)
       return {
@@ -389,7 +441,9 @@ export async function verifyTransaction(params: {
         } catch (decodeError) {
           // If decoding fails, the data might be for a contract call (USDC transfer)
           // For USDC transfers, we rely on the exact amount + recipient + sender verification
-          console.warn("Could not decode transaction data, likely USDC contract call");
+          console.warn(
+            "Could not decode transaction data, likely USDC contract call",
+          );
         }
       }
     }
@@ -422,11 +476,14 @@ export async function verifyTransaction(params: {
         if (!isValidSignature) {
           return {
             success: false,
-            error: "Signature verification failed - signature does not match claimed wallet address",
+            error:
+              "Signature verification failed - signature does not match claimed wallet address",
           };
         }
 
-        console.log(`[verifyTransaction] Signature verified: wallet ${walletAddress} signed orderId ${orderId}`);
+        console.log(
+          `[verifyTransaction] Signature verified: wallet ${walletAddress} signed orderId ${orderId}`,
+        );
       } catch (sigError) {
         return {
           success: false,
@@ -445,18 +502,27 @@ export async function verifyTransaction(params: {
         appSource: appSource,
         entityId: orderId,
       });
-      console.log(`[verifyTransaction] Registered tx ${txHash.substring(0, 10)}... in replay prevention table`);
+      console.log(
+        `[verifyTransaction] Registered tx ${txHash.substring(0, 10)}... in replay prevention table`,
+      );
     } catch (dbError) {
       // If this is a unique constraint violation, the tx was already registered
       // (race condition - another request beat us to it)
-      if (dbError instanceof Error && dbError.message.includes('duplicate key')) {
+      if (
+        dbError instanceof Error &&
+        dbError.message.includes("duplicate key")
+      ) {
         return {
           success: false,
-          error: "Transaction already registered - possible replay attack detected",
+          error:
+            "Transaction already registered - possible replay attack detected",
         };
       }
       // Log but don't fail - this is a best-effort registration
-      console.error("[verifyTransaction] Failed to register transaction in replay prevention table:", dbError);
+      console.error(
+        "[verifyTransaction] Failed to register transaction in replay prevention table:",
+        dbError,
+      );
     }
 
     return {
@@ -471,7 +537,8 @@ export async function verifyTransaction(params: {
       },
     };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
     return {
       success: false,
       error: `Transaction verification failed: ${errorMessage}`,
@@ -491,7 +558,10 @@ export async function verifyTransaction(params: {
  * @param decimals - Token decimals (18 for ETH, 6 for USDC)
  * @returns Human-readable amount as string
  */
-export function formatTokenAmount(amount: bigint | string, decimals: number = 18): string {
+export function formatTokenAmount(
+  amount: bigint | string,
+  decimals: number = 18,
+): string {
   const { formatUnits } = require("viem");
   return formatUnits(BigInt(amount), decimals);
 }
@@ -504,16 +574,19 @@ export function formatTokenAmount(amount: bigint | string, decimals: number = 18
  * @param decimals - Token decimals (18 for ETH, 6 for USDC)
  * @returns Amount in smallest units as bigint
  */
-export function parseTokenAmount(amount: string, decimals: number = 18): bigint {
+export function parseTokenAmount(
+  amount: string,
+  decimals: number = 18,
+): bigint {
   // CRITICAL: Parse string directly to avoid floating-point errors
   // Split into integer and fractional parts
   const { parseUnits } = require("viem");
-  
+
   // Validate input format
   if (!amount || typeof amount !== "string") {
     throw new Error("Invalid amount: must be a non-empty string");
   }
-  
+
   // Use viem's parseUnits which handles the conversion safely
   return parseUnits(amount, decimals);
 }
@@ -526,7 +599,10 @@ export function parseTokenAmount(amount: string, decimals: number = 18): bigint 
  * @param tokenSymbol - Token symbol (USDC, ETH, etc.)
  * @returns Formatted price string (e.g., "$10.50" or "0.005 ETH")
  */
-export function formatCryptoPrice(amount: string | bigint, tokenSymbol: string = "USDC"): string {
+export function formatCryptoPrice(
+  amount: string | bigint,
+  tokenSymbol: string = "USDC",
+): string {
   const { formatUnits } = require("viem");
   const decimals = TOKEN_DECIMALS[tokenSymbol] || 6;
   const formatted = formatUnits(BigInt(amount), decimals);
@@ -551,7 +627,11 @@ export function formatCryptoPrice(amount: string | bigint, tokenSymbol: string =
  * @param tokenPriceUsd - Token price in USD (from oracle)
  * @returns Token amount in smallest units (string)
  */
-export function usdToCrypto(usdAmount: number, tokenSymbol: string, tokenPriceUsd: number): string {
+export function usdToCrypto(
+  usdAmount: number,
+  tokenSymbol: string,
+  tokenPriceUsd: number,
+): string {
   const decimals = TOKEN_DECIMALS[tokenSymbol] || 6;
 
   // CRITICAL: Use BigInt math to avoid floating-point precision errors
@@ -559,7 +639,9 @@ export function usdToCrypto(usdAmount: number, tokenSymbol: string, tokenPriceUs
   // Using cents and basis points for precision:
   // token_atomic = (usdCents * 10^(decimals+2)) / tokenPriceScaled
   const BASIS_POINTS = 10_000n;
-  const tokenPriceScaled = BigInt(Math.round(tokenPriceUsd * Number(BASIS_POINTS)));
+  const tokenPriceScaled = BigInt(
+    Math.round(tokenPriceUsd * Number(BASIS_POINTS)),
+  );
   const usdCents = BigInt(Math.round(usdAmount * 100));
 
   // Multiplier: 10^(decimals+2) to convert cents to atomic units with price scaling
@@ -567,7 +649,8 @@ export function usdToCrypto(usdAmount: number, tokenSymbol: string, tokenPriceUs
   // For USDC (6 decimals): 10^8
   const CENTS_TO_ATOMIC_MULTIPLIER = 10n ** BigInt(decimals + 2);
 
-  const tokenAmountAtomic = (usdCents * CENTS_TO_ATOMIC_MULTIPLIER) / tokenPriceScaled;
+  const tokenAmountAtomic =
+    (usdCents * CENTS_TO_ATOMIC_MULTIPLIER) / tokenPriceScaled;
 
   return tokenAmountAtomic.toString();
 }
@@ -595,18 +678,24 @@ export function getPaymentStatusText(status: string): string {
  * @param decimals - Token decimals
  * @returns Token amount in smallest units
  */
-export function usdToTokenAmount(usdAmount: number, tokenPrice: number, decimals: number): bigint {
+export function usdToTokenAmount(
+  usdAmount: number,
+  tokenPrice: number,
+  decimals: number,
+): bigint {
   // CRITICAL: Use BigInt math to avoid floating-point precision errors
   // Formula: token_atomic = (USD_amount * 10^decimals) / token_price
   // Using cents and basis points for precision:
   // token_atomic = (usdCents * 10^(decimals+2)) / tokenPriceScaled
   const BASIS_POINTS = 10_000n;
-  const tokenPriceScaled = BigInt(Math.round(tokenPrice * Number(BASIS_POINTS)));
+  const tokenPriceScaled = BigInt(
+    Math.round(tokenPrice * Number(BASIS_POINTS)),
+  );
   const usdCents = BigInt(Math.round(usdAmount * 100));
-  
+
   // Multiplier: 10^(decimals+2) to convert cents to atomic units with price scaling
   const CENTS_TO_ATOMIC_MULTIPLIER = 10n ** BigInt(decimals + 2);
-  
+
   return (usdCents * CENTS_TO_ATOMIC_MULTIPLIER) / tokenPriceScaled;
 }
 

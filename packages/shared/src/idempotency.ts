@@ -130,8 +130,14 @@ export class IdempotencyService {
   }
 
   /**
-   * Checks if a key has already been processed.
-   * If not, it sets the key with a 24-hour TTL.
+   * Checks if a key has already been processed or is currently being processed.
+   * If not, it sets the key with status "processing" and a 24-hour TTL.
+   *
+   * TWO-PHASE COMMIT PATTERN:
+   * - Keys are initially set to "processing" instead of "processed"
+   * - If execution succeeds, markProcessed() should be called to finalize
+   * - If execution fails, removeKey() should be called to allow retries
+   * - If key is already "processing", returns duplicate=true (caller should return 409)
    *
    * ENHANCEMENT: Semantic Checksum Idempotency
    * - Uses SHA-256(toolName + sortedParameters) for stricter idempotency
@@ -174,11 +180,98 @@ export class IdempotencyService {
       ? `idempotency:${effectiveRouteName}:${key}:${paramsHash}`
       : `idempotency:${effectiveRouteName}:${key}`;
 
-    const set = await this.redis.set(fullKey, "processed", {
+    const set = await this.redis.set(fullKey, "processing", {
       nx: true,
       ex: this.defaultTtlSeconds,
     });
     return set === null;
+  }
+
+  /**
+   * Mark a previously "processing" key as "processed" after successful execution.
+   * Should be called after the handler completes successfully.
+   *
+   * @param key - Base key (same as used in isDuplicate)
+   * @param toolName - Tool name (same as used in isDuplicate)
+   * @param parameters - Parameters (same as used in isDuplicate)
+   * @param userId - User ID (same as used in isDuplicate)
+   * @param context - Context including routeName (same as used in isDuplicate)
+   */
+  async markProcessed(
+    key: string,
+    toolName: string,
+    parameters?: Record<string, unknown>,
+    userId?: string,
+    context?: { routeName?: string },
+  ): Promise<void> {
+    const effectiveRouteName =
+      context?.routeName || this.routeName || "unknown";
+    const effectiveUserId = userId || this.userId;
+    const paramsHash = parameters
+      ? await this.generateParamsHash(toolName, parameters, effectiveUserId)
+      : null;
+    const fullKey = paramsHash
+      ? `idempotency:${effectiveRouteName}:${key}:${paramsHash}`
+      : `idempotency:${effectiveRouteName}:${key}`;
+
+    await this.redis.set(fullKey, "processed", {
+      xx: true, // Only update if key already exists
+      ex: this.defaultTtlSeconds,
+    });
+  }
+
+  /**
+   * Remove an idempotency key after failed execution.
+   * Should be called when handler fails, allowing retries to proceed.
+   *
+   * @param key - Base key (same as used in isDuplicate)
+   * @param toolName - Tool name (same as used in isDuplicate)
+   * @param parameters - Parameters (same as used in isDuplicate)
+   * @param userId - User ID (same as used in isDuplicate)
+   * @param context - Context including routeName (same as used in isDuplicate)
+   */
+  async removeKey(
+    key: string,
+    toolName: string,
+    parameters?: Record<string, unknown>,
+    userId?: string,
+    context?: { routeName?: string },
+  ): Promise<void> {
+    const effectiveRouteName =
+      context?.routeName || this.routeName || "unknown";
+    const effectiveUserId = userId || this.userId;
+    const paramsHash = parameters
+      ? await this.generateParamsHash(toolName, parameters, effectiveUserId)
+      : null;
+    const fullKey = paramsHash
+      ? `idempotency:${effectiveRouteName}:${key}:${paramsHash}`
+      : `idempotency:${effectiveRouteName}:${key}`;
+
+    await this.redis.del(fullKey);
+  }
+
+  /**
+   * Get the current status of an idempotency key.
+   * Returns "processing", "processed", or null if key doesn't exist.
+   */
+  async getStatus(
+    key: string,
+    toolName: string,
+    parameters?: Record<string, unknown>,
+    userId?: string,
+    context?: { routeName?: string },
+  ): Promise<"processing" | "processed" | null> {
+    const effectiveRouteName =
+      context?.routeName || this.routeName || "unknown";
+    const effectiveUserId = userId || this.userId;
+    const paramsHash = parameters
+      ? await this.generateParamsHash(toolName, parameters, effectiveUserId)
+      : null;
+    const fullKey = paramsHash
+      ? `idempotency:${effectiveRouteName}:${key}:${paramsHash}`
+      : `idempotency:${effectiveRouteName}:${key}`;
+
+    return (await this.redis.get(fullKey)) as "processing" | "processed" | null;
   }
 
   /**

@@ -1,16 +1,21 @@
-import { NextRequest } from 'next/server';
+import { NextRequest } from "next/server";
 import { getDb, restaurants, eq } from "@repo/database";
-import { getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
-import { verifyScopedJWT, verifyAsymmetricJWT, SecurityProvider, type ScopedJWTPayload } from '@repo/auth';
-import { generateSecureRandom } from '@repo/shared/utils/crypto';
+import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
+import {
+  verifyScopedJWT,
+  verifyAsymmetricJWT,
+  SecurityProvider,
+  type ScopedJWTPayload,
+} from "@repo/auth";
+import { generateSecureRandom } from "@repo/shared/utils/crypto";
 
-const logger = new Logger({ serviceName: 'table-stack' });
+const logger = new Logger({ serviceName: "table-stack" });
 const redis = getRedisClient(ServiceNamespace.TS);
 
 export interface AuthContext {
   restaurantId?: string;
   isInternal?: boolean;
-  scopedPermissions?: ScopedJWTPayload['permissions'];
+  scopedPermissions?: ScopedJWTPayload["permissions"];
   traceId?: string;
 }
 
@@ -35,19 +40,23 @@ export async function validateRequest(req: NextRequest): Promise<{
   status?: number;
   context?: AuthContext;
 }> {
-  const authHeader = req.headers.get('authorization');
-  const apiKey = req.headers.get('x-api-key');
+  const authHeader = req.headers.get("authorization");
+  const apiKey = req.headers.get("x-api-key");
 
   // Priority 1: Bearer Token (JWT - Zero-Trust Standard)
-  if (authHeader?.toLowerCase().startsWith('bearer ')) {
+  if (authHeader?.toLowerCase().startsWith("bearer ")) {
     const token = authHeader.substring(7).trim();
 
     // Try asymmetric verification first (RS256 - public key, no shared secrets)
-    const asymmetricPayload = await verifyAsymmetricJWT(token, 'intention-engine', 'table-stack');
+    const asymmetricPayload = await verifyAsymmetricJWT(
+      token,
+      "intention-engine",
+      "table-stack",
+    );
     if (asymmetricPayload) {
       logger.info(
         `Asymmetric JWT (RS256) verified for service=${asymmetricPayload.iss}, ` +
-        `sub=${asymmetricPayload.sub || 'unknown'}`
+          `sub=${asymmetricPayload.sub || "unknown"}`,
       );
       return {
         context: {
@@ -59,11 +68,15 @@ export async function validateRequest(req: NextRequest): Promise<{
     }
 
     // Try scoped JWT (has tool-level permissions)
-    const scopedPayload = await verifyScopedJWT(token, 'internal-service', 'table-stack');
+    const scopedPayload = await verifyScopedJWT(
+      token,
+      "internal-service",
+      "table-stack",
+    );
     if (scopedPayload) {
       logger.info(
         `Scoped JWT verified for service=${scopedPayload.iss}, ` +
-        `permissions=${scopedPayload.permissions?.length || 0} tools`
+          `permissions=${scopedPayload.permissions?.length || 0} tools`,
       );
       return {
         context: {
@@ -76,9 +89,11 @@ export async function validateRequest(req: NextRequest): Promise<{
     }
 
     // Token present but invalid - Zero-Trust: reject immediately
-    logger.warn('Invalid or expired JWT token (all verification methods failed)');
+    logger.warn(
+      "Invalid or expired JWT token (all verification methods failed)",
+    );
     return {
-      error: 'Invalid or expired JWT token',
+      error: "Invalid or expired JWT token",
       status: 401,
     };
   }
@@ -87,7 +102,7 @@ export async function validateRequest(req: NextRequest): Promise<{
   // Note: Being phased out in favor of JWT tokens
   if (apiKey) {
     // Rate limiting (IP-based) using Upstash Redis
-    const ip = req.headers.get('x-forwarded-for') || 'anonymous';
+    const ip = req.headers.get("x-forwarded-for") || "anonymous";
     const limit = 100; // 100 requests
     const window = 60; // per 60 seconds
 
@@ -96,12 +111,14 @@ export async function validateRequest(req: NextRequest): Promise<{
 
       if (!success) {
         return {
-          error: 'Too many requests',
+          error: "Too many requests",
           status: 429,
         };
       }
     } catch (e) {
-      logger.error('Rate limit error', { error: e instanceof Error ? e.message : String(e) });
+      logger.error("Rate limit error", {
+        error: e instanceof Error ? e.message : String(e),
+      });
       // Continue if redis is down to avoid blocking traffic
     }
 
@@ -111,7 +128,7 @@ export async function validateRequest(req: NextRequest): Promise<{
     });
 
     if (!restaurant) {
-      return { error: 'Invalid API key', status: 403 };
+      return { error: "Invalid API key", status: 403 };
     }
 
     return {
@@ -123,18 +140,34 @@ export async function validateRequest(req: NextRequest): Promise<{
 
   // No authentication provided - Zero-Trust: reject
   return {
-    error: 'Missing authentication. Provide Bearer token (preferred) or x-api-key header (legacy)',
+    error:
+      "Missing authentication. Provide Bearer token (preferred) or x-api-key header (legacy)",
     status: 401,
   };
 }
 
+/**
+ * Lua script for atomic rate limiting.
+ * Combines INCR and conditional EXPIRE into a single atomic operation.
+ * Prevents permanent lockout if the process dies between INCR and EXPIRE.
+ */
+const RATE_LIMIT_LUA_SCRIPT = `
+  local current = redis.call("INCR", KEYS[1])
+  if current == 1 then
+    redis.call("EXPIRE", KEYS[1], ARGV[1])
+  end
+  return current
+`;
+
 async function rateLimit(identifier: string, limit: number, window: number) {
   const key = `ratelimit:${identifier}`;
-  const current = await redis.incr(key);
-  
-  if (current === 1) {
-    await redis.expire(key, window);
-  }
+
+  // Use atomic Lua script to prevent TOCTOU race condition
+  const current = (await redis.eval(
+    RATE_LIMIT_LUA_SCRIPT,
+    [key],
+    [window],
+  )) as number;
 
   return {
     success: current <= limit,
@@ -153,48 +186,59 @@ export function generateApiKey() {
 /**
  * Signs a webhook payload using HMAC-SHA256.
  */
-export async function signWebhookPayload(payload: string, secret: string): Promise<string> {
+export async function signWebhookPayload(
+  payload: string,
+  secret: string,
+): Promise<string> {
   const encoder = new TextEncoder();
   const keyData = encoder.encode(secret);
   const data = encoder.encode(payload);
 
   const cryptoKey = await crypto.subtle.importKey(
-    'raw',
+    "raw",
     keyData,
-    { name: 'HMAC', hash: 'SHA-256' },
+    { name: "HMAC", hash: "SHA-256" },
     false,
-    ['sign']
+    ["sign"],
   );
 
-  const signature = await crypto.subtle.sign('HMAC', cryptoKey, data);
+  const signature = await crypto.subtle.sign("HMAC", cryptoKey, data);
   return Array.from(new Uint8Array(signature))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 /**
  * Verifies a webhook payload using HMAC-SHA256.
  */
-export async function verifyWebhookPayload(payload: string, signature: string, secret: string): Promise<boolean> {
+export async function verifyWebhookPayload(
+  payload: string,
+  signature: string,
+  secret: string,
+): Promise<boolean> {
   if (!signature || !secret) return false;
-  
+
   try {
     const encoder = new TextEncoder();
     const keyData = encoder.encode(secret);
     const data = encoder.encode(payload);
 
     const cryptoKey = await crypto.subtle.importKey(
-      'raw',
+      "raw",
       keyData,
-      { name: 'HMAC', hash: 'SHA-256' },
+      { name: "HMAC", hash: "SHA-256" },
       false,
-      ['verify']
+      ["verify"],
     );
 
-    const signatureBytes = new Uint8Array(signature.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
-    return await crypto.subtle.verify('HMAC', cryptoKey, signatureBytes, data);
+    const signatureBytes = new Uint8Array(
+      signature.match(/.{1,2}/g)!.map((byte) => parseInt(byte, 16)),
+    );
+    return await crypto.subtle.verify("HMAC", cryptoKey, signatureBytes, data);
   } catch (e) {
-    logger.error('Webhook verification failed', { error: e instanceof Error ? e.message : String(e) });
+    logger.error("Webhook verification failed", {
+      error: e instanceof Error ? e.message : String(e),
+    });
     return false;
   }
 }
@@ -212,7 +256,7 @@ export async function verifySignature(
   payload: string,
   signature: string,
   timestamp: number,
-  secret: string
+  secret: string,
 ): Promise<boolean> {
   // Use SecurityProvider for standardized verification
   return await SecurityProvider.verifySignature(payload, signature, timestamp);
@@ -221,7 +265,10 @@ export async function verifySignature(
 /**
  * Signs a webhook payload using HMAC-SHA256, including a timestamp.
  */
-export async function signPayload(payload: string, secret: string): Promise<{ signature: string; timestamp: number }> {
+export async function signPayload(
+  payload: string,
+  secret: string,
+): Promise<{ signature: string; timestamp: number }> {
   // Use SecurityProvider for standardized signing
   return await SecurityProvider.signPayload(payload);
 }

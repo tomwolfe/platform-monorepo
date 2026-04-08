@@ -184,6 +184,23 @@ export class WebhookDispatcherService {
           "webhook",
         );
         if (isDuplicate) {
+          // Check if still processing (return 409 to force retry) vs processed (return 200)
+          const status = await idempotencyService.getStatus(
+            idempotencyKey,
+            "webhook",
+          );
+          if (status === "processing") {
+            this.logger.info("Webhook still processing, returning 409", {
+              idempotencyKey,
+            });
+            return NextResponse.json(
+              {
+                success: false,
+                message: "Request still processing, please retry",
+              },
+              { status: 409 },
+            );
+          }
           this.logger.info("Duplicate webhook ignored", { idempotencyKey });
           return NextResponse.json(
             { success: true, message: "Duplicate ignored", idempotent: true },
@@ -220,8 +237,24 @@ export class WebhookDispatcherService {
         );
       }
 
-      // Execute handler
-      const result = await handler(event, context);
+      // Execute handler with two-phase idempotency commit
+      let result: WebhookHandlerResult;
+      try {
+        result = await handler(event, context);
+
+        // Mark as processed after successful execution
+        if (this.config.enableIdempotency && idempotencyKey) {
+          const idempotencyService = new IdempotencyService(this.redis);
+          await idempotencyService.markProcessed(idempotencyKey, "webhook");
+        }
+      } catch (error) {
+        // Remove idempotency key on failure to allow retries
+        if (this.config.enableIdempotency && idempotencyKey) {
+          const idempotencyService = new IdempotencyService(this.redis);
+          await idempotencyService.removeKey(idempotencyKey, "webhook");
+        }
+        throw error;
+      }
 
       return NextResponse.json(result, { status: result.statusCode || 200 });
     } catch (error) {

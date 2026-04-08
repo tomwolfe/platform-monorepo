@@ -300,9 +300,10 @@ describe("IdempotencyService", () => {
 
       expect(result).toBe(false);
       // Key format is idempotency:{routeName}:{key} (routeName defaults to "unknown")
+      // Value is "processing" (two-phase commit pattern)
       expect(mockRedis.set).toHaveBeenCalledWith(
         expect.stringContaining("idempotency:unknown:key1"),
-        "processed",
+        "processing",
         { nx: true, ex: 86400 },
       );
     });
@@ -330,7 +331,7 @@ describe("IdempotencyService", () => {
 
       expect(mockRedis.set).toHaveBeenCalledWith(
         expect.any(String),
-        "processed",
+        "processing",
         { nx: true, ex: 3600 },
       );
     });

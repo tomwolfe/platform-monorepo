@@ -119,7 +119,10 @@ export interface RateLimitResult {
 
 export class RateLimiterService {
   private static redis: Redis | null = null;
-  private static lruCache: LRUCache<string, { count: number; resetAt: number }> | null = null;
+  private static lruCache: LRUCache<
+    string,
+    { count: number; resetAt: number }
+  > | null = null;
   private config: EndpointRateLimitConfig;
 
   constructor(config?: Partial<EndpointRateLimitConfig>) {
@@ -134,7 +137,10 @@ export class RateLimiterService {
    * Get or create the in-memory LRU cache for degraded mode fallback.
    * Max 1000 entries with 5-minute TTL to prevent memory leaks.
    */
-  private static getLruCache(): LRUCache<string, { count: number; resetAt: number }> {
+  private static getLruCache(): LRUCache<
+    string,
+    { count: number; resetAt: number }
+  > {
     if (!this.lruCache) {
       this.lruCache = new LRUCache({ max: 1000, ttl: 5 * 60 * 1000 });
     }
@@ -143,7 +149,7 @@ export class RateLimiterService {
 
   async checkRateLimit(
     userId: string,
-    endpointType: keyof EndpointRateLimitConfig = "api"
+    endpointType: keyof EndpointRateLimitConfig = "api",
   ): Promise<RateLimitResult> {
     const endpointConfig = this.config[endpointType];
 
@@ -151,7 +157,10 @@ export class RateLimiterService {
     try {
       return await this.checkRateLimitRedis(userId, endpointType);
     } catch (error) {
-      console.error("[RateLimiter] Redis error, falling back to LRU cache:", error);
+      console.error(
+        "[RateLimiter] Redis error, falling back to LRU cache:",
+        error,
+      );
       // Fail-degraded: Use in-memory LRU cache to preserve availability
       return this.checkRateLimitLRU(userId, endpointType);
     }
@@ -164,7 +173,7 @@ export class RateLimiterService {
    */
   checkRateLimitLRU(
     userId: string,
-    endpointType: keyof EndpointRateLimitConfig
+    endpointType: keyof EndpointRateLimitConfig,
   ): RateLimitResult {
     const endpointConfig = this.config[endpointType];
     const lru = RateLimiterService.getLruCache();
@@ -183,7 +192,8 @@ export class RateLimiterService {
 
     lru.set(redisKey, { count: currentCount, resetAt });
 
-    const maxRequests = endpointConfig.maxRequests + endpointConfig.burstAllowance;
+    const maxRequests =
+      endpointConfig.maxRequests + endpointConfig.burstAllowance;
     const remaining = Math.max(0, maxRequests - currentCount);
     const allowed = currentCount <= maxRequests;
 
@@ -197,30 +207,55 @@ export class RateLimiterService {
         "X-RateLimit-Remaining": remaining.toString(),
         "X-RateLimit-Reset": resetAt.toString(),
         "X-RateLimit-Degraded": "true", // Signal that rate limiting is in fallback mode
-        ...(allowed ? {} : { "Retry-After": Math.ceil((resetAt - now) / 1000).toString() }),
+        ...(allowed
+          ? {}
+          : { "Retry-After": Math.ceil((resetAt - now) / 1000).toString() }),
       },
       userId,
       endpointType,
     };
   }
 
+  /**
+   * Lua script for atomic rate limiting.
+   * Combines INCR and conditional EXPIRE into a single atomic operation.
+   * Prevents permanent lockout if the process dies between INCR and EXPIRE.
+   *
+   * The script:
+   * 1. Increments the counter
+   * 2. Only sets TTL when count is 1 (first request in a new window)
+   * 3. Returns the current count
+   *
+   * This guarantees atomicity: either both INCR and EXPIRE happen, or neither does.
+   */
+  private static readonly RATE_LIMIT_LUA_SCRIPT = `
+    local current = redis.call("INCR", KEYS[1])
+    if current == 1 then
+      redis.call("EXPIRE", KEYS[1], ARGV[1])
+    end
+    return current
+  `;
+
   private async checkRateLimitRedis(
     userId: string,
-    endpointType: keyof EndpointRateLimitConfig
+    endpointType: keyof EndpointRateLimitConfig,
   ): Promise<RateLimitResult> {
     const endpointConfig = this.config[endpointType];
     const redisKey = `${endpointConfig.keyPrefix}${userId}`;
     const now = Date.now();
 
-    // Use atomic INCR with conditional EXPIRE to prevent infinite lockout.
-    // Only set TTL when count is exactly 1 (first request in a new window).
-    // This avoids resetting the TTL on every request, which would lock users
-    // out indefinitely if they continuously retry after exceeding the limit.
-    const currentCount = await RateLimiterService.redis!.incr(redisKey);
-    if (currentCount === 1) {
-      await RateLimiterService.redis!.expire(redisKey, Math.ceil(endpointConfig.windowMs / 1000));
-    }
-    const maxRequests = endpointConfig.maxRequests + endpointConfig.burstAllowance;
+    // Use atomic Lua script to prevent TOCTOU race condition.
+    // If the serverless function times out or crashes between INCR and EXPIRE,
+    // the Lua script ensures both operations happen atomically,
+    // preventing permanent lockout of the user.
+    const currentCount = (await RateLimiterService.redis!.eval(
+      RateLimiterService.RATE_LIMIT_LUA_SCRIPT,
+      [redisKey],
+      [Math.ceil(endpointConfig.windowMs / 1000)],
+    )) as number;
+
+    const maxRequests =
+      endpointConfig.maxRequests + endpointConfig.burstAllowance;
     const remaining = Math.max(0, maxRequests - currentCount);
     const resetInMs = endpointConfig.windowMs;
 
@@ -235,7 +270,9 @@ export class RateLimiterService {
         "X-RateLimit-Limit": maxRequests.toString(),
         "X-RateLimit-Remaining": remaining.toString(),
         "X-RateLimit-Reset": (now + resetInMs).toString(),
-        ...(allowed ? {} : { "Retry-After": Math.ceil(resetInMs / 1000).toString() }),
+        ...(allowed
+          ? {}
+          : { "Retry-After": Math.ceil(resetInMs / 1000).toString() }),
       },
       userId,
       endpointType,
@@ -249,7 +286,7 @@ export class RateLimiterService {
    */
   async getStatus(
     userId: string,
-    endpointType: keyof EndpointRateLimitConfig = "api"
+    endpointType: keyof EndpointRateLimitConfig = "api",
   ): Promise<{
     remaining: number;
     limit: number;
@@ -259,9 +296,13 @@ export class RateLimiterService {
     const redisKey = `${endpointConfig.keyPrefix}${userId}`;
     const currentCount = await RateLimiterService.redis?.get<number>(redisKey);
 
-    const maxRequests = endpointConfig.maxRequests + endpointConfig.burstAllowance;
+    const maxRequests =
+      endpointConfig.maxRequests + endpointConfig.burstAllowance;
     return {
-      remaining: currentCount !== null ? Math.max(0, maxRequests - currentCount) : maxRequests,
+      remaining:
+        currentCount !== null
+          ? Math.max(0, maxRequests - currentCount)
+          : maxRequests,
       limit: maxRequests,
       resetInMs: endpointConfig.windowMs,
     };
@@ -270,14 +311,19 @@ export class RateLimiterService {
   /**
    * Reset rate limit for a user
    */
-  async reset(userId: string, endpointType?: keyof EndpointRateLimitConfig): Promise<void> {
+  async reset(
+    userId: string,
+    endpointType?: keyof EndpointRateLimitConfig,
+  ): Promise<void> {
     if (endpointType) {
       const endpointConfig = this.config[endpointType];
       const redisKey = `${endpointConfig.keyPrefix}${userId}`;
       await RateLimiterService.redis?.del(redisKey);
     } else {
       // Reset all endpoints for user
-      for (const type of Object.keys(this.config) as Array<keyof EndpointRateLimitConfig>) {
+      for (const type of Object.keys(this.config) as Array<
+        keyof EndpointRateLimitConfig
+      >) {
         await this.reset(userId, type);
       }
     }
@@ -297,7 +343,7 @@ export interface RateLimitMiddlewareResult {
 export async function rateLimitMiddleware(
   userId: string,
   endpointType: keyof EndpointRateLimitConfig = "api",
-  config?: Partial<EndpointRateLimitConfig>
+  config?: Partial<EndpointRateLimitConfig>,
 ): Promise<RateLimitMiddlewareResult> {
   try {
     const limiter = new RateLimiterService(config);
@@ -361,7 +407,8 @@ export async function rateLimitMiddleware(
             userId,
             endpointType,
           },
-          error: "Rate limiter completely unavailable - service temporarily blocked (503)",
+          error:
+            "Rate limiter completely unavailable - service temporarily blocked (503)",
         };
       }
 
@@ -396,7 +443,7 @@ export async function rateLimitMiddleware(
  */
 export function createRateLimitMiddleware(
   endpointType: keyof EndpointRateLimitConfig = "api",
-  getUserId?: (request: Request) => string
+  getUserId?: (request: Request) => string,
 ) {
   return async function rateLimit(request: Request): Promise<{
     allowed: boolean;
@@ -406,11 +453,11 @@ export function createRateLimitMiddleware(
     // Extract user ID
     const clerkId = request.headers.get("x-clerk-id");
     const userIp = request.headers.get("x-forwarded-for") || "anonymous";
-    const userId = getUserId ? getUserId(request) : (clerkId || userIp);
-    
+    const userId = getUserId ? getUserId(request) : clerkId || userIp;
+
     // Check rate limit
     const result = await rateLimitMiddleware(userId, endpointType);
-    
+
     if (!result.allowed) {
       return {
         allowed: false,
@@ -418,7 +465,7 @@ export function createRateLimitMiddleware(
         error: result.error,
       };
     }
-    
+
     return {
       allowed: true,
       headers: result.result.headers,

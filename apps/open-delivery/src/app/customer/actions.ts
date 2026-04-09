@@ -19,6 +19,8 @@ import {
   OutboxRelayService,
   isReplayAllowed,
   AppConfig,
+  getRedisClient,
+  ServiceNamespace,
 } from "@repo/shared";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
@@ -490,7 +492,21 @@ export async function placeRealOrder(
         `CRITICAL: Order creation failed but payment ${paymentParams.txHash} may have been captured. Routing to manual reconciliation.`,
         error,
       );
-      // TODO: Push to Redis DLQ for admin reconciliation dashboard
+      // Push to Redis DLQ for admin reconciliation dashboard
+      const redis = getRedisClient(ServiceNamespace.OD);
+      await redis.lpush(
+        "dlq:orphaned_payments",
+        JSON.stringify({
+          txHash: paymentParams.txHash,
+          orderId,
+          customerEmail: user.emailAddresses[0].emailAddress,
+          vendorId,
+          amount: totalCrypto,
+          currency: paymentCurrency,
+          failedAt: new Date().toISOString(),
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
     }
 
     console.error("Order placement failed:", error);

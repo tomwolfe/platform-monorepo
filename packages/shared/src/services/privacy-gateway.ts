@@ -122,7 +122,8 @@ const PII_PATTERNS: Record<PiiType, { pattern: RegExp; confidence: number }> = {
   },
   // Basic address detection
   ADDRESS: {
-    pattern: /\b\d+\s+[A-Za-z]+\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct)\b/gi,
+    pattern:
+      /\b\d+\s+[A-Za-z]+\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct)\b/gi,
     confidence: 0.7,
   },
   // Date of birth patterns
@@ -149,7 +150,8 @@ export class PrivacyGatewayService {
 
   constructor(config?: PrivacyGatewayConfig) {
     this.config = {
-      enabledTypes: config?.enabledTypes || Object.keys(PII_PATTERNS) as PiiType[],
+      enabledTypes:
+        config?.enabledTypes || (Object.keys(PII_PATTERNS) as PiiType[]),
       confidenceThreshold: config?.confidenceThreshold || 0.7,
       tokenFormat: config?.tokenFormat || "[{type}_{hash}]",
       encryptTokens: config?.encryptTokens || false,
@@ -176,7 +178,7 @@ export class PrivacyGatewayService {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
       const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
+      hash = (hash << 5) - hash + char;
       hash = hash & hash; // Convert to 32bit integer
     }
     return Math.abs(hash).toString(16);
@@ -190,10 +192,10 @@ export class PrivacyGatewayService {
 
     for (const type of this.config.enabledTypes) {
       const { pattern, confidence } = PII_PATTERNS[type];
-      
+
       // Reset regex lastIndex
       pattern.lastIndex = 0;
-      
+
       let match;
       while ((match = pattern.exec(text)) !== null) {
         if (confidence >= this.config.confidenceThreshold) {
@@ -218,9 +220,9 @@ export class PrivacyGatewayService {
    */
   async scrub(text: string): Promise<ScrubbingResult> {
     // FEATURE FLAG: Check if privacy gateway is enabled
-    const { getFeatureFlags } = await import('../feature-flags');
+    const { getFeatureFlags } = await import("../feature-flags");
     const flags = getFeatureFlags();
-    
+
     if (!flags.ENABLE_PRIVACY_GATEWAY) {
       // Feature disabled - return text as-is
       return {
@@ -270,7 +272,7 @@ export class PrivacyGatewayService {
 
     console.log(
       `[PrivacyGateway] Scrubbed ${detectedPii.length} PII entities: ` +
-      detectedPii.map(p => `${p.type}(${p.token})`).join(", ")
+        detectedPii.map((p) => `${p.type}(${p.token})`).join(", "),
     );
 
     return {
@@ -284,14 +286,20 @@ export class PrivacyGatewayService {
   /**
    * Reverse tokenization (requires encryption key if enabled)
    */
-  async reverseScrubbing(scrubbedText: string, tokenMap: Record<string, EncryptedToken>): Promise<string> {
+  async reverseScrubbing(
+    scrubbedText: string,
+    tokenMap: Record<string, EncryptedToken>,
+  ): Promise<string> {
     let restoredText = scrubbedText;
 
     for (const [token, encryptedToken] of Object.entries(tokenMap)) {
       const value = await this.decryptValue(encryptedToken);
 
       // Replace all occurrences of token
-      restoredText = restoredText.replace(new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), value);
+      restoredText = restoredText.replace(
+        new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
+        value,
+      );
     }
 
     return restoredText;
@@ -306,8 +314,14 @@ export class PrivacyGatewayService {
    */
   private async encryptValue(value: string): Promise<EncryptedToken> {
     if (!this.config.encryptionKey) {
-      console.warn("[PrivacyGateway] Encryption requested but no key provided");
-      // Return unencrypted token for backward compatibility
+      if (process.env.NODE_ENV === "production") {
+        throw new Error(
+          "CRITICAL: Privacy Gateway encryption requested but no encryptionKey provided. Refusing to store unencrypted PII.",
+        );
+      }
+      console.warn(
+        "[PrivacyGateway] Encryption requested but no key provided. Using base64 fallback for development ONLY.",
+      );
       return {
         ciphertext: btoa(value),
         keyId: "none",
@@ -318,7 +332,9 @@ export class PrivacyGatewayService {
 
     try {
       // Get or derive the CryptoKey from the base64-encoded key
-      const cryptoKey = await this.getOrCreateCryptoKey(this.config.encryptionKey);
+      const cryptoKey = await this.getOrCreateCryptoKey(
+        this.config.encryptionKey,
+      );
 
       // Generate a random IV (12 bytes for GCM)
       const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -334,7 +350,7 @@ export class PrivacyGatewayService {
           iv: iv,
         },
         cryptoKey,
-        data
+        data,
       );
 
       // Extract ciphertext and auth tag (last 16 bytes)
@@ -350,7 +366,9 @@ export class PrivacyGatewayService {
       };
     } catch (error) {
       console.error("[PrivacyGateway] Encryption failed:", error);
-      throw new Error(`Encryption failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Encryption failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -385,7 +403,7 @@ export class PrivacyGatewayService {
         // For now, use current key (will fail if key actually rotated)
         console.warn(
           `[PrivacyGateway] Decrypting with different keyId: ${token.keyId}. ` +
-          "Ensure old key is still available."
+            "Ensure old key is still available.",
         );
         cryptoKey = await this.getOrCreateCryptoKey(this.config.encryptionKey);
       }
@@ -407,14 +425,16 @@ export class PrivacyGatewayService {
           iv: iv.buffer as ArrayBuffer,
         },
         cryptoKey,
-        encryptedBytes
+        encryptedBytes,
       );
 
       const decoder = new TextDecoder();
       return decoder.decode(decrypted);
     } catch (error) {
       console.error("[PrivacyGateway] Decryption failed:", error);
-      throw new Error(`Decryption failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Decryption failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -437,7 +457,7 @@ export class PrivacyGatewayService {
       if (keyBytes.byteLength !== 32) {
         throw new Error(
           `Invalid key length: expected 32 bytes (256 bits), got ${keyBytes.byteLength} bytes. ` +
-          "Ensure encryptionKey is a base64-encoded 32-byte key."
+            "Ensure encryptionKey is a base64-encoded 32-byte key.",
         );
       }
 
@@ -447,7 +467,7 @@ export class PrivacyGatewayService {
         keyBytes,
         { name: "AES-GCM" },
         false, // Not extractable
-        ["encrypt", "decrypt"]
+        ["encrypt", "decrypt"],
       );
 
       // Cache the key
@@ -456,7 +476,9 @@ export class PrivacyGatewayService {
       return cryptoKey;
     } catch (error) {
       console.error("[PrivacyGateway] Failed to import encryption key:", error);
-      throw new Error(`Key import failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Key import failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -517,7 +539,10 @@ export class PrivacyGatewayService {
   /**
    * Scrub semantic memory entry before storage
    */
-  async scrubMemoryEntry(rawText: string, parameters?: Record<string, unknown>): Promise<{
+  async scrubMemoryEntry(
+    rawText: string,
+    parameters?: Record<string, unknown>,
+  ): Promise<{
     scrubbedText: string;
     scrubbedParameters: Record<string, unknown>;
     tokenMap: Record<string, EncryptedToken>;
@@ -528,7 +553,9 @@ export class PrivacyGatewayService {
 
     // Scrub parameters
     const scrubbedParameters: Record<string, unknown> = {};
-    const allTokenMaps: Record<string, EncryptedToken> = { ...textResult.tokenMap };
+    const allTokenMaps: Record<string, EncryptedToken> = {
+      ...textResult.tokenMap,
+    };
     const allDetectedPii: DetectedPii[] = [...textResult.detectedPii];
 
     for (const [key, value] of Object.entries(parameters || {})) {
@@ -586,6 +613,8 @@ export function getPrivacyGateway(): PrivacyGatewayService {
   return defaultPrivacyGateway;
 }
 
-export function createPrivacyGateway(config?: PrivacyGatewayConfig): PrivacyGatewayService {
+export function createPrivacyGateway(
+  config?: PrivacyGatewayConfig,
+): PrivacyGatewayService {
   return new PrivacyGatewayService(config);
 }

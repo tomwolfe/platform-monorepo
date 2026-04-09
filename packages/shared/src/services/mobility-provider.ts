@@ -113,7 +113,14 @@ export interface IMobilityProvider {
  * Generates realistic-looking mock data without calling real APIs
  */
 export class MockMobilityProvider implements IMobilityProvider {
-  private readonly driverNames = ["Alex", "Jordan", "Sam", "Taylor", "Morgan", "Casey"];
+  private readonly driverNames = [
+    "Alex",
+    "Jordan",
+    "Sam",
+    "Taylor",
+    "Morgan",
+    "Casey",
+  ];
   private readonly vehiclePrefixes = ["ABC", "XYZ", "DEF", "GHI", "JKL", "MNO"];
 
   getProviderName(): string {
@@ -132,7 +139,10 @@ export class MockMobilityProvider implements IMobilityProvider {
    * Generate a random vehicle plate
    */
   private generateVehiclePlate(): string {
-    const prefix = this.vehiclePrefixes[Math.floor(Math.random() * this.vehiclePrefixes.length)];
+    const prefix =
+      this.vehiclePrefixes[
+        Math.floor(Math.random() * this.vehiclePrefixes.length)
+      ];
     const suffix = Math.random().toString(36).substring(2, 5).toUpperCase();
     return `${prefix}-${suffix}`;
   }
@@ -152,15 +162,18 @@ export class MockMobilityProvider implements IMobilityProvider {
   }
 
   async requestRide(params: MobilityRequest): Promise<MobilityResult> {
-    const { service, pickup_location, destination_location, ride_type } = params;
+    const { service, pickup_location, destination_location, ride_type } =
+      params;
 
     const normalizedPickup = this.normalizeLocation(pickup_location);
     const normalizedDestination = this.normalizeLocation(destination_location);
 
-    console.log(`[MockMobility] Ride request: ${service} from ${normalizedPickup} to ${normalizedDestination}`);
+    console.log(
+      `[MockMobility] Ride request: ${service} from ${normalizedPickup} to ${normalizedDestination}`,
+    );
 
     // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     return {
       status: "requested",
@@ -175,12 +188,13 @@ export class MockMobilityProvider implements IMobilityProvider {
   }
 
   async cancelRide(params: CancellationRequest): Promise<CancellationResult> {
-    const rideId = params.ride_id || `ride_${Math.random().toString(36).substring(2, 9)}`;
+    const rideId =
+      params.ride_id || `ride_${Math.random().toString(36).substring(2, 9)}`;
 
     console.log(`[MockMobility] Cancelling ride: ${rideId}`);
 
     // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     return {
       status: "cancelled",
@@ -199,16 +213,21 @@ export class MockMobilityProvider implements IMobilityProvider {
 /**
  * Get mobility provider based on environment
  */
-export function getMobilityProvider(service?: MobilityService): IMobilityProvider {
-  // In production, throw an error to prevent silent false-positive ride requests
-  if (process.env.NODE_ENV === 'production') {
+export function getMobilityProvider(
+  service?: MobilityService,
+): IMobilityProvider {
+  // Check if we are explicitly allowing mock mobility in production via env var
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.ENABLE_MOCK_MOBILITY !== "true"
+  ) {
     throw new NotImplementedError(
-      'Real mobility providers must be configured. ' +
-      'Implement a real provider (Uber, Lyft, etc.) before deploying to production.'
+      "Real mobility providers must be configured. " +
+        "Set ENABLE_MOCK_MOBILITY=true to allow simulated rides in production.",
     );
   }
 
-  // In development/testing, return mock provider
+  // In development/testing, or when explicitly enabled in production, return mock provider
   return new MockMobilityProvider();
 }
 
@@ -218,7 +237,7 @@ export function getMobilityProvider(service?: MobilityService): IMobilityProvide
 export class NotImplementedError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'NotImplementedError';
+    this.name = "NotImplementedError";
   }
 }
 

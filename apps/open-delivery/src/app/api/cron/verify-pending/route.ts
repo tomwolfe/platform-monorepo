@@ -12,6 +12,8 @@ import { type Address } from "viem";
 import { processStuckTransactions } from "@repo/shared/services/transaction-speedup";
 import { trace, Span, SpanStatusCode } from "@opentelemetry/api";
 
+export const maxDuration = 10; // Vercel Hobby limit
+
 const logger = new Logger({ serviceName: "verify-pending-cron" });
 const tracer = trace.getTracer("open-delivery-cron");
 
@@ -135,10 +137,14 @@ async function postHandler(req: NextRequest) {
 
         const batchPromises = batch.map(async (order) => {
           try {
+            // Move BigInt casting inside try block to catch parsing errors
+            const totalBigInt = BigInt(order.total);
+            const tipBigInt = BigInt(order.tip); // Reserved for future tip-based verification
+
             // Verify the transaction on-chain
             const verificationResult = await verifyTransaction({
               txHash: order.paymentTxHash as `0x${string}`,
-              expectedValue: BigInt(order.total),
+              expectedValue: totalBigInt,
               expectedRecipient: order.restaurant.walletAddress as
                 | Address
                 | undefined,

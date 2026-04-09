@@ -6,7 +6,7 @@ import { currentUser } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
 import { Logger } from "@repo/shared";
 
-const logger = new Logger({ serviceName: 'open-delivery-driver-register' });
+const logger = new Logger({ serviceName: "open-delivery-driver-register" });
 
 export interface RegisterDriverResult {
   success: boolean;
@@ -18,7 +18,10 @@ export interface RegisterDriverResult {
  *
  * Creates a new driver profile for the authenticated user.
  */
-export async function registerDriver(fullName: string, email: string): Promise<RegisterDriverResult> {
+export async function registerDriver(
+  fullName: string,
+  email: string,
+): Promise<RegisterDriverResult> {
   try {
     // 1. Verify Clerk authentication
     const user = await currentUser();
@@ -27,9 +30,12 @@ export async function registerDriver(fullName: string, email: string): Promise<R
       return { success: false, error: "Unauthorized - please log in" };
     }
 
+    // Normalize email to prevent duplicates with whitespace/case variations
+    const normalizedEmail = email.trim().toLowerCase();
+
     // 2. Check if driver already exists
     const existingDriver = await getDb().execute(
-      sql`SELECT * FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`
+      sql`SELECT * FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`,
     );
 
     if (existingDriver.rows.length > 0) {
@@ -38,20 +44,23 @@ export async function registerDriver(fullName: string, email: string): Promise<R
 
     // 3. Check if email is already registered
     const existingEmail = await getDb().execute(
-      sql`SELECT * FROM drivers WHERE email = ${email.toLowerCase()} LIMIT 1`
+      sql`SELECT * FROM drivers WHERE email = ${normalizedEmail} LIMIT 1`,
     );
 
     if (existingEmail.rows.length > 0) {
-      return { success: false, error: "This email is already registered as a driver" };
+      return {
+        success: false,
+        error: "This email is already registered as a driver",
+      };
     }
 
     // 4. Create driver profile
     const result = await getDb().execute(
       sql`
         INSERT INTO drivers (clerk_id, full_name, email, trust_score, is_active, created_at)
-        VALUES (${user.id}, ${fullName}, ${email.toLowerCase()}, 80, true, NOW())
+        VALUES (${user.id}, ${fullName}, ${normalizedEmail}, 80, true, NOW())
         RETURNING *
-      `
+      `,
     );
 
     if (result.rows.length === 0) {
@@ -60,17 +69,22 @@ export async function registerDriver(fullName: string, email: string): Promise<R
 
     const driver = result.rows[0] as any;
 
-    logger.info(`Created driver profile for ${user.id}`, { driverId: driver.id });
+    logger.info(`Created driver profile for ${user.id}`, {
+      driverId: driver.id,
+    });
 
     // 5. Revalidate driver dashboard
-    revalidatePath('/driver');
+    revalidatePath("/driver");
 
     return { success: true };
   } catch (error) {
-    logger.error("Error in registerDriver", { error: error instanceof Error ? error.message : String(error) });
+    logger.error("Error in registerDriver", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to register as driver"
+      error:
+        error instanceof Error ? error.message : "Failed to register as driver",
     };
   }
 }

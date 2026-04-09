@@ -215,6 +215,16 @@ export async function placeRealOrder(
   // Use the client-provided ID (which the signature binds to) or fallback to new UUID
   const orderId = clientOrderId || randomUUID();
 
+  // Validate clientOrderId format if provided to prevent ID spoofing
+  if (
+    clientOrderId &&
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      clientOrderId,
+    )
+  ) {
+    throw new Error("Invalid order ID format");
+  }
+
   // Convert fiat amounts to crypto smallest units (Wei for ETH, atomic for USDC)
   // CRITICAL: Use integer math (cents) from the start to avoid floating-point precision loss
   const paymentCurrency = paymentParams?.paymentCurrency || "USDC";
@@ -240,27 +250,11 @@ export async function placeRealOrder(
     ).toString();
   } else {
     // USDC: 6 decimals, assume 1 USD = 1 USDC
-    // Convert cents to dollars with exact decimal precision (no float division)
-    const dollars = Math.floor(totalCents / 100);
-    const centsRemainder = totalCents % 100;
-    totalCrypto = parseUnits(
-      `${dollars}.${String(centsRemainder).padStart(2, "0")}0000`,
-      6,
-    ).toString();
-
-    const subtotalDollars = Math.floor(subtotalCents / 100);
-    const subtotalCentsRemainder = subtotalCents % 100;
-    subtotalCrypto = parseUnits(
-      `${subtotalDollars}.${String(subtotalCentsRemainder).padStart(2, "0")}0000`,
-      6,
-    ).toString();
-
-    const tipDollars = Math.floor(tipCents / 100);
-    const tipCentsRemainder = tipCents % 100;
-    tipCrypto = parseUnits(
-      `${tipDollars}.${String(tipCentsRemainder).padStart(2, "0")}0000`,
-      6,
-    ).toString();
+    // 1 USD = 100 cents. 1 USDC = 1,000,000 atomic units.
+    // Multiplier from cents to 6-decimal USDC is 10,000 (10^4).
+    totalCrypto = (BigInt(totalCents) * 10000n).toString();
+    subtotalCrypto = (BigInt(subtotalCents) * 10000n).toString();
+    tipCrypto = (BigInt(tipCents) * 10000n).toString();
   }
 
   // ============================================================================

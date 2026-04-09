@@ -37,7 +37,7 @@ const LLM_API_KEY = AppConfig.getLlmApiKey();
 const LLM_BASE_URL = AppConfig.getLlmBaseUrl();
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 10; // Vercel Hobby limit
 
 const redis = getRedisClient(ServiceNamespace.IE);
 

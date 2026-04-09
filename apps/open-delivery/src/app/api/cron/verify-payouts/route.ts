@@ -6,6 +6,8 @@ import { ESCROW_ABI } from "@repo/shared/utils/escrow-abi";
 import { withCronAuth } from "@repo/shared";
 import { trace, Span, SpanStatusCode } from "@opentelemetry/api";
 
+export const maxDuration = 10; // Vercel Hobby limit
+
 const tracer = trace.getTracer("open-delivery-payouts-cron");
 
 /**

@@ -19,20 +19,20 @@
  * @since 1.0.0
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { withCronAuth, Logger } from '@repo/shared';
-import { getOutboxListener } from '@repo/shared';
+import { NextRequest, NextResponse } from "next/server";
+import { withCronAuth, Logger } from "@repo/shared";
+import { getOutboxListener } from "@repo/shared";
 
-export const runtime = 'nodejs';
-export const maxDuration = 30; // Vercel Hobby limit
+export const runtime = "nodejs";
+export const maxDuration = 10; // Vercel Hobby limit
 
-const logger = new Logger({ serviceName: 'outbox-sweep-cron' });
+const logger = new Logger({ serviceName: "outbox-sweep-cron" });
 
 async function cronHandler(req: NextRequest): Promise<NextResponse> {
   const startTime = performance.now();
 
   try {
-    logger.info({ message: 'Starting outbox sweep' });
+    logger.info({ message: "Starting outbox sweep" });
 
     const listener = getOutboxListener();
     await listener.pollAndProcess();
@@ -41,14 +41,14 @@ async function cronHandler(req: NextRequest): Promise<NextResponse> {
     const duration = performance.now() - startTime;
 
     logger.info({
-      message: 'Outbox sweep completed',
+      message: "Outbox sweep completed",
       durationMs: Math.round(duration),
       stats,
     });
 
     return NextResponse.json({
       success: true,
-      message: 'Outbox sweep completed',
+      message: "Outbox sweep completed",
       durationMs: Math.round(duration),
       stats: {
         notificationsReceived: stats.notificationsReceived,
@@ -60,16 +60,16 @@ async function cronHandler(req: NextRequest): Promise<NextResponse> {
     });
   } catch (error) {
     logger.error({
-      message: 'Outbox sweep failed',
+      message: "Outbox sweep failed",
       error: error instanceof Error ? error.message : String(error),
     });
 
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

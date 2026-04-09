@@ -115,6 +115,14 @@ export function registerPublicKey(
   serviceName: string,
   publicKey: string,
 ): void {
+  if (process.env.NEXT_RUNTIME === "edge") {
+    console.warn(
+      `[AsymmetricJWT] Runtime key registration detected in Edge runtime. ` +
+        `Registered keys may not persist across requests due to Vercel Edge isolation. ` +
+        `Consider using environment variables (${serviceName.toUpperCase().replace("-", "_")}_PUBLIC_KEY) instead.`,
+    );
+  }
+
   const registry = (globalThis as Record<string, unknown>)
     .__publicKeyRegistry as Record<string, string> | undefined;
   const updatedRegistry = registry || {};

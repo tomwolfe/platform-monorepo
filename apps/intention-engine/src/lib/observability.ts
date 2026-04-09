@@ -105,6 +105,55 @@ export function initObservability(serviceName = "intention-engine") {
 
 export const tracer = trace.getTracer("intention-engine");
 
+/**
+ * T4.1: Start an active span that properly sets the async context.
+ *
+ * Unlike the previous `startTrace()` which used `tracer.startSpan()`,
+ * this uses `tracer.startActiveSpan()` which activates the span context
+ * via the OpenTelemetry Context API. This ensures that any child spans
+ * created downstream (e.g., via fetchWithTracing, redis operations)
+ * are automatically linked as descendants in the trace tree.
+ *
+ * @param name - Span name
+ * @param traceId - Correlation ID for cross-service trace linking
+ * @param fn - Function to execute within the active span context
+ * @returns The result of the function
+ */
+export function startActiveTrace<T>(
+  name: string,
+  traceId: string,
+  fn: (span: import("@opentelemetry/api").Span) => Promise<T>,
+): Promise<T> {
+  return tracer.startActiveSpan(
+    name,
+    {
+      attributes: { "x-trace-id": traceId },
+    },
+    async (span) => {
+      try {
+        const result = await fn(span);
+        span.setStatus({ code: 1 }); // OK
+        return result;
+      } catch (error) {
+        span.setStatus({
+          code: 2, // ERROR
+          message: error instanceof Error ? error.message : String(error),
+        });
+        span.recordException(error);
+        throw error;
+      } finally {
+        span.end();
+      }
+    },
+  );
+}
+
+/**
+ * @deprecated Use `startActiveTrace()` instead.
+ * This function does not activate the span context, so child spans
+ * created downstream will be orphaned from the parent trace.
+ * Retained for backward compatibility only.
+ */
 export function startTrace(name: string, traceId: string) {
   return tracer.startSpan(name, {
     attributes: { "x-trace-id": traceId },

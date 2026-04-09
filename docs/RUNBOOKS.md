@@ -8,6 +8,8 @@
 4. [Debug LLM Parsing Failures](#debug-llm-parsing-failures)
 5. [Handle Web3 Transaction Failures](#handle-web3-transaction-failures)
 6. [Reset Nonce Tracker](#reset-nonce-tracker)
+7. [T4.1: Follow a Distributed Trace](#t41-follow-a-distributed-trace)
+8. [T4.1: Debug Broken Trace Propagation](#t41-debug-broken-trace-propagation)
 
 ---
 
@@ -302,3 +304,83 @@ cat packages/shared/src/utils/wallet-provider.ts | grep "address"
 | `POST /api/admin/dlq/replay-all`               | Replay all DLQ tasks   | `ADMIN_TOKEN` |
 | `POST /api/admin/circuit-breaker/{tool}/reset` | Reset circuit breaker  | `ADMIN_TOKEN` |
 | `POST /api/cron/payouts`                       | Manual payout trigger  | `CRON_SECRET` |
+
+---
+
+## T4.1: Follow a Distributed Trace
+
+### When to Use
+
+- Debugging a failed user request across multiple services
+- Understanding the full execution path from LLM → DB → Web3 → Ably
+- Identifying latency bottlenecks in the request pipeline
+
+### How to Trace a Request
+
+1. **Obtain the `x-trace-id`** from:
+   - User's browser console (logged on errors)
+   - API response headers (`x-trace-id`)
+   - Grafana Loki logs (search for `x-trace-id`)
+   - QStash delivery logs
+
+2. **Open Grafana Tempo** at `http://localhost:3200` (local) or your production Grafana instance.
+
+3. **Search by Trace ID**:
+   - Go to Explore → Select Tempo data source
+   - Search tab → Paste the `x-trace-id` value
+   - Click "Run query"
+
+4. **Analyze the Trace Tree**:
+   - Root span: The original HTTP request (e.g., `POST /api/chat`)
+   - Child spans: LLM calls, DB queries, Redis operations, Web3 RPC calls
+   - Look for spans with `status: ERROR` or high latency
+   - Each span should have `x-trace-id` attribute matching your search
+
+5. **Cross-Service Correlation**:
+   - `x-trace-id` is propagated via HTTP headers to all downstream services
+   - QStash payloads include `x-trace-id` in headers
+   - Ably events include `traceId` in the `extras` field
+
+### Common Trace Patterns
+
+| Pattern                          | Meaning                                             | Action                                  |
+| -------------------------------- | --------------------------------------------------- | --------------------------------------- |
+| Orphaned spans (no parent)       | `startTrace()` used instead of `startActiveTrace()` | Update code to use `startActiveTrace()` |
+| Missing spans for external calls | Raw `fetch()` not wrapped with `fetchWithTracing()` | Wrap fetch calls                        |
+| Trace ID mismatch                | Service didn't extract `x-trace-id` from headers    | Check header extraction                 |
+
+---
+
+## T4.1: Debug Broken Trace Propagation
+
+### Symptoms
+
+- Spans appearing as separate traces in Grafana Tempo
+- Child spans not linked to parent request
+- `x-trace-id` header missing from downstream requests
+
+### Diagnosis
+
+```bash
+# Check if trace ID is being propagated in QStash payloads
+curl -H "Authorization: Bearer $QSTASH_TOKEN" \
+  "https://qstash.upstash.io/v2/publish/{url}" \
+  -H "Content-Type: application/json" \
+  -d '{"traceId": "test-trace-123"}'
+
+# Verify Ably events include traceId in extras
+# Check the event.extras.traceId field in your Ably consumer
+```
+
+### Fixes
+
+1. **For HTTP calls**: Use `fetchWithTracing()` from `@/lib/fetch` instead of raw `fetch()`
+2. **For root spans**: Use `startActiveTrace()` instead of `startTrace()`
+3. **For QStash**: Always pass `traceId` in options:
+   ```typescript
+   await QStashService.triggerNextStep({
+     url: "...",
+     traceId: currentTraceId,
+   });
+   ```
+4. **For Ably**: Use `publishTracedEvent()` instead of raw `publish()`

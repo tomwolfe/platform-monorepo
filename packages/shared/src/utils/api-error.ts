@@ -25,6 +25,10 @@
 import { z } from "zod";
 import { isNextRedirectError } from "./next-errors";
 import type { NextRequest } from "next/server";
+import {
+  rateLimitMiddleware,
+  type EndpointRateLimitConfig,
+} from "../middleware/rate-limiter";
 
 /**
  * Standard API error response structure
@@ -390,6 +394,9 @@ export type ServerActionResponse<T> =
  * @param options - Optional configuration
  * @param options.errorCode - Default error code to use (for logging)
  * @param options.transformError - Custom error message transformer
+ * @param options.rateLimit - Rate limiting configuration
+ * @param options.rateLimit.endpointType - The endpoint type to use for rate limiting
+ * @param options.rateLimit.getUserId - Optional function to extract user ID (defaults to Clerk auth)
  * @returns Wrapped function that returns ServerActionResponse
  *
  * @example
@@ -405,6 +412,16 @@ export type ServerActionResponse<T> =
  * );
  * ```
  *
+ * @example
+ * ```typescript
+ * export const acceptDelivery = withServerActionHandler(
+ *   async (deliveryId: string) => {
+ *     // ... logic
+ *   },
+ *   { rateLimit: { endpointType: 'api' } }
+ * );
+ * ```
+ *
  * @see https://nextjs.org/docs/app/building-your-application/data-fetching/server-actions-and-mutations#error-handling
  */
 export function withServerActionHandler<TArgs extends unknown[], TReturn>(
@@ -412,10 +429,44 @@ export function withServerActionHandler<TArgs extends unknown[], TReturn>(
   options?: {
     errorCode?: string;
     transformError?: (error: unknown) => string;
+    rateLimit?: {
+      endpointType: keyof EndpointRateLimitConfig;
+      getUserId?: () => Promise<string | null> | string | null;
+    };
   },
 ) {
   return async (...args: TArgs): Promise<ServerActionResponse<TReturn>> => {
     try {
+      // Check rate limit before executing the server action
+      if (options?.rateLimit) {
+        const userId = options.rateLimit.getUserId
+          ? await options.rateLimit.getUserId()
+          : await (async () => {
+              try {
+                const { auth } = await import("@clerk/nextjs/server");
+                const { userId: clerkUserId } = await auth();
+                return clerkUserId;
+              } catch {
+                return null;
+              }
+            })();
+
+        if (userId) {
+          const rateLimitResult = await rateLimitMiddleware(
+            userId,
+            options.rateLimit.endpointType,
+          );
+
+          if (!rateLimitResult.allowed) {
+            return {
+              success: false,
+              error: rateLimitResult.error || "Rate limit exceeded",
+              code: "RATE_LIMIT_EXCEEDED",
+            };
+          }
+        }
+      }
+
       const result = await fn(...args);
       return { success: true, data: result };
     } catch (error) {

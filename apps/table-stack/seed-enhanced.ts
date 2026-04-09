@@ -1,5 +1,14 @@
-import 'dotenv/config';
-import { getDb, restaurants, restaurantTables, users, restaurantReservations, restaurantWaitlist, eq } from "@repo/database";
+import "dotenv/config";
+import crypto from "node:crypto";
+import {
+  getDb,
+  restaurants,
+  restaurantTables,
+  users,
+  restaurantReservations,
+  restaurantWaitlist,
+  eq,
+} from "@repo/database";
 import { sql } from "drizzle-orm";
 
 /**
@@ -19,27 +28,27 @@ import { sql } from "drizzle-orm";
 
 // Parse command-line arguments
 const args = process.argv.slice(2);
-const shouldReset = args.includes('--reset');
+const shouldReset = args.includes("--reset");
 
 async function resetSchema() {
-  console.log('🔄 Resetting database schema...');
-  
+  console.log("🔄 Resetting database schema...");
+
   const db = getDb();
-  
+
   // Drop and recreate tables in correct order (respecting foreign keys)
   await db.execute(sql`DROP TABLE IF EXISTS restaurant_waitlist CASCADE`);
   await db.execute(sql`DROP TABLE IF EXISTS restaurant_reservations CASCADE`);
   await db.execute(sql`DROP TABLE IF EXISTS restaurant_tables CASCADE`);
   await db.execute(sql`DROP TABLE IF EXISTS users CASCADE`);
   await db.execute(sql`DROP TABLE IF EXISTS restaurants CASCADE`);
-  
-  console.log('   ✅ Schema dropped');
-  console.log('   ⏳ Tables will be recreated by Drizzle migrations\n');
+
+  console.log("   ✅ Schema dropped");
+  console.log("   ⏳ Tables will be recreated by Drizzle migrations\n");
 }
 
 async function seed() {
-  console.log('🌱 Seeding demo data with diverse interaction contexts...\n');
-  
+  console.log("🌱 Seeding demo data with diverse interaction contexts...\n");
+
   if (shouldReset) {
     await resetSchema();
   }
@@ -47,46 +56,69 @@ async function seed() {
   // ==========================================================================
   // RESTAURANTS
   // ==========================================================================
-  
-  console.log('🍽️  Creating restaurants...');
-  
-  const [restaurant] = await getDb().insert(restaurants).values({
-    name: 'The Pesto Place',
-    slug: 'demo',
-    ownerEmail: 'owner@pestoplace.com',
-    ownerId: 'user_2abc123',
-    apiKey: 'pk_test_123456789',
-    lat: '37.7749',
-    lng: '-122.4194',
-    address: '123 Market St, San Francisco, CA 94103',
-  }).onConflictDoUpdate({
-    target: restaurants.slug,
-    set: {
-      name: 'The Pesto Place',
-      ownerEmail: 'owner@pestoplace.com',
-      ownerId: 'user_2abc123',
-      apiKey: 'pk_test_123456789',
-    }
-  }).returning();
+
+  console.log("🍽️  Creating restaurants...");
+
+  // Hash API keys before inserting — auth middleware hashes incoming keys before querying
+  const plaintextApiKey1 = "pk_test_123456789";
+  const hashedApiKey1 = crypto
+    .createHash("sha256")
+    .update(plaintextApiKey1)
+    .digest("hex");
+  console.log(`   🔑 Restaurant 1 API key (plaintext): ${plaintextApiKey1}`);
+
+  const plaintextApiKey2 = "pk_test_987654321";
+  const hashedApiKey2 = crypto
+    .createHash("sha256")
+    .update(plaintextApiKey2)
+    .digest("hex");
+  console.log(`   🔑 Restaurant 2 API key (plaintext): ${plaintextApiKey2}`);
+
+  const [restaurant] = await getDb()
+    .insert(restaurants)
+    .values({
+      name: "The Pesto Place",
+      slug: "demo",
+      ownerEmail: "owner@pestoplace.com",
+      ownerId: "user_2abc123",
+      apiKey: hashedApiKey1,
+      lat: "37.7749",
+      lng: "-122.4194",
+      address: "123 Market St, San Francisco, CA 94103",
+    })
+    .onConflictDoUpdate({
+      target: restaurants.slug,
+      set: {
+        name: "The Pesto Place",
+        ownerEmail: "owner@pestoplace.com",
+        ownerId: "user_2abc123",
+        apiKey: hashedApiKey1,
+      },
+    })
+    .returning();
 
   console.log(`   ✅ ${restaurant.name} (ID: ${restaurant.id})`);
 
   // Create a second restaurant for alternative suggestions
-  const [restaurant2] = await getDb().insert(restaurants).values({
-    name: 'Bella Italia',
-    slug: 'bella-italia',
-    ownerEmail: 'owner@bellaitalia.com',
-    ownerId: 'user_3def456',
-    apiKey: 'pk_test_987654321',
-    lat: '37.7751',
-    lng: '-122.4180',
-    address: '456 Mission St, San Francisco, CA 94105',
-  }).onConflictDoUpdate({
-    target: restaurants.slug,
-    set: {
-      name: 'Bella Italia',
-    }
-  }).returning();
+  const [restaurant2] = await getDb()
+    .insert(restaurants)
+    .values({
+      name: "Bella Italia",
+      slug: "bella-italia",
+      ownerEmail: "owner@bellaitalia.com",
+      ownerId: "user_3def456",
+      apiKey: hashedApiKey2,
+      lat: "37.7751",
+      lng: "-122.4180",
+      address: "456 Mission St, San Francisco, CA 94105",
+    })
+    .onConflictDoUpdate({
+      target: restaurants.slug,
+      set: {
+        name: "Bella Italia",
+      },
+    })
+    .returning();
 
   console.log(`   ✅ ${restaurant2.name} (ID: ${restaurant2.id})`);
 
@@ -94,23 +126,67 @@ async function seed() {
   // RESTAURANT TABLES
   // ==========================================================================
 
-  console.log('\n🪑  Creating tables...');
+  console.log("\n🪑  Creating tables...");
 
-  await getDb().delete(restaurantTables).where(eq(restaurantTables.restaurantId, restaurant.id));
+  await getDb()
+    .delete(restaurantTables)
+    .where(eq(restaurantTables.restaurantId, restaurant.id));
 
   const tables = [
-    { tableNumber: '1', minCapacity: 2, maxCapacity: 2, xPos: 100, yPos: 100, tableType: 'square', status: 'available' },
-    { tableNumber: '2', minCapacity: 2, maxCapacity: 2, xPos: 250, yPos: 100, tableType: 'square', status: 'occupied' },
-    { tableNumber: '3', minCapacity: 4, maxCapacity: 4, xPos: 100, yPos: 250, tableType: 'square', status: 'available' },
-    { tableNumber: '4', minCapacity: 6, maxCapacity: 8, xPos: 250, yPos: 250, tableType: 'round', status: 'available' },
-    { tableNumber: '5', minCapacity: 2, maxCapacity: 2, xPos: 400, yPos: 100, tableType: 'booth', status: 'occupied' },
+    {
+      tableNumber: "1",
+      minCapacity: 2,
+      maxCapacity: 2,
+      xPos: 100,
+      yPos: 100,
+      tableType: "square",
+      status: "available",
+    },
+    {
+      tableNumber: "2",
+      minCapacity: 2,
+      maxCapacity: 2,
+      xPos: 250,
+      yPos: 100,
+      tableType: "square",
+      status: "occupied",
+    },
+    {
+      tableNumber: "3",
+      minCapacity: 4,
+      maxCapacity: 4,
+      xPos: 100,
+      yPos: 250,
+      tableType: "square",
+      status: "available",
+    },
+    {
+      tableNumber: "4",
+      minCapacity: 6,
+      maxCapacity: 8,
+      xPos: 250,
+      yPos: 250,
+      tableType: "round",
+      status: "available",
+    },
+    {
+      tableNumber: "5",
+      minCapacity: 2,
+      maxCapacity: 2,
+      xPos: 400,
+      yPos: 100,
+      tableType: "booth",
+      status: "occupied",
+    },
   ];
 
   for (const table of tables) {
-    await getDb().insert(restaurantTables).values({
-      ...table,
-      restaurantId: restaurant.id,
-    });
+    await getDb()
+      .insert(restaurantTables)
+      .values({
+        ...table,
+        restaurantId: restaurant.id,
+      });
   }
 
   // Query created tables to get their IDs
@@ -124,258 +200,279 @@ async function seed() {
   // ==========================================================================
   // USERS WITH DIVERSE INTERACTION CONTEXTS
   // ==========================================================================
-  
-  console.log('\n👥  Creating users with diverse interaction contexts...');
+
+  console.log("\n👥  Creating users with diverse interaction contexts...");
 
   const usersData = [
     {
-      clerkId: 'user_test_001',
-      email: 'alice@example.com',
-      name: 'Alice Chen',
+      clerkId: "user_test_001",
+      email: "alice@example.com",
+      name: "Alice Chen",
       lastInteractionContext: {
-        intentType: 'BOOKING',
-        rawText: 'Book a table for 2 at Pesto Place tonight at 7pm',
+        intentType: "BOOKING",
+        rawText: "Book a table for 2 at Pesto Place tonight at 7pm",
         parameters: {
           restaurantId: restaurant.id,
-          restaurantSlug: 'demo',
-          restaurantName: 'The Pesto Place',
+          restaurantSlug: "demo",
+          restaurantName: "The Pesto Place",
           partySize: 2,
-          time: '19:00',
-          date: new Date().toISOString().split('T')[0],
+          time: "19:00",
+          date: new Date().toISOString().split("T")[0],
         },
         timestamp: new Date(Date.now() - 1000 * 60 * 30).toISOString(), // 30 min ago
-        executionId: 'exec_alice_001',
+        executionId: "exec_alice_001",
       },
     },
     {
-      clerkId: 'user_test_002',
-      email: 'bob@example.com',
-      name: 'Bob Martinez',
+      clerkId: "user_test_002",
+      email: "bob@example.com",
+      name: "Bob Martinez",
       lastInteractionContext: {
-        intentType: 'DELIVERY',
-        rawText: 'Order delivery from Bella Italia to my office',
+        intentType: "DELIVERY",
+        rawText: "Order delivery from Bella Italia to my office",
         parameters: {
           restaurantId: restaurant2.id,
-          restaurantSlug: 'bella-italia',
-          restaurantName: 'Bella Italia',
-          deliveryAddress: '456 Mission St, San Francisco, CA 94105',
-          items: ['Margherita Pizza', 'Caesar Salad'],
+          restaurantSlug: "bella-italia",
+          restaurantName: "Bella Italia",
+          deliveryAddress: "456 Mission St, San Francisco, CA 94105",
+          items: ["Margherita Pizza", "Caesar Salad"],
         },
         timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(), // 2 hours ago
-        executionId: 'exec_bob_001',
-        outcome: 'success',
+        executionId: "exec_bob_001",
+        outcome: "success",
       },
     },
     {
-      clerkId: 'user_test_003',
-      email: 'carol@example.com',
-      name: 'Carol Williams',
+      clerkId: "user_test_003",
+      email: "carol@example.com",
+      name: "Carol Williams",
       lastInteractionContext: {
-        intentType: 'BOOKING',
-        rawText: 'Can I get a table for 8 this Friday at 8pm?',
+        intentType: "BOOKING",
+        rawText: "Can I get a table for 8 this Friday at 8pm?",
         parameters: {
           restaurantId: restaurant.id,
-          restaurantSlug: 'demo',
-          restaurantName: 'The Pesto Place',
+          restaurantSlug: "demo",
+          restaurantName: "The Pesto Place",
           partySize: 8,
-          time: '20:00',
-          date: new Date(Date.now() + 1000 * 60 * 60 * 24 * 2).toISOString().split('T')[0], // 2 days from now
+          time: "20:00",
+          date: new Date(Date.now() + 1000 * 60 * 60 * 24 * 2)
+            .toISOString()
+            .split("T")[0], // 2 days from now
         },
         timestamp: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(), // 5 hours ago
-        executionId: 'exec_carol_001',
-        outcome: 'failed',
-        failureReason: 'PARTY_SIZE_TOO_LARGE',
+        executionId: "exec_carol_001",
+        outcome: "failed",
+        failureReason: "PARTY_SIZE_TOO_LARGE",
       },
     },
     {
-      clerkId: 'user_test_004',
-      email: 'david@example.com',
-      name: 'David Kim',
+      clerkId: "user_test_004",
+      email: "david@example.com",
+      name: "David Kim",
       lastInteractionContext: {
-        intentType: 'WAITLIST',
-        rawText: 'Add me to the waitlist for Pesto Place',
+        intentType: "WAITLIST",
+        rawText: "Add me to the waitlist for Pesto Place",
         parameters: {
           restaurantId: restaurant.id,
-          restaurantSlug: 'demo',
-          restaurantName: 'The Pesto Place',
+          restaurantSlug: "demo",
+          restaurantName: "The Pesto Place",
           partySize: 4,
         },
         timestamp: new Date(Date.now() - 1000 * 60 * 15).toISOString(), // 15 min ago
-        executionId: 'exec_david_001',
-        outcome: 'success',
+        executionId: "exec_david_001",
+        outcome: "success",
       },
     },
     {
-      clerkId: 'user_test_005',
-      email: 'emma@example.com',
-      name: 'Emma Thompson',
+      clerkId: "user_test_005",
+      email: "emma@example.com",
+      name: "Emma Thompson",
       lastInteractionContext: {
-        intentType: 'BOOKING',
-        rawText: 'Book a table for 2 at 7:30pm',
+        intentType: "BOOKING",
+        rawText: "Book a table for 2 at 7:30pm",
         parameters: {
           restaurantId: restaurant.id,
-          restaurantSlug: 'demo',
-          restaurantName: 'The Pesto Place',
+          restaurantSlug: "demo",
+          restaurantName: "The Pesto Place",
           partySize: 2,
-          time: '19:30',
-          date: new Date().toISOString().split('T')[0],
+          time: "19:30",
+          date: new Date().toISOString().split("T")[0],
         },
         timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(), // 1 day ago
-        executionId: 'exec_emma_001',
-        outcome: 'failed',
-        failureReason: 'RESTAURANT_FULL',
+        executionId: "exec_emma_001",
+        outcome: "failed",
+        failureReason: "RESTAURANT_FULL",
       },
     },
     {
-      clerkId: 'user_test_006',
-      email: 'frank@example.com',
-      name: 'Frank Rodriguez',
+      clerkId: "user_test_006",
+      email: "frank@example.com",
+      name: "Frank Rodriguez",
       lastInteractionContext: {
-        intentType: 'RESERVATION_MODIFY',
-        rawText: 'Change my reservation from 7pm to 8pm',
+        intentType: "RESERVATION_MODIFY",
+        rawText: "Change my reservation from 7pm to 8pm",
         parameters: {
           restaurantId: restaurant.id,
-          restaurantSlug: 'demo',
-          restaurantName: 'The Pesto Place',
-          reservationId: 'res_frank_001',
-          newTime: '20:00',
+          restaurantSlug: "demo",
+          restaurantName: "The Pesto Place",
+          reservationId: "res_frank_001",
+          newTime: "20:00",
         },
         timestamp: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(), // 3 hours ago
-        executionId: 'exec_frank_001',
-        outcome: 'success',
+        executionId: "exec_frank_001",
+        outcome: "success",
       },
     },
   ];
 
   for (const userData of usersData) {
-    await getDb().insert(users).values(userData).onConflictDoUpdate({
-      target: users.clerkId,
-      set: {
-        name: userData.name,
-        lastInteractionContext: userData.lastInteractionContext as any,
-      },
-    });
-    console.log(`   ✅ ${userData.name} - Last intent: ${userData.lastInteractionContext.intentType}`);
+    await getDb()
+      .insert(users)
+      .values(userData)
+      .onConflictDoUpdate({
+        target: users.clerkId,
+        set: {
+          name: userData.name,
+          lastInteractionContext: userData.lastInteractionContext as any,
+        },
+      });
+    console.log(
+      `   ✅ ${userData.name} - Last intent: ${userData.lastInteractionContext.intentType}`,
+    );
   }
 
   // ==========================================================================
   // SAMPLE RESERVATIONS
   // ==========================================================================
-  
-  console.log('\n📅  Creating sample reservations...');
+
+  console.log("\n📅  Creating sample reservations...");
 
   const reservations = [
     {
       restaurantId: restaurant.id,
       tableId: createdTables[1].id, // Table 2
-      guestName: 'Bob Martinez',
-      guestEmail: 'bob@example.com',
+      guestName: "Bob Martinez",
+      guestEmail: "bob@example.com",
       partySize: 2,
       startTime: new Date(Date.now() + 1000 * 60 * 60), // 1 hour from now
       endTime: new Date(Date.now() + 1000 * 60 * 60 * 2.5),
-      status: 'confirmed',
+      status: "confirmed",
       isVerified: true,
     },
     {
       restaurantId: restaurant.id,
       tableId: createdTables[4].id, // Table 5
-      guestName: 'David Kim',
-      guestEmail: 'david@example.com',
+      guestName: "David Kim",
+      guestEmail: "david@example.com",
       partySize: 2,
       startTime: new Date(Date.now() + 1000 * 60 * 60 * 1.5), // 1.5 hours from now
       endTime: new Date(Date.now() + 1000 * 60 * 60 * 3),
-      status: 'confirmed',
+      status: "confirmed",
       isVerified: true,
     },
   ];
 
   for (const reservation of reservations) {
     await getDb().insert(restaurantReservations).values(reservation);
-    console.log(`   ✅ Reservation for ${reservation.guestName} at ${reservation.startTime.toLocaleTimeString()}`);
+    console.log(
+      `   ✅ Reservation for ${reservation.guestName} at ${reservation.startTime.toLocaleTimeString()}`,
+    );
   }
 
   // ==========================================================================
   // WAITLIST ENTRIES
   // ==========================================================================
-  
-  console.log('\n⏳  Creating waitlist entries...');
+
+  console.log("\n⏳  Creating waitlist entries...");
 
   const waitlistEntries = [
     {
       restaurantId: restaurant.id,
-      guestName: 'Carol Williams',
-      guestEmail: 'carol@example.com',
+      guestName: "Carol Williams",
+      guestEmail: "carol@example.com",
       partySize: 4,
-      status: 'waiting',
+      status: "waiting",
     },
     {
       restaurantId: restaurant.id,
-      guestName: 'Emma Thompson',
-      guestEmail: 'emma@example.com',
+      guestName: "Emma Thompson",
+      guestEmail: "emma@example.com",
       partySize: 2,
-      status: 'waiting',
+      status: "waiting",
     },
   ];
 
   for (const entry of waitlistEntries) {
     await getDb().insert(restaurantWaitlist).values(entry);
-    console.log(`   ✅ Waitlist: ${entry.guestName} (party of ${entry.partySize})`);
+    console.log(
+      `   ✅ Waitlist: ${entry.guestName} (party of ${entry.partySize})`,
+    );
   }
 
   // ==========================================================================
   // HIGH VALUE GUEST (>5 visits for proactive engagement testing)
   // ==========================================================================
 
-  console.log('\n⭐ Creating high-value guest for proactive engagement testing...');
+  console.log(
+    "\n⭐ Creating high-value guest for proactive engagement testing...",
+  );
 
-  const [highValueGuest] = await getDb().insert(users).values({
-    clerkId: 'user_test_high_value_guest',
-    email: 'vip@example.com',
-    name: 'Victoria Sterling',
-    lastInteractionContext: {
-      intentType: 'BOOKING',
-      rawText: 'Book my usual table for 2 at 8pm',
-      parameters: {
-        restaurantId: restaurant.id,
-        restaurantSlug: 'demo',
-        restaurantName: 'The Pesto Place',
-        partySize: 2,
-        time: '20:00',
-        date: new Date().toISOString().split('T')[0],
-        isVIP: true,
-      },
-      timestamp: new Date().toISOString(),
-      executionId: 'exec_vip_001',
-      outcome: 'success',
-      visitCount: 7, // >5 visits to trigger proactive engagement
-      lifetimeValue: 450.50,
-      lastVisitDate: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(), // 3 days ago
-    },
-  }).onConflictDoUpdate({
-    target: users.clerkId,
-    set: {
-      name: 'Victoria Sterling',
+  const [highValueGuest] = await getDb()
+    .insert(users)
+    .values({
+      clerkId: "user_test_high_value_guest",
+      email: "vip@example.com",
+      name: "Victoria Sterling",
       lastInteractionContext: {
-        intentType: 'BOOKING',
-        rawText: 'Book my usual table for 2 at 8pm',
+        intentType: "BOOKING",
+        rawText: "Book my usual table for 2 at 8pm",
         parameters: {
           restaurantId: restaurant.id,
-          restaurantSlug: 'demo',
-          restaurantName: 'The Pesto Place',
+          restaurantSlug: "demo",
+          restaurantName: "The Pesto Place",
           partySize: 2,
-          time: '20:00',
-          date: new Date().toISOString().split('T')[0],
+          time: "20:00",
+          date: new Date().toISOString().split("T")[0],
           isVIP: true,
         },
         timestamp: new Date().toISOString(),
-        executionId: 'exec_vip_001',
-        outcome: 'success',
-        visitCount: 7,
-        lifetimeValue: 450.50,
-        lastVisitDate: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(),
-      } as any,
-    },
-  }).returning();
+        executionId: "exec_vip_001",
+        outcome: "success",
+        visitCount: 7, // >5 visits to trigger proactive engagement
+        lifetimeValue: 450.5,
+        lastVisitDate: new Date(
+          Date.now() - 1000 * 60 * 60 * 24 * 3,
+        ).toISOString(), // 3 days ago
+      },
+    })
+    .onConflictDoUpdate({
+      target: users.clerkId,
+      set: {
+        name: "Victoria Sterling",
+        lastInteractionContext: {
+          intentType: "BOOKING",
+          rawText: "Book my usual table for 2 at 8pm",
+          parameters: {
+            restaurantId: restaurant.id,
+            restaurantSlug: "demo",
+            restaurantName: "The Pesto Place",
+            partySize: 2,
+            time: "20:00",
+            date: new Date().toISOString().split("T")[0],
+            isVIP: true,
+          },
+          timestamp: new Date().toISOString(),
+          executionId: "exec_vip_001",
+          outcome: "success",
+          visitCount: 7,
+          lifetimeValue: 450.5,
+          lastVisitDate: new Date(
+            Date.now() - 1000 * 60 * 60 * 24 * 3,
+          ).toISOString(),
+        } as any,
+      },
+    })
+    .returning();
 
   console.log(`   ✅ High-value guest created: ${highValueGuest.name}`);
   console.log(`      - Visit count: 7`);
@@ -386,24 +483,30 @@ async function seed() {
   // SUMMARY
   // ==========================================================================
 
-  console.log('\n📊 Seed Summary:');
+  console.log("\n📊 Seed Summary:");
   console.log(`   - Restaurants: 2`);
   console.log(`     • ${restaurant.name} (ID: ${restaurant.id})`);
   console.log(`     • ${restaurant2.name} (ID: ${restaurant2.id})`);
   console.log(`   - Tables: ${tables.length}`);
-  console.log(`   - Users: ${usersData.length + 1} (including high-value guest)`);
-  console.log(`     • High-value guest: ${highValueGuest.name} (ID: ${highValueGuest.id})`);
+  console.log(
+    `   - Users: ${usersData.length + 1} (including high-value guest)`,
+  );
+  console.log(
+    `     • High-value guest: ${highValueGuest.name} (ID: ${highValueGuest.id})`,
+  );
   console.log(`   - Reservations: ${reservations.length}`);
   console.log(`   - Waitlist entries: ${waitlistEntries.length}`);
 
-  console.log('\n🎯 Test Scenarios Enabled:');
-  console.log('   - ✅ Pre-flight state injection (restaurant availability)');
-  console.log('   - ✅ Failover policies (full restaurant → alternatives)');
-  console.log('   - ✅ Semantic memory (diverse user interaction contexts)');
-  console.log('   - ✅ Schema evolution (failed bookings with mismatched parameters)');
-  console.log('   - ✅ Proactive engagement (high-value guest with >5 visits)');
+  console.log("\n🎯 Test Scenarios Enabled:");
+  console.log("   - ✅ Pre-flight state injection (restaurant availability)");
+  console.log("   - ✅ Failover policies (full restaurant → alternatives)");
+  console.log("   - ✅ Semantic memory (diverse user interaction contexts)");
+  console.log(
+    "   - ✅ Schema evolution (failed bookings with mismatched parameters)",
+  );
+  console.log("   - ✅ Proactive engagement (high-value guest with >5 visits)");
 
-  console.log('\n🔑 Copy-Paste IDs for Manual Testing:');
+  console.log("\n🔑 Copy-Paste IDs for Manual Testing:");
   console.log(`   Restaurant ID:  ${restaurant.id}`);
   console.log(`   Restaurant 2 ID: ${restaurant2.id}`);
   console.log(`   High-Value User ID: ${highValueGuest.id}`);
@@ -412,7 +515,7 @@ async function seed() {
   console.log(`     - Bob Martinez: user_test_002`);
   console.log(`     - Victoria Sterling (VIP): user_test_high_value_guest`);
 
-  console.log('\n🚀 Seed complete! Ready for testing.\n');
+  console.log("\n🚀 Seed complete! Ready for testing.\n");
 }
 
 seed().catch(console.error);

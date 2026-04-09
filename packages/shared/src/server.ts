@@ -237,16 +237,6 @@ export type {
   RepairResult,
 } from "./services/repair-agent";
 
-export * from "./services/redlock";
-export type {
-  RedlockResource,
-  RedlockConfig,
-  RedlockLock,
-  ReleaseResult,
-  ExtendResult,
-  AcquireResult,
-} from "./services/redlock";
-
 export * from "./services/contract-testing";
 export type {
   ToolExecutionTrace,

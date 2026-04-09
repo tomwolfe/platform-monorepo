@@ -32,7 +32,9 @@ const UrlSchema = z.string().url();
  */
 const BaseConfigSchema = z.object({
   // Node Environment
-  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  NODE_ENV: z
+    .enum(["development", "test", "production"])
+    .default("development"),
 
   // Shared API Keys
   INTERNAL_SYSTEM_KEY: z.string().optional(),
@@ -49,7 +51,11 @@ const BaseConfigSchema = z.object({
   // LLM Configuration
   LLM_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
-  LLM_BASE_URL: z.string().url().optional().default("https://api.z.ai/api/paas/v4"),
+  LLM_BASE_URL: z
+    .string()
+    .url()
+    .optional()
+    .default("https://api.z.ai/api/paas/v4"),
   LLM_MODEL: z.string().optional().default("glm-4.7-flash"),
 
   // Clerk Authentication
@@ -121,15 +127,22 @@ const getDevDefaults = (): z.infer<typeof ServiceUrlsSchema> => {
 
   return {
     // Development localhost defaults
-    INTENTION_ENGINE_API_URL: process.env.INTENTION_ENGINE_API_URL || "http://localhost:3000",
-    INTENTION_ENGINE_MCP_URL: process.env.INTENTION_ENGINE_MCP_URL || "http://localhost:3000/api/mcp",
+    INTENTION_ENGINE_API_URL:
+      process.env.INTENTION_ENGINE_API_URL || "http://localhost:3000",
+    INTENTION_ENGINE_MCP_URL:
+      process.env.INTENTION_ENGINE_MCP_URL || "http://localhost:3000/api/mcp",
 
     OPEN_DELIVERY_URL: process.env.OPEN_DELIVERY_URL || "http://localhost:3001",
-    OPEN_DELIVERY_MCP_URL: process.env.OPEN_DELIVERY_MCP_URL || "http://localhost:3001/api/mcp",
-    OPEN_DELIVERY_WEBHOOK_URL: process.env.OPEN_DELIVERY_WEBHOOK_URL || "http://localhost:3001/api/webhooks",
+    OPEN_DELIVERY_MCP_URL:
+      process.env.OPEN_DELIVERY_MCP_URL || "http://localhost:3001/api/mcp",
+    OPEN_DELIVERY_WEBHOOK_URL:
+      process.env.OPEN_DELIVERY_WEBHOOK_URL ||
+      "http://localhost:3001/api/webhooks",
 
-    TABLESTACK_API_URL: process.env.TABLESTACK_API_URL || "http://localhost:3005/api/v1",
-    TABLESTACK_MCP_URL: process.env.TABLESTACK_MCP_URL || "http://localhost:3005/api/mcp",
+    TABLESTACK_API_URL:
+      process.env.TABLESTACK_API_URL || "http://localhost:3005/api/v1",
+    TABLESTACK_MCP_URL:
+      process.env.TABLESTACK_MCP_URL || "http://localhost:3005/api/mcp",
 
     STORES_URL: process.env.STORES_URL || "http://localhost:3000",
   };
@@ -147,15 +160,27 @@ const getProdDefaults = (): z.infer<typeof ServiceUrlsSchema> => {
 
   return {
     // Production Vercel defaults
-    INTENTION_ENGINE_API_URL: process.env.INTENTION_ENGINE_API_URL || "https://intention-engine.vercel.app",
-    INTENTION_ENGINE_MCP_URL: process.env.INTENTION_ENGINE_MCP_URL || "https://intention-engine.vercel.app/api/mcp",
+    INTENTION_ENGINE_API_URL:
+      process.env.INTENTION_ENGINE_API_URL ||
+      "https://intention-engine.vercel.app",
+    INTENTION_ENGINE_MCP_URL:
+      process.env.INTENTION_ENGINE_MCP_URL ||
+      "https://intention-engine.vercel.app/api/mcp",
 
-    OPEN_DELIVERY_URL: process.env.OPEN_DELIVERY_URL || "https://open-delivery.vercel.app",
-    OPEN_DELIVERY_MCP_URL: process.env.OPEN_DELIVERY_MCP_URL || "https://open-delivery.vercel.app/api/mcp",
-    OPEN_DELIVERY_WEBHOOK_URL: process.env.OPEN_DELIVERY_WEBHOOK_URL || "https://open-delivery.vercel.app/api/webhooks",
+    OPEN_DELIVERY_URL:
+      process.env.OPEN_DELIVERY_URL || "https://open-delivery.vercel.app",
+    OPEN_DELIVERY_MCP_URL:
+      process.env.OPEN_DELIVERY_MCP_URL ||
+      "https://open-delivery.vercel.app/api/mcp",
+    OPEN_DELIVERY_WEBHOOK_URL:
+      process.env.OPEN_DELIVERY_WEBHOOK_URL ||
+      "https://open-delivery.vercel.app/api/webhooks",
 
-    TABLESTACK_API_URL: process.env.TABLESTACK_API_URL || "https://table-stack.vercel.app/api/v1",
-    TABLESTACK_MCP_URL: process.env.TABLESTACK_MCP_URL || "https://table-stack.vercel.app/api/mcp",
+    TABLESTACK_API_URL:
+      process.env.TABLESTACK_API_URL || "https://table-stack.vercel.app/api/v1",
+    TABLESTACK_MCP_URL:
+      process.env.TABLESTACK_MCP_URL ||
+      "https://table-stack.vercel.app/api/mcp",
 
     STORES_URL: process.env.STORES_URL || "https://stores.vercel.app",
   };
@@ -197,7 +222,7 @@ export class AppConfig {
     if (!parsed.success) {
       console.warn(
         "⚠️ Configuration validation warnings:",
-        parsed.error.format()
+        parsed.error.format(),
       );
 
       // In production, we may want to throw, but for now be lenient
@@ -271,7 +296,9 @@ export class AppConfig {
    */
   static getOpenDeliveryWebhookUrl(): string {
     const config = this.init();
-    return config.OPEN_DELIVERY_WEBHOOK_URL || "http://localhost:3001/api/webhooks";
+    return (
+      config.OPEN_DELIVERY_WEBHOOK_URL || "http://localhost:3001/api/webhooks"
+    );
   }
 
   /**
@@ -305,7 +332,10 @@ export class AppConfig {
   /**
    * Get internal system key for service-to-service authentication
    *
-   * SECURITY: This throws a fatal error if the key is missing in ALL environments.
+   * SECURITY: Requires a 64-character hex string (representing a 32-byte random value).
+   * Generate one with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   *
+   * This throws a fatal error if the key is missing in ALL environments.
    * This prevents the system from running with insecure defaults.
    */
   static getInternalSystemKey(): string {
@@ -315,9 +345,9 @@ export class AppConfig {
     // Fail-closed: throw if key is missing in any environment
     if (!key) {
       throw new Error(
-        'CRITICAL: INTERNAL_SYSTEM_KEY is not configured. ' +
-        'This is a required security credential for service-to-service authentication. ' +
-        'Set a strong, random value in your environment variables (see .env.example).'
+        "CRITICAL: INTERNAL_SYSTEM_KEY is not configured. " +
+          "This is a required security credential for service-to-service authentication. " +
+          "Set a strong, random value in your environment variables (see .env.example).",
       );
     }
 
@@ -476,11 +506,11 @@ export class AppConfig {
     const key = config.ESCROW_RESOLVER_PRIVATE_KEY;
 
     // In production, fail fast if key is missing
-    if (!key && process.env.NODE_ENV === 'production') {
+    if (!key && process.env.NODE_ENV === "production") {
       throw new Error(
-        'CRITICAL: ESCROW_RESOLVER_PRIVATE_KEY is not configured. ' +
-        'This is a required security credential for Web3 escrow resolution. ' +
-        'Set a strong, random value in your production environment variables.'
+        "CRITICAL: ESCROW_RESOLVER_PRIVATE_KEY is not configured. " +
+          "This is a required security credential for Web3 escrow resolution. " +
+          "Set a strong, random value in your production environment variables.",
       );
     }
 
@@ -536,7 +566,9 @@ export class AppConfig {
    */
   static getPlatformFeeBps(): number {
     const config = this.init();
-    return config.PLATFORM_FEE_BPS ? parseInt(config.PLATFORM_FEE_BPS, 10) : 100;
+    return config.PLATFORM_FEE_BPS
+      ? parseInt(config.PLATFORM_FEE_BPS, 10)
+      : 100;
   }
 
   /**
@@ -544,7 +576,9 @@ export class AppConfig {
    */
   static getDriverBasePayCents(): number {
     const config = this.init();
-    return config.DRIVER_BASE_PAY_CENTS ? parseInt(config.DRIVER_BASE_PAY_CENTS, 10) : 200;
+    return config.DRIVER_BASE_PAY_CENTS
+      ? parseInt(config.DRIVER_BASE_PAY_CENTS, 10)
+      : 200;
   }
 
   /**
@@ -569,7 +603,9 @@ export class AppConfig {
    */
   static getOrsRoutingTimeoutMs(): number {
     const config = this.init();
-    return config.ORS_ROUTING_TIMEOUT_MS ? parseInt(config.ORS_ROUTING_TIMEOUT_MS, 10) : 5000;
+    return config.ORS_ROUTING_TIMEOUT_MS
+      ? parseInt(config.ORS_ROUTING_TIMEOUT_MS, 10)
+      : 5000;
   }
 
   // ========================================================================
@@ -597,9 +633,7 @@ export class AppConfig {
     const missing = keys.filter((key) => !config[key]);
 
     if (missing.length > 0) {
-      throw new Error(
-        `Missing required configuration: ${missing.join(", ")}`
-      );
+      throw new Error(`Missing required configuration: ${missing.join(", ")}`);
     }
   }
 

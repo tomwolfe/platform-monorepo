@@ -180,8 +180,15 @@ export {
   withCacheMiddleware,
   type CacheConfig,
 } from "./middleware/cache-middleware";
-// ⚠️  withRedlock is DEPRECATED - use withDistributedLock instead
-export { withRedlock } from "./services/redlock";
+export {
+  rateLimitMiddleware,
+  createRateLimitMiddleware,
+  RateLimiterService,
+  type EndpointRateLimitConfig,
+  type RateLimitConfig,
+  type RateLimitResult,
+  type RateLimitMiddlewareResult,
+} from "./middleware/rate-limiter";
 // New unified locking strategy (replaces Redlock)
 export {
   withDistributedLock,

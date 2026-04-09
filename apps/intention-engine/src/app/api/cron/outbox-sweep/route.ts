@@ -20,7 +20,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { withCronAuth, Logger } from "@repo/shared";
+import { withCronAuth, Logger, withDistributedLock } from "@repo/shared";
 import { getOutboxListener } from "@repo/shared";
 
 export const runtime = "nodejs";
@@ -35,7 +35,35 @@ async function cronHandler(req: NextRequest): Promise<NextResponse> {
     logger.info({ message: "Starting outbox sweep" });
 
     const listener = getOutboxListener();
-    await listener.pollAndProcess();
+
+    // Prevent duplicate processing when cron intervals overlap in serverless
+    let skipped = false;
+    try {
+      await withDistributedLock("cron:outbox-sweep", 60, async () => {
+        await listener.pollAndProcess();
+      });
+    } catch (lockError) {
+      if (
+        lockError instanceof Error &&
+        lockError.message.includes("Failed to acquire distributed lock")
+      ) {
+        skipped = true;
+        logger.info({
+          message: "Outbox sweep skipped — already running",
+        });
+      } else {
+        throw lockError;
+      }
+    }
+
+    if (skipped) {
+      return NextResponse.json({
+        success: true,
+        skipped: true,
+        reason: "Already running",
+        timestamp: new Date().toISOString(),
+      });
+    }
 
     const stats = listener.getStats();
     const duration = performance.now() - startTime;

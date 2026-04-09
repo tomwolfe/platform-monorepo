@@ -1,28 +1,39 @@
 import { getAuditLog } from "@/lib/audit";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  withApiErrorHandler,
+  formatApiSuccess,
+  notFoundErrorResponse,
+  validationErrorResponse,
+} from "@repo/shared";
 
 export const runtime = "nodejs";
 
-export async function GET(
+async function getHandler(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  const traceId = req.headers.get("x-trace-id");
 
   if (!id) {
-    return NextResponse.json({ error: "Missing audit ID" }, { status: 400 });
+    return NextResponse.json(validationErrorResponse("Missing audit ID"), {
+      status: 400,
+    });
   }
 
-  try {
-    const log = await getAuditLog(id);
+  const log = await getAuditLog(id);
 
-    if (!log) {
-      return NextResponse.json({ error: "Audit log not found" }, { status: 404 });
-    }
-
-    return NextResponse.json(log);
-  } catch (error) {
-    console.error(`Error fetching audit log ${id}:`, error);
-    return NextResponse.json({ error: "Failed to fetch audit log" }, { status: 500 });
+  if (!log) {
+    return NextResponse.json(notFoundErrorResponse("Audit log", id), {
+      status: 404,
+    });
   }
+
+  return NextResponse.json(formatApiSuccess(log, { traceId }));
 }
+
+export const GET = withApiErrorHandler(getHandler, {
+  serviceName: "audit-detail",
+  includeStackTrace: process.env.NODE_ENV !== "production",
+});

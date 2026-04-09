@@ -3,9 +3,6 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   transpilePackages: ["@repo/ui-theme", "@repo/mcp-protocol"],
   serverExternalPackages: ["ably", "async_hooks", "node:crypto"],
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
   webpack: (config, { isServer }) => {
     if (isServer) {
       config.externals = [

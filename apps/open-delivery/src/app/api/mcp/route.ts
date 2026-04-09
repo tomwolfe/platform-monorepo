@@ -39,9 +39,9 @@ const server = new McpServer({
  * Calculate delivery quote with detailed pricing breakdown
  */
 async function calculateDeliveryQuote(
-  pickupAddress: any,
-  deliveryAddress: any,
-  items: any[],
+  pickupAddress: string,
+  deliveryAddress: string,
+  items: Array<Record<string, unknown>>,
   priority: string = "standard",
   traceId: string,
   restaurantId?: string,

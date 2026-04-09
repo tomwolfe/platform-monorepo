@@ -372,44 +372,47 @@ export class PGVectorStore implements VectorStore {
     const ids: string[] = [];
 
     // Process in batches of 100 to avoid overwhelming the database
+    // All batches are wrapped in a single transaction for atomicity
     const batchSize = 100;
 
-    for (let i = 0; i < entries.length; i += batchSize) {
-      const batch = entries.slice(i, i + batchSize);
+    await this.db.transaction(async (tx) => {
+      for (let i = 0; i < entries.length; i += batchSize) {
+        const batch = entries.slice(i, i + batchSize);
 
-      const values = batch.map((entry) => {
-        const id = crypto.randomUUID();
-        ids.push(id);
+        const values = batch.map((entry) => {
+          const id = crypto.randomUUID();
+          ids.push(id);
 
-        if (entry.embedding.length !== this.config.dimensions) {
-          throw new Error(
-            `Embedding dimension mismatch: expected ${this.config.dimensions}, got ${entry.embedding.length}`,
-          );
-        }
+          if (entry.embedding.length !== this.config.dimensions) {
+            throw new Error(
+              `Embedding dimension mismatch: expected ${this.config.dimensions}, got ${entry.embedding.length}`,
+            );
+          }
 
-        return {
-          id,
-          userId: entry.userId,
-          intentType: entry.intentType,
-          rawText: entry.rawText,
-          embedding: entry.embedding,
-          parameters: entry.parameters,
-          timestamp: new Date(entry.timestamp),
-          executionId: entry.executionId,
-          restaurantId: entry.restaurantId,
-          restaurantSlug: entry.restaurantSlug,
-          restaurantName: entry.restaurantName,
-          outcome: entry.outcome,
-          metadata: entry.metadata,
-        };
-      });
+          return {
+            id,
+            userId: entry.userId,
+            intentType: entry.intentType,
+            rawText: entry.rawText,
+            embedding: entry.embedding,
+            parameters: entry.parameters,
+            timestamp: new Date(entry.timestamp),
+            executionId: entry.executionId,
+            restaurantId: entry.restaurantId,
+            restaurantSlug: entry.restaurantSlug,
+            restaurantName: entry.restaurantName,
+            outcome: entry.outcome,
+            metadata: entry.metadata,
+          };
+        });
 
-      await this.db.insert(semanticMemories).values(values);
+        await tx.insert(semanticMemories).values(values);
 
-      console.log(
-        `[PGVectorStore] Batch inserted ${batch.length} vectors (${i + batch.length}/${entries.length})`,
-      );
-    }
+        console.log(
+          `[PGVectorStore] Batch inserted ${batch.length} vectors (${i + batch.length}/${entries.length})`,
+        );
+      }
+    });
 
     return ids;
   }

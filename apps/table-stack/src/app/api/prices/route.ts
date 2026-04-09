@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getCryptoPrices } from "@repo/shared/utils/crypto-price";
 import { Logger } from "@repo/shared";
 
-const logger = new Logger({ serviceName: 'table-stack' });
+const logger = new Logger({ serviceName: "table-stack" });
 
 /**
  * Crypto Price Oracle API Endpoint
@@ -24,25 +24,33 @@ export async function GET() {
     const prices = await getCryptoPrices();
     return NextResponse.json(prices);
   } catch (error) {
-    logger.error('Failed to fetch crypto prices', { error: error instanceof Error ? error.message : String(error) });
+    logger.error("Failed to fetch crypto prices", {
+      error: error instanceof Error ? error.message : String(error),
+    });
 
     // Return specific error code for client handling
-    if ((error as any).code === "PRICE_ORACLE_UNAVAILABLE") {
+    const errorCode =
+      error instanceof Error && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+    if (errorCode === "PRICE_ORACLE_UNAVAILABLE") {
       return NextResponse.json(
         {
           error: "Price oracle unavailable",
-          message: "Unable to fetch current crypto prices. Please try again later.",
+          message:
+            "Unable to fetch current crypto prices. Please try again later.",
         },
-        { status: 503 }
+        { status: 503 },
       );
     }
 
     return NextResponse.json(
       {
         error: "Internal server error",
-        message: error instanceof Error ? error.message : "Failed to fetch prices",
+        message:
+          error instanceof Error ? error.message : "Failed to fetch prices",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

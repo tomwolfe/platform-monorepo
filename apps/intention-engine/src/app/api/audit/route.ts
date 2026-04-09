@@ -1,16 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserAuditLogs } from "@/lib/audit";
+import {
+  withApiErrorHandler,
+  formatApiSuccess,
+  formatApiError,
+} from "@repo/shared";
 
 export const runtime = "nodejs";
 
-export async function GET(req: NextRequest) {
+async function getHandler(req: NextRequest) {
   const userIp = req.headers.get("x-forwarded-for") || "anonymous";
+  const traceId = req.headers.get("x-trace-id");
 
-  try {
-    const logs = await getUserAuditLogs(userIp, 10);
-    return NextResponse.json({ logs });
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
-  }
+  const logs = await getUserAuditLogs(userIp, 10);
+  return NextResponse.json(formatApiSuccess({ logs }, { traceId }));
 }
+
+export const GET = withApiErrorHandler(getHandler, {
+  serviceName: "audit",
+  includeStackTrace: process.env.NODE_ENV !== "production",
+});

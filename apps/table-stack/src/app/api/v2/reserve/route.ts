@@ -142,7 +142,7 @@ export const POST = withApiErrorHandler(
     const reservationEnd = addMinutes(reservationStart, 90);
 
     // Wrap conflict detection + insertion in an atomic transaction to prevent race conditions
-    const { newReservation } = await getDb().transaction(async (tx: any) => {
+    const { newReservation } = await getDb().transaction(async (tx) => {
       // Enforce strict DB-level timeout to prevent dangling locks if Lambda dies
       await tx.execute(sql`SET LOCAL statement_timeout = '7000'`);
 

@@ -25,7 +25,7 @@ server.tool(
   TOOLS.tableStack.getAvailability.name,
   TOOLS.tableStack.getAvailability.description,
   TOOLS.tableStack.getAvailability.schema.shape,
-  async ({ restaurantId, date, partySize }, _extra: any) => {
+  async ({ restaurantId, date, partySize }, _extra) => {
     const traceId = _extra?.traceId || randomUUID();
 
     const restaurant = await getDb().query.restaurants.findFirst({
@@ -132,7 +132,7 @@ server.tool(
   TOOLS.tableStack.bookTable.schema.shape,
   async (
     { restaurantId, tableId, guestName, guestEmail, partySize, startTime },
-    _extra: any,
+    _extra,
   ) => {
     const traceId = _extra?.traceId || randomUUID();
 
@@ -193,7 +193,7 @@ server.tool(
     date: TOOLS.tableStack.getAvailability.schema.shape.date,
     partySize: TOOLS.tableStack.getAvailability.schema.shape.partySize,
   },
-  async ({ restaurantId, date, partySize }, _extra: any) => {
+  async ({ restaurantId, date, partySize }, _extra) => {
     const traceId = _extra?.traceId || randomUUID();
 
     const restaurant = await getDb().query.restaurants.findFirst({
@@ -244,7 +244,7 @@ server.tool(
   liveOperationalStateTool.name,
   "Retrieve real-time table status for a restaurant",
   { restaurant_id: TOOLS.tableStack.getAvailability.schema.shape.restaurantId },
-  async ({ restaurant_id }: any, _extra: any) => {
+  async ({ restaurant_id }, _extra) => {
     const traceId = _extra?.traceId || randomUUID();
     const key = `state:${restaurant_id}:tables`;
     const { getRedisClient, ServiceNamespace } = await import("@repo/shared");

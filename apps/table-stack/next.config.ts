@@ -17,9 +17,6 @@ const nextConfig: NextConfig = {
     }
     return config;
   },
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
   // Optimize large packages
   experimental: {
     optimizePackageImports: ["viem", "wagmi", "ably", "swagger-ui-react"],

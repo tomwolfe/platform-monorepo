@@ -109,16 +109,26 @@ export async function getRealVendors(
       LIMIT 20
     `);
 
-    return data.rows.map((r: any) => ({
-      id: r.id,
-      name: r.name,
-      address: r.address || "Address unavailable",
-      slug: r.slug,
-      category: "Restaurant",
-      rating: 4.5,
-      image: "🍽️",
-      distance: parseFloat(r.distance) || undefined,
-    }));
+    return data.rows.map(
+      (r: {
+        id: string;
+        name: string;
+        address: string | null;
+        slug: string;
+        lat?: string;
+        lng?: string;
+        distance?: string | number;
+      }) => ({
+        id: r.id,
+        name: r.name,
+        address: r.address || "Address unavailable",
+        slug: r.slug,
+        category: "Restaurant",
+        rating: 4.5,
+        image: "🍽️",
+        distance: parseFloat(r.distance) || undefined,
+      }),
+    );
   } catch (error) {
     logger.error("Failed to fetch vendors", {
       error: error instanceof Error ? error.message : String(error),

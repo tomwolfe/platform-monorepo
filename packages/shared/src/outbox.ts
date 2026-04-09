@@ -198,24 +198,25 @@ export class OutboxService {
 
         // Move to DLQ if max attempts exceeded (3 attempts)
         if (event.attempts >= 3) {
-          // Insert into dead-letter queue table
-          await db.insert(outboxDlq).values({
-            id: crypto.randomUUID(),
-            originalEventId: event.id,
-            executionId: event.payload.executionId || null,
-            eventType: event.eventType,
-            payload: event.payload,
-            status: "failed",
-            attempts: event.attempts,
-            errorMessage:
-              error instanceof Error ? error.message : String(error),
-            createdAt: event.createdAt,
-            dlqCreatedAt: new Date(),
-            expiresAt: event.expiresAt,
-          });
+          // Atomic: insert into DLQ + delete from outbox in single transaction
+          await db.transaction(async (tx) => {
+            await tx.insert(outboxDlq).values({
+              id: crypto.randomUUID(),
+              originalEventId: event.id,
+              executionId: event.payload.executionId || null,
+              eventType: event.eventType,
+              payload: event.payload,
+              status: "failed",
+              attempts: event.attempts,
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
+              createdAt: event.createdAt,
+              dlqCreatedAt: new Date(),
+              expiresAt: event.expiresAt,
+            });
 
-          // Delete from main outbox table to prevent bloat
-          await db.delete(outbox).where(eq(outbox.id, event.id));
+            await tx.delete(outbox).where(eq(outbox.id, event.id));
+          });
 
           logger.error({
             message: "Outbox event moved to DLQ after max retries",
@@ -317,7 +318,7 @@ export class OutboxService {
     const events = await db
       .select()
       .from(outbox)
-      .where(eq(outbox.executionId, executionId as any))
+      .where(eq(outbox.executionId, executionId))
       .orderBy(outbox.createdAt)
       .limit(limit);
 
@@ -359,19 +360,20 @@ export class OutboxService {
 
     const event = dlqEvent[0];
 
-    // Insert back into main outbox with reset attempts
-    await db.insert(outbox).values({
-      id: crypto.randomUUID(),
-      eventType: event.eventType,
-      payload: event.payload,
-      status: "pending",
-      attempts: 0,
-      createdAt: new Date(),
-      expiresAt: event.expiresAt,
-    });
+    // Atomic: insert back into outbox + delete from DLQ in single transaction
+    await db.transaction(async (tx) => {
+      await tx.insert(outbox).values({
+        id: crypto.randomUUID(),
+        eventType: event.eventType,
+        payload: event.payload,
+        status: "pending",
+        attempts: 0,
+        createdAt: new Date(),
+        expiresAt: event.expiresAt,
+      });
 
-    // Remove from DLQ
-    await db.delete(outboxDlq).where(eq(outboxDlq.id, dlqEventId));
+      await tx.delete(outboxDlq).where(eq(outboxDlq.id, dlqEventId));
+    });
 
     logger.info({
       message: "DLQ event retried",

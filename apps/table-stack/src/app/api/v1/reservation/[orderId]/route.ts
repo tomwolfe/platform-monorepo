@@ -54,8 +54,11 @@ async function getHandler(
   }
 
   // Extract payment tx hash from metadata if present
-  const paymentTxHash = (reservation.metadata as Record<string, unknown> | null)
-    ?.paymentTxHash as string | undefined;
+  const metadata = reservation.metadata as Record<string, unknown> | null;
+  const paymentTxHash =
+    typeof metadata?.paymentTxHash === "string"
+      ? metadata.paymentTxHash
+      : undefined;
 
   // Convert deposit amount from cents to dollars
   const depositAmount = reservation.depositAmount

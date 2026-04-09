@@ -1,21 +1,30 @@
-export const dynamic = 'force-dynamic';
-import { NextRequest, NextResponse } from 'next/server';
+export const dynamic = "force-dynamic";
+import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@repo/database";
 import { restaurantReservations } from "@repo/database";
-import { eq } from '@repo/database';
-import { NotifyService } from '@tablestack/lib/notifications';
-import { withApiErrorHandler } from '@repo/shared';
+import { eq } from "@repo/database";
+import { NotifyService } from "@tablestack/lib/notifications";
+import {
+  withApiErrorHandler,
+  formatApiSuccess,
+  validationErrorResponse,
+  notFoundErrorResponse,
+} from "@repo/shared";
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 
 async function getHandler(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const token = searchParams.get('token');
+  const token = searchParams.get("token");
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const uuidRegex =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
   if (!token || !uuidRegex.test(token)) {
-    return NextResponse.json({ message: 'Missing or invalid token' }, { status: 400 });
+    return NextResponse.json(
+      validationErrorResponse("Missing or invalid token"),
+      { status: 400 },
+    );
   }
 
   const reservation = await getDb().query.restaurantReservations.findFirst({
@@ -26,16 +35,21 @@ async function getHandler(req: NextRequest) {
   });
 
   if (!reservation) {
-    return NextResponse.json({ message: 'Invalid token' }, { status: 404 });
+    return NextResponse.json(notFoundErrorResponse("Reservation"), {
+      status: 404,
+    });
   }
 
   if (reservation.isVerified) {
-    return NextResponse.json({ message: 'Reservation already verified' });
+    return NextResponse.json(
+      formatApiSuccess({ message: "Reservation already verified" }),
+    );
   }
 
   // Mark as verified
-  await getDb().update(restaurantReservations)
-    .set({ isVerified: true, status: 'confirmed' })
+  await getDb()
+    .update(restaurantReservations)
+    .set({ isVerified: true, status: "confirmed" })
     .where(eq(restaurantReservations.id, reservation.id));
 
   // Notify owner
@@ -47,7 +61,9 @@ async function getHandler(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ message: 'Verification successful' });
+  return NextResponse.json(
+    formatApiSuccess({ message: "Verification successful" }),
+  );
 }
 
-export const GET = withApiErrorHandler(getHandler, 'EXECUTION_FAILED');
+export const GET = withApiErrorHandler(getHandler, "EXECUTION_FAILED");

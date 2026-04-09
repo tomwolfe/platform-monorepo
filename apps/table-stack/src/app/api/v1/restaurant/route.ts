@@ -4,7 +4,12 @@ import { getDb } from "@repo/database";
 import { restaurants } from "@repo/database";
 import { eq } from "@repo/database";
 import { validateRequest } from "@tablestack/lib/auth";
-import { withApiErrorHandler, formatApiSuccess } from "@repo/shared";
+import {
+  withApiErrorHandler,
+  formatApiSuccess,
+  notFoundErrorResponse,
+  forbiddenErrorResponse,
+} from "@repo/shared";
 
 export const runtime = "nodejs";
 
@@ -12,6 +17,7 @@ async function getHandler(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const slug = searchParams.get("slug");
   const id = searchParams.get("id");
+  const traceId = req.headers.get("x-trace-id");
   const apiKeyHeader =
     req.headers.get("x-api-key") || req.headers.get("x-internal-key");
   const isInternal =
@@ -24,12 +30,11 @@ async function getHandler(req: NextRequest) {
       where: eq(restaurants.id, id),
     });
     if (!restaurant) {
-      return NextResponse.json(
-        { message: "Restaurant not found" },
-        { status: 404 },
-      );
+      return NextResponse.json(notFoundErrorResponse("Restaurant", id), {
+        status: 404,
+      });
     }
-    return NextResponse.json(formatApiSuccess(restaurant));
+    return NextResponse.json(formatApiSuccess(restaurant, { traceId }));
   }
 
   // Allow public access if slug is provided
@@ -39,20 +44,19 @@ async function getHandler(req: NextRequest) {
     });
 
     if (!restaurant) {
-      return NextResponse.json(
-        { message: "Restaurant not found" },
-        { status: 404 },
-      );
+      return NextResponse.json(notFoundErrorResponse("Restaurant", slug), {
+        status: 404,
+      });
     }
 
     // If internal key is provided, return sensitive data for tool integration
     if (isInternal) {
-      return NextResponse.json(formatApiSuccess(restaurant));
+      return NextResponse.json(formatApiSuccess(restaurant, { traceId }));
     }
 
     // Sanitize response
     const { apiKey, ownerEmail, ownerId, ...publicRestaurant } = restaurant;
-    return NextResponse.json(formatApiSuccess(publicRestaurant));
+    return NextResponse.json(formatApiSuccess(publicRestaurant, { traceId }));
   }
 
   // If internal and no slug, return all restaurants (paginated)
@@ -68,17 +72,18 @@ async function getHandler(req: NextRequest) {
       limit,
       offset,
     });
-    return NextResponse.json(formatApiSuccess(allRestaurants));
+    return NextResponse.json(formatApiSuccess(allRestaurants, { traceId }));
   }
 
   const { error, status, context } = await validateRequest(req);
-  if (error) return NextResponse.json({ message: error }, { status });
+  if (error)
+    return NextResponse.json(forbiddenErrorResponse(error), { status });
 
   const restaurantId = context?.restaurantId;
 
   if (!restaurantId) {
     return NextResponse.json(
-      { message: "Restaurant ID not found in context" },
+      forbiddenErrorResponse("Restaurant ID not found in context"),
       { status: 403 },
     );
   }
@@ -88,16 +93,15 @@ async function getHandler(req: NextRequest) {
   });
 
   if (!restaurant) {
-    return NextResponse.json(
-      { message: "Restaurant not found" },
-      { status: 404 },
-    );
+    return NextResponse.json(notFoundErrorResponse("Restaurant"), {
+      status: 404,
+    });
   }
 
   // Sanitize response
   const { apiKey, ownerEmail, ownerId, ...publicRestaurant } = restaurant;
 
-  return NextResponse.json(formatApiSuccess(publicRestaurant));
+  return NextResponse.json(formatApiSuccess(publicRestaurant, { traceId }));
 }
 
 export const GET = withApiErrorHandler(getHandler, "EXECUTION_FAILED");

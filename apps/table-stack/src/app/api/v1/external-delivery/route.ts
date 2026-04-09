@@ -27,9 +27,14 @@ const ExternalDeliverySchema = z.object({
 
 async function postHandler(req: NextRequest, context: InternalWebhookContext) {
   const body = context.parsedBody;
+  const traceId = req.headers.get("x-trace-id");
 
   const { error, status, authContext } = await validateRequest(req);
-  if (error) return NextResponse.json({ message: error }, { status });
+  if (error)
+    return NextResponse.json(
+      formatApiError(new Error(error), "VALIDATION_ERROR"),
+      { status },
+    );
 
   // Validate request body with Zod schema
   const validationResult = ExternalDeliverySchema.safeParse(body);
@@ -59,7 +64,7 @@ async function postHandler(req: NextRequest, context: InternalWebhookContext) {
 
   if (!targetRestaurantId) {
     return NextResponse.json(
-      { message: "Missing restaurantId" },
+      formatApiError(new Error("Missing restaurantId"), "VALIDATION_ERROR"),
       { status: 400 },
     );
   }
@@ -69,7 +74,10 @@ async function postHandler(req: NextRequest, context: InternalWebhookContext) {
     targetRestaurantId !== authContext!.restaurantId
   ) {
     return NextResponse.json(
-      { message: "Unauthorized access to this restaurant" },
+      formatApiError(
+        new Error("Unauthorized access to this restaurant"),
+        "FORBIDDEN",
+      ),
       { status: 403 },
     );
   }
@@ -80,7 +88,9 @@ async function postHandler(req: NextRequest, context: InternalWebhookContext) {
     timestamp: new Date().toISOString(),
   });
 
-  return NextResponse.json({ message: "Delivery update broadcasted" });
+  return NextResponse.json(
+    formatApiSuccess({ message: "Delivery update broadcasted" }, { traceId }),
+  );
 }
 
 export const POST = withApiErrorHandler(

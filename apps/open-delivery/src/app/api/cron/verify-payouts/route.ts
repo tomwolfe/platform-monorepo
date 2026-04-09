@@ -143,7 +143,9 @@ async function getCronHandler(req: NextRequest) {
       });
 
       // Process verifications in batches to avoid RPC rate limits
-      const BATCH_SIZE = 5;
+      // REDUCED BATCH SIZE: From 5 to 2 to ensure we stay within Vercel's 10s maxDuration
+      // even with RPC fallbacks and rate limiting. QStash self-trigger handles remaining orders.
+      const BATCH_SIZE = 2;
       const results: Array<{
         orderId: string;
         status: "completed" | "failed" | "pending";

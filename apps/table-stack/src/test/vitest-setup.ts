@@ -127,16 +127,16 @@ vi.mock("@repo/database", async () => {
       restaurantTables: mockRestaurantTablesQuery,
       guestProfiles: mockGuestProfilesQuery,
     },
-    insert: vi.fn().mockImplementation((table: any) => ({
+    insert: vi.fn().mockImplementation((table: unknown) => ({
       values: vi.fn().mockReturnThis(),
       returning: vi.fn().mockResolvedValue([]),
     })),
-    update: vi.fn().mockImplementation((table: any) => ({
+    update: vi.fn().mockImplementation((table: unknown) => ({
       set: vi.fn().mockReturnThis(),
       where: vi.fn().mockReturnThis(),
       returning: vi.fn().mockResolvedValue([]),
     })),
-    delete: vi.fn().mockImplementation((table: any) => ({
+    delete: vi.fn().mockImplementation((table: unknown) => ({
       where: vi.fn().mockReturnThis(),
       returning: vi.fn().mockResolvedValue([]),
     })),
@@ -146,6 +146,9 @@ vi.mock("@repo/database", async () => {
     limit: vi.fn().mockReturnThis(),
     orderBy: vi.fn().mockReturnThis(),
   });
+
+  // Type for mock transaction
+  type MockTransaction = ReturnType<typeof createMockTransaction>;
 
   return {
     ...(actual as any),
@@ -174,10 +177,12 @@ vi.mock("@repo/database", async () => {
       where: vi.fn().mockReturnThis(),
       limit: vi.fn().mockReturnThis(),
       orderBy: vi.fn().mockReturnThis(),
-      transaction: vi.fn(async (fn: any) => {
-        // Properly call the function with a mock transaction object
-        return await fn(createMockTransaction());
-      }),
+      transaction: vi.fn(
+        async (fn: (tx: MockTransaction) => Promise<unknown>) => {
+          // Properly call the function with a mock transaction object
+          return await fn(createMockTransaction());
+        },
+      ),
     })),
     restaurants: {
       apiKey: "apiKey",

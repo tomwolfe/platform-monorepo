@@ -46,7 +46,9 @@ const MAX_ORDERS_PER_RUN = 15;
  */
 
 // RELIABILITY FIX: Process orders in batches to avoid RPC rate limits
-const BATCH_SIZE = 5;
+// REDUCED BATCH SIZE: From 5 to 2 to ensure we stay within Vercel's 10s maxDuration
+// even with RPC fallbacks and rate limiting. QStash self-trigger handles remaining orders.
+const BATCH_SIZE = 2;
 
 async function postHandler(req: NextRequest) {
   const traceId = req.headers.get("x-trace-id") || undefined;

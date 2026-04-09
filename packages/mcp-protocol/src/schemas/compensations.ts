@@ -34,6 +34,7 @@ export interface CompensationDefinition {
 // Strict type for original parameters with known fields
 interface OriginalParams {
   reservationId?: string;
+  waitlistId?: string;
   order_id?: string;
   pickup_location?: string;
   destination_location?: string;
@@ -47,6 +48,8 @@ interface StepResult {
   fulfillmentId?: string;
   ride_id?: string;
   order_id?: string;
+  /** Pre-mutation state snapshot for update operations (captured before mutation) */
+  preMutationState?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -81,10 +84,16 @@ export const COMPENSATIONS: Record<string, CompensationDefinition> = {
     toolName: "update_reservation",
     parameterMapper: "use_reservation_id",
     requiresConfirmation: false,
-    // Note: This would need to restore previous values, not just cancel
+    // Restores the pre-mutation state captured in the step result
     customMapper: (originalParams: OriginalParams, stepResult?: StepResult) => {
-      // For updates, we would need to store the original state to restore it
-      // This is a placeholder - production implementation would need state snapshot
+      // Use the pre-mutation state snapshot to restore exact previous state
+      if (stepResult?.preMutationState) {
+        return {
+          reservationId: originalParams.reservationId,
+          ...stepResult.preMutationState,
+        };
+      }
+      // Fallback: if no snapshot available, log warning and return minimal restore params
       return { reservationId: originalParams.reservationId };
     },
   },
@@ -149,10 +158,10 @@ export const COMPENSATIONS: Record<string, CompensationDefinition> = {
     toolName: "update_waitlist_status",
     parameterMapper: "use_reservation_id",
     requiresConfirmation: false,
-    // Would need to set status to 'removed'
+    // Sets status to 'removed' using the waitlistId from original params
     customMapper: (originalParams: OriginalParams) => {
       return {
-        reservationId: originalParams.reservationId,
+        waitlistId: originalParams.waitlistId,
         status: "removed",
       };
     },

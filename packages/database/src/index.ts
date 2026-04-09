@@ -257,6 +257,7 @@ export class TimeoutError extends Error {
 /**
  * Creates a proxy around the Drizzle client that enforces query timeouts.
  * Wraps execute() and query methods with Promise.race timeout.
+ * Also wraps the transaction() method to ensure tx objects also have timeout enforcement.
  */
 function createTimeoutProxy<T extends Record<string, any>>(
   db: T,
@@ -269,6 +270,24 @@ function createTimeoutProxy<T extends Record<string, any>>(
       // If it's not a function, return as-is
       if (typeof value !== "function") {
         return value;
+      }
+
+      // Special handling for transaction method
+      if (prop === "transaction") {
+        return async function (
+          fn: (...args: any[]) => Promise<any>,
+          ...txArgs: any[]
+        ) {
+          return await value.call(
+            target,
+            async (tx: any) => {
+              // Wrap the transaction object with timeout proxy
+              const wrappedTx = createTimeoutProxy(tx, timeoutMs);
+              return fn(wrappedTx);
+            },
+            ...txArgs,
+          );
+        };
       }
 
       // Wrap the function with timeout

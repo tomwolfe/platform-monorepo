@@ -17,6 +17,7 @@
 import { z } from "zod";
 import { CommunicationSchema } from "@repo/mcp-protocol";
 import { AppConfig } from "../config";
+import { AppError } from "../errors";
 
 // ============================================================================
 // TYPES
@@ -124,7 +125,9 @@ export class ResendEmailProvider implements ICommunicationProvider {
         ...(metadata && { headers: metadata as Record<string, string> }),
       });
 
-      console.log(`[Resend] Email sent to ${recipient}, messageId: ${result.id}`);
+      console.log(
+        `[Resend] Email sent to ${recipient}, messageId: ${result.id}`,
+      );
 
       return {
         status: "sent",
@@ -134,8 +137,12 @@ export class ResendEmailProvider implements ICommunicationProvider {
         messageId: result.id,
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error(`[Resend] Failed to send email to ${recipient}:`, errorMessage);
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      console.error(
+        `[Resend] Failed to send email to ${recipient}:`,
+        errorMessage,
+      );
 
       return {
         status: "failed",
@@ -183,21 +190,24 @@ export class TwilioSmsProvider implements ICommunicationProvider {
         channel: "sms",
         recipient,
         timestamp: new Date().toISOString(),
-        error: "Twilio credentials not configured. Missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, or TWILIO_PHONE_NUMBER.",
+        error:
+          "Twilio credentials not configured. Missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, or TWILIO_PHONE_NUMBER.",
       };
     }
 
     try {
-      const twilio = require('twilio');
+      const twilio = require("twilio");
       const client = twilio(this.accountSid, this.authToken);
-      
+
       const result = await client.messages.create({
         body: message,
         from: this.fromNumber,
         to: recipient,
       });
 
-      console.log(`[Twilio] SMS sent to ${recipient}, messageId: ${result.sid}`);
+      console.log(
+        `[Twilio] SMS sent to ${recipient}, messageId: ${result.sid}`,
+      );
 
       return {
         status: "sent",
@@ -207,8 +217,12 @@ export class TwilioSmsProvider implements ICommunicationProvider {
         messageId: result.sid,
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error(`[Twilio] Failed to send SMS to ${recipient}:`, errorMessage);
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      console.error(
+        `[Twilio] Failed to send SMS to ${recipient}:`,
+        errorMessage,
+      );
 
       return {
         status: "failed",
@@ -240,10 +254,12 @@ export class MockCommunicationProvider implements ICommunicationProvider {
   async send(params: CommunicationRequest): Promise<CommunicationResult> {
     const { recipient, channel, message } = params;
 
-    console.log(`[MockCommunication] Sending ${channel} to ${recipient}: ${message.substring(0, 50)}...`);
+    console.log(
+      `[MockCommunication] Sending ${channel} to ${recipient}: ${message.substring(0, 50)}...`,
+    );
 
     // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     return {
       status: "sent",
@@ -262,9 +278,12 @@ export class MockCommunicationProvider implements ICommunicationProvider {
 /**
  * Get communication provider based on channel
  */
-export function getCommunicationProvider(channel: CommunicationChannel): ICommunicationProvider {
+export function getCommunicationProvider(
+  channel: CommunicationChannel,
+): ICommunicationProvider {
   // Use environment variable to force mock provider for testing
-  const useMock = process.env.NODE_ENV === "test" || process.env.USE_MOCK_COMM === "true";
+  const useMock =
+    process.env.NODE_ENV === "test" || process.env.USE_MOCK_COMM === "true";
 
   if (useMock) {
     return new MockCommunicationProvider();
@@ -276,9 +295,26 @@ export function getCommunicationProvider(channel: CommunicationChannel): ICommun
     case "sms":
       return new TwilioSmsProvider();
     case "push":
+      if (AppConfig.isProduction()) {
+        throw new AppError(
+          "NOT_IMPLEMENTED",
+          `Push notification channel is not implemented in production`,
+        );
+      }
+      console.warn(
+        `[CommProvider] Push channel not yet implemented, using mock provider`,
+      );
+      return new MockCommunicationProvider();
     case "webhook":
-      // Not yet implemented - return mock
-      console.warn(`[CommProvider] ${channel} channel not yet implemented, using mock provider`);
+      if (AppConfig.isProduction()) {
+        throw new AppError(
+          "NOT_IMPLEMENTED",
+          `Webhook notification channel is not implemented in production`,
+        );
+      }
+      console.warn(
+        `[CommProvider] Webhook channel not yet implemented, using mock provider`,
+      );
       return new MockCommunicationProvider();
     default:
       throw new Error(`Unknown communication channel: ${channel}`);
@@ -288,7 +324,9 @@ export function getCommunicationProvider(channel: CommunicationChannel): ICommun
 /**
  * Validate communication request using Zod schema
  */
-export function validateCommunicationRequest(params: unknown): CommunicationRequest {
+export function validateCommunicationRequest(
+  params: unknown,
+): CommunicationRequest {
   return CommunicationSchema.parse(params) as CommunicationRequest;
 }
 
@@ -296,7 +334,9 @@ export function validateCommunicationRequest(params: unknown): CommunicationRequ
  * Send communication using the appropriate provider
  * Convenience function that handles provider selection automatically
  */
-export async function sendCommunication(params: CommunicationRequest): Promise<CommunicationResult> {
+export async function sendCommunication(
+  params: CommunicationRequest,
+): Promise<CommunicationResult> {
   const validatedParams = validateCommunicationRequest(params);
   const provider = getCommunicationProvider(validatedParams.channel);
 

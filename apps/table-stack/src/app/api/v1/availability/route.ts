@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
-import { restaurants } from "@repo/database";
+import {
+  getDb,
+  restaurants,
+  restaurantTables,
+  restaurantReservations,
+  eq,
+} from "@repo/database";
 import type { InferSelectModel } from "drizzle-orm";
-import { eq } from "@repo/database";
 import { addMinutes, parseISO } from "date-fns";
 import { toZonedTime, format } from "date-fns-tz";
 import { validateRequest } from "@tablestack/lib/auth";

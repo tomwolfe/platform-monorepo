@@ -2,7 +2,7 @@
  * Normalization Service
  * Validates raw LLM output against McpToolRegistry schemas
  * Provides deterministic guardrails against "Confidence Inflation"
- * 
+ *
  * Integrated with Schema Evolution Service to automatically record
  * parameter mismatches for continuous schema improvement.
  */
@@ -10,6 +10,7 @@
 import { z } from "zod";
 import { TOOLS, McpToolRegistry } from "@repo/mcp-protocol";
 import type { SchemaEvolutionService } from "./services/schema-evolution";
+import { getPrivacyGateway } from "./services/privacy-gateway";
 
 export interface NormalizationResult<T = unknown> {
   success: boolean;
@@ -32,7 +33,7 @@ export interface NormalizationError {
  *
  * Takes raw LLM output and validates it against the McpToolRegistry schemas.
  * This overrides LLM "Confidence Inflation" with deterministic Zod failures.
- * 
+ *
  * When schema evolution service is provided, automatically records mismatches
  * to enable self-healing schema evolution.
  */
@@ -57,68 +58,70 @@ export class NormalizationService {
    */
   private static getAllSchemas(): Map<string, z.ZodType<any>> {
     const schemas = new Map<string, z.ZodType<any>>();
-    
+
     // Flatten the TOOLS registry
     const toolEntries = Object.entries(TOOLS);
-    
+
     for (const [, serviceTools] of toolEntries) {
       const serviceToolEntries = Object.entries(serviceTools);
       for (const [toolName, toolDef] of serviceToolEntries) {
-        if (toolDef && typeof toolDef === 'object' && 'schema' in toolDef) {
+        if (toolDef && typeof toolDef === "object" && "schema" in toolDef) {
           schemas.set(toolDef.name as string, toolDef.schema as z.ZodType<any>);
         }
       }
     }
-    
+
     return schemas;
   }
 
   /**
    * Validate raw LLM output against a specific tool schema
-   * 
+   *
    * @param toolName - The name of the tool to validate against
    * @param rawOutput - The raw LLM output to validate
    * @returns NormalizationResult with validation status
    */
   static validateToolParameters(
     toolName: string,
-    rawOutput: unknown
+    rawOutput: unknown,
   ): NormalizationResult {
     const schemas = this.getAllSchemas();
     const schema = schemas.get(toolName);
-    
+
     if (!schema) {
       return {
         success: false,
-        errors: [{
-          path: "tool",
-          message: `Unknown tool: ${toolName}`,
-          code: "UNKNOWN_TOOL"
-        }],
-        rawInput: rawOutput
+        errors: [
+          {
+            path: "tool",
+            message: `Unknown tool: ${toolName}`,
+            code: "UNKNOWN_TOOL",
+          },
+        ],
+        rawInput: rawOutput,
       };
     }
 
     const result = schema.safeParse(rawOutput);
-    
+
     if (result.success) {
       return {
         success: true,
         data: result.data,
         errors: [],
-        rawInput: rawOutput
+        rawInput: rawOutput,
       };
     } else {
-      const errors: NormalizationError[] = result.error.errors.map(err => ({
-        path: err.path.join('.'),
+      const errors: NormalizationError[] = result.error.errors.map((err) => ({
+        path: err.path.join("."),
         message: err.message,
-        code: err.code
+        code: err.code,
       }));
-      
+
       return {
         success: false,
         errors,
-        rawInput: rawOutput
+        rawInput: rawOutput,
       };
     }
   }
@@ -126,45 +129,47 @@ export class NormalizationService {
   /**
    * Attempt to validate against all known tool schemas
    * Returns the first successful match or all failures
-   * 
+   *
    * @param rawOutput - The raw LLM output to validate
    * @returns NormalizationResult with the best matching schema
    */
   static validateAgainstAllTools(
-    rawOutput: unknown
+    rawOutput: unknown,
   ): NormalizationResult & { matchedTool?: string } {
     const schemas = this.getAllSchemas();
     const allErrors: Array<{ tool: string; errors: NormalizationError[] }> = [];
-    
+
     for (const [toolName, schema] of Array.from(schemas.entries())) {
       const result = schema.safeParse(rawOutput);
-      
+
       if (result.success) {
         return {
           success: true,
           data: result.data,
           errors: [],
           rawInput: rawOutput,
-          matchedTool: toolName
+          matchedTool: toolName,
         };
       } else {
-        const errors: NormalizationError[] = result.error.errors.map(err => ({
-          path: err.path.join('.'),
+        const errors: NormalizationError[] = result.error.errors.map((err) => ({
+          path: err.path.join("."),
           message: err.message,
-          code: err.code
+          code: err.code,
         }));
         allErrors.push({ tool: toolName, errors });
       }
     }
-    
+
     // No schema matched - return aggregate errors
     return {
       success: false,
-      errors: allErrors.flatMap(e => e.errors.map(err => ({
-        ...err,
-        path: `${e.tool}.${err.path}`
-      }))),
-      rawInput: rawOutput
+      errors: allErrors.flatMap((e) =>
+        e.errors.map((err) => ({
+          ...err,
+          path: `${e.tool}.${err.path}`,
+        })),
+      ),
+      rawInput: rawOutput,
     };
   }
 
@@ -178,18 +183,18 @@ export class NormalizationService {
    */
   static normalizeIntentParameters(
     intentType: string,
-    parameters: Record<string, unknown>
+    parameters: Record<string, unknown>,
   ): NormalizationResult {
     // Map intent types to likely tools
     const intentToolMap: Record<string, string[]> = {
-      "SCHEDULE": ["add_calendar_event"],
-      "BOOKING": ["reserve_restaurant", "bookTable"],
-      "MOBILITY": ["request_ride", "get_route_estimate"],
-      "DELIVERY": ["calculateQuote"],
-      "SEARCH": ["search_restaurant", "listVendors", "find_product_nearby"],
-      "COMMUNICATION": ["send_comm"],
-      "WEATHER": ["get_weather_data"],
-      "OPERATIONAL": ["getLiveOperationalState"],
+      SCHEDULE: ["add_calendar_event"],
+      BOOKING: ["reserve_restaurant", "bookTable"],
+      MOBILITY: ["request_ride", "get_route_estimate"],
+      DELIVERY: ["calculateQuote"],
+      SEARCH: ["search_restaurant", "listVendors", "find_product_nearby"],
+      COMMUNICATION: ["send_comm"],
+      WEATHER: ["get_weather_data"],
+      OPERATIONAL: ["getLiveOperationalState"],
     };
 
     const candidateTools = intentToolMap[intentType] || [];
@@ -214,38 +219,77 @@ export class NormalizationService {
         const unexpectedFields = new Set<string>();
 
         for (const error of result.errors) {
-          const fieldPath = error.path.split('.')[0];
-          if (error.code === "unrecognized_keys" || error.message.includes("unrecognized")) {
+          const fieldPath = error.path.split(".")[0];
+          if (
+            error.code === "unrecognized_keys" ||
+            error.message.includes("unrecognized")
+          ) {
             unexpectedFields.add(fieldPath);
-          } else if (error.code === "invalid_type" || error.code === "required") {
+          } else if (
+            error.code === "invalid_type" ||
+            error.code === "required"
+          ) {
             expectedFields.add(fieldPath);
           }
         }
 
-        // Record the mismatch event (async, non-blocking)
+        // GDPR/CCPA FIX: Scrub PII from parameters before storing in schema evolution logs
+        // This prevents raw PII (emails, names, phones) from bypassing the PrivacyGateway
+        // and being written directly to the database's schema evolution logs.
+        let scrubbedParameters = parameters;
+        try {
+          const privacyGateway = getPrivacyGateway();
+          // Build a raw text representation of parameters for PII detection
+          const rawParamText = JSON.stringify(parameters);
+          const scrubbingResult = await privacyGateway.scrubMemoryEntry(
+            rawParamText,
+            parameters as Record<string, unknown>,
+          );
+          scrubbedParameters = scrubbingResult.scrubbedParameters as Record<
+            string,
+            unknown
+          >;
+        } catch (scrubError) {
+          // If scrubbing fails, fall back to raw parameters (non-fatal)
+          console.warn(
+            "[NormalizationService] PII scrubbing failed, using raw parameters:",
+            scrubError,
+          );
+        }
+
+        // Record the mismatch with sanitized parameters (async, non-blocking)
         // Use the matchedTool from validation result if available
-        this.schemaEvolutionService.recordMismatch({
-          intentType,
-          toolName: result.matchedTool || "unknown_tool",
-          timestamp: new Date().toISOString(),
-          llmParameters: parameters,
-          expectedFields: Array.from(expectedFields),
-          unexpectedFields: Array.from(unexpectedFields),
-          missingFields: Array.from(expectedFields),
-          errors: result.errors.map(e => ({
-            field: e.path,
-            message: e.message,
-            code: e.code,
-          })),
-        }).then(eventId => {
-          result.mismatchRecorded = true;
-          result.mismatchEventId = eventId;
-        }).catch(err => {
-          console.warn("[NormalizationService] Failed to record mismatch:", err);
-        });
+        this.schemaEvolutionService
+          .recordMismatch({
+            intentType,
+            toolName: result.matchedTool || "unknown_tool",
+            timestamp: new Date().toISOString(),
+            llmParameters: scrubbedParameters,
+            expectedFields: Array.from(expectedFields),
+            unexpectedFields: Array.from(unexpectedFields),
+            missingFields: Array.from(expectedFields),
+            errors: result.errors.map((e) => ({
+              field: e.path,
+              message: e.message,
+              code: e.code,
+            })),
+          })
+          .then((eventId) => {
+            result.mismatchRecorded = true;
+            result.mismatchEventId = eventId;
+          })
+          .catch((err) => {
+            console.warn(
+              "[NormalizationService] Failed to record mismatch:",
+              err,
+            );
+          });
       } catch (evolutionError) {
         // Silently fail - schema evolution is optional
-        console.warn("[NormalizationService] Schema evolution recording failed:", evolutionError);
+        console.warn(
+          "[NormalizationService] Schema evolution recording failed:",
+          evolutionError,
+        );
       }
     }
 
@@ -255,7 +299,7 @@ export class NormalizationService {
   /**
    * Strict validation that throws on failure
    * Use this when you want to enforce hard failures on invalid LLM output
-   * 
+   *
    * @param toolName - The tool to validate against
    * @param rawOutput - The raw LLM output
    * @returns The validated data
@@ -263,12 +307,14 @@ export class NormalizationService {
    */
   static validateStrict<T = unknown>(toolName: string, rawOutput: unknown): T {
     const result = this.validateToolParameters(toolName, rawOutput);
-    
+
     if (!result.success) {
-      const errorMessages = result.errors.map(e => `${e.path}: ${e.message}`).join(', ');
+      const errorMessages = result.errors
+        .map((e) => `${e.path}: ${e.message}`)
+        .join(", ");
       throw new Error(`Validation failed for ${toolName}: ${errorMessages}`);
     }
-    
+
     return result.data as T;
   }
 }

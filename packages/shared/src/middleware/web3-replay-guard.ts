@@ -125,6 +125,14 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
   }
 
   /**
+   * Redis key for a processing transaction hash (two-phase commit lock)
+   * Value is "processing", expiration is 120 seconds (prevents permanent deadlocks on lambda crash)
+   */
+  private getProcessingKey(txHash: string): string {
+    return `replay_guard:processing:${txHash}`;
+  }
+
+  /**
    * Redis key for replay attempt tracking
    * Format: replay_attempts:{txHash}:{ipAddress}
    */
@@ -436,6 +444,76 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
       );
     }
   }
+
+  /**
+   * TWO-PHASE COMMIT: Try to acquire a processing lock with short TTL
+   *
+   * PHASE 1 (Claim): Register the txHash in Redis with "processing" status and 120s TTL.
+   * If the key already exists, the transaction is already being processed (duplicate).
+   *
+   * This prevents the "bricked transaction hash" problem:
+   * - If the lambda crashes AFTER this check but BEFORE DB commit,
+   *   the 120s TTL automatically releases the lock.
+   * - The user can retry after the TTL expires.
+   *
+   * @param txHash - Transaction hash to lock
+   * @returns true if lock was acquired, false if already processing/processed
+   */
+  async tryAcquireProcessingLock(txHash: Hash): Promise<boolean> {
+    try {
+      const processingKey = this.getProcessingKey(txHash);
+      const set = await this.redis.set(processingKey, "processing", {
+        nx: true, // Only set if key does NOT exist
+        ex: 120, // 2-minute TTL (prevents permanent deadlocks on lambda crash)
+      });
+
+      if (set === null) {
+        // Key already exists - another request is processing this txHash
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      replayLogger.error(
+        "[ReplayGuard] Failed to acquire processing lock:",
+        error,
+      );
+      // Fail open - allow processing if Redis is down
+      return true;
+    }
+  }
+
+  /**
+   * TWO-PHASE COMMIT: Confirm a processing transaction (upgrade to "confirmed")
+   *
+   * PHASE 2 (Commit): After successful on-chain verification and DB transaction,
+   * upgrade the Redis status from "processing" to "confirmed" with a 24h TTL.
+   *
+   * This should be called INSIDE or immediately after the DB transaction succeeds.
+   * If the lambda crashes before this call, the 120s TTL from Phase 1 will
+   * automatically release the lock.
+   *
+   * @param txHash - Transaction hash to confirm
+   */
+  async confirmTransaction(txHash: Hash): Promise<void> {
+    try {
+      const processingKey = this.getProcessingKey(txHash);
+      const confirmedKey = this.getRedisKey(txHash);
+
+      // Upgrade to confirmed with 24h TTL
+      await this.redis.set(confirmedKey, "1", { ex: 86400 });
+
+      // Remove the processing lock
+      await this.redis.del(processingKey);
+    } catch (error) {
+      // Log but don't fail - Redis cache failure is non-critical
+      // The DB record is the source of truth
+      replayLogger.warn(
+        "[ReplayGuard] Failed to confirm transaction in Redis:",
+        error,
+      );
+    }
+  }
 }
 
 // ============================================================================
@@ -559,6 +637,39 @@ export async function isReplayAllowed(
 export async function rollbackReplayGuard(txHash: Hash): Promise<void> {
   const guard = getReplayGuard();
   await guard.rollback(txHash);
+}
+
+/**
+ * TWO-PHASE COMMIT: Try to acquire a processing lock with short TTL
+ *
+ * PHASE 1 (Claim): Register the txHash in Redis with "processing" status and 120s TTL.
+ * If the key already exists, the transaction is already being processed (duplicate).
+ *
+ * Convenience wrapper around ReplayGuardService.tryAcquireProcessingLock()
+ *
+ * @param txHash - Transaction hash to lock
+ * @returns true if lock was acquired, false if already processing/processed
+ */
+export async function tryAcquireReplayProcessingLock(
+  txHash: Hash,
+): Promise<boolean> {
+  const guard = getReplayGuard();
+  return guard.tryAcquireProcessingLock(txHash);
+}
+
+/**
+ * TWO-PHASE COMMIT: Confirm a processing transaction (upgrade to "confirmed")
+ *
+ * PHASE 2 (Commit): After successful on-chain verification and DB transaction,
+ * upgrade the Redis status from "processing" to "confirmed" with a 24h TTL.
+ *
+ * Convenience wrapper around ReplayGuardService.confirmTransaction()
+ *
+ * @param txHash - Transaction hash to confirm
+ */
+export async function confirmReplayGuard(txHash: Hash): Promise<void> {
+  const guard = getReplayGuard();
+  await guard.confirmTransaction(txHash);
 }
 
 // ============================================================================

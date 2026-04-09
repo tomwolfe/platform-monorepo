@@ -50,9 +50,34 @@ const MAX_ORDERS_PER_RUN = 15;
 // even with RPC fallbacks and rate limiting. QStash self-trigger handles remaining orders.
 const BATCH_SIZE = 2;
 
+// CRITICAL FIX: Prevent infinite QStash recursive loops
+// If a batch of orders consistently fails, the hop count will halt self-triggering
+const MAX_QSTASH_HOP_COUNT = 5;
+const QSTASH_HOP_HEADER = "x-qstash-hop-count";
+
 async function postHandler(req: NextRequest) {
   const traceId = req.headers.get("x-trace-id") || undefined;
-  const requestLogger = traceId ? logger.child({ traceId }) : logger;
+  const hopCountHeader = req.headers.get(QSTASH_HOP_HEADER);
+  const currentHopCount = hopCountHeader ? parseInt(hopCountHeader, 10) : 0;
+  const requestLogger = traceId
+    ? logger.child({ traceId, hopCount: currentHopCount })
+    : logger;
+
+  // CRITICAL: Halt if hop count exceeds threshold to prevent infinite loops
+  if (currentHopCount > MAX_QSTASH_HOP_COUNT) {
+    requestLogger.error(
+      `QStash self-trigger hop count exceeded (${currentHopCount}/${MAX_QSTASH_HOP_COUNT}). Halting to prevent infinite loop.`,
+    );
+    return NextResponse.json(
+      {
+        success: false,
+        error: "QStash hop count exceeded",
+        hopCount: currentHopCount,
+        message: `Self-triggering halted after ${currentHopCount} hops to prevent infinite loop`,
+      },
+      { status: 500 },
+    );
+  }
 
   requestLogger.info("Starting background verification sweep");
 
@@ -125,6 +150,7 @@ async function postHandler(req: NextRequest) {
       const hasMoreOrders = pendingOrders.length >= MAX_ORDERS_PER_RUN;
       if (hasMoreOrders) {
         const traceId = req.headers.get("x-trace-id") || undefined;
+        const nextHopCount = currentHopCount + 1;
         QStashService.publish({
           url: `${process.env.NEXT_PUBLIC_APP_URL || "https://your-domain.com"}/api/cron/verify-pending`,
           body: JSON.stringify({ triggeredBy: "qstash-self-trigger" }),
@@ -132,12 +158,14 @@ async function postHandler(req: NextRequest) {
             "Content-Type": "application/json",
             Authorization: `Bearer ${process.env.CRON_SECRET || ""}`,
             ...(traceId ? { "x-trace-id": traceId } : {}),
+            [QSTASH_HOP_HEADER]: String(nextHopCount),
           },
         }).catch((err) => {
           requestLogger.warn(
             "Failed to schedule QStash self-trigger for remaining orders",
             {
               error: err instanceof Error ? err.message : String(err),
+              hopCount: nextHopCount,
             },
           );
         });

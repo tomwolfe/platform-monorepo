@@ -29,6 +29,8 @@ import {
 import {
   isReplayAllowed,
   rollbackReplayGuard,
+  tryAcquireReplayProcessingLock,
+  confirmReplayGuard,
 } from "@repo/shared/middleware/web3-replay-guard";
 
 export const runtime = "nodejs";
@@ -387,7 +389,23 @@ async function postHandler(req: NextRequest) {
     );
   }
 
-  // REPLAY GUARD: Check if this transaction hash has already been used
+  // REPLAY GUARD: Two-phase commit to prevent bricked transaction hashes
+  // PHASE 1: Acquire a processing lock with short TTL (120s)
+  const processingLockAcquired = await tryAcquireReplayProcessingLock(
+    txHash as `0x${string}`,
+  );
+
+  if (!processingLockAcquired) {
+    return NextResponse.json(
+      errorResponse(
+        "CONFLICT",
+        `Payment transaction is currently being processed by another request.`,
+      ),
+      { status: 409 },
+    );
+  }
+
+  // PHASE 1b: Atomically register the txHash in DB to prevent replay attacks
   const replayCheck = await isReplayAllowed({
     txHash: txHash as `0x${string}`,
     appSource: "table-stack",
@@ -483,6 +501,10 @@ async function postHandler(req: NextRequest) {
       paymentTxHash: txHash,
     })
     .where(eq(restaurantReservations.id, targetReservationId));
+
+  // PHASE 2 (Commit): After DB update succeeds, confirm the replay guard
+  // This upgrades the processing lock to a confirmed state with 24h TTL
+  await confirmReplayGuard(txHash as `0x${string}`);
 
   // Notify restaurant owner
   if (reservation.restaurant?.ownerEmail) {

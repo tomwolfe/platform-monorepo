@@ -443,8 +443,17 @@ export class ReservationService {
           ? [assignedTableId]
           : combinedTableIds || [];
 
-        // CRITICAL FIX: Prevent Drizzle/PostgreSQL crash on empty arrays in ANY()
+        // CRITICAL FIX: Prevent Drizzle/PostgreSQL crash on empty arrays in ANY() / && operators
+        // PostgreSQL's ANY(empty_array) and array && empty_array both crash with:
+        // "cannot determine type of empty array" — this guard ensures we only pass non-empty arrays
         const hasTablesToCheck = tablesToCheck.length > 0;
+
+        if (!hasTablesToCheck && !assignedTableId) {
+          // No tables to check and no assigned table — this is a logic error
+          throw new ConflictError(
+            "No table specified. Either tableId or combinedTableIds must be provided.",
+          );
+        }
 
         const conflict = await tx.query.restaurantReservations.findFirst({
           where: and(
@@ -461,15 +470,19 @@ export class ReservationService {
             ),
             sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${start.toISOString()}, ${end.toISOString()})`,
             or(
+              // Single table check
               assignedTableId
                 ? eq(restaurantReservations.tableId, assignedTableId)
                 : undefined,
+              // Combined table contains single table
               assignedTableId
                 ? sql`${restaurantReservations.combinedTableIds} @> ${JSON.stringify([assignedTableId])}::jsonb`
                 : undefined,
+              // Table ID is in the combined table IDs list (only if list is non-empty)
               combinedTableIds && hasTablesToCheck
                 ? sql`${restaurantReservations.tableId} = ANY(${tablesToCheck}::uuid[])`
                 : undefined,
+              // Combined table IDs overlap with the check list (only if list is non-empty)
               combinedTableIds && hasTablesToCheck
                 ? sql`${restaurantReservations.combinedTableIds} && ${tablesToCheck}::uuid[]`
                 : undefined,

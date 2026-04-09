@@ -19,6 +19,8 @@ import {
   OutboxRelayService,
   isReplayAllowed,
   rollbackReplayGuard,
+  tryAcquireReplayProcessingLock,
+  confirmReplayGuard,
   AppConfig,
   getRedisClient,
   ServiceNamespace,
@@ -290,10 +292,21 @@ export async function placeRealOrder(
     }
 
     // ============================================================================
-    // REPLAY GUARD: Atomically register the txHash to prevent replay attacks
-    // This is a TOCTOU-safe check that registers the transaction upfront.
-    // If the order creation fails later, we rollback this registration.
+    // REPLAY GUARD: Two-phase commit to prevent bricked transaction hashes
+    // PHASE 1: Acquire a processing lock with short TTL (120s)
+    // If the lambda crashes after this but before DB commit, the lock auto-expires
     // ============================================================================
+    const processingLockAcquired = await tryAcquireReplayProcessingLock(
+      paymentParams.txHash as Hash,
+    );
+
+    if (!processingLockAcquired) {
+      throw new Error(
+        `Payment transaction ${paymentParams.txHash.substring(0, 10)}... is currently being processed by another request.`,
+      );
+    }
+
+    // PHASE 1b: Atomically register the txHash in DB to prevent replay attacks
     const replayCheck = await isReplayAllowed({
       txHash: paymentParams.txHash as Hash,
       appSource: "open-delivery",
@@ -455,6 +468,12 @@ export async function placeRealOrder(
 
       return fetchedUser;
     });
+
+    // PHASE 2 (Commit): After DB transaction succeeds, confirm the replay guard
+    // This upgrades the processing lock to a confirmed state with 24h TTL
+    if (paymentParams?.txHash) {
+      await confirmReplayGuard(paymentParams.txHash as Hash);
+    }
 
     // Trigger the outbox relay AFTER the transaction commits.
     // Wrapped in after() to guarantee execution outside the request lifecycle.

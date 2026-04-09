@@ -521,6 +521,27 @@ export function createCircuitBreakerRegistry(
 }
 
 // ============================================================================
+// DEFAULT REGISTRY (singleton)
+// ============================================================================
+
+let _defaultCircuitBreakerRegistry: CircuitBreakerRegistry | null = null;
+
+/**
+ * Get or create the default CircuitBreakerRegistry singleton
+ */
+export function defaultCircuitBreakerRegistry(): CircuitBreakerRegistry {
+  if (!_defaultCircuitBreakerRegistry) {
+    _defaultCircuitBreakerRegistry = new CircuitBreakerRegistry({
+      failureThreshold: 5,
+      resetTimeoutMs: 30000,
+      successThreshold: 3,
+      requestTimeoutMs: 10000,
+    });
+  }
+  return _defaultCircuitBreakerRegistry;
+}
+
+// ============================================================================
 // COST-BASED CIRCUIT BREAKER
 // Prevents "Budget Bleed" from runaway LLM calls or logic loops
 // ============================================================================

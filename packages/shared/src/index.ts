@@ -138,6 +138,9 @@ export {
   type CircuitBreakerConfig,
   type CircuitBreakerStats,
   type CircuitEvent,
+  CircuitBreakerRegistry,
+  createCircuitBreakerRegistry,
+  defaultCircuitBreakerRegistry,
 } from "./services/circuit-breaker";
 export type { CircuitState } from "./services/circuit-breaker";
 

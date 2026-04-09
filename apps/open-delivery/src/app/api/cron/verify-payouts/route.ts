@@ -21,6 +21,11 @@ const logger = new Logger({ serviceName: "open-delivery-verify-payouts" });
 // If more than 15 orders exist, a QStash self-trigger recursively processes the rest.
 const MAX_ORDERS_PER_RUN = 15;
 
+// CRITICAL FIX: Prevent infinite QStash recursive loops
+// If a batch of orders consistently fails, the hop count will halt self-triggering
+const MAX_QSTASH_HOP_COUNT = 5;
+const QSTASH_HOP_HEADER = "x-qstash-hop-count";
+
 /**
  * Verify Tip Releases Cron Endpoint
  *
@@ -49,6 +54,25 @@ const MAX_ORDERS_PER_RUN = 15;
 
 async function getCronHandler(req: NextRequest) {
   const traceId = req.headers.get("x-trace-id") || undefined;
+  const hopCountHeader = req.headers.get(QSTASH_HOP_HEADER);
+  const currentHopCount = hopCountHeader ? parseInt(hopCountHeader, 10) : 0;
+
+  // CRITICAL: Halt if hop count exceeds threshold to prevent infinite loops
+  if (currentHopCount > MAX_QSTASH_HOP_COUNT) {
+    logger.error(
+      `[Verify Payouts Cron] QStash self-trigger hop count exceeded (${currentHopCount}/${MAX_QSTASH_HOP_COUNT}). Halting to prevent infinite loop.`,
+      { traceId, hopCount: currentHopCount },
+    );
+    return NextResponse.json(
+      {
+        success: false,
+        error: "QStash hop count exceeded",
+        hopCount: currentHopCount,
+        message: `Self-triggering halted after ${currentHopCount} hops to prevent infinite loop`,
+      },
+      { status: 500 },
+    );
+  }
 
   return tracer.startActiveSpan("verify-payouts-sweep", async (span: Span) => {
     try {
@@ -58,7 +82,7 @@ async function getCronHandler(req: NextRequest) {
 
       logger.info(
         "[Verify Payouts Cron] Starting tip release verification...",
-        { traceId },
+        { traceId, hopCount: currentHopCount },
       );
 
       // Get database connection
@@ -100,6 +124,7 @@ async function getCronHandler(req: NextRequest) {
       const hasMoreOrders = releasedOrders.length >= MAX_ORDERS_PER_RUN;
       if (hasMoreOrders) {
         const traceId = req.headers.get("x-trace-id") || undefined;
+        const nextHopCount = currentHopCount + 1;
         QStashService.publish({
           url: `${process.env.NEXT_PUBLIC_APP_URL || "https://your-domain.com"}/api/cron/verify-payouts`,
           body: JSON.stringify({ triggeredBy: "qstash-self-trigger" }),
@@ -107,6 +132,7 @@ async function getCronHandler(req: NextRequest) {
             "Content-Type": "application/json",
             Authorization: `Bearer ${process.env.CRON_SECRET || ""}`,
             ...(traceId ? { "x-trace-id": traceId } : {}),
+            [QSTASH_HOP_HEADER]: String(nextHopCount),
           },
         }).catch((err) => {
           logger.warn(
@@ -114,6 +140,7 @@ async function getCronHandler(req: NextRequest) {
             {
               error: err instanceof Error ? err.message : String(err),
               traceId,
+              hopCount: nextHopCount,
             },
           );
         });

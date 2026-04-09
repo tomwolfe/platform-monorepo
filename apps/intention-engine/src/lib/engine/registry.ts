@@ -9,6 +9,7 @@ import { Tracer } from "./tracing";
 import { getMemoryClient } from "./memory";
 import { mcpConfig } from "../mcp-config";
 import { Logger, getRedisClient, ServiceNamespace } from "@repo/shared";
+import { defaultCircuitBreakerRegistry } from "@repo/shared";
 import { getDb } from "@repo/database";
 import { SERVICES } from "@repo/shared/services";
 
@@ -127,7 +128,7 @@ export class RegistryManager {
    * Iterates over each service and hits /api/mcp/tools endpoint
    */
   private async discoverServicesViaMCP(): Promise<void> {
-    const memory = getMemoryClient();
+    const breakerRegistry = defaultCircuitBreakerRegistry();
 
     for (const [serviceName, serviceConfig] of Object.entries(SERVICES)) {
       // Skip Intention Engine (we are the intention engine)
@@ -142,8 +143,6 @@ export class RegistryManager {
         continue;
       }
 
-      const serverKey = `circuit_breaker:mcp:${serviceName.toLowerCase()}`;
-
       try {
         // Create MCP client for this service
         let client = this.mcpClients.get(serviceName.toLowerCase());
@@ -155,39 +154,32 @@ export class RegistryManager {
         await client.connect();
         const remoteTools = await client.listTools();
 
+        // Get or create circuit breaker for this service
+        const breaker = breakerRegistry.get(serviceName.toLowerCase());
+
         for (const tool of remoteTools) {
           this.registerRemoteTool(tool, async (params, context) => {
             return Tracer.startActiveSpan(
               `mcp_tool_call:${tool.name}`,
               async (toolSpan) => {
-                // Check Circuit Breaker
-                const failCount = await memory.getCounter(serverKey);
-                if (failCount >= 3) {
-                  return {
-                    success: false,
-                    error: `Circuit breaker tripped for MCP server: ${serviceName}. Too many recent failures.`,
-                  };
-                }
-
                 try {
-                  const paramsWithTrace: Record<string, unknown> = {
-                    ...params,
-                    _trace_id: context.executionId,
-                  };
-                  const result = await client!.callTool(
-                    tool.name,
-                    paramsWithTrace,
-                    context.abortSignal,
-                  );
+                  const result = await breaker.execute(async () => {
+                    const paramsWithTrace: Record<string, unknown> = {
+                      ...params,
+                      _trace_id: context.executionId,
+                    };
+                    return client!.callTool(
+                      tool.name,
+                      paramsWithTrace,
+                      context.abortSignal,
+                    );
+                  });
 
                   return {
                     success: true,
                     output: result,
                   };
                 } catch (error: unknown) {
-                  // Increment Failure Counter
-                  await memory.incrementCounter(serverKey, 60);
-
                   return {
                     success: false,
                     error:
@@ -216,48 +208,40 @@ export class RegistryManager {
    * Uses existing hardcoded MCP client instances
    */
   private async discoverLegacyMcpClients(): Promise<void> {
-    const memory = getMemoryClient();
+    const breakerRegistry = defaultCircuitBreakerRegistry();
     const clients = Array.from(this.mcpClients.entries());
 
     for (const [name, client] of clients) {
       try {
         await client.connect();
         const remoteTools = await client.listTools();
-        const serverKey = `circuit_breaker:mcp:${name}`;
+
+        // Get or create circuit breaker for this client
+        const breaker = breakerRegistry.get(name);
 
         for (const tool of remoteTools) {
           this.registerRemoteTool(tool, async (params, context) => {
             return Tracer.startActiveSpan(
               `mcp_tool_call:${tool.name}`,
               async (toolSpan) => {
-                // Check Circuit Breaker
-                const failCount = await memory.getCounter(serverKey);
-                if (failCount >= 3) {
-                  return {
-                    success: false,
-                    error: `Circuit breaker tripped for MCP server: ${name}. Too many recent failures.`,
-                  };
-                }
-
                 try {
-                  const paramsWithTrace: Record<string, unknown> = {
-                    ...params,
-                    _trace_id: context.executionId,
-                  };
-                  const result = await client.callTool(
-                    tool.name,
-                    paramsWithTrace,
-                    context.abortSignal,
-                  );
+                  const result = await breaker.execute(async () => {
+                    const paramsWithTrace: Record<string, unknown> = {
+                      ...params,
+                      _trace_id: context.executionId,
+                    };
+                    return client.callTool(
+                      tool.name,
+                      paramsWithTrace,
+                      context.abortSignal,
+                    );
+                  });
 
                   return {
                     success: true,
                     output: result,
                   };
                 } catch (error: unknown) {
-                  // Increment Failure Counter
-                  await memory.incrementCounter(serverKey, 60);
-
                   return {
                     success: false,
                     error:

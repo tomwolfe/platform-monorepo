@@ -1,5 +1,8 @@
 import { RealtimeService } from "./realtime";
 import { Redis } from "@upstash/redis";
+import { Logger } from "./logger";
+
+const logger = new Logger({ serviceName: "order-state-machine" });
 
 export class OrderStateMachine {
   constructor(private redis: Redis) {}
@@ -26,15 +29,19 @@ export class OrderStateMachine {
       ex: 86400 * 7,
     });
 
-    console.log(
-      `[OrderStateMachine] Order ${orderId} transitioned: ${previousStatus || "INIT"} -> ${newStatus}`,
-    );
+    logger.info({
+      message: "Order status transitioned",
+      orderId,
+      previousStatus: previousStatus || "INIT",
+      newStatus,
+    });
 
     // 2. Reactive Side Effects (Decentralized Reactivity)
     if (newStatus === "ready_for_pickup") {
-      console.log(
-        `[OrderStateMachine] Triggering delivery.request for order ${orderId}`,
-      );
+      logger.info({
+        message: "Triggering delivery.request",
+        orderId,
+      });
 
       // We emit an event to the mesh. Open-Delivery or Intention-Engine can listen.
       // This bypasses the need for Intention-Engine to manually orchestrate.

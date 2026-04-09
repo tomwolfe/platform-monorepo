@@ -24,6 +24,9 @@ import {
   CircuitBreaker,
   CircuitBreakerOpenError,
 } from "../services/circuit-breaker";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "crypto-price-oracle" });
 
 const COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price";
 const COINBASE_API = "https://api.coinbase.com/v2/exchange-rates";
@@ -136,7 +139,7 @@ async function getHistoricalMovingAverage(
     }
   } catch (error) {
     // Table might not exist - that's okay, return null
-    console.debug("[CryptoPrice] Historical average not available");
+    logger.debug({ message: "Historical average not available", error });
   }
 
   // Return null if no historical data - DO NOT use hardcoded fallbacks
@@ -170,7 +173,7 @@ export async function getCryptoPrices(options?: {
 }> {
   // CI/TEST MODE: Return static mock prices for deterministic, offline-safe testing
   if (process.env.CI === "true" || process.env.NODE_ENV === "test") {
-    console.log("[CryptoPrice] CI/Test mode detected - returning mock prices");
+    logger.info({ message: "CI/Test mode detected - returning mock prices" });
     return {
       ...CI_MOCK_PRICES,
       timestamp: Date.now(),
@@ -198,18 +201,18 @@ export async function getCryptoPrices(options?: {
       // Mark as stale if between 30 seconds and 5 minutes old
       if (cached && cacheAge < STALE_CACHE_TTL * 1000) {
         isStale = true;
-        console.warn(
-          `[CryptoPrice] Using stale cache data (${Math.round(cacheAge / 1000)}s old). ` +
-            `Attempting to refresh in background.`,
-        );
+        logger.warn({
+          message: "Using stale cache data, attempting background refresh",
+          cacheAgeSeconds: Math.round(cacheAge / 1000),
+        });
       }
     }
   } catch (error) {
     // Redis failure - log warning and proceed to API fallbacks
-    console.warn(
-      "[CryptoPrice] Redis cache read failed, proceeding to API fallbacks:",
+    logger.warn({
+      message: "Redis cache read failed, proceeding to API fallbacks",
       error,
-    );
+    });
   }
 
   // Try CoinGecko (primary) — protected by circuit breaker
@@ -256,11 +259,14 @@ export async function getCryptoPrices(options?: {
     // If circuit breaker is OPEN, skip network timeout and go straight to fallbacks
     const isBreakerOpen = coingeckoError instanceof CircuitBreakerOpenError;
     if (!isBreakerOpen) {
-      console.warn("CoinGecko failed, trying Coinbase:", coingeckoError);
+      logger.warn({
+        message: "CoinGecko failed, trying Coinbase",
+        error: coingeckoError,
+      });
     } else {
-      console.warn(
-        "[CryptoPrice] CoinGecko circuit breaker OPEN, skipping to fallback",
-      );
+      logger.warn({
+        message: "CoinGecko circuit breaker OPEN, skipping to fallback",
+      });
     }
 
     // Try Coinbase (secondary fallback)
@@ -309,7 +315,7 @@ export async function getCryptoPrices(options?: {
           maticPrice = parseFloat(maticData.data?.rates?.USD || "0");
         }
       } catch (e) {
-        console.warn("Failed to fetch MATIC price from Coinbase");
+        logger.warn({ message: "Failed to fetch MATIC price from Coinbase" });
       }
 
       const prices = {
@@ -332,7 +338,7 @@ export async function getCryptoPrices(options?: {
 
       return { ...prices, source: "coinbase" as const, isStale: false };
     } catch (coinbaseError) {
-      console.warn("Coinbase also failed:", coinbaseError);
+      logger.warn({ message: "Coinbase also failed", error: coinbaseError });
 
       // Try Binance Public API (tertiary fallback - no auth required)
       try {
@@ -383,7 +389,7 @@ export async function getCryptoPrices(options?: {
             maticPrice = parseFloat(maticData.lastPrice || "0");
           }
         } catch (e) {
-          console.warn("Failed to fetch MATIC price from Binance");
+          logger.warn({ message: "Failed to fetch MATIC price from Binance" });
         }
 
         const prices = {
@@ -406,7 +412,7 @@ export async function getCryptoPrices(options?: {
 
         return { ...prices, source: "binance" as const, isStale: false };
       } catch (binanceError) {
-        console.warn("Binance also failed:", binanceError);
+        logger.warn({ message: "Binance also failed", error: binanceError });
 
         // Try historical moving average from Postgres
         try {
@@ -414,7 +420,9 @@ export async function getCryptoPrices(options?: {
           const maticHistorical = await getHistoricalMovingAverage("MATIC");
 
           if (ethHistorical && maticHistorical) {
-            console.warn("Using historical moving average as fallback");
+            logger.warn({
+              message: "Using historical moving average as fallback",
+            });
             const prices = {
               ETH: ethHistorical,
               MATIC: maticHistorical,
@@ -423,7 +431,10 @@ export async function getCryptoPrices(options?: {
             return { ...prices, source: "historical" as const, isStale: true };
           }
         } catch (historicalError) {
-          console.warn("Historical average also unavailable:", historicalError);
+          logger.warn({
+            message: "Historical average also unavailable",
+            error: historicalError,
+          });
         }
 
         // LAST RESORT: Use stale cache data if available
@@ -438,18 +449,15 @@ export async function getCryptoPrices(options?: {
             ) as CachedPriceData;
           }
         } catch (error) {
-          console.warn(
-            "[CryptoPrice] Redis stale cache read also failed:",
-            error,
-          );
+          logger.warn({ message: "Redis stale cache read also failed", error });
         }
 
         if (staleCached) {
-          console.error(
-            "⚠️ CRITICAL: All crypto price sources (CoinGecko, Coinbase, Binance, historical) failed. " +
-              "Using STALE cached data as last resort. Prices may be significantly outdated. " +
-              "Users should be warned that crypto prices are not current.",
-          );
+          logger.error({
+            message:
+              "All crypto price sources failed, using STALE cached data as last resort. Prices may be significantly outdated.",
+            sources: ["CoinGecko", "Coinbase", "Binance", "historical"],
+          });
           return {
             ...staleCached,
             source: "cache-stale" as const,

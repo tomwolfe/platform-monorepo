@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb, drivers as driversTable, orders as ordersTable, eq, sql, and, gte, lt } from "@repo/database";
+import {
+  getDb,
+  drivers as driversTable,
+  orders as ordersTable,
+  eq,
+  sql,
+  and,
+  gte,
+  lt,
+} from "@repo/database";
 import { currentUser } from "@clerk/nextjs/server";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "open-delivery-driver-stats" });
 
 interface DriverStats {
   id: string;
@@ -30,7 +42,7 @@ export async function GET(request: NextRequest) {
     if (!user) {
       return NextResponse.json(
         { error: "Unauthorized - please log in" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -52,7 +64,7 @@ export async function GET(request: NextRequest) {
     if (!driver) {
       return NextResponse.json(
         { error: "No driver profile found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -79,8 +91,8 @@ export async function GET(request: NextRequest) {
         and(
           eq(ordersTable.driverId, driverId),
           gte(ordersTable.createdAt, today),
-          lt(ordersTable.createdAt, tomorrow)
-        )
+          lt(ordersTable.createdAt, tomorrow),
+        ),
       );
 
     const stats = statsResult[0];
@@ -88,7 +100,7 @@ export async function GET(request: NextRequest) {
     if (!stats) {
       return NextResponse.json(
         { error: "Failed to fetch statistics" },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -99,13 +111,15 @@ export async function GET(request: NextRequest) {
       trustScore: driver.trustScore || 80,
     });
   } catch (error) {
-    console.error("Driver stats error:", error);
+    logger.error("Driver stats error", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json(
       {
         error: "Failed to fetch statistics",
-        details: error instanceof Error ? error.message : "Unknown error"
+        details: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

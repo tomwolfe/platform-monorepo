@@ -37,6 +37,9 @@
 
 import { getRedisClient, ServiceNamespace } from "../redis";
 import { randomUUID } from "crypto";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "distributed-lock" });
 
 // ============================================================================
 // LUA SCRIPTS FOR ATOMIC OPERATIONS
@@ -182,10 +185,11 @@ export async function releaseDistributedLock(
   } catch (error) {
     // Log but don't throw - lock release failures are non-fatal
     // The lock will expire via TTL anyway
-    console.warn(
-      `[DistributedLock] Failed to release ${lockKey}:`,
-      error instanceof Error ? error.message : String(error),
-    );
+    logger.warn({
+      message: "Failed to release distributed lock",
+      lockKey,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return false;
   }
 }

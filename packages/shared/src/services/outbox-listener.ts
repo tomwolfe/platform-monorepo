@@ -40,12 +40,17 @@
  * @since 1.0.0
  */
 
-import { getDb, outbox } from '@repo/database';
-import { sql, eq, and, lt, isNull } from 'drizzle-orm';
-import { Redis } from '@upstash/redis';
-import { getRedisClient, ServiceNamespace } from '../redis';
-import { OutboxService, type OutboxPayload, type OutboxEventType, type OutboxEvent } from '../outbox';
-import { Logger } from '../logger';
+import { getDb, outbox } from "@repo/database";
+import { sql, eq, and, lt, isNull } from "drizzle-orm";
+import { Redis } from "@upstash/redis";
+import { getRedisClient, ServiceNamespace } from "../redis";
+import {
+  OutboxService,
+  type OutboxPayload,
+  type OutboxEventType,
+  type OutboxEvent,
+} from "../outbox";
+import { Logger } from "../logger";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -124,10 +129,10 @@ export async function notifyOutboxEvent(
     executionId: string;
     eventType: OutboxEventType;
     outboxId: string;
-  }
+  },
 ): Promise<void> {
-  const logger = new Logger({ serviceName: 'outbox-listener' });
-  const channelName = process.env.OUTBOX_CHANNEL_NAME || 'outbox_events';
+  const logger = new Logger({ serviceName: "outbox-listener" });
+  const channelName = process.env.OUTBOX_CHANNEL_NAME || "outbox_events";
 
   // Use pg_notify to send notification
   await tx.execute(sql`
@@ -141,7 +146,7 @@ export async function notifyOutboxEvent(
 
   logger.info(
     `Notified channel '${channelName}' for execution ${notification.executionId}`,
-    { outboxId: notification.outboxId }
+    { outboxId: notification.outboxId },
   );
 }
 
@@ -151,7 +156,7 @@ export async function notifyOutboxEvent(
 // ============================================================================
 
 export class OutboxListener {
-  private logger = new Logger({ serviceName: 'outbox-listener' });
+  private logger = new Logger({ serviceName: "outbox-listener" });
   private config: OutboxListenerConfig;
   private redis: Redis;
   private outboxService: OutboxService;
@@ -166,7 +171,7 @@ export class OutboxListener {
 
   constructor(config: OutboxListenerConfig = {}) {
     this.config = {
-      channelName: process.env.OUTBOX_CHANNEL_NAME || 'outbox_events',
+      channelName: process.env.OUTBOX_CHANNEL_NAME || "outbox_events",
       batchSize: 10,
       pollIntervalMs: 5000,
       enableFallbackPolling: true,
@@ -182,25 +187,28 @@ export class OutboxListener {
    */
   async startListening(): Promise<void> {
     if (this.isListening) {
-      this.logger.warn('Already listening');
+      this.logger.warn("Already listening");
       return;
     }
 
     this.isListening = true;
-    this.logger.info(`Starting listener on channel '${this.config.channelName}'`, {
-      batchSize: this.config.batchSize,
-    });
+    this.logger.info(
+      `Starting listener on channel '${this.config.channelName}'`,
+      {
+        batchSize: this.config.batchSize,
+      },
+    );
 
     try {
       // Try to set up LISTEN/NOTIFY
       await this.setupListener();
     } catch (error) {
-      this.logger.error('Failed to setup LISTEN/NOTIFY', { error });
+      this.logger.error("Failed to setup LISTEN/NOTIFY", { error });
 
       // In serverless environments, LISTEN/NOTIFY won't work.
       // Log a warning and rely on cron-based processing instead.
       this.logger.warn(
-        'LISTEN/NOTIFY unavailable. Outbox processing will be handled by /api/cron/outbox-sweep endpoint.'
+        "LISTEN/NOTIFY unavailable. Outbox processing will be handled by /api/cron/outbox-sweep endpoint.",
       );
     }
   }
@@ -216,12 +224,12 @@ export class OutboxListener {
         await this.client.query(`UNLISTEN ${this.config.channelName}`);
         await this.client.end();
       } catch (error) {
-        this.logger.error('Error stopping listener', { error });
+        this.logger.error("Error stopping listener", { error });
       }
       this.client = undefined;
     }
 
-    this.logger.info('Stopped listening');
+    this.logger.info("Stopped listening");
   }
 
   /**
@@ -236,11 +244,11 @@ export class OutboxListener {
    */
   private async setupListener(): Promise<void> {
     // Import neon serverless for direct SQL execution
-    const { neon } = await import('@neondatabase/serverless');
+    const { neon } = await import("@neondatabase/serverless");
 
     const databaseUrl = AppConfig.getDatabaseUrl();
     if (!databaseUrl) {
-      throw new Error('DATABASE_URL not configured');
+      throw new Error("DATABASE_URL not configured");
     }
 
     // Create dedicated connection for LISTEN
@@ -255,7 +263,7 @@ export class OutboxListener {
     // Note: neon serverless doesn't support persistent connections well
     // We'll use polling as the primary mechanism in serverless environments
     this.logger.warn(
-      'LISTEN/NOTIFY in serverless: Using polling as primary mechanism. For real-time LISTEN, deploy a persistent worker (e.g., Fly.io, Railway).'
+      "LISTEN/NOTIFY in serverless: Using polling as primary mechanism. For real-time LISTEN, deploy a persistent worker (e.g., Fly.io, Railway).",
     );
   }
 
@@ -277,7 +285,7 @@ export class OutboxListener {
     // This method is kept as a no-op for backward compatibility.
     // Use pollAndProcess() directly for manual or cron-triggered processing.
     this.logger.info(
-      'startFallbackPolling() is deprecated for serverless. Use the /api/cron/outbox-sweep endpoint triggered by QStash instead.'
+      "startFallbackPolling() is deprecated for serverless. Use the /api/cron/outbox-sweep endpoint triggered by QStash instead.",
     );
   }
 
@@ -295,10 +303,12 @@ export class OutboxListener {
     const pendingEvents = await db
       .select()
       .from(outbox)
-      .where(sql`
+      .where(
+        sql`
         ${outbox.status} = 'pending'
         AND (${outbox.expiresAt} > ${now} OR ${outbox.expiresAt} IS NULL)
-      `)
+      `,
+      )
       .orderBy(outbox.createdAt)
       .limit(this.config.batchSize!);
 
@@ -311,7 +321,7 @@ export class OutboxListener {
     // Process events in batch
     for (const event of pendingEvents) {
       await this.processNotification({
-        executionId: (event.payload as any).executionId,
+        executionId: event.payload.executionId,
         eventType: event.eventType as OutboxEventType,
         outboxId: event.id,
         timestamp: event.createdAt.toISOString(),
@@ -322,14 +332,16 @@ export class OutboxListener {
   /**
    * Process a single outbox notification
    */
-  private async processNotification(notification: OutboxNotification): Promise<void> {
+  private async processNotification(
+    notification: OutboxNotification,
+  ): Promise<void> {
     this.stats.notificationsReceived++;
     this.stats.lastNotificationAt = new Date();
     const db = getDb();
 
     this.logger.info(
       `Processing notification for execution ${notification.executionId}`,
-      { outboxId: notification.outboxId }
+      { outboxId: notification.outboxId },
     );
 
     try {
@@ -348,7 +360,7 @@ export class OutboxListener {
       const event = events[0]!;
 
       // Skip if already processed
-      if (event.status === 'processed') {
+      if (event.status === "processed") {
         this.logger.info(`Event ${notification.outboxId} already processed`);
         return;
       }
@@ -360,7 +372,7 @@ export class OutboxListener {
 
       this.logger.info(`Successfully processed event ${notification.outboxId}`);
     } catch (error) {
-      this.logger.error('Failed to process notification', {
+      this.logger.error("Failed to process notification", {
         error: error instanceof Error ? error.message : String(error),
       });
       this.stats.eventsFailed++;
@@ -375,7 +387,9 @@ export class OutboxListener {
 
 let defaultOutboxListener: OutboxListener | null = null;
 
-export function createOutboxListener(config?: OutboxListenerConfig): OutboxListener {
+export function createOutboxListener(
+  config?: OutboxListenerConfig,
+): OutboxListener {
   if (!defaultOutboxListener) {
     defaultOutboxListener = new OutboxListener(config);
   }
@@ -404,11 +418,11 @@ export function getOutboxListener(): OutboxListener {
  */
 export async function triggerOutboxRelay(
   executionId: string,
-  outboxId: string
+  outboxId: string,
 ): Promise<string | null> {
-  const { QStashService } = await import('../services/qstash');
-  const { AppConfig } = await import('../config');
-  const logger = new Logger({ serviceName: 'outbox-listener' });
+  const { QStashService } = await import("../services/qstash");
+  const { AppConfig } = await import("../config");
+  const logger = new Logger({ serviceName: "outbox-listener" });
 
   const baseUrl = AppConfig.getIntentionEngineApiUrl();
   const url = `${baseUrl}/api/engine/outbox-relay`;
@@ -420,15 +434,15 @@ export async function triggerOutboxRelay(
   };
 
   // SECURITY: Generate short-lived JWT for internal service-to-service communication
-  const { signInternalJWT } = await import('@repo/auth');
+  const { signInternalJWT } = await import("@repo/auth");
   const authToken = await signInternalJWT(
-    { action: 'outbox_relay', executionId, outboxId },
-    { issuer: 'outbox-listener', audience: 'intention-engine' }
+    { action: "outbox_relay", executionId, outboxId },
+    { issuer: "outbox-listener", audience: "intention-engine" },
   );
 
   const headers = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${authToken}`,
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${authToken}`,
   };
 
   try {
@@ -438,14 +452,13 @@ export async function triggerOutboxRelay(
       headers,
     });
 
-    logger.info(
-      `Triggered QStash relay for execution ${executionId}`,
-      { messageId }
-    );
+    logger.info(`Triggered QStash relay for execution ${executionId}`, {
+      messageId,
+    });
 
     return messageId;
   } catch (error) {
-    logger.error('Failed to trigger QStash relay', { error });
+    logger.error("Failed to trigger QStash relay", { error });
     return null;
   }
 }

@@ -2,6 +2,7 @@ import {
   RealtimeService,
   getRedisClient,
   ServiceNamespace,
+  Logger,
 } from "@repo/shared";
 import { handleTableStackRejection } from "./tablestack";
 import { verifyAsymmetricJWT } from "@repo/auth";
@@ -11,6 +12,8 @@ import { createAuditLog } from "@/lib/audit";
 import { getAblyClient } from "@repo/shared";
 import { listTools } from "@/lib/tools/registry";
 import { getEventSchemaRegistry } from "@repo/mcp-protocol";
+
+const logger = new Logger({ serviceName: "intention-engine-mesh-listener" });
 import {
   SystemEventSchema,
   ReservationEventPayloadSchema,
@@ -78,12 +81,11 @@ async function sendEventToDLQ(
       },
     );
 
-    console.error(`[MeshListener] Event ${eventName} sent to DLQ: ${dlqKey}`);
+    logger.info("Event sent to DLQ", { eventName, dlqKey });
   } catch (error) {
-    console.error(
-      `[MeshListener] Failed to store event in DLQ:`,
-      error instanceof Error ? error.message : error,
-    );
+    logger.error("Failed to store event in DLQ", {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -229,16 +231,16 @@ export class ProactiveIntentGenerator {
     // Check if this event type has a proactive trigger
     const triggerFn = this.PROACTIVE_TRIGGERS[eventName];
     if (!triggerFn) {
-      console.log(`[ProactiveIntent] No proactive trigger for ${eventName}`);
       return null;
     }
 
     try {
       // Generate natural language prompt from event
       const proactivePrompt = triggerFn(data);
-      console.log(
-        `[ProactiveIntent] Generating plan for ${eventName}: ${proactivePrompt}`,
-      );
+      logger.info("Generating proactive plan", {
+        eventName,
+        prompt: proactivePrompt,
+      });
 
       // Infer intent from the prompt
       const { hypotheses } = await inferIntent(proactivePrompt, []);
@@ -246,9 +248,10 @@ export class ProactiveIntentGenerator {
 
       // Only proceed if confidence is above threshold
       if (intent.confidence < 0.5) {
-        console.log(
-          `[ProactiveIntent] Skipping low-confidence intent (${intent.confidence}) for ${eventName}`,
-        );
+        logger.info("Skipping low-confidence proactive intent", {
+          eventName,
+          confidence: intent.confidence,
+        });
         return null;
       }
 
@@ -267,10 +270,10 @@ export class ProactiveIntentGenerator {
 
       return proactivePlan;
     } catch (error) {
-      console.error(
-        `[ProactiveIntent] Failed to generate plan for ${eventName}:`,
-        error instanceof Error ? error.message : error,
-      );
+      logger.error("Failed to generate proactive plan", {
+        eventName,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }
@@ -329,22 +332,18 @@ export class MeshListener {
    * 3. Validate events against Zod schemas from event-registry
    */
   static async handleEvent(eventName: string, payload: unknown) {
-    console.log(`[MeshListener] Received event: ${eventName}`);
+    logger.info("Received event", { eventName });
 
     // Standardized Security Check
     if (!payload || typeof payload !== "object" || !("token" in payload)) {
-      console.warn(
-        `[MeshListener] Event ${eventName} rejected: Missing service token`,
-      );
+      logger.warn("Event rejected: missing service token", { eventName });
       return;
     }
 
     const payloadObj = payload as { token?: string; [key: string]: unknown };
 
     if (!payloadObj.token) {
-      console.warn(
-        `[MeshListener] Event ${eventName} rejected: Missing service token`,
-      );
+      logger.warn("Event rejected: missing service token", { eventName });
       return;
     }
 
@@ -354,9 +353,7 @@ export class MeshListener {
       "mesh-listener",
     );
     if (!verified) {
-      console.warn(
-        `[MeshListener] Event ${eventName} rejected: Invalid service token`,
-      );
+      logger.warn("Event rejected: invalid service token", { eventName });
       return;
     }
 
@@ -395,13 +392,13 @@ export class MeshListener {
       const validation = registry.validate(registryEventType, data);
       if (!validation.success) {
         // FAIL-CLOSED: Drop event if it fails schema validation
-        console.error(
-          `[MeshListener] Event ${eventName} FAILED schema validation, DROPPING:`,
-          validation.error,
-        );
+        logger.error("Event failed schema validation, dropping", {
+          eventName,
+          validationError: validation.error,
+        });
         return;
       }
-      console.log(`[MeshListener] Event ${eventName} validated against schema`);
+      logger.info("Event validated against schema", { eventName });
     }
 
     // Handle proactive events with strict Zod validation
@@ -418,9 +415,9 @@ export class MeshListener {
       // Validate data structure using Zod
       const dataValidation = z.object({}).passthrough().safeParse(data);
       if (!dataValidation.success) {
-        console.error(
-          `[MeshListener] Invalid data structure for proactive event ${eventName}`,
-        );
+        logger.error("Invalid data structure for proactive event", {
+          eventName,
+        });
         return;
       }
 
@@ -440,10 +437,10 @@ export class MeshListener {
         // Events that fail validation are dropped and sent to DLQ
         const validated = ReservationEventPayloadSchema.safeParse(data);
         if (!validated.success) {
-          console.error(
-            `[MeshListener] Event ${eventName} FAILED validation, DROPPING:`,
-            validated.error,
-          );
+          logger.error("Event failed validation, dropping", {
+            eventName,
+            validationError: validated.error,
+          });
           // Send to DLQ for manual inspection
           await sendEventToDLQ(eventName, data, validated.error, {
             userId,
@@ -457,10 +454,10 @@ export class MeshListener {
       case "high_value_guest_reservation": {
         const validated = HighValueGuestEventPayloadSchema.safeParse(data);
         if (!validated.success) {
-          console.error(
-            `[MeshListener] Event ${eventName} FAILED validation, DROPPING:`,
-            validated.error,
-          );
+          logger.error("Event failed validation, dropping", {
+            eventName,
+            validationError: validated.error,
+          });
           // Send to DLQ for manual inspection
           await sendEventToDLQ(eventName, data, validated.error, {
             userId,
@@ -475,10 +472,10 @@ export class MeshListener {
         // STRICT VALIDATION: Use full schema validation (not partial)
         const validated = DeliveryEventPayloadSchema.safeParse(data);
         if (!validated.success) {
-          console.error(
-            `[MeshListener] Event ${eventName} FAILED validation, DROPPING:`,
-            validated.error,
-          );
+          logger.error("Event failed validation, dropping", {
+            eventName,
+            validationError: validated.error,
+          });
           // Send to DLQ for manual inspection
           await sendEventToDLQ(eventName, data, validated.error, {
             userId,
@@ -486,15 +483,14 @@ export class MeshListener {
           });
           return;
         }
-        console.log(
-          `[MeshListener] Delivery logged on mesh:`,
-          validated.data.orderId,
-        );
+        logger.info("Delivery logged on mesh", {
+          orderId: validated.data.orderId,
+        });
         break;
       }
 
       default:
-        console.log(`[MeshListener] No handler for event: ${eventName}`);
+        logger.info("No handler for event", { eventName });
     }
   }
 
@@ -504,17 +500,12 @@ export class MeshListener {
   private static async handleProactiveEvent(context: ProactiveEventContext) {
     const { eventName, data, userId, userChannel, traceId } = context;
 
-    console.log(
-      `[MeshListener] Processing proactive event ${eventName}` +
-        (userId ? ` for user ${userId}` : ""),
-    );
+    logger.info("Processing proactive event", { eventName, userId });
 
     try {
       // TYPE SAFETY: Validate proactive event payload structure
       if (!data || typeof data !== "object") {
-        console.error(
-          `[MeshListener] Invalid data for proactive event ${eventName}`,
-        );
+        logger.error("Invalid data for proactive event", { eventName });
         return;
       }
 
@@ -523,9 +514,7 @@ export class MeshListener {
         await ProactiveIntentGenerator.generateProactivePlan(context);
 
       if (!proactivePlan) {
-        console.log(
-          `[MeshListener] No proactive plan generated for ${eventName}`,
-        );
+        logger.info("No proactive plan generated", { eventName });
         return;
       }
 
@@ -555,10 +544,10 @@ export class MeshListener {
           { traceId },
         );
 
-        console.log(
-          `[MeshListener] Pushed proactive plan to ${userChannel}: ` +
-            `${proactivePlan.reasoning}`,
-        );
+        logger.info("Pushed proactive plan to user", {
+          userChannel,
+          reasoning: proactivePlan.reasoning,
+        });
       }
 
       return {
@@ -568,10 +557,10 @@ export class MeshListener {
         reasoning: proactivePlan.reasoning,
       };
     } catch (error) {
-      console.error(
-        `[MeshListener] Error handling proactive event ${eventName}:`,
-        error instanceof Error ? error.message : error,
-      );
+      logger.error("Error handling proactive event", {
+        eventName,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),

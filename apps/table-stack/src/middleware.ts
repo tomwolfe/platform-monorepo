@@ -7,7 +7,9 @@ import {
 } from "@repo/shared/security-headers";
 import { SecurityProvider } from "@repo/auth";
 import { isReplayBlockedInRedis } from "@repo/shared/web3-replay-guard";
-import { TRACE_ID_HEADER, CORRELATION_ID_HEADER } from "@repo/shared";
+import { TRACE_ID_HEADER, CORRELATION_ID_HEADER, Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "table-stack-middleware" });
 
 const isProtectedRoute = createRouteMatcher([
   "/dashboard(.*)",
@@ -82,9 +84,11 @@ export default clerkMiddleware(async (auth, req) => {
         }
       } catch (error) {
         // If Redis is unavailable, log and allow the route handler to perform the definitive check
-        console.warn(
-          "[Middleware] Replay guard pre-check unavailable, deferring to route handler:",
-          error,
+        logger.warn(
+          "Replay guard pre-check unavailable, deferring to route handler",
+          {
+            error: error instanceof Error ? error.message : String(error),
+          },
         );
       }
     }

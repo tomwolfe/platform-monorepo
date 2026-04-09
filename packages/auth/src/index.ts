@@ -1,4 +1,4 @@
-import { SignJWT, jwtVerify, CompactSign, compactVerify } from 'jose';
+import { SignJWT, jwtVerify, CompactSign, compactVerify } from "jose";
 
 // Export asymmetric JWT functions for Zero-Trust authentication
 export {
@@ -15,7 +15,7 @@ export {
   type KeyPair,
   type AsymmetricJWTPayload,
   type AsymmetricJWTOptions,
-} from './asymmetric-jwt';
+} from "./asymmetric-jwt";
 
 /**
  * Get internal system key with production safety check
@@ -23,17 +23,17 @@ export {
  */
 function getInternalSystemKey(): string {
   const key = process.env.INTERNAL_SYSTEM_KEY;
-  
+
   // In production, fail fast if key is missing
-  if (!key && process.env.NODE_ENV === 'production') {
+  if (!key && process.env.NODE_ENV === "production") {
     throw new Error(
-      'CRITICAL: INTERNAL_SYSTEM_KEY is not configured. ' +
-      'This is a required security credential for service-to-service authentication. ' +
-      'Set a strong, random value in your production environment variables.'
+      "CRITICAL: INTERNAL_SYSTEM_KEY is not configured. " +
+        "This is a required security credential for service-to-service authentication. " +
+        "Set a strong, random value in your production environment variables.",
     );
   }
-  
-  return key || 'internal-system-key-change-in-production';
+
+  return key || "internal-system-key-change-in-production";
 }
 
 function getSecret() {
@@ -48,12 +48,12 @@ function getSecret() {
 
 /**
  * Sign a short-lived JWT for internal service-to-service communication
- * 
+ *
  * Security improvements over static key:
  * - 5-minute TTL limits exposure window if token is compromised
  * - Strict issuer (iss) and audience (aud) claims prevent token reuse
  * - Each service has unique identity
- * 
+ *
  * @param payload - Token payload (will include iss, aud, exp, iat automatically)
  * @param options - JWT options
  * @returns Signed JWT
@@ -65,10 +65,10 @@ export async function signInternalJWT(
     audience: string;
     expiresIn?: string;
     subject?: string;
-  }
+  },
 ): Promise<string> {
   const secret = getSecret();
-  const { issuer, audience, expiresIn = '5m', subject } = options;
+  const { issuer, audience, expiresIn = "5m", subject } = options;
 
   const jwtPayload: Record<string, unknown> = {
     ...payload,
@@ -81,7 +81,7 @@ export async function signInternalJWT(
   }
 
   return await new SignJWT(jwtPayload)
-    .setProtectedHeader({ alg: 'HS256' })
+    .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(expiresIn)
     .sign(secret);
@@ -89,13 +89,13 @@ export async function signInternalJWT(
 
 /**
  * Verify a short-lived JWT for internal service-to-service communication
- * 
+ *
  * Validates:
  * - Signature integrity
  * - Expiration time (exp)
  * - Issuer (iss) matches expected
  * - Audience (aud) matches expected
- * 
+ *
  * @param token - JWT to verify
  * @param expectedIssuer - Expected issuer claim
  * @param expectedAudience - Expected audience claim
@@ -104,19 +104,22 @@ export async function signInternalJWT(
 export async function verifyInternalJWT(
   token: string,
   expectedIssuer: string,
-  expectedAudience: string
+  expectedAudience: string,
 ): Promise<Record<string, unknown> | null> {
   const secret = getSecret();
-  
+
   try {
     const { payload } = await jwtVerify(token, secret, {
       issuer: expectedIssuer,
       audience: expectedAudience,
-      algorithms: ['HS256'],
+      algorithms: ["HS256"],
     });
     return payload as Record<string, unknown>;
   } catch (error) {
-    console.warn(`[Auth] JWT verification failed:`, error instanceof Error ? error.message : error);
+    console.warn(
+      `[Auth] JWT verification failed:`,
+      error instanceof Error ? error.message : error,
+    );
     return null;
   }
 }
@@ -124,10 +127,13 @@ export async function verifyInternalJWT(
 /**
  * signInternalToken - Unified signing for internal tokens
  */
-export async function signInternalToken(payload: Record<string, unknown> = {}, expires: string = '1h') {
+export async function signInternalToken(
+  payload: Record<string, unknown> = {},
+  expires: string = "1h",
+) {
   const secret = getSecret();
   return await new SignJWT(payload)
-    .setProtectedHeader({ alg: 'HS256' })
+    .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(expires)
     .sign(secret);
@@ -214,15 +220,15 @@ export async function signScopedJWT(
     issuer: string;
     audience: string;
     expiresIn?: string;
-  }
+  },
 ): Promise<string> {
   const secret = getSecret();
-  const { issuer, audience, expiresIn = '5m' } = options;
+  const { issuer, audience, expiresIn = "5m" } = options;
 
   // Build scope string for quick permission checks
   const scope = payload.permissions
-    .map(p => `${p.toolName}:${p.actions.join(',')}`)
-    .join(' ');
+    .map((p) => `${p.toolName}:${p.actions.join(",")}`)
+    .join(" ");
 
   const jwtPayload: ScopedJWTPayload = {
     sub: payload.sub,
@@ -237,7 +243,7 @@ export async function signScopedJWT(
   };
 
   return await new SignJWT(jwtPayload)
-    .setProtectedHeader({ alg: 'HS256' })
+    .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(expiresIn)
     .sign(secret);
@@ -254,7 +260,7 @@ export async function signScopedJWT(
 export async function verifyScopedJWT(
   token: string,
   expectedIssuer: string,
-  expectedAudience: string
+  expectedAudience: string,
 ): Promise<ScopedJWTPayload | null> {
   const secret = getSecret();
 
@@ -262,11 +268,14 @@ export async function verifyScopedJWT(
     const { payload } = await jwtVerify(token, secret, {
       issuer: expectedIssuer,
       audience: expectedAudience,
-      algorithms: ['HS256'],
+      algorithms: ["HS256"],
     });
     return payload as ScopedJWTPayload;
   } catch (error) {
-    console.warn(`[Auth] Scoped JWT verification failed:`, error instanceof Error ? error.message : error);
+    console.warn(
+      `[Auth] Scoped JWT verification failed:`,
+      error instanceof Error ? error.message : error,
+    );
     return null;
   }
 }
@@ -283,23 +292,29 @@ export async function verifyScopedJWT(
 export function hasToolPermission(
   payload: ScopedJWTPayload,
   toolName: string,
-  action: string = 'execute',
-  resourceId?: string
+  action: string = "execute",
+  resourceId?: string,
 ): boolean {
-  const permission = payload.permissions.find(p => p.toolName === toolName);
+  const permission = payload.permissions.find((p) => p.toolName === toolName);
 
   if (!permission) {
     return false;
   }
 
   // Check action
-  if (!permission.actions.includes(action) && !permission.actions.includes('*')) {
+  if (
+    !permission.actions.includes(action) &&
+    !permission.actions.includes("*")
+  ) {
     return false;
   }
 
   // Check resource constraint if provided
   if (resourceId && permission.resources) {
-    if (!permission.resources.includes(resourceId) && !permission.resources.includes('*')) {
+    if (
+      !permission.resources.includes(resourceId) &&
+      !permission.resources.includes("*")
+    ) {
       return false;
     }
   }
@@ -318,34 +333,45 @@ export function hasToolPermission(
 export function satisfiesParameterConstraints(
   payload: ScopedJWTPayload,
   toolName: string,
-  parameters: Record<string, unknown>
+  parameters: Record<string, unknown>,
 ): boolean {
-  const permission = payload.permissions.find(p => p.toolName === toolName);
+  const permission = payload.permissions.find((p) => p.toolName === toolName);
 
   if (!permission?.parameterConstraints) {
     return true; // No constraints = allowed
   }
 
   // Check each constraint
-  for (const [key, constraintValue] of Object.entries(permission.parameterConstraints)) {
+  for (const [key, constraintValue] of Object.entries(
+    permission.parameterConstraints,
+  )) {
     const actualValue = parameters[key];
 
     // Handle numeric constraints (e.g., max party size)
-    if (typeof constraintValue === 'number' && typeof actualValue === 'number') {
+    if (
+      typeof constraintValue === "number" &&
+      typeof actualValue === "number"
+    ) {
       if (actualValue > constraintValue) {
         return false;
       }
     }
 
     // Handle string constraints (e.g., allowed cuisine types)
-    if (typeof constraintValue === 'string' && typeof actualValue === 'string') {
+    if (
+      typeof constraintValue === "string" &&
+      typeof actualValue === "string"
+    ) {
       if (actualValue !== constraintValue) {
         return false;
       }
     }
 
     // Handle array constraints (e.g., allowed values)
-    if (Array.isArray(constraintValue) && !constraintValue.includes(actualValue)) {
+    if (
+      Array.isArray(constraintValue) &&
+      !constraintValue.includes(actualValue)
+    ) {
       return false;
     }
   }
@@ -369,13 +395,13 @@ export async function createToolScopedToken(
   caller: string,
   callee: string,
   toolName: string,
-  actions: string[] = ['execute'],
+  actions: string[] = ["execute"],
   options: {
     executionId?: string;
     traceId?: string;
     resources?: string[];
     expiresIn?: string;
-  } = {}
+  } = {},
 ): Promise<string> {
   return signScopedJWT(
     {
@@ -393,7 +419,7 @@ export async function createToolScopedToken(
       issuer: caller,
       audience: callee,
       expiresIn: options.expiresIn,
-    }
+    },
   );
 }
 
@@ -410,13 +436,13 @@ function parseExpiresIn(expiresIn: string): number {
   const unit = match[2];
 
   switch (unit) {
-    case 's':
+    case "s":
       return value;
-    case 'm':
+    case "m":
       return value * 60;
-    case 'h':
+    case "h":
       return value * 60 * 60;
-    case 'd':
+    case "d":
       return value * 60 * 60 * 24;
     default:
       return 300;
@@ -426,20 +452,52 @@ function parseExpiresIn(expiresIn: string): number {
 /**
  * signServiceToken - For service-to-service communication
  *
+ * @deprecated Use `signAsymmetricJWT` directly with explicit issuer/audience claims.
+ * This wrapper hardcodes `issuer: 'intention-engine'` and `audience: 'internal-service'`,
+ * which limits flexibility for other service-to-service communication patterns.
+ *
+ * Migration:
+ * ```typescript
+ * // Before:
+ * const token = await signServiceToken({ executionId: '...' }, '5m');
+ *
+ * // After:
+ * const token = await signAsymmetricJWT(
+ *   { executionId: '...' },
+ *   { issuer: 'your-service', audience: 'target-service', expiresIn: '5m' }
+ * );
+ * ```
+ *
  * ZERO-TRUST SECURITY: Uses asymmetric JWT (RS256) only
  * - Private key stays in Intention Engine
  * - Satellite apps verify with public key only
  */
-export async function signServiceToken(payload: Record<string, unknown> = {}, expires: string = '5m') {
+export async function signServiceToken(
+  payload: Record<string, unknown> = {},
+  expires: string = "5m",
+) {
   // Use asymmetric JWT for Zero-Trust security
-  return await signAsymmetricJWT(
-    payload,
-    { issuer: 'intention-engine', audience: 'internal-service', expiresIn: expires }
-  );
+  return await signAsymmetricJWT(payload, {
+    issuer: "intention-engine",
+    audience: "internal-service",
+    expiresIn: expires,
+  });
 }
 
 /**
  * verifyServiceToken - Verifies a service-to-service token
+ *
+ * @deprecated Use `verifyAsymmetricJWT` directly with explicit issuer/audience claims.
+ * This wrapper hardcodes expected issuer as `'intention-engine'` and audience as `'internal-service'`.
+ *
+ * Migration:
+ * ```typescript
+ * // Before:
+ * const payload = await verifyServiceToken(token);
+ *
+ * // After:
+ * const payload = await verifyAsymmetricJWT(token, 'your-service', 'target-service');
+ * ```
  *
  * ZERO-TRUST SECURITY: Uses asymmetric JWT (RS256) only
  * - Private key stays in Intention Engine
@@ -448,11 +506,15 @@ export async function signServiceToken(payload: Record<string, unknown> = {}, ex
  */
 export async function verifyServiceToken(token: string) {
   // Asymmetric verification (RS256) only - no fallback
-  const asymmetricPayload = await verifyAsymmetricJWT(token, 'intention-engine', 'internal-service');
+  const asymmetricPayload = await verifyAsymmetricJWT(
+    token,
+    "intention-engine",
+    "internal-service",
+  );
   if (asymmetricPayload) {
     return asymmetricPayload;
   }
-  
+
   // Token verification failed - return null (no fallback)
   return null;
 }
@@ -460,23 +522,31 @@ export async function verifyServiceToken(token: string) {
 /**
  * signPayload - Signs a payload using HMAC-SHA256 via jose Compact JWS
  */
-export async function signPayload(payload: string): Promise<{ signature: string; timestamp: number }> {
+export async function signPayload(
+  payload: string,
+): Promise<{ signature: string; timestamp: number }> {
   const secret = getSecret();
   const timestamp = Date.now();
-  const jws = await new CompactSign(new TextEncoder().encode(`${timestamp}.${payload}`))
-    .setProtectedHeader({ alg: 'HS256' })
+  const jws = await new CompactSign(
+    new TextEncoder().encode(`${timestamp}.${payload}`),
+  )
+    .setProtectedHeader({ alg: "HS256" })
     .sign(secret);
-  
+
   return {
     signature: jws,
-    timestamp
+    timestamp,
   };
 }
 
 /**
  * verifySignature - Verifies a signature created by signPayload
  */
-export async function verifySignature(payload: string, signature: string, timestamp: number): Promise<boolean> {
+export async function verifySignature(
+  payload: string,
+  signature: string,
+  timestamp: number,
+): Promise<boolean> {
   const secret = getSecret();
   const MAX_AGE_MS = 300000; // 5 minute expiry
   if (Date.now() - timestamp > MAX_AGE_MS) return false;
@@ -492,7 +562,7 @@ export async function verifySignature(payload: string, signature: string, timest
 
 /**
  * SecurityProvider utility for cross-project identity and security standardization.
- * 
+ *
  * Vercel Hobby Tier Optimization:
  * - Intent safety validation for high-risk tool guardrails
  * - Forces AWAITING_CONFIRMATION state for sensitive operations
@@ -510,31 +580,31 @@ export const HIGH_RISK_TOOLS = [
   "dispatch_intent",
   "cancel_fulfillment",
   "update_fulfillment",
-  
+
   // Table Management / Reservations
   "book_table",
   "create_reservation",
   "update_reservation",
   "cancel_reservation",
   "book_tablestack_reservation",
-  
+
   // Financial / Payment Operations
   "process_payment",
   "refund_payment",
   "create_charge",
-  
+
   // Communication (spam prevention)
   "send_comm",
   "send_email",
   "send_sms",
-  
+
   // Data Modification
   "delete_resource",
   "bulk_update",
   "admin_action",
 ] as const;
 
-export type HighRiskTool = typeof HIGH_RISK_TOOLS[number];
+export type HighRiskTool = (typeof HIGH_RISK_TOOLS)[number];
 
 // ============================================================================
 // INTENT SAFETY VALIDATION
@@ -581,29 +651,31 @@ export class SecurityProvider {
    * validateServiceJWT - Validates JWT from Authorization header
    * Zero-Trust: Only accepts properly signed RS256 JWTs
    */
-  static async validateServiceJWT(authHeader: string | null): Promise<{ valid: boolean; payload?: Record<string, unknown> }> {
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  static async validateServiceJWT(
+    authHeader: string | null,
+  ): Promise<{ valid: boolean; payload?: Record<string, unknown> }> {
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return { valid: false };
     }
-    
+
     const token = authHeader.substring(7);
     const payload = await verifyServiceToken(token);
-    
+
     if (payload) {
       return { valid: true, payload };
     }
-    
+
     return { valid: false };
   }
 
   /**
    * validateIntentSafety - Security guardrails for intent execution
-   * 
+   *
    * Vercel Hobby Tier Optimization:
    * - Checks Plan against high-risk tool list
    * - Forces AWAITING_CONFIRMATION state for sensitive operations
    * - Integrates with Task Queue state machine
-   * 
+   *
    * @param intent - The intent to validate
    * @param plan - The execution plan to validate
    * @param options - Validation options
@@ -619,7 +691,7 @@ export class SecurityProvider {
       maxRiskScore?: number;
       /** Additional tools to consider high-risk */
       additionalHighRiskTools?: string[];
-    } = {}
+    } = {},
   ): IntentSafetyCheck {
     const {
       userRole = "user",
@@ -627,20 +699,21 @@ export class SecurityProvider {
       additionalHighRiskTools = [],
     } = options;
 
-    const allHighRiskTools = [
-      ...HIGH_RISK_TOOLS,
-      ...additionalHighRiskTools,
-    ];
+    const allHighRiskTools = [...HIGH_RISK_TOOLS, ...additionalHighRiskTools];
 
     // Find high-risk tools in the plan
     const highRiskToolsInPlan = plan.steps.filter((step) =>
-      allHighRiskTools.includes(step.tool_name as HighRiskTool)
+      allHighRiskTools.includes(step.tool_name as HighRiskTool),
     );
 
     const highRiskToolNames = highRiskToolsInPlan.map((s) => s.tool_name);
 
     // Calculate risk score
-    const riskScore = this.calculateRiskScore(intent, plan, highRiskToolsInPlan);
+    const riskScore = this.calculateRiskScore(
+      intent,
+      plan,
+      highRiskToolsInPlan,
+    );
 
     // Determine if confirmation is required
     const requiresConfirmation = highRiskToolsInPlan.length > 0;
@@ -709,7 +782,7 @@ export class SecurityProvider {
   private static calculateRiskScore(
     intent: Intent,
     plan: Plan,
-    highRiskSteps: PlanStep[]
+    highRiskSteps: PlanStep[],
   ): number {
     let score = 0;
 
@@ -717,9 +790,13 @@ export class SecurityProvider {
     score += highRiskSteps.length * 0.2;
 
     // Additional risk for financial operations
-    const financialTools = ["process_payment", "refund_payment", "create_charge"];
+    const financialTools = [
+      "process_payment",
+      "refund_payment",
+      "create_charge",
+    ];
     const hasFinancial = plan.steps.some((s) =>
-      financialTools.includes(s.tool_name)
+      financialTools.includes(s.tool_name),
     );
     if (hasFinancial) {
       score += 0.3;
@@ -739,7 +816,7 @@ export class SecurityProvider {
 
     // Risk for bulk operations
     const hasBulkOperation = plan.steps.some(
-      (s) => s.tool_name.includes("bulk") || s.tool_name.includes("batch")
+      (s) => s.tool_name.includes("bulk") || s.tool_name.includes("batch"),
     );
     if (hasBulkOperation) {
       score += 0.2;
@@ -753,14 +830,14 @@ export class SecurityProvider {
    */
   private static detectBlockedPatterns(
     plan: Plan,
-    intent: Intent
+    intent: Intent,
   ): {
     blocked: boolean;
     reason?: string;
   } {
     // Pattern 1: Multiple refunds in same plan
     const refundSteps = plan.steps.filter((s) =>
-      s.tool_name.includes("refund")
+      s.tool_name.includes("refund"),
     );
     if (refundSteps.length > 1) {
       return {
@@ -770,31 +847,30 @@ export class SecurityProvider {
     }
 
     // Pattern 2: Cancel followed by create (potential race condition)
-    const hasCancel = plan.steps.some((s) =>
-      s.tool_name.includes("cancel")
-    );
-    const hasCreate = plan.steps.some((s) =>
-      s.tool_name.includes("create") || s.tool_name.includes("book")
+    const hasCancel = plan.steps.some((s) => s.tool_name.includes("cancel"));
+    const hasCreate = plan.steps.some(
+      (s) => s.tool_name.includes("create") || s.tool_name.includes("book"),
     );
     if (hasCancel && hasCreate && plan.steps.length < 3) {
       // Only block if they're adjacent (potential race)
       const cancelIndex = plan.steps.findIndex((s) =>
-        s.tool_name.includes("cancel")
+        s.tool_name.includes("cancel"),
       );
-      const createIndex = plan.steps.findIndex((s) =>
-        s.tool_name.includes("create") || s.tool_name.includes("book")
+      const createIndex = plan.steps.findIndex(
+        (s) => s.tool_name.includes("create") || s.tool_name.includes("book"),
       );
       if (Math.abs(cancelIndex - createIndex) === 1) {
         return {
           blocked: true,
-          reason: "Rapid cancel-create pattern detected (potential race condition)",
+          reason:
+            "Rapid cancel-create pattern detected (potential race condition)",
         };
       }
     }
 
     // Pattern 3: Admin actions without explicit admin intent
     const hasAdminAction = plan.steps.some((s) =>
-      s.tool_name.includes("admin")
+      s.tool_name.includes("admin"),
     );
     if (hasAdminAction && intent.type !== "ADMIN") {
       return {
@@ -816,16 +892,21 @@ export class SecurityProvider {
  * verifyInternalToken - Verify an internal token without checking issuer/audience
  * Used for bridge tokens and general internal authentication
  */
-export async function verifyInternalToken(token: string): Promise<Record<string, unknown> | null> {
+export async function verifyInternalToken(
+  token: string,
+): Promise<Record<string, unknown> | null> {
   const secret = getSecret();
 
   try {
     const { payload } = await jwtVerify(token, secret, {
-      algorithms: ['HS256'],
+      algorithms: ["HS256"],
     });
     return payload as Record<string, unknown>;
   } catch (error) {
-    console.warn(`[Auth] Internal token verification failed:`, error instanceof Error ? error.message : error);
+    console.warn(
+      `[Auth] Internal token verification failed:`,
+      error instanceof Error ? error.message : error,
+    );
     return null;
   }
 }
@@ -836,33 +917,36 @@ export const verifyBridgeToken = verifyInternalToken;
 
 /**
  * unifiedAuth - Shared logic for validating both Clerk and internal service tokens.
- * Since @clerk/nextjs can only be used in Next.js apps, this is a helper 
+ * Since @clerk/nextjs can only be used in Next.js apps, this is a helper
  * that can be integrated into a project's middleware.ts.
  */
-export async function validateUnifiedAuth(req: Request, options: {
-  internalKey?: string | null;
-  serviceToken?: string | null;
-  clerkAuth?: any;
-}) {
+export async function validateUnifiedAuth(
+  req: Request,
+  options: {
+    internalKey?: string | null;
+    serviceToken?: string | null;
+    clerkAuth?: any;
+  },
+) {
   const { internalKey, serviceToken, clerkAuth } = options;
 
   // 1. Internal System Key (highest priority, for local/dev/simplicity)
   if (internalKey && SecurityProvider.validateInternalKey(internalKey)) {
-    return { type: 'internal', authorized: true };
+    return { type: "internal", authorized: true };
   }
 
   // 2. Service-to-Service JWT (Standardized Security)
   if (serviceToken) {
     const payload = await verifyServiceToken(serviceToken);
     if (payload) {
-      return { type: 'service', authorized: true, payload };
+      return { type: "service", authorized: true, payload };
     }
   }
 
   // 3. Clerk Session (User Auth)
   if (clerkAuth && clerkAuth.userId) {
-    return { type: 'user', authorized: true, userId: clerkAuth.userId };
+    return { type: "user", authorized: true, userId: clerkAuth.userId };
   }
 
-  return { type: 'none', authorized: false };
+  return { type: "none", authorized: false };
 }

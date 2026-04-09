@@ -42,7 +42,7 @@ import { NervousSystemObserver } from "@/lib/listeners/nervous-system-observer";
 import { WorkflowMachine } from "@/lib/engine/workflow-machine";
 import type { ToolExecutor as WorkflowToolExecutor } from "@/lib/engine/workflow-machine";
 import { LockingService } from "@/lib/engine/locking";
-import { verifyServiceToken } from "@repo/auth";
+import { verifyAsymmetricJWT } from "@repo/auth";
 
 const logger = new Logger({ serviceName: "intention-engine" });
 
@@ -215,7 +215,11 @@ export class StepExecutionService {
 
     if (hasAuthToken) {
       const token = authHeader.substring(7);
-      const payload = await verifyServiceToken(token);
+      const payload = await verifyAsymmetricJWT(
+        token,
+        "shared-outbox-relay", // or other expected issuers
+        "intention-engine",
+      );
 
       if (!payload) {
         logger.warn({
@@ -225,8 +229,8 @@ export class StepExecutionService {
         throw new Error("Invalid or expired JWT token");
       }
 
-      const service = (payload as any).service;
-      const tokenExecutionId = (payload as any).executionId;
+      const service = payload.service;
+      const tokenExecutionId = payload.executionId;
 
       if (tokenExecutionId && tokenExecutionId !== executionId) {
         logger.warn({

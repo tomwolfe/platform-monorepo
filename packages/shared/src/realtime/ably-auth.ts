@@ -27,6 +27,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import Ably from "ably";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "ably-auth" });
 
 export interface AblyAuthConfig {
   /**
@@ -117,7 +120,7 @@ export function createAblyAuthHandler(config: AblyAuthConfig = {}) {
       // Get API key from environment
       const apiKey = process.env.ABLY_API_KEY;
       if (!apiKey) {
-        console.error(`${logPrefix} ABLY_API_KEY is not configured`);
+        logger.error({ message: "ABLY_API_KEY is not configured", logPrefix });
         return NextResponse.json(
           { error: "Ably API key not configured" },
           { status: 500 },
@@ -125,10 +128,11 @@ export function createAblyAuthHandler(config: AblyAuthConfig = {}) {
       }
 
       // Debug: Log key format (first 10 chars only for security)
-      console.log(
-        `${logPrefix} Key name:`,
-        apiKey.split(":")[0]?.slice(0, 10) + "...",
-      );
+      logger.debug({
+        message: "Ably key name for verification",
+        keyPrefix: apiKey.split(":")[0]?.slice(0, 10) + "...",
+        logPrefix,
+      });
 
       // Initialize Ably Rest client
       const ably = new Ably.Rest({ key: apiKey });
@@ -139,7 +143,11 @@ export function createAblyAuthHandler(config: AblyAuthConfig = {}) {
         capability: capabilities as any,
       });
 
-      console.log(`${logPrefix} Token generated for client: ${clientId}`);
+      logger.info({
+        message: "Token generated for client",
+        clientId,
+        logPrefix,
+      });
 
       return NextResponse.json(tokenRequest);
     } catch (error) {
@@ -147,7 +155,7 @@ export function createAblyAuthHandler(config: AblyAuthConfig = {}) {
       if (onError) {
         onError(error, request);
       } else {
-        console.error(`${logPrefix} Authentication error:`, error);
+        logger.error({ message: "Authentication error", logPrefix, error });
       }
 
       return NextResponse.json(

@@ -2,6 +2,9 @@ import { z } from "zod";
 import { WeatherDataSchema } from "@repo/mcp-protocol";
 import { fetchWithTracing } from "../fetch";
 import { ToolExecutionContext } from "../engine/tools/registry";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "intention-engine-weather" });
 
 export const weatherReturnSchema = {
   location: "string",
@@ -27,7 +30,7 @@ export async function get_weather_data(
 
   const { lat, lon } = validated.data;
 
-  console.log(`Getting weather data for coordinates (${lat}, ${lon})...`);
+  logger.info("Fetching weather data", { lat, lon });
 
   try {
     const controller = new AbortController();

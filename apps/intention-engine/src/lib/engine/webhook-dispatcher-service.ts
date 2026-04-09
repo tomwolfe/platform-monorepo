@@ -19,7 +19,7 @@ import { inferIntent } from "./intent";
 import { generatePlan } from "./unified-planner";
 import { createAuditLog } from "@/lib/audit";
 import { handleTableStackRejection } from "@/lib/listeners/tablestack";
-import { signServiceToken } from "@repo/auth";
+import { signAsymmetricJWT } from "@repo/auth";
 import {
   IdempotencyService,
   IDEMPOTENCY_KEY_HEADER,
@@ -338,11 +338,18 @@ export class WebhookDispatcherService {
     };
 
     // Sign token for event
-    const token = await signServiceToken({
-      event: "TableVacated",
-      data: tableVacatedEvent,
-      timestamp: Date.now(),
-    });
+    const token = await signAsymmetricJWT(
+      {
+        event: "TableVacated",
+        data: tableVacatedEvent,
+        timestamp: Date.now(),
+      },
+      {
+        issuer: "webhook-dispatcher",
+        audience: "nervous-system-observer",
+        expiresIn: "5m",
+      },
+    );
 
     // Use Nervous System Observer to handle proactive re-engagement
     const result = await this.observer.handleTableVacated({

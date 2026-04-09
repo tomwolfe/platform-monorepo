@@ -68,6 +68,10 @@ export {
  * Sentry instance for error tracking
  * Only available in Node.js environments
  */
+import { Logger } from "./logger";
+
+const sentryLogger = new Logger({ serviceName: "sentry" });
+
 let Sentry: any = undefined;
 
 /**
@@ -100,9 +104,12 @@ export async function initSentry(
       ],
     });
 
-    console.log("[Sentry] Initialized");
+    sentryLogger.info({ message: "Sentry initialized" });
   } catch (error) {
-    console.warn("[Sentry] Failed to initialize:", error);
+    sentryLogger.warn({
+      message: "Failed to initialize Sentry",
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 

@@ -18,8 +18,11 @@
  * @since 1.0.0
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { isTimingSafeEqual } from '../utils/crypto';
+import { NextRequest, NextResponse } from "next/server";
+import { isTimingSafeEqual } from "../utils/crypto";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "cron-auth" });
 
 // ============================================================================
 // TYPES
@@ -54,26 +57,26 @@ export interface CronAuthResult {
  */
 export function verifyCronAuth(
   req: NextRequest,
-  options: CronAuthOptions = {}
+  options: CronAuthOptions = {},
 ): CronAuthResult {
   const {
     secret = process.env.CRON_SECRET,
-    errorMessage = 'Unauthorized',
+    errorMessage = "Unauthorized",
     debug = false,
   } = options;
 
-  const authHeader = req.headers.get('authorization');
+  const authHeader = req.headers.get("authorization");
 
   // Check for Bearer token format
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
     if (debug) {
-      console.log('[CronAuth] Missing or invalid authorization header');
+      logger.warn({ message: "Missing or invalid authorization header" });
     }
     return {
       authenticated: false,
       errorResponse: NextResponse.json(
-        { error: 'Missing or invalid authorization header' },
-        { status: 401 }
+        { error: "Missing or invalid authorization header" },
+        { status: 401 },
       ),
     };
   }
@@ -83,13 +86,13 @@ export function verifyCronAuth(
   // Validate secret exists
   if (!secret) {
     if (debug) {
-      console.warn('[CronAuth] CRON_SECRET not configured in environment');
+      logger.warn({ message: "CRON_SECRET not configured in environment" });
     }
     return {
       authenticated: false,
       errorResponse: NextResponse.json(
-        { error: 'Server configuration error' },
-        { status: 500 }
+        { error: "Server configuration error" },
+        { status: 500 },
       ),
     };
   }
@@ -97,13 +100,13 @@ export function verifyCronAuth(
   // TIMING-SAFE COMPARISON: Prevents timing attacks on secret validation
   if (!isTimingSafeEqual(providedSecret, secret)) {
     if (debug) {
-      console.warn('[CronAuth] Invalid cron secret provided');
+      logger.warn({ message: "Invalid cron secret provided" });
     }
     return {
       authenticated: false,
       errorResponse: NextResponse.json(
         { error: errorMessage },
-        { status: 401 }
+        { status: 401 },
       ),
     };
   }
@@ -135,10 +138,9 @@ export function verifyCronAuth(
  * );
  * ```
  */
-export function withCronAuth<T extends (...args: any[]) => Promise<NextResponse>>(
-  handler: T,
-  options: CronAuthOptions = {}
-): T {
+export function withCronAuth<
+  T extends (...args: any[]) => Promise<NextResponse>,
+>(handler: T, options: CronAuthOptions = {}): T {
   return (async (...args: any[]) => {
     const req = args[0] as NextRequest;
 

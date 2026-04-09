@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@repo/database";
 import { sql } from "drizzle-orm";
 import { currentUser } from "@clerk/nextjs/server";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "open-delivery-driver-profile" });
 
 /**
  * Driver Profile API Route
@@ -17,13 +20,13 @@ export async function GET(request: NextRequest) {
     if (!user) {
       return NextResponse.json(
         { error: "Unauthorized - please log in" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
     // 2. Look up driver profile
     const driverResult = await getDb().execute(
-      sql`SELECT id, full_name, email, trust_score, is_active FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`
+      sql`SELECT id, full_name, email, trust_score, is_active FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`,
     );
 
     const driver = driverResult.rows[0] as any | undefined;
@@ -31,7 +34,7 @@ export async function GET(request: NextRequest) {
     if (!driver) {
       return NextResponse.json(
         { error: "No driver profile found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -44,13 +47,15 @@ export async function GET(request: NextRequest) {
       isActive: driver.is_active,
     });
   } catch (error) {
-    console.error("Driver profile error:", error);
+    logger.error("Driver profile error", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json(
       {
         error: "Failed to fetch profile",
-        details: error instanceof Error ? error.message : "Unknown error"
+        details: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

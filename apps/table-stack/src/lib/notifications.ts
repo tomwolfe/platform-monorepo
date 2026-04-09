@@ -37,13 +37,11 @@ export class NotifyService {
     const ably = this.getAbly();
     if (ably) {
       const channel = ably.channels.get(`restaurant:${restaurantId}`);
-      await channel
-        .publish(event, data)
-        .catch((err) =>
-          logger.error("Ably broadcast failed", {
-            error: err instanceof Error ? err.message : String(err),
-          }),
-        );
+      await channel.publish(event, data).catch((err) =>
+        logger.error("Ably broadcast failed", {
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
     }
   }
 
@@ -80,8 +78,15 @@ export class NotifyService {
     // This ensures the system proactively finds alternatives without user intervention
     const intentionEngineUrl = AppConfig.getIntentionEngineApiUrl();
     if (intentionEngineUrl) {
-      const { signServiceToken } = await import("@repo/auth");
-      const token = await signServiceToken({ purpose: "reservation_failover" });
+      const { signAsymmetricJWT } = await import("@repo/auth");
+      const token = await signAsymmetricJWT(
+        { purpose: "reservation_failover" },
+        {
+          issuer: "table-stack-notifications",
+          audience: "intention-engine",
+          expiresIn: "5m",
+        },
+      );
 
       const webhookPayload = {
         event: "reservation_rejected",

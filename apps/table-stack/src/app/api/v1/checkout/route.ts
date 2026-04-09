@@ -1,5 +1,5 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getDb, restaurantReservations, eq, restaurants } from "@repo/database";
 import { NotifyService } from "@tablestack/lib/notifications";
 import {
@@ -524,20 +524,23 @@ async function postHandler(req: NextRequest) {
   // This allows external frontends to update their state even if the
   // initial HTTP connection dropped (e.g., user closed browser tab)
   if (frontendCallbackUrl) {
-    // Send webhook in background (don't block the response)
-    sendWebhookCallback(
-      frontendCallbackUrl,
-      {
-        success: true,
-        reservationId: targetReservationId,
-        txHash,
-        status: "confirmed",
-        message: "Crypto payment verified successfully",
-        timestamp: new Date().toISOString(),
-      },
-      logger,
-    ).catch(() => {
-      // Already logged in sendWebhookCallback
+    // CRITICAL: Wrap in after() to ensure Vercel doesn't terminate
+    // the serverless function before the webhook completes
+    after(() => {
+      sendWebhookCallback(
+        frontendCallbackUrl,
+        {
+          success: true,
+          reservationId: targetReservationId,
+          txHash,
+          status: "confirmed",
+          message: "Crypto payment verified successfully",
+          timestamp: new Date().toISOString(),
+        },
+        logger,
+      ).catch(() => {
+        // Already logged in sendWebhookCallback
+      });
     });
   }
 

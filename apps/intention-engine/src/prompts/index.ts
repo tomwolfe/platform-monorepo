@@ -13,6 +13,9 @@
  */
 
 import crypto from "node:crypto";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "intention-engine-prompts" });
 
 // ============================================================================
 // PROMPT VERSIONS
@@ -303,23 +306,22 @@ export function logPromptUsage(
   model?: string,
 ): void {
   const metadata = PROMPT_METADATA[`${promptType}:${version}`];
-  console.log(
-    `[PromptVersion] ${promptType}:${version} used in execution ${executionId}`,
-  );
+  logger.info("Prompt version used in execution", {
+    promptType,
+    version,
+    executionId,
+  });
 
   // P4: Enhanced logging with promptHash and model
   if (metadata) {
-    console.log(
-      JSON.stringify({
-        event: "prompt_used",
-        promptType,
-        version,
-        promptHash: metadata.promptHash,
-        model: model ?? "unknown",
-        executionId,
-        timestamp: new Date().toISOString(),
-      }),
-    );
+    logger.info("Prompt usage details", {
+      event: "prompt_used",
+      promptType,
+      version,
+      promptHash: metadata.promptHash,
+      model: model ?? "unknown",
+      executionId,
+    });
   }
 
   // In production, this would publish to an observability system

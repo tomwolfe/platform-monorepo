@@ -2,7 +2,7 @@
  * ConfirmationService - Human-in-the-Loop (HITL) for Interrupted Sagas
  *
  * Manages confirmation tokens for high-risk actions requiring user approval.
- * 
+ *
  * Architecture:
  * 1. WorkflowMachine detects high-risk action (e.g., payment > $100)
  * 2. Machine transitions to SUSPENDED state, generates confirmation token
@@ -23,13 +23,13 @@
  */
 
 import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
-const redis = getRedisClient(ServiceNamespace.IE);;
+const redis = getRedisClient(ServiceNamespace.IE);
 import { loadExecutionState, saveExecutionState } from "@/lib/engine/memory";
 import { transitionState, ExecutionState } from "@/lib/engine/types";
 import { QStashService, AppConfig } from "@repo/shared";
-import { signServiceToken } from "@repo/auth";
+import { signAsymmetricJWT } from "@repo/auth";
 
-const logger = new Logger({ serviceName: 'intention-engine' });
+const logger = new Logger({ serviceName: "intention-engine" });
 
 // ============================================================================
 // CONFIGURATION
@@ -102,7 +102,7 @@ export class ConfirmationService {
     parameters: Record<string, unknown>,
     riskAssessment: ConfirmationData["riskAssessment"],
     userId?: string,
-    clerkId?: string
+    clerkId?: string,
   ): Promise<string> {
     const token = crypto.randomUUID();
     const now = new Date();
@@ -127,14 +127,14 @@ export class ConfirmationService {
     await redis.setex(
       this.buildTokenKey(token),
       CONFIRMATION_TTL_SECONDS,
-      JSON.stringify(confirmationData)
+      JSON.stringify(confirmationData),
     );
 
     // Also index by executionId for lookup
     await redis.setex(
       this.buildExecutionKey(executionId),
       CONFIRMATION_TTL_SECONDS,
-      token
+      token,
     );
 
     logger.info({
@@ -149,7 +149,7 @@ export class ConfirmationService {
    */
   static async validateToken(
     token: string,
-    userContext?: { clerkId?: string; userId?: string }
+    userContext?: { clerkId?: string; userId?: string },
   ): Promise<ConfirmationData | null> {
     const data = await redis.get<ConfirmationData>(this.buildTokenKey(token));
 
@@ -163,17 +163,29 @@ export class ConfirmationService {
       // Token expired - clean up
       await this.deleteToken(token);
       throw new Error(
-        `Confirmation token expired. Please restart the operation.`
+        `Confirmation token expired. Please restart the operation.`,
       );
     }
 
     // Validate user context if provided
     if (userContext) {
-      if (userContext.clerkId && data.clerkId && userContext.clerkId !== data.clerkId) {
-        throw new Error("Unauthorized: Confirmation token belongs to a different user");
+      if (
+        userContext.clerkId &&
+        data.clerkId &&
+        userContext.clerkId !== data.clerkId
+      ) {
+        throw new Error(
+          "Unauthorized: Confirmation token belongs to a different user",
+        );
       }
-      if (userContext.userId && data.userId && userContext.userId !== data.userId) {
-        throw new Error("Unauthorized: Confirmation token belongs to a different user");
+      if (
+        userContext.userId &&
+        data.userId &&
+        userContext.userId !== data.userId
+      ) {
+        throw new Error(
+          "Unauthorized: Confirmation token belongs to a different user",
+        );
       }
     }
 
@@ -194,7 +206,9 @@ export class ConfirmationService {
   /**
    * Get confirmation token by executionId
    */
-  static async getTokenByExecutionId(executionId: string): Promise<string | null> {
+  static async getTokenByExecutionId(
+    executionId: string,
+  ): Promise<string | null> {
     return await redis.get<string>(this.buildExecutionKey(executionId));
   }
 
@@ -203,7 +217,7 @@ export class ConfirmationService {
    */
   static async resumeSuspendedSaga(
     executionId: string,
-    confirmationData: ConfirmationData
+    confirmationData: ConfirmationData,
   ): Promise<ExecutionState> {
     // Load current state
     const state = await loadExecutionState(executionId);
@@ -212,19 +226,24 @@ export class ConfirmationService {
     }
 
     // Validate state is SUSPENDED or AWAITING_CONFIRMATION
-    if (state.status !== "SUSPENDED" && state.status !== "AWAITING_CONFIRMATION") {
+    if (
+      state.status !== "SUSPENDED" &&
+      state.status !== "AWAITING_CONFIRMATION"
+    ) {
       throw new Error(
         `Invalid state for confirmation: ${state.status}. ` +
-        `Expected SUSPENDED or AWAITING_CONFIRMATION`
+          `Expected SUSPENDED or AWAITING_CONFIRMATION`,
       );
     }
 
     // Update step state to mark it as confirmed
-    const stepState = state.step_states.find(s => s.step_id === confirmationData.stepId);
+    const stepState = state.step_states.find(
+      (s) => s.step_id === confirmationData.stepId,
+    );
     if (stepState) {
       stepState.status = "pending"; // Reset to pending for execution
       stepState.output = {
-        ...(stepState.output as Record<string, unknown> || {}),
+        ...((stepState.output as Record<string, unknown>) || {}),
         confirmed: true,
         confirmedAt: new Date().toISOString(),
       };
@@ -255,21 +274,26 @@ export class ConfirmationService {
     executionId: string,
     state: ExecutionState,
     traceId?: string,
-    correlationId?: string
+    correlationId?: string,
   ): Promise<boolean> {
     try {
       // Use AppConfig for centralized URL management
       const baseUrl = AppConfig.getIntentionEngineApiUrl();
       const url = `${baseUrl}/api/engine/execute-step`;
 
-      // SECURITY: Generate short-lived JWT for internal service-to-service communication
-      const authToken = await signServiceToken(
+      // SECURITY: Generate short-lived asymmetric JWT (RS256) for
+      // Zero-Trust internal service-to-service communication
+      const authToken = await signAsymmetricJWT(
         {
           service: "confirmation-service",
           executionId,
           action: "resume-saga",
         },
-        "5m"
+        {
+          issuer: "confirmation-service",
+          audience: "intention-engine",
+          expiresIn: "5m",
+        },
       );
 
       const headers: Record<string, string> = {

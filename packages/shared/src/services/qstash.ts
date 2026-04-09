@@ -19,7 +19,7 @@
  */
 
 import { Client } from "@upstash/qstash";
-import { signServiceToken } from "@repo/auth";
+import { signAsymmetricJWT } from "@repo/auth";
 
 // ============================================================================
 // CONFIGURATION
@@ -87,12 +87,20 @@ export class QStashService {
    * Call once at application startup
    */
   static initialize(config: QStashConfig = {}): void {
-    const token = config.token || process.env.QSTASH_TOKEN || process.env.UPSTASH_QSTASH_TOKEN;
+    const token =
+      config.token ||
+      process.env.QSTASH_TOKEN ||
+      process.env.UPSTASH_QSTASH_TOKEN;
     const enabled = config.enabled ?? (token !== undefined && token !== "");
 
     this.config = {
       token,
-      baseUrl: (config.baseUrl || process.env.QSTASH_URL || process.env.NEXT_PUBLIC_APP_URL)?.replace(/\/$/, "") || "",
+      baseUrl:
+        (
+          config.baseUrl ||
+          process.env.QSTASH_URL ||
+          process.env.NEXT_PUBLIC_APP_URL
+        )?.replace(/\/$/, "") || "",
       enabled,
       retry: config.retry || {
         retries: 3,
@@ -106,17 +114,22 @@ export class QStashService {
         token,
         retry: this.config.retry,
       });
-      console.log("[QStashService] Initialized with retry config:", this.config.retry);
+      console.log(
+        "[QStashService] Initialized with retry config:",
+        this.config.retry,
+      );
     } else {
       // PRODUCTION HARDENING: Clear error message for missing QStash
-      if (process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV === "production") {
         console.error(
           "[QStashService] CRITICAL: QStash not configured in production. " +
-          "Set QSTASH_TOKEN or UPSTASH_QSTASH_TOKEN environment variable. " +
-          "Saga execution will fail without QStash."
+            "Set QSTASH_TOKEN or UPSTASH_QSTASH_TOKEN environment variable. " +
+            "Saga execution will fail without QStash.",
         );
       } else {
-        console.warn("[QStashService] QStash not configured - will fallback to fetch(self) for development");
+        console.warn(
+          "[QStashService] QStash not configured - will fallback to fetch(self) for development",
+        );
       }
     }
   }
@@ -124,7 +137,7 @@ export class QStashService {
   /**
    * Pre-flight Check - Validate QStash configuration before use
    * Call this at application startup to catch configuration issues early
-   * 
+   *
    * @param options - Check options
    * @param options.throwOnError - Throw error if not configured (default: true in production)
    * @returns Configuration status
@@ -134,18 +147,23 @@ export class QStashService {
     canConnect: boolean;
     error?: string;
   }> {
-    const shouldThrow = options?.throwOnError ?? (process.env.NODE_ENV === 'production');
-    
+    const shouldThrow =
+      options?.throwOnError ?? process.env.NODE_ENV === "production";
+
     // Check if configured
-    const token = this.config?.token || process.env.QSTASH_TOKEN || process.env.UPSTASH_QSTASH_TOKEN;
-    
+    const token =
+      this.config?.token ||
+      process.env.QSTASH_TOKEN ||
+      process.env.UPSTASH_QSTASH_TOKEN;
+
     if (!token) {
-      const errorMsg = "QStash token not configured. Set QSTASH_TOKEN or UPSTASH_QSTASH_TOKEN.";
-      
-      if (shouldThrow && process.env.NODE_ENV === 'production') {
+      const errorMsg =
+        "QStash token not configured. Set QSTASH_TOKEN or UPSTASH_QSTASH_TOKEN.";
+
+      if (shouldThrow && process.env.NODE_ENV === "production") {
         throw new Error(`[QStashService] CRITICAL: ${errorMsg}`);
       }
-      
+
       return { configured: false, canConnect: false, error: errorMsg };
     }
 
@@ -155,15 +173,17 @@ export class QStashService {
       // Quick ping by getting topics (lightweight operation)
       await client.topics;
 
-      console.log("[QStashService] Preflight check passed - QStash is reachable");
+      console.log(
+        "[QStashService] Preflight check passed - QStash is reachable",
+      );
       return { configured: true, canConnect: true };
     } catch (error) {
       const errorMsg = `QStash connectivity test failed: ${error instanceof Error ? error.message : String(error)}`;
-      
-      if (shouldThrow && process.env.NODE_ENV === 'production') {
+
+      if (shouldThrow && process.env.NODE_ENV === "production") {
         throw new Error(`[QStashService] ${errorMsg}`);
       }
-      
+
       console.warn("[QStashService] Preflight check warning:", errorMsg);
       return { configured: true, canConnect: false, error: errorMsg };
     }
@@ -182,7 +202,7 @@ export class QStashService {
     if (process.env.NODE_ENV === "production" && !this.config?.enabled) {
       throw new Error(
         "QStash must be configured for production saga reliability. " +
-        "Set QSTASH_TOKEN or UPSTASH_QSTASH_TOKEN environment variable."
+          "Set QSTASH_TOKEN or UPSTASH_QSTASH_TOKEN environment variable.",
       );
     }
 
@@ -226,7 +246,9 @@ export class QStashService {
    *
    * @throws Error in production if QStash is not configured
    */
-  static async triggerNextStep(options: QStashTriggerOptions): Promise<string | null> {
+  static async triggerNextStep(
+    options: QStashTriggerOptions,
+  ): Promise<string | null> {
     const client = this.getClient();
 
     // PRODUCTION HARDENING: No fallback in production - QStash is required
@@ -234,11 +256,13 @@ export class QStashService {
       if (process.env.NODE_ENV === "production") {
         throw new Error(
           "QStash is required for production reliability. " +
-          "Fallback to fetch(self) is disabled in production."
+            "Fallback to fetch(self) is disabled in production.",
         );
       }
       // Development only: allow fallback to fetch
-      console.warn("[QStashService] QStash not configured, using fallback fetch (dev only)");
+      console.warn(
+        "[QStashService] QStash not configured, using fallback fetch (dev only)",
+      );
       await this.fallbackFetch(options);
       return null;
     }
@@ -252,13 +276,17 @@ export class QStashService {
 
       // SECURITY: Generate short-lived JWT for internal service-to-service communication
       // This replaces the static x-internal-system-key with Zero-Trust authentication
-      const authToken = await signServiceToken(
+      const authToken = await signAsymmetricJWT(
         {
           service: "intention-engine",
           executionId: options.executionId,
           action: "execute-step",
         },
-        "5m"
+        {
+          issuer: "qstash-service",
+          audience: "intention-engine",
+          expiresIn: "5m",
+        },
       );
 
       const headers: Record<string, string> = {
@@ -284,7 +312,7 @@ export class QStashService {
       const messageId = "messageId" in result ? result.messageId : undefined;
 
       console.log(
-        `[QStashService] Triggered next step for execution ${options.executionId} (step ${options.stepIndex})${messageId ? ` [message: ${messageId}]` : ''}${options.traceId ? ` [trace: ${options.traceId}]` : ''}`
+        `[QStashService] Triggered next step for execution ${options.executionId} (step ${options.stepIndex})${messageId ? ` [message: ${messageId}]` : ""}${options.traceId ? ` [trace: ${options.traceId}]` : ""}`,
       );
 
       return messageId || null;
@@ -350,11 +378,15 @@ export class QStashService {
    * });
    * ```
    */
-  static async scheduleStep(options: QStashScheduleOptions): Promise<string | null> {
+  static async scheduleStep(
+    options: QStashScheduleOptions,
+  ): Promise<string | null> {
     const client = this.getClient();
 
     if (!client || !this.config?.enabled) {
-      console.warn("[QStashService] QStash not configured, cannot schedule delayed execution");
+      console.warn(
+        "[QStashService] QStash not configured, cannot schedule delayed execution",
+      );
       return null;
     }
 
@@ -366,13 +398,17 @@ export class QStashService {
       });
 
       // SECURITY: Generate short-lived JWT for internal service-to-service communication
-      const authToken = await signServiceToken(
+      const authToken = await signAsymmetricJWT(
         {
           service: "intention-engine",
           executionId: options.executionId,
           action: "execute-step",
         },
-        "5m"
+        {
+          issuer: "qstash-service",
+          audience: "intention-engine",
+          expiresIn: "5m",
+        },
       );
 
       const headers: Record<string, string> = {
@@ -390,7 +426,7 @@ export class QStashService {
       const messageId = "messageId" in result ? result.messageId : undefined;
 
       console.log(
-        `[QStashService] Scheduled step for execution ${options.executionId} (step ${options.stepIndex}) with delay ${options.delay}${messageId ? ` [message: ${messageId}]` : ''}`
+        `[QStashService] Scheduled step for execution ${options.executionId} (step ${options.stepIndex}) with delay ${options.delay}${messageId ? ` [message: ${messageId}]` : ""}`,
       );
 
       return messageId || null;
@@ -419,18 +455,22 @@ export class QStashService {
    * @param options - Multi-trigger parameters
    * @returns Array of message IDs if successful
    */
-  static async triggerParallelSteps(options: QStashMultiTriggerOptions): Promise<string[]> {
+  static async triggerParallelSteps(
+    options: QStashMultiTriggerOptions,
+  ): Promise<string[]> {
     const client = this.getClient();
 
     if (!client || !this.config?.enabled) {
       if (process.env.NODE_ENV === "production") {
         throw new Error(
           "QStash is required for production parallel execution. " +
-          "Multi-trigger is not supported in fallback mode."
+            "Multi-trigger is not supported in fallback mode.",
         );
       }
       // Development: fallback to sequential execution
-      console.warn("[QStashService] QStash not configured, falling back to sequential execution (dev only)");
+      console.warn(
+        "[QStashService] QStash not configured, falling back to sequential execution (dev only)",
+      );
       for (const stepIndex of options.stepIndices) {
         await this.fallbackFetch({ ...options, stepIndex });
       }
@@ -442,13 +482,17 @@ export class QStashService {
       const messageIds: string[] = [];
 
       // SECURITY: Generate short-lived JWT for internal service-to-service communication
-      const authToken = await signServiceToken(
+      const authToken = await signAsymmetricJWT(
         {
           service: "intention-engine",
           executionId: options.executionId,
           action: "execute-step",
         },
-        "5m"
+        {
+          issuer: "qstash-service",
+          audience: "intention-engine",
+          expiresIn: "5m",
+        },
       );
 
       const baseHeaders: Record<string, string> = {
@@ -484,14 +528,14 @@ export class QStashService {
 
         console.log(
           `[QStashService] Parallel trigger for execution ${options.executionId} ` +
-          `(step ${stepIndex}) [message: ${messageId || 'none'}]`
+            `(step ${stepIndex}) [message: ${messageId || "none"}]`,
         );
       });
 
       await Promise.all(publishPromises);
 
       console.log(
-        `[QStashService] Triggered ${messageIds.length} parallel steps for execution ${options.executionId}`
+        `[QStashService] Triggered ${messageIds.length} parallel steps for execution ${options.executionId}`,
       );
 
       return messageIds;
@@ -513,12 +557,14 @@ export class QStashService {
    */
   static async scheduleStepAt(
     options: Omit<QStashScheduleOptions, "delay">,
-    time: string
+    time: string,
   ): Promise<string | null> {
     const client = this.getClient();
 
     if (!client || !this.config?.enabled) {
-      console.warn("[QStashService] QStash not configured, cannot schedule execution");
+      console.warn(
+        "[QStashService] QStash not configured, cannot schedule execution",
+      );
       return null;
     }
 
@@ -530,13 +576,17 @@ export class QStashService {
       });
 
       // SECURITY: Generate short-lived JWT for internal service-to-service communication
-      const authToken = await signServiceToken(
+      const authToken = await signAsymmetricJWT(
         {
           service: "intention-engine",
           executionId: options.executionId,
           action: "execute-step",
         },
-        "5m"
+        {
+          issuer: "qstash-service",
+          audience: "intention-engine",
+          expiresIn: "5m",
+        },
       );
 
       const headers: Record<string, string> = {
@@ -551,13 +601,15 @@ export class QStashService {
         url,
         body: payload,
         headers,
-        ...(isCron ? { cron: time } : { notBefore: Math.floor(new Date(time).getTime() / 1000) }),
+        ...(isCron
+          ? { cron: time }
+          : { notBefore: Math.floor(new Date(time).getTime() / 1000) }),
       } as any);
 
       const messageId = "messageId" in result ? result.messageId : undefined;
 
       console.log(
-        `[QStashService] Scheduled step for execution ${options.executionId} (step ${options.stepIndex}) at ${time}${messageId ? ` [message: ${messageId}]` : ''}`
+        `[QStashService] Scheduled step for execution ${options.executionId} (step ${options.stepIndex}) at ${time}${messageId ? ` [message: ${messageId}]` : ""}`,
       );
 
       return messageId || null;
@@ -588,11 +640,13 @@ export class QStashService {
       if (process.env.NODE_ENV === "production") {
         throw new Error(
           "QStash is required for production reliability. " +
-          "Fallback to fetch(self) is disabled in production."
+            "Fallback to fetch(self) is disabled in production.",
         );
       }
       // Development only: allow fallback to fetch
-      console.warn("[QStashService] QStash not configured, using fallback fetch (dev only)");
+      console.warn(
+        "[QStashService] QStash not configured, using fallback fetch (dev only)",
+      );
       await this.fallbackPublish(options);
       return null;
     }
@@ -600,15 +654,20 @@ export class QStashService {
     try {
       const result = await client.publish({
         url: options.url,
-        body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body),
+        body:
+          typeof options.body === "string"
+            ? options.body
+            : JSON.stringify(options.body),
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           ...options.headers,
         },
       });
 
       const messageId = "messageId" in result ? result.messageId : undefined;
-      console.log(`[QStashService] Published message to ${options.url}${messageId ? ` [message: ${messageId}]` : ''}`);
+      console.log(
+        `[QStashService] Published message to ${options.url}${messageId ? ` [message: ${messageId}]` : ""}`,
+      );
 
       return messageId || null;
     } catch (error) {
@@ -632,31 +691,38 @@ export class QStashService {
   }): Promise<void> {
     try {
       // Use dynamic import to avoid breaking non-Next.js environments
-      const { after } = await import('next/server');
-      
-      after(() => 
+      const { after } = await import("next/server");
+
+      after(() =>
         fetch(options.url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             ...options.headers,
           },
-          body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body),
-        }).then(response => {
-          if (!response.ok) {
-            console.error(
-              `[FallbackPublish] Failed to call URL: ${response.status} ${response.statusText}`
-            );
-          } else {
-            console.log(`[FallbackPublish] URL called successfully`);
-          }
-        }).catch(error => {
-          console.error(`[FallbackPublish] Error calling URL:`, error);
+          body:
+            typeof options.body === "string"
+              ? options.body
+              : JSON.stringify(options.body),
         })
+          .then((response) => {
+            if (!response.ok) {
+              console.error(
+                `[FallbackPublish] Failed to call URL: ${response.status} ${response.statusText}`,
+              );
+            } else {
+              console.log(`[FallbackPublish] URL called successfully`);
+            }
+          })
+          .catch((error) => {
+            console.error(`[FallbackPublish] Error calling URL:`, error);
+          }),
       );
     } catch (error) {
       // Fallback to setTimeout if after() is not available (non-Next.js environment)
-      console.warn("[FallbackPublish] after() not available, using setTimeout (dev only)");
+      console.warn(
+        "[FallbackPublish] after() not available, using setTimeout (dev only)",
+      );
       setTimeout(async () => {
         try {
           const response = await fetch(options.url, {
@@ -665,12 +731,15 @@ export class QStashService {
               "Content-Type": "application/json",
               ...options.headers,
             },
-            body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body),
+            body:
+              typeof options.body === "string"
+                ? options.body
+                : JSON.stringify(options.body),
           });
 
           if (!response.ok) {
             console.error(
-              `[FallbackPublish] Failed to call URL: ${response.status} ${response.statusText}`
+              `[FallbackPublish] Failed to call URL: ${response.status} ${response.statusText}`,
             );
           } else {
             console.log(`[FallbackPublish] URL called successfully`);
@@ -687,21 +756,27 @@ export class QStashService {
    * Maintains backward compatibility for local development
    * Uses Next.js after() to ensure execution continues after response
    */
-  private static async fallbackFetch(options: QStashTriggerOptions): Promise<void> {
+  private static async fallbackFetch(
+    options: QStashTriggerOptions,
+  ): Promise<void> {
     const url = `${this.baseUrl}/api/engine/execute-step`;
 
     try {
       // Use dynamic import to avoid breaking non-Next.js environments
-      const { after } = await import('next/server');
+      const { after } = await import("next/server");
 
       // SECURITY: Generate short-lived JWT for internal service-to-service communication
-      const authToken = await signServiceToken(
+      const authToken = await signAsymmetricJWT(
         {
           service: "intention-engine",
           executionId: options.executionId,
           action: "execute-step",
         },
-        "5m"
+        {
+          issuer: "qstash-service",
+          audience: "intention-engine",
+          expiresIn: "5m",
+        },
       );
 
       after(() => {
@@ -725,31 +800,41 @@ export class QStashService {
             executionId: options.executionId,
             startStepIndex: options.stepIndex,
           }),
-        }).then(response => {
-          if (!response.ok) {
-            console.error(
-              `[FallbackFetch] Failed to trigger next step: ${response.status} ${response.statusText}`
-            );
-          } else {
-            console.log(`[FallbackFetch] Next step triggered successfully${options.traceId ? ` [trace: ${options.traceId}]` : ''}`);
-          }
-        }).catch(error => {
-          console.error(`[FallbackFetch] Error triggering next step:`, error);
-        });
+        })
+          .then((response) => {
+            if (!response.ok) {
+              console.error(
+                `[FallbackFetch] Failed to trigger next step: ${response.status} ${response.statusText}`,
+              );
+            } else {
+              console.log(
+                `[FallbackFetch] Next step triggered successfully${options.traceId ? ` [trace: ${options.traceId}]` : ""}`,
+              );
+            }
+          })
+          .catch((error) => {
+            console.error(`[FallbackFetch] Error triggering next step:`, error);
+          });
       });
     } catch (error) {
       // Fallback to setTimeout if after() is not available (non-Next.js environment)
-      console.warn("[FallbackFetch] after() not available, using setTimeout (dev only)");
+      console.warn(
+        "[FallbackFetch] after() not available, using setTimeout (dev only)",
+      );
       setTimeout(async () => {
         try {
           // SECURITY: Generate short-lived JWT for internal service-to-service communication
-          const authToken = await signServiceToken(
+          const authToken = await signAsymmetricJWT(
             {
               service: "intention-engine",
               executionId: options.executionId,
               action: "execute-step",
             },
-            "5m"
+            {
+              issuer: "qstash-service",
+              audience: "intention-engine",
+              expiresIn: "5m",
+            },
           );
 
           const headers: Record<string, string> = {
@@ -776,10 +861,12 @@ export class QStashService {
 
           if (!response.ok) {
             console.error(
-              `[FallbackFetch] Failed to trigger next step: ${response.status} ${response.statusText}`
+              `[FallbackFetch] Failed to trigger next step: ${response.status} ${response.statusText}`,
             );
           } else {
-            console.log(`[FallbackFetch] Next step triggered successfully${options.traceId ? ` [trace: ${options.traceId}]` : ''}`);
+            console.log(
+              `[FallbackFetch] Next step triggered successfully${options.traceId ? ` [trace: ${options.traceId}]` : ""}`,
+            );
           }
         } catch (error) {
           console.error(`[FallbackFetch] Error triggering next step:`, error);

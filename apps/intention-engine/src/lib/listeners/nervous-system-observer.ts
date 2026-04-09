@@ -15,21 +15,42 @@
  * 4. Uses LLM to generate "Proactive Intent" (e.g., "The table you wanted at Pesto Place is now free")
  * 5. Sends proactive notification via Ably to user's channel
  * 6. Tracks all proactive notifications for audit and learning
- * 
+ *
  * Proactive Re-engagement:
  * - When TableVacated arrives, queries Redis key failed_bookings:{restaurantId}
  * - If match found: Generates "Re-engagement Intent" locally
  * - Pushes to Ably channel user:{userId} with personalized message
  */
 
-import { getAblyClient, RealtimeService, MemoryClient, getMemoryClient as getSharedMemoryClient, parseJsonWithFallback } from "@repo/shared";
-import { getDb, eq, users, restaurants, restaurantReservations } from "@repo/database";
-import { createSystemEvent, SystemEvent, createTypedSystemEvent, SystemEventType } from "@repo/mcp-protocol";
-import { signServiceToken } from "@repo/auth";
+import {
+  getAblyClient,
+  RealtimeService,
+  MemoryClient,
+  getMemoryClient as getSharedMemoryClient,
+  parseJsonWithFallback,
+  Logger,
+} from "@repo/shared";
+import {
+  getDb,
+  eq,
+  users,
+  restaurants,
+  restaurantReservations,
+} from "@repo/database";
+import {
+  createSystemEvent,
+  SystemEvent,
+  createTypedSystemEvent,
+  SystemEventType,
+} from "@repo/mcp-protocol";
+import { signAsymmetricJWT } from "@repo/auth";
 import { generateText } from "../engine/llm";
 import { Redis } from "@upstash/redis";
-import { getRedisClient, ServiceNamespace } from '@repo/shared';
+import { getRedisClient, ServiceNamespace } from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.IE);
+const logger = new Logger({
+  serviceName: "intention-engine-nervous-system-observer",
+});
 
 // ============================================================================
 // OBSERVER CONFIGURATION
@@ -125,20 +146,20 @@ export class NervousSystemObserver {
    */
   async initialize(): Promise<void> {
     if (!this.config.enableProactiveNotifications) {
-      console.log("[NervousSystemObserver] Proactive notifications disabled");
+      logger.info("Proactive notifications disabled");
       return;
     }
 
     // Serverless-friendly: No persistent subscriptions
     // Use processTableVacatedEvent for webhook-based triggers
-    console.log("[NervousSystemObserver] Initialized (serverless mode)");
+    logger.info("Initialized (serverless mode)");
   }
 
   /**
    * Handle TableVacated event
    * Queries users with matching last_interaction_context
    * Specifically targets users whose last interaction FAILED
-   * 
+   *
    * Proactive Re-engagement Enhancement:
    * - Queries Redis key failed_bookings:{restaurantId} for users who failed
    * - Generates "Re-engagement Intent" locally for each matched user
@@ -150,18 +171,21 @@ export class NervousSystemObserver {
   }): Promise<ProactiveNotificationResult> {
     const { event, token } = eventData;
 
-    console.log(
-      `[NervousSystemObserver] Processing TableVacated: ${event.tableId} at ${event.restaurantId}`
-    );
+    logger.info("Processing TableVacated event", {
+      tableId: event.tableId,
+      restaurantId: event.restaurantId,
+    });
 
     const usersNotified = 0;
-    let llmContent: { proactiveIntent: string; suggestedAction: string } | undefined;
+    let llmContent:
+      | { proactiveIntent: string; suggestedAction: string }
+      | undefined;
 
     try {
       // Verify the event token
       const verified = await this.verifyEventToken(token);
       if (!verified) {
-        console.warn("[NervousSystemObserver] Invalid event token, skipping");
+        logger.warn("Invalid event token, skipping");
         return {
           success: false,
           error: "Invalid event token",
@@ -171,42 +195,45 @@ export class NervousSystemObserver {
 
       // PROACTIVE RE-ENGAGEMENT: Check Redis for failed bookings first
       const failedBookingsKey = `failed_bookings:${event.restaurantId}`;
-      const failedBookings = await redis?.get<any[]>(failedBookingsKey) || [];
-      
+      const failedBookings = (await redis?.get<any[]>(failedBookingsKey)) || [];
+
       let reEngagementUsersNotified = 0;
-      
+
       if (failedBookings.length > 0) {
-        console.log(
-          `[NervousSystemObserver] Found ${failedBookings.length} failed bookings for restaurant ${event.restaurantId}, triggering re-engagement`
-        );
-        
+        logger.info("Found failed bookings, triggering re-engagement", {
+          count: failedBookings.length,
+          restaurantId: event.restaurantId,
+        });
+
         // Trigger re-engagement for each failed booking
-        for (const failure of failedBookings.slice(0, 5)) { // Limit to 5 to avoid timeout
+        for (const failure of failedBookings.slice(0, 5)) {
+          // Limit to 5 to avoid timeout
           const result = await this.triggerReEngagement(failure, event);
           if (result.success) {
             reEngagementUsersNotified++;
           }
         }
-        
-        console.log(
-          `[NervousSystemObserver] Re-engagement complete: ${reEngagementUsersNotified}/${failedBookings.length} users notified`
-        );
+
+        logger.info("Re-engagement complete", {
+          notified: reEngagementUsersNotified,
+          total: failedBookings.length,
+        });
       }
 
       // Find matching users - specifically those with FAILED status
       const matchedUsers = await this.findMatchingUsers(event);
 
       if (matchedUsers.length === 0) {
-        console.log("[NervousSystemObserver] No matching users found");
+        logger.info("No matching users found");
         return {
           success: true,
           usersNotified: reEngagementUsersNotified,
         };
       }
 
-      console.log(
-        `[NervousSystemObserver] Found ${matchedUsers.length} matching users for proactive notification`
-      );
+      logger.info("Found matching users for proactive notification", {
+        count: matchedUsers.length,
+      });
 
       // Send proactive notifications
       let successCount = 0;
@@ -225,9 +252,10 @@ export class NervousSystemObserver {
         }
       }
 
-      console.log(
-        `[NervousSystemObserver] Successfully notified ${successCount}/${matchedUsers.length} users`
-      );
+      logger.info("Proactive notification complete", {
+        notified: successCount,
+        total: matchedUsers.length,
+      });
 
       return {
         success: true,
@@ -235,7 +263,9 @@ export class NervousSystemObserver {
         llmGeneratedContent: llmContent,
       };
     } catch (error) {
-      console.error("[NervousSystemObserver] Error handling TableVacated:", error);
+      logger.error("Error handling TableVacated", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
@@ -253,16 +283,19 @@ export class NervousSystemObserver {
    * 2. Fall back to Postgres query only if Redis is empty (slow path)
    * This avoids expensive Postgres queries for common cases
    */
-  async findMatchingUsers(event: TableVacatedEvent): Promise<UserContextMatch[]> {
+  async findMatchingUsers(
+    event: TableVacatedEvent,
+  ): Promise<UserContextMatch[]> {
     try {
       // FAST PATH: Check Redis for failed bookings first
       const failedBookingsKey = `failed_bookings:${event.restaurantId}`;
-      const failedBookings = await redis?.get<any[]>(failedBookingsKey) || [];
+      const failedBookings = (await redis?.get<any[]>(failedBookingsKey)) || [];
 
       if (failedBookings.length > 0) {
-        console.log(
-          `[NervousSystemObserver] Fast path: Found ${failedBookings.length} failed bookings in Redis for ${event.restaurantId}`
-        );
+        logger.info("Fast path: found failed bookings in Redis", {
+          count: failedBookings.length,
+          restaurantId: event.restaurantId,
+        });
 
         // Convert Redis failures to UserContextMatch format
         const matchedUsers: UserContextMatch[] = [];
@@ -277,16 +310,19 @@ export class NervousSystemObserver {
           }
 
           matchedUsers.push({
-            userId: failure.userId || failure.clerkId || `anon_${failure.userEmail || 'unknown'}`,
-            userEmail: failure.userEmail || '',
+            userId:
+              failure.userId ||
+              failure.clerkId ||
+              `anon_${failure.userEmail || "unknown"}`,
+            userEmail: failure.userEmail || "",
             clerkId: failure.clerkId,
             lastInteractionContext: {
-              intentType: failure.intentType || 'BOOKING',
+              intentType: failure.intentType || "BOOKING",
               parameters: failure.parameters || {},
               timestamp: failure.timestamp,
-              status: 'FAILED' as const,
+              status: "FAILED" as const,
             },
-            matchReason: `FAILED booking at ${event.restaurantName || event.restaurantId}: ${failure.reason || 'Unknown error'}`,
+            matchReason: `FAILED booking at ${event.restaurantName || event.restaurantId}: ${failure.reason || "Unknown error"}`,
             confidence: 0.9, // High confidence for explicit failures
           });
         }
@@ -295,16 +331,16 @@ export class NervousSystemObserver {
       }
 
       // SLOW PATH: Fall back to Postgres query if Redis is empty
-      console.log(
-        `[NervousSystemObserver] Slow path: No Redis failures, querying Postgres for ${event.restaurantId}`
-      );
+      logger.info("Slow path: querying Postgres", {
+        restaurantId: event.restaurantId,
+      });
 
       // Get restaurant details
       const restaurant = await this.getRestaurantById(event.restaurantId);
       if (!restaurant) {
-        console.warn(
-          `[NervousSystemObserver] Restaurant not found: ${event.restaurantId}`
-        );
+        logger.warn("Restaurant not found", {
+          restaurantId: event.restaurantId,
+        });
         return [];
       }
 
@@ -321,7 +357,9 @@ export class NervousSystemObserver {
         if (!user.lastInteractionContext) continue;
 
         const context = user.lastInteractionContext;
-        const contextTime = context.timestamp ? new Date(context.timestamp) : null;
+        const contextTime = context.timestamp
+          ? new Date(context.timestamp)
+          : null;
 
         // Check if context is fresh enough
         if (contextTime) {
@@ -333,11 +371,15 @@ export class NervousSystemObserver {
         }
 
         // PRIORITY 1: Users who FAILED to book this restaurant
-        if (context.status === "FAILED" || context.status === "TIMEOUT" || context.status === "CANCELLED") {
+        if (
+          context.status === "FAILED" ||
+          context.status === "TIMEOUT" ||
+          context.status === "CANCELLED"
+        ) {
           const matchResult = this.checkRestaurantMatch(
             context,
             restaurant,
-            event
+            event,
           );
 
           if (matchResult.confidence >= this.config.matchConfidenceThreshold) {
@@ -357,7 +399,7 @@ export class NervousSystemObserver {
         const matchResult = this.checkRestaurantMatch(
           context,
           restaurant,
-          event
+          event,
         );
 
         if (matchResult.confidence >= this.config.matchConfidenceThreshold) {
@@ -377,7 +419,9 @@ export class NervousSystemObserver {
 
       return matchedUsers.slice(0, 5); // Limit to top 5 matches
     } catch (error) {
-      console.error("[NervousSystemObserver] Error finding matching users:", error);
+      logger.error("Error finding matching users", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return [];
     }
   }
@@ -386,9 +430,9 @@ export class NervousSystemObserver {
    * Check if user's last_interaction_context matches the vacated table
    */
   private checkRestaurantMatch(
-    context: NonNullable<typeof users.$inferSelect["lastInteractionContext"]>,
+    context: NonNullable<(typeof users.$inferSelect)["lastInteractionContext"]>,
     restaurant: typeof restaurants.$inferSelect,
-    event: TableVacatedEvent
+    event: TableVacatedEvent,
   ): { confidence: number; reason: string } {
     let confidence = 0;
     const reasons: string[] = [];
@@ -422,7 +466,9 @@ export class NervousSystemObserver {
       const partySize = context.parameters.partySize as number;
       if (event.capacity >= partySize) {
         confidence += 0.2;
-        reasons.push(`Table capacity (${event.capacity}) matches party size (${partySize})`);
+        reasons.push(
+          `Table capacity (${event.capacity}) matches party size (${partySize})`,
+        );
       }
     }
 
@@ -437,13 +483,16 @@ export class NervousSystemObserver {
    */
   async sendProactiveNotification(
     user: UserContextMatch,
-    event: TableVacatedEvent
+    event: TableVacatedEvent,
   ): Promise<{ success: boolean; notificationId?: string; error?: string }> {
     try {
       const userChannel = `user:${user.clerkId || user.userId}`;
 
       // Generate LLM-powered notification content
-      const notificationContent = await this.buildNotificationMessage(user, event);
+      const notificationContent = await this.buildNotificationMessage(
+        user,
+        event,
+      );
 
       // Build proactive message
       const notification = {
@@ -471,13 +520,13 @@ export class NervousSystemObserver {
         this.config.notificationChannel,
         "ProactiveNotification",
         notification,
-        { traceId: event.traceId }
+        { traceId: event.traceId },
       );
 
-      console.log(
-        `[NervousSystemObserver] Sent proactive notification to ${user.userEmail}: ` +
-        `${notification.message}`
-      );
+      logger.info("Sent proactive notification", {
+        userEmail: user.userEmail,
+        message: notification.message,
+      });
 
       // Also create a SystemEvent for audit trail
       const systemEvent = createTypedSystemEvent(
@@ -498,25 +547,24 @@ export class NervousSystemObserver {
             llmGenerated: true,
             userEmail: user.userEmail,
           },
-        }
+        },
       );
 
       // Store notification in Redis for analytics (optional)
       // Note: This would require direct Redis access or a new MemoryClient method
       // For now, the SystemEvent serves as the audit trail
-      console.log(
-        `[NervousSystemObserver] Notification audit trail created: ${systemEvent.id}`
-      );
+      logger.info("Notification audit trail created", {
+        eventId: systemEvent.id,
+      });
 
       return {
         success: true,
         notificationId: systemEvent.id,
       };
     } catch (error) {
-      console.error(
-        "[NervousSystemObserver] Error sending notification:",
-        error
-      );
+      logger.error("Error sending notification", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
@@ -526,10 +574,10 @@ export class NervousSystemObserver {
 
   /**
    * Trigger Re-engagement for Failed Booking
-   * 
+   *
    * Called when a table becomes available at a restaurant where a user previously failed.
    * Generates a personalized "Re-engagement Intent" and pushes to user's Ably channel.
-   * 
+   *
    * @param failure - Failed booking record from Redis
    * @param event - TableVacated event
    */
@@ -543,12 +591,12 @@ export class NervousSystemObserver {
       timestamp: string;
       reason?: string;
     },
-    event: TableVacatedEvent
+    event: TableVacatedEvent,
   ): Promise<{ success: boolean; notificationId?: string; error?: string }> {
     try {
       const userId = failure.clerkId || failure.userId;
       if (!userId) {
-        console.warn("[NervousSystemObserver] No userId in failed booking, skipping re-engagement");
+        logger.warn("No userId in failed booking, skipping re-engagement");
         return { success: false, error: "No userId in failed booking" };
       }
 
@@ -589,19 +637,27 @@ Respond with ONLY a JSON object in this format:
         const response = await generateText({
           modelType: "planning",
           prompt,
-          systemPrompt: "You are a helpful, empathetic re-engagement assistant. Output ONLY valid JSON.",
+          systemPrompt:
+            "You are a helpful, empathetic re-engagement assistant. Output ONLY valid JSON.",
           temperature: 0.7,
         });
 
         const parsed = parseJsonWithFallback(response.content.trim());
         notificationContent = {
           title: parsed.title || "Second Chance!",
-          message: parsed.message || `Good news! A table${capacity} is now available at ${restaurantName}. Your previous booking failed, but now's your chance to try again!`,
-          proactiveIntent: parsed.proactiveIntent || `Your chance to book ${restaurantName} is back!`,
+          message:
+            parsed.message ||
+            `Good news! A table${capacity} is now available at ${restaurantName}. Your previous booking failed, but now's your chance to try again!`,
+          proactiveIntent:
+            parsed.proactiveIntent ||
+            `Your chance to book ${restaurantName} is back!`,
           suggestedAction: parsed.suggestedAction || "Try Again",
         };
       } catch (llmError) {
-        console.warn("[NervousSystemObserver] LLM re-engagement generation failed, using fallback:", llmError);
+        logger.warn("LLM re-engagement generation failed, using fallback", {
+          error:
+            llmError instanceof Error ? llmError.message : String(llmError),
+        });
         // Fallback to static message
         notificationContent = {
           title: "Second Chance!",
@@ -640,12 +696,13 @@ Respond with ONLY a JSON object in this format:
         this.config.notificationChannel,
         "ReEngagementNotification",
         notification,
-        { traceId: event.traceId }
+        { traceId: event.traceId },
       );
 
-      console.log(
-        `[NervousSystemObserver] Re-engagement sent to ${failure.userEmail || userId}: ${notification.message}`
-      );
+      logger.info("Re-engagement notification sent", {
+        userEmail: failure.userEmail || userId,
+        message: notification.message,
+      });
 
       // Create SystemEvent for audit trail using generic createSystemEvent
       const systemEvent = createSystemEvent(
@@ -669,7 +726,7 @@ Respond with ONLY a JSON object in this format:
             llmGenerated: true,
             userEmail: failure.userEmail,
           },
-        }
+        },
       );
 
       return {
@@ -677,7 +734,9 @@ Respond with ONLY a JSON object in this format:
         notificationId: systemEvent.id,
       };
     } catch (error) {
-      console.error("[NervousSystemObserver] Error in re-engagement:", error);
+      logger.error("Error in re-engagement", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
@@ -687,10 +746,10 @@ Respond with ONLY a JSON object in this format:
 
   /**
    * Track Failed Booking in Redis
-   * 
+   *
    * Called when a booking step fails during execution.
    * Stores the failure in Redis for later re-engagement when tables become available.
-   * 
+   *
    * @param restaurantId - Restaurant ID where booking failed
    * @param failure - Failure details
    */
@@ -704,11 +763,11 @@ Respond with ONLY a JSON object in this format:
       parameters?: Record<string, unknown>;
       reason?: string;
       executionId?: string;
-    }
+    },
   ): Promise<void> {
     try {
       const failedBookingsKey = `failed_bookings:${restaurantId}`;
-      
+
       const failureRecord = {
         userId: failure.userId,
         clerkId: failure.clerkId,
@@ -721,58 +780,78 @@ Respond with ONLY a JSON object in this format:
       };
 
       // Get existing failures
-      const existingFailures = await redis?.get<any[]>(failedBookingsKey) || [];
-      
+      const existingFailures =
+        (await redis?.get<any[]>(failedBookingsKey)) || [];
+
       // Add new failure (keep only last 10 to avoid bloat)
       const updatedFailures = [failureRecord, ...existingFailures].slice(0, 10);
-      
+
       // Store with 1 hour TTL (failures are only relevant for immediate re-engagement)
-      await redis?.setex(failedBookingsKey, 3600, JSON.stringify(updatedFailures));
-      
-      console.log(
-        `[NervousSystemObserver] Tracked failed booking for restaurant ${restaurantId} (total: ${updatedFailures.length})`
+      await redis?.setex(
+        failedBookingsKey,
+        3600,
+        JSON.stringify(updatedFailures),
       );
+
+      logger.info("Tracked failed booking", {
+        restaurantId,
+        totalFailures: updatedFailures.length,
+      });
     } catch (error) {
-      console.error("[NervousSystemObserver] Failed to track booking failure:", error);
+      logger.error("Failed to track booking failure", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
   /**
    * Clear Failed Bookings for Restaurant
-   * 
+   *
    * Called after successful re-engagement or after TTL expires.
-   * 
+   *
    * @param restaurantId - Restaurant ID
    * @param userId - Optional user ID to clear specific failure
    */
   static async clearFailedBookings(
     restaurantId: string,
-    userId?: string
+    userId?: string,
   ): Promise<void> {
     try {
       const failedBookingsKey = `failed_bookings:${restaurantId}`;
-      
+
       if (!userId) {
         // Clear all failures for restaurant
         await redis?.del(failedBookingsKey);
-        console.log(`[NervousSystemObserver] Cleared all failed bookings for restaurant ${restaurantId}`);
+        logger.info("Cleared all failed bookings for restaurant", {
+          restaurantId,
+        });
       } else {
         // Remove specific user's failure
-        const existingFailures = await redis?.get<any[]>(failedBookingsKey) || [];
-        const updatedFailures = existingFailures.filter(f => f.userId !== userId && f.clerkId !== userId);
-        
+        const existingFailures =
+          (await redis?.get<any[]>(failedBookingsKey)) || [];
+        const updatedFailures = existingFailures.filter(
+          (f) => f.userId !== userId && f.clerkId !== userId,
+        );
+
         if (updatedFailures.length === 0) {
           await redis?.del(failedBookingsKey);
         } else {
-          await redis?.setex(failedBookingsKey, 3600, JSON.stringify(updatedFailures));
+          await redis?.setex(
+            failedBookingsKey,
+            3600,
+            JSON.stringify(updatedFailures),
+          );
         }
-        
-        console.log(
-          `[NervousSystemObserver] Cleared failed booking for user ${userId} at restaurant ${restaurantId}`
-        );
+
+        logger.info("Cleared failed booking for user", {
+          userId,
+          restaurantId,
+        });
       }
     } catch (error) {
-      console.error("[NervousSystemObserver] Failed to clear failed bookings:", error);
+      logger.error("Failed to clear failed bookings", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -781,7 +860,7 @@ Respond with ONLY a JSON object in this format:
    */
   private async buildNotificationMessage(
     user: UserContextMatch,
-    event: TableVacatedEvent
+    event: TableVacatedEvent,
   ): Promise<{
     title: string;
     message: string;
@@ -790,7 +869,7 @@ Respond with ONLY a JSON object in this format:
   }> {
     const restaurantName = event.restaurantName || "the restaurant";
     const capacity = event.capacity ? ` (seats ${event.capacity})` : "";
-    
+
     // Use LLM to generate personalized proactive intent
     try {
       const prompt = `You are a proactive assistant helping users who previously failed to book a restaurant table.
@@ -817,7 +896,8 @@ Respond with ONLY a JSON object in this format:
       const response = await generateText({
         modelType: "planning",
         prompt,
-        systemPrompt: "You are a helpful, concise notification generator. Output ONLY valid JSON.",
+        systemPrompt:
+          "You are a helpful, concise notification generator. Output ONLY valid JSON.",
         temperature: 0.7,
       });
 
@@ -825,17 +905,24 @@ Respond with ONLY a JSON object in this format:
 
       return {
         title: parsed.title || "Table Available!",
-        message: parsed.message || `Good news! A table${capacity} just became available at ${restaurantName}.`,
-        proactiveIntent: parsed.proactiveIntent || `The table you wanted at ${restaurantName} is now available.`,
+        message:
+          parsed.message ||
+          `Good news! A table${capacity} just became available at ${restaurantName}.`,
+        proactiveIntent:
+          parsed.proactiveIntent ||
+          `The table you wanted at ${restaurantName} is now available.`,
         suggestedAction: parsed.suggestedAction || "Book Now",
       };
     } catch (error) {
-      console.error("[NervousSystemObserver] LLM message generation failed, using fallback:", error);
-      
+      logger.error("LLM message generation failed, using fallback", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+
       // Fallback to static message
       return {
         title: "Table Available!",
-        message: `Good news! A table${capacity} just became available at ${restaurantName}. ` +
+        message:
+          `Good news! A table${capacity} just became available at ${restaurantName}. ` +
           `You recently searched for this restaurant - would you like to book it now?`,
         proactiveIntent: `The table you wanted at ${restaurantName} is now free. Should I book it?`,
         suggestedAction: "Book Now",
@@ -847,7 +934,7 @@ Respond with ONLY a JSON object in this format:
    * Get restaurant by ID or slug
    */
   private async getRestaurantById(
-    restaurantId: string
+    restaurantId: string,
   ): Promise<typeof restaurants.$inferSelect | null> {
     try {
       const restaurant = await getDb().query.restaurants.findFirst({
@@ -855,7 +942,9 @@ Respond with ONLY a JSON object in this format:
       });
       return restaurant || null;
     } catch (error) {
-      console.error("[NervousSystemObserver] Error fetching restaurant:", error);
+      logger.error("Error fetching restaurant", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }
@@ -865,11 +954,17 @@ Respond with ONLY a JSON object in this format:
    */
   private async verifyEventToken(token: string): Promise<boolean> {
     try {
-      const { verifyServiceToken } = await import("@repo/auth");
-      const verified = await verifyServiceToken(token);
+      const { verifyAsymmetricJWT } = await import("@repo/auth");
+      const verified = await verifyAsymmetricJWT(
+        token,
+        "nervous-system-observer",
+        "intention-engine",
+      );
       return !!verified;
     } catch (error) {
-      console.error("[NervousSystemObserver] Token verification failed:", error);
+      logger.error("Token verification failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -887,11 +982,18 @@ Respond with ONLY a JSON object in this format:
 
     await this.handleTableVacated({
       event,
-      token: await signServiceToken({
-        event: "TableVacated",
-        data: event,
-        timestamp: Date.now(),
-      }),
+      token: await signAsymmetricJWT(
+        {
+          event: "TableVacated",
+          data: event,
+          timestamp: Date.now(),
+        },
+        {
+          issuer: "nervous-system-observer",
+          audience: "intention-engine",
+          expiresIn: "5m",
+        },
+      ),
     });
   }
 
@@ -916,7 +1018,7 @@ Respond with ONLY a JSON object in this format:
 let observerInstance: NervousSystemObserver | null = null;
 
 export function getNervousSystemObserver(
-  config?: Partial<ObserverConfig>
+  config?: Partial<ObserverConfig>,
 ): NervousSystemObserver {
   if (!observerInstance) {
     observerInstance = new NervousSystemObserver(config);
@@ -931,7 +1033,7 @@ export function getNervousSystemObserver(
 
 export async function processTableVacatedEvent(
   eventData: { event: TableVacatedEvent; token: string },
-  config?: Partial<ObserverConfig>
+  config?: Partial<ObserverConfig>,
 ): Promise<void> {
   const observer = new NervousSystemObserver(config);
   await observer.handleTableVacated(eventData);

@@ -23,6 +23,9 @@
 
 import { Redis } from "@upstash/redis";
 import { LRUCache } from "lru-cache";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "rate-limiter" });
 
 // ============================================================================
 // CONFIGURATION
@@ -167,10 +170,10 @@ export class RateLimiterService {
     try {
       return await this.checkRateLimitRedis(userId, endpointType);
     } catch (error) {
-      console.error(
-        "[RateLimiter] Redis error, falling back to LRU cache:",
+      logger.error({
+        message: "Redis error, falling back to LRU cache",
         error,
-      );
+      });
       // Fail-degraded: Use in-memory LRU cache to preserve availability
       return this.checkRateLimitLRU(userId, endpointType);
     }
@@ -380,7 +383,7 @@ export async function rateLimitMiddleware(
       result,
     };
   } catch (error) {
-    console.error("[RateLimiter] Middleware error:", error);
+    logger.error({ message: "Middleware error", error });
 
     // DEGRADED MODE: Fall back to in-memory LRU cache when Redis is unavailable.
     // This preserves security (rate limiting still works per-instance) while
@@ -403,7 +406,10 @@ export async function rateLimitMiddleware(
       };
     } catch (lruError) {
       // Absolute last resort - this should never happen
-      console.error("[RateLimiter] LRU cache fallback also failed:", lruError);
+      logger.error({
+        message: "LRU cache fallback also failed",
+        error: lruError,
+      });
 
       // Fail-open for non-critical endpoints, fail-closed for critical ones
       const isCriticalEndpoint = endpointType !== "cache";

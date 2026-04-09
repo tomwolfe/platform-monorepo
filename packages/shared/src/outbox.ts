@@ -202,7 +202,7 @@ export class OutboxService {
           await db.insert(outboxDlq).values({
             id: crypto.randomUUID(),
             originalEventId: event.id,
-            executionId: (event.payload as any).executionId || null,
+            executionId: event.payload.executionId || null,
             eventType: event.eventType,
             payload: event.payload,
             status: "failed",

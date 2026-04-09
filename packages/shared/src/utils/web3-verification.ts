@@ -32,6 +32,9 @@ import { base, polygon, mainnet } from "viem/chains";
 import { ERC20_ABI } from "./erc20-abi";
 import { ESCROW_ABI } from "./escrow-abi";
 import { getDb, processed_crypto_transactions, eq } from "@repo/database";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "web3-verification" });
 
 // ============================================================================
 // CONFIGURATION
@@ -322,16 +325,14 @@ export async function verifyTransaction(params: {
         actualValue =
           eventArgs.subtotal + eventArgs.tip + eventArgs.platformFee;
 
-        console.log(
-          `[verifyTransaction] Escrow OrderDeposited event verified:`,
-          {
-            orderId: eventArgs.orderId,
-            subtotal: eventArgs.subtotal.toString(),
-            tip: eventArgs.tip.toString(),
-            platformFee: eventArgs.platformFee.toString(),
-            total: actualValue.toString(),
-          },
-        );
+        logger.info({
+          message: "Escrow OrderDeposited event verified",
+          orderId: eventArgs.orderId,
+          subtotal: eventArgs.subtotal.toString(),
+          tip: eventArgs.tip.toString(),
+          platformFee: eventArgs.platformFee.toString(),
+          total: actualValue.toString(),
+        });
       } catch (parseError) {
         return {
           success: false,
@@ -372,7 +373,8 @@ export async function verifyTransaction(params: {
 
         actualValue = (matchingTransfer.args as { value: bigint }).value;
 
-        console.log(`[verifyTransaction] ERC-20 Transfer verified:`, {
+        logger.info({
+          message: "ERC-20 Transfer verified",
           from: (matchingTransfer.args as any).from,
           to: (matchingTransfer.args as any).to,
           value: actualValue.toString(),
@@ -407,15 +409,13 @@ export async function verifyTransaction(params: {
         };
       }
 
-      console.log(
-        `[verifyTransaction] Value within slippage tolerance (${slippageBps}bps):`,
-        {
-          expected: expectedValue.toString(),
-          actual: actualValue.toString(),
-          lowerBound: lowerBound.toString(),
-          upperBound: upperBound.toString(),
-        },
-      );
+      logger.info({
+        message: `Value within slippage tolerance (${slippageBps}bps)`,
+        expected: expectedValue.toString(),
+        actual: actualValue.toString(),
+        lowerBound: lowerBound.toString(),
+        upperBound: upperBound.toString(),
+      });
     } else if (actualValue !== expectedValue) {
       // Exact match required when no slippage specified (stablecoins like USDC)
       return {
@@ -441,9 +441,10 @@ export async function verifyTransaction(params: {
         } catch (decodeError) {
           // If decoding fails, the data might be for a contract call (USDC transfer)
           // For USDC transfers, we rely on the exact amount + recipient + sender verification
-          console.warn(
-            "Could not decode transaction data, likely USDC contract call",
-          );
+          logger.warn({
+            message:
+              "Could not decode transaction data, likely USDC contract call",
+          });
         }
       }
     }
@@ -481,9 +482,11 @@ export async function verifyTransaction(params: {
           };
         }
 
-        console.log(
-          `[verifyTransaction] Signature verified: wallet ${walletAddress} signed orderId ${orderId}`,
-        );
+        logger.info({
+          message: "Signature verified",
+          walletAddress,
+          orderId,
+        });
       } catch (sigError) {
         return {
           success: false,
@@ -502,9 +505,10 @@ export async function verifyTransaction(params: {
         appSource: appSource,
         entityId: orderId,
       });
-      console.log(
-        `[verifyTransaction] Registered tx ${txHash.substring(0, 10)}... in replay prevention table`,
-      );
+      logger.info({
+        message: "Registered transaction in replay prevention table",
+        txHashPrefix: txHash.substring(0, 10),
+      });
     } catch (dbError) {
       // If this is a unique constraint violation, the tx was already registered
       // (race condition - another request beat us to it)
@@ -519,10 +523,10 @@ export async function verifyTransaction(params: {
         };
       }
       // Log but don't fail - this is a best-effort registration
-      console.error(
-        "[verifyTransaction] Failed to register transaction in replay prevention table:",
-        dbError,
-      );
+      logger.error({
+        message: "Failed to register transaction in replay prevention table",
+        error: dbError,
+      });
     }
 
     return {

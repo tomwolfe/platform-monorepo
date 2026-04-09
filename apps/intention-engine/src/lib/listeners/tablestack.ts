@@ -7,7 +7,11 @@
 
 import { inferIntent } from "@/lib/engine/intent";
 import { generatePlan } from "@/lib/engine/unified-planner";
-import { AppConfig } from "@repo/shared";
+import { AppConfig, Logger } from "@repo/shared";
+
+const logger = new Logger({
+  serviceName: "intention-engine-tablestack-listener",
+});
 
 export async function handleTableStackRejection(payload: {
   guestEmail: string;
@@ -31,7 +35,7 @@ export async function handleTableStackRejection(payload: {
     4. Provide the guest with a delivery alternative since they couldn't get a table.
   `.trim();
 
-  console.log(`[TableStack Listener] Initiating Delivery-to-Table failover for ${guestEmail}`);
+  logger.info("Initiating Delivery-to-Table failover", { guestEmail });
 
   // Trigger Inference & Planning
   const { hypotheses } = await inferIntent(prompt, []);

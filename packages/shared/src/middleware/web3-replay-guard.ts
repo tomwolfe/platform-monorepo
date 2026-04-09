@@ -234,7 +234,7 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
       await this.redis.setex(this.getRedisKey(txHash), 86400, "1");
     } catch (error) {
       // Log but don't fail - Redis cache failure is non-critical
-      console.warn("[ReplayGuard] Failed to cache txHash in Redis:", error);
+      replayLogger.warn({ message: "Failed to cache txHash in Redis", error });
     }
   }
 
@@ -247,7 +247,7 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
       return exists === 1;
     } catch (error) {
       // If Redis is unavailable, return false to fall through to route handler
-      console.warn("[ReplayGuard] Redis unavailable for pre-check:", error);
+      replayLogger.warn({ message: "Redis unavailable for pre-check", error });
       return false;
     }
   }
@@ -305,10 +305,12 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
       });
 
       // Insert succeeded - transaction is now registered and allowed to proceed
-      console.log(
-        `[ReplayGuard] Atomically registered tx ${txHash.substring(0, 10)}... ` +
-          `for ${appSource} entity ${entityId}`,
-      );
+      replayLogger.info({
+        message: "Atomically registered transaction",
+        txHashPrefix: txHash.substring(0, 10),
+        appSource,
+        entityId,
+      });
 
       // Cache in Redis for fast middleware pre-checks (24h expiration)
       await this.cacheTxHashInRedis(txHash);
@@ -386,10 +388,10 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
       }
 
       // Other database error - fail-closed to prevent potential replay
-      console.error(
-        "[ReplayGuard] Database error during atomic replay check:",
+      replayLogger.error({
+        message: "Database error during atomic replay check",
         error,
-      );
+      });
       return {
         allowed: false,
         error: `Replay guard check failed: ${error instanceof Error ? error.message : "Unknown database error"}`,
@@ -435,13 +437,16 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
         .delete(processed_crypto_transactions)
         .where(eq(processed_crypto_transactions.txHash, txHash));
 
-      console.log(`[ReplayGuard] Rolled back tx ${txHash.substring(0, 10)}...`);
+      replayLogger.info({
+        message: "Rolled back transaction",
+        txHashPrefix: txHash.substring(0, 10),
+      });
     } catch (error) {
       // Log but don't throw - rollback failure is non-fatal
-      console.error(
-        "[ReplayGuard] Failed to rollback transaction:",
-        error instanceof Error ? error.message : String(error),
-      );
+      replayLogger.error({
+        message: "Failed to rollback transaction",
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

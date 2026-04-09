@@ -3,6 +3,10 @@
  * Uses Photon API (Komoot) as primary service with Nominatim fallback
  */
 
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "geo" });
+
 export interface GeocodeResult {
   success: boolean;
   result?: {
@@ -31,9 +35,18 @@ export interface UserLocation {
  * @param userLocation - Optional user location to bias results
  * @returns GeocodeResult with coordinates
  */
-export async function geocode(address: string, userLocation?: UserLocation): Promise<GeocodeResult> {
+export async function geocode(
+  address: string,
+  userLocation?: UserLocation,
+): Promise<GeocodeResult> {
   // Handle vague location terms
-  const vagueTerms = ["nearby", "near me", "around here", "here", "current location"];
+  const vagueTerms = [
+    "nearby",
+    "near me",
+    "around here",
+    "here",
+    "current location",
+  ];
   if (vagueTerms.includes(address.toLowerCase()) && userLocation) {
     return {
       success: true,
@@ -57,7 +70,7 @@ export async function geocode(address: string, userLocation?: UserLocation): Pro
 
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'TableStack-OpenDeliver/1.0',
+        "User-Agent": "TableStack-OpenDeliver/1.0",
       },
       signal: controller.signal,
     });
@@ -93,11 +106,14 @@ export async function geocode(address: string, userLocation?: UserLocation): Pro
     }
 
     // Fallback to Nominatim if Photon returns no results
-    console.log('[Geo] No Photon results, falling back to Nominatim...');
+    logger.warn({ message: "No Photon results, falling back to Nominatim" });
     return await geocodeNominatim(address, userLocation);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.warn(`[Geo] Photon geocoding failed: ${errorMessage}, falling back to Nominatim`);
+    logger.warn({
+      message: "Photon geocoding failed, falling back to Nominatim",
+      errorMessage,
+    });
     return await geocodeNominatim(address, userLocation);
   }
 }
@@ -105,7 +121,10 @@ export async function geocode(address: string, userLocation?: UserLocation): Pro
 /**
  * Geocode using Nominatim (OpenStreetMap) - Fallback service
  */
-async function geocodeNominatim(address: string, userLocation?: UserLocation): Promise<GeocodeResult> {
+async function geocodeNominatim(
+  address: string,
+  userLocation?: UserLocation,
+): Promise<GeocodeResult> {
   try {
     let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`;
 
@@ -120,7 +139,7 @@ async function geocodeNominatim(address: string, userLocation?: UserLocation): P
 
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'TableStack-OpenDeliver/1.0',
+        "User-Agent": "TableStack-OpenDeliver/1.0",
       },
       signal: controller.signal,
     });
@@ -140,9 +159,12 @@ async function geocodeNominatim(address: string, userLocation?: UserLocation): P
       };
     }
 
-    return { success: false, error: 'Location not found' };
+    return { success: false, error: "Location not found" };
   } catch (error: unknown) {
-    return { success: false, error: error instanceof Error ? error.message : String(error) };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -152,7 +174,10 @@ async function geocodeNominatim(address: string, userLocation?: UserLocation): P
  * @param lng - Longitude
  * @returns GeocodeResult with address details
  */
-export async function reverseGeocode(lat: number, lng: number): Promise<GeocodeResult> {
+export async function reverseGeocode(
+  lat: number,
+  lng: number,
+): Promise<GeocodeResult> {
   try {
     const url = `https://photon.komoot.io/reverse?lat=${lat}&lon=${lng}`;
 
@@ -161,7 +186,7 @@ export async function reverseGeocode(lat: number, lng: number): Promise<GeocodeR
 
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'TableStack-OpenDeliver/1.0',
+        "User-Agent": "TableStack-OpenDeliver/1.0",
       },
       signal: controller.signal,
     });
@@ -181,7 +206,8 @@ export async function reverseGeocode(lat: number, lng: number): Promise<GeocodeR
         result: {
           lat,
           lng,
-          displayName: props.name || props.street || props.city || 'Unknown location',
+          displayName:
+            props.name || props.street || props.city || "Unknown location",
           address: {
             street: props.street,
             city: props.city,
@@ -193,8 +219,11 @@ export async function reverseGeocode(lat: number, lng: number): Promise<GeocodeR
       };
     }
 
-    return { success: false, error: 'No address found for coordinates' };
+    return { success: false, error: "No address found for coordinates" };
   } catch (error: unknown) {
-    return { success: false, error: error instanceof Error ? error.message : String(error) };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }

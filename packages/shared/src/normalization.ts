@@ -11,6 +11,9 @@ import { z } from "zod";
 import { TOOLS, McpToolRegistry } from "@repo/mcp-protocol";
 import type { SchemaEvolutionService } from "./services/schema-evolution";
 import { getPrivacyGateway } from "./services/privacy-gateway";
+import { Logger } from "./logger";
+
+const logger = new Logger({ serviceName: "normalization" });
 
 export interface NormalizationResult<T = unknown> {
   success: boolean;
@@ -49,7 +52,7 @@ export class NormalizationService {
   }): void {
     if (options?.schemaEvolutionService) {
       this.schemaEvolutionService = options.schemaEvolutionService;
-      console.log("[NormalizationService] Schema evolution tracking enabled");
+      logger.info({ message: "Schema evolution tracking enabled" });
     }
   }
 
@@ -251,10 +254,10 @@ export class NormalizationService {
           >;
         } catch (scrubError) {
           // If scrubbing fails, fall back to raw parameters (non-fatal)
-          console.warn(
-            "[NormalizationService] PII scrubbing failed, using raw parameters:",
-            scrubError,
-          );
+          logger.warn({
+            message: "PII scrubbing failed, using raw parameters",
+            error: scrubError,
+          });
         }
 
         // Record the mismatch with sanitized parameters (async, non-blocking)
@@ -279,17 +282,17 @@ export class NormalizationService {
             result.mismatchEventId = eventId;
           })
           .catch((err) => {
-            console.warn(
-              "[NormalizationService] Failed to record mismatch:",
-              err,
-            );
+            logger.warn({
+              message: "Failed to record schema evolution mismatch",
+              error: err,
+            });
           });
       } catch (evolutionError) {
         // Silently fail - schema evolution is optional
-        console.warn(
-          "[NormalizationService] Schema evolution recording failed:",
-          evolutionError,
-        );
+        logger.warn({
+          message: "Schema evolution recording failed",
+          error: evolutionError,
+        });
       }
     }
 

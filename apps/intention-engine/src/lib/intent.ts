@@ -10,6 +10,9 @@ import {
   saveUserInteractionContext,
   type InteractionContext,
 } from "./context-persistence";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "intention-engine-intent" });
 
 export async function getLastInteractionContextByClerkId(clerkId: string) {
   return await loadUserInteractionContext(clerkId);
@@ -17,9 +20,9 @@ export async function getLastInteractionContextByClerkId(clerkId: string) {
 
 export async function getLastInteractionContext(userIp: string) {
   // Note: IP-based lookup not implemented - use clerkId instead
-  console.warn(
-    `[Intent] getLastInteractionContext called with IP, but only clerkId is supported. ` +
-    `IP: ${userIp}`
+  logger.warn(
+    "getLastInteractionContext called with IP, but only clerkId is supported",
+    { userIp },
   );
   return null;
 }
@@ -27,7 +30,7 @@ export async function getLastInteractionContext(userIp: string) {
 export async function saveInteractionContextByClerkId(
   clerkId: string,
   intent: any,
-  auditLogId: string
+  auditLogId: string,
 ) {
   const context: InteractionContext = {
     intentType: intent.type,
@@ -43,12 +46,12 @@ export async function saveInteractionContextByClerkId(
 export async function saveInteractionContext(
   userIp: string,
   intent: any,
-  auditLogId: string
+  auditLogId: string,
 ) {
   // Note: IP-based persistence not implemented - use clerkId instead
-  console.warn(
-    `[Intent] saveInteractionContext called with IP, but only clerkId is supported. ` +
-    `IP: ${userIp}, AuditLogId: ${auditLogId}`
+  logger.warn(
+    "saveInteractionContext called with IP, but only clerkId is supported",
+    { userIp, auditLogId },
   );
   // Non-critical operation - don't throw
 }

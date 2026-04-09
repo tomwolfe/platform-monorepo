@@ -19,7 +19,10 @@ import {
   AppConfig,
   CircuitBreaker,
   CircuitBreakerOpenError,
+  Logger,
 } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "intention-engine-mobility" });
 
 export { MobilityRequestSchema, RouteEstimateSchema, UnifiedLocationSchema };
 export type { UnifiedLocation };
@@ -272,15 +275,15 @@ export async function get_route_estimate(
     const normalizedOrigin = normalizeLocation(origin);
     const normalizedDestination = normalizeLocation(destination);
 
-    console.log(
-      `Getting functional route estimate from ${normalizedOrigin} to ${normalizedDestination} via ${travel_mode}...`,
-    );
+    logger.info("Getting route estimate", {
+      origin: normalizedOrigin,
+      destination: normalizedDestination,
+      travel_mode,
+    });
 
     // CI/TEST MODE: Use Haversine fallback for deterministic, offline-safe testing
     if (process.env.CI === "true" || process.env.NODE_ENV === "test") {
-      console.log(
-        "[get_route_estimate] CI/Test mode detected - using Haversine fallback",
-      );
+      logger.info("CI/Test mode - using Haversine fallback");
       return getHaversineFallback(
         normalizedOrigin,
         normalizedDestination,
@@ -301,11 +304,9 @@ export async function get_route_estimate(
     const hasOrsKey = !!orsApiKey;
 
     if (hasOrsKey) {
-      console.log("[get_route_estimate] Using OpenRouteService (primary)");
+      logger.info("Using OpenRouteService (primary)");
     } else {
-      console.log(
-        "[get_route_estimate] No ORS API key, falling back to public OSRM",
-      );
+      logger.info("No ORS API key, falling back to public OSRM");
     }
 
     // Try primary provider (ORS or OSRM)
@@ -379,25 +380,24 @@ export async function get_route_estimate(
           } else {
             const statusCode = orsResponse.status;
             if (statusCode === 429 || statusCode === 403 || statusCode >= 500) {
-              console.warn(
-                `[get_route_estimate] ORS API ${statusCode}, falling back to OSRM`,
-              );
+              logger.warn("ORS API returned error, falling back to OSRM", {
+                statusCode,
+              });
             } else {
-              console.warn(
-                `[get_route_estimate] ORS API error ${statusCode}, falling back to OSRM`,
-              );
+              logger.warn("ORS API error, falling back to OSRM", {
+                statusCode,
+              });
             }
           }
         } catch (err) {
           if (err instanceof CircuitBreakerOpenError) {
-            console.warn(
-              "[get_route_estimate] OpenRouteService circuit is open, falling back to OSRM",
+            logger.warn(
+              "OpenRouteService circuit is open, falling back to OSRM",
             );
           } else {
-            console.warn(
-              "[get_route_estimate] ORS request failed, falling back to OSRM:",
-              err instanceof Error ? err.message : String(err),
-            );
+            logger.warn("ORS request failed, falling back to OSRM", {
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
         }
       }
@@ -443,27 +443,22 @@ export async function get_route_estimate(
             };
           }
         } else {
-          console.warn(
-            `[get_route_estimate] OSRM API ${osrmResponse.status}, falling back to Haversine`,
-          );
+          logger.warn("OSRM API returned error, falling back to Haversine", {
+            status: osrmResponse.status,
+          });
         }
       } catch (err) {
         if (err instanceof CircuitBreakerOpenError) {
-          console.warn(
-            "[get_route_estimate] OSRM circuit is open, falling back to Haversine",
-          );
+          logger.warn("OSRM circuit is open, falling back to Haversine");
         } else {
-          console.warn(
-            "[get_route_estimate] OSRM request failed, falling back to Haversine:",
-            err instanceof Error ? err.message : String(err),
-          );
+          logger.warn("OSRM request failed, falling back to Haversine", {
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
 
       // ---- LAST RESORT: Haversine ----
-      console.log(
-        "[get_route_estimate] All routing providers failed, using Haversine fallback",
-      );
+      logger.info("All routing providers failed, using Haversine fallback");
       return getHaversineFallback(
         normalizedOrigin,
         normalizedDestination,
@@ -475,10 +470,9 @@ export async function get_route_estimate(
   } catch (error: unknown) {
     // Final fallback: return Haversine-based estimate
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.warn(
-      "[get_route_estimate] OSRM failed, using Haversine fallback:",
-      errorMessage,
-    );
+    logger.warn("OSRM failed, using Haversine fallback", {
+      error: errorMessage,
+    });
     try {
       const originCoords = await resolveCoords(origin);
       const destCoords = await resolveCoords(destination);
@@ -518,9 +512,11 @@ async function getHaversineFallback(
 
   const durationMins = estimateDuration(distanceKm, travelMode);
 
-  console.log(
-    `[get_route_estimate] Haversine fallback: ${distanceKm.toFixed(1)}km, ~${durationMins}min (${travelMode})`,
-  );
+  logger.info("Haversine fallback used", {
+    distance_km: parseFloat(distanceKm.toFixed(1)),
+    duration_minutes: durationMins,
+    travel_mode: travelMode,
+  });
 
   return {
     success: true,

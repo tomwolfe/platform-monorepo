@@ -22,7 +22,7 @@
  */
 
 import { QStashService } from "./services/qstash";
-import { signServiceToken } from "@repo/auth";
+import { signAsymmetricJWT } from "@repo/auth";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -112,14 +112,19 @@ export class OutboxRelayService {
         timestamp: new Date().toISOString(),
       });
 
-      // SECURITY: Generate short-lived JWT for internal service-to-service communication
-      const authToken = await signServiceToken(
+      // SECURITY: Generate short-lived asymmetric JWT (RS256) for
+      // Zero-Trust internal service-to-service communication
+      const authToken = await signAsymmetricJWT(
         {
           service: "outbox-relay",
           executionId,
           action: "trigger-relay",
         },
-        "5m",
+        {
+          issuer: "shared-outbox-relay",
+          audience: "intention-engine",
+          expiresIn: "5m",
+        },
       );
 
       const headers: Record<string, string> = {
@@ -211,14 +216,19 @@ export class OutboxRelayService {
     }
     const url = `${baseUrl}/api/engine/outbox-relay`;
 
-    // SECURITY: Generate short-lived JWT for internal service-to-service communication
-    const authToken = await signServiceToken(
+    // SECURITY: Generate short-lived asymmetric JWT (RS256) for
+    // Zero-Trust internal service-to-service communication
+    const authToken = await signAsymmetricJWT(
       {
         service: "outbox-relay",
         executionId,
         action: "trigger-relay",
       },
-      "5m",
+      {
+        issuer: "shared-outbox-relay",
+        audience: "intention-engine",
+        expiresIn: "5m",
+      },
     );
 
     const headers: Record<string, string> = {

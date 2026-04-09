@@ -2,7 +2,6 @@ import { trace, context } from "@opentelemetry/api";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import {
   ConsoleSpanExporter,
-  SimpleSpanProcessor,
   BatchSpanProcessor,
   SpanExporter,
   ReadableSpan,
@@ -10,7 +9,9 @@ import {
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { Resource } from "@opentelemetry/resources";
 import { SEMRESATTRS_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
-import { registerObservabilityFlush } from "@repo/shared";
+import { registerObservabilityFlush, Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "observability" });
 
 // Initialize OpenTelemetry
 let sdk: NodeSDK | null = null;
@@ -42,7 +43,11 @@ class DualExporter implements SpanExporter {
   }
 }
 
-export function initObservability() {
+/**
+ * Initialize OpenTelemetry SDK.
+ * Should be called from Next.js instrumentation.ts register() function.
+ */
+export function initObservability(serviceName = "intention-engine") {
   if (sdk) return;
   if (process.env.NEXT_PHASE === "phase-production-build") return;
 
@@ -66,7 +71,7 @@ export function initObservability() {
 
   sdk = new NodeSDK({
     resource: new Resource({
-      [SEMRESATTRS_SERVICE_NAME]: "intention-engine",
+      [SEMRESATTRS_SERVICE_NAME]: serviceName,
     }),
     spanProcessor: new BatchSpanProcessor(spanExporter, {
       maxQueueSize: 100,
@@ -78,14 +83,11 @@ export function initObservability() {
 
   try {
     sdk.start();
-    console.log(
-      "[Observability] OpenTelemetry SDK initialized with OTLP exporter",
-    );
-    if (isDevelopment) {
-      console.log(
-        "[Observability] Console export enabled for development debugging",
-      );
-    }
+    logger.info({
+      message: "OpenTelemetry SDK initialized",
+      serviceName,
+      environment: process.env.NODE_ENV,
+    });
 
     // Register the flush function with shared error handler
     registerObservabilityFlush(async () => {
@@ -94,12 +96,12 @@ export function initObservability() {
       }
     });
   } catch (e) {
-    console.warn("[Observability] Failed to start OpenTelemetry SDK:", e);
+    logger.error({
+      message: "Failed to start OpenTelemetry SDK",
+      error: e instanceof Error ? e.message : String(e),
+    });
   }
 }
-
-// Call it, but it might do nothing during build
-initObservability();
 
 export const tracer = trace.getTracer("intention-engine");
 
@@ -126,7 +128,10 @@ export async function flushObservability(): Promise<void> {
     try {
       await sdk.forceFlush();
     } catch (error) {
-      console.warn("[Observability] Failed to flush spans:", error);
+      logger.warn({
+        message: "Failed to flush spans",
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 }

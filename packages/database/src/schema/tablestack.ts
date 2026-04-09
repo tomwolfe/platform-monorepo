@@ -436,7 +436,17 @@ export const outboxDlq = pgTable(
     // Event type (copied from outbox)
     eventType: text("event_type").notNull(),
     // Payload containing event data (JSON)
-    payload: jsonb("payload").notNull(),
+    payload: jsonb("payload").notNull().$type<{
+      executionId: string;
+      stepId?: string;
+      stepIndex?: number;
+      status?: string;
+      output?: Record<string, unknown>;
+      error?: Record<string, unknown>;
+      timestamp: string;
+      traceId?: string;
+      correlationId?: string;
+    }>(),
     // Error message explaining why this event was moved to DLQ
     errorMessage: text("error_message").notNull(),
     // Number of processing attempts before DLQ

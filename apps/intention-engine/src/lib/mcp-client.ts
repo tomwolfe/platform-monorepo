@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { SecurityProvider } from "@repo/auth";
+import { signAsymmetricJWT, SecurityProvider } from "@repo/auth";
 import { getRedisClient, ServiceNamespace, AppConfig } from "@repo/shared";
 import { SERVICES } from "@repo/shared";
 import {
@@ -69,7 +69,9 @@ export interface ToolCallResult {
 
 export class ParameterAliaser {
   private aliases: Record<string, string>;
-  private schemaEvolutionService: Awaited<ReturnType<typeof createSchemaEvolutionService>> | null = null;
+  private schemaEvolutionService: Awaited<
+    ReturnType<typeof createSchemaEvolutionService>
+  > | null = null;
   private aliasUsageCounter: Map<string, number> = new Map();
 
   constructor(aliases: Record<string, string> = PARAMETER_ALIASES) {
@@ -106,7 +108,7 @@ export class ParameterAliaser {
     // Log frequently used aliases for schema evolution review
     if (count > 10 && this.schemaEvolutionService) {
       console.log(
-        `[ParameterAliaser] High-frequency alias detected: ${alias} -> ${canonical} (${count + 1} uses)`
+        `[ParameterAliaser] High-frequency alias detected: ${alias} -> ${canonical} (${count + 1} uses)`,
       );
       // Could trigger schema evolution review here
     }
@@ -116,7 +118,10 @@ export class ParameterAliaser {
    * Apply parameter aliases to tool input
    * If LLM provides `venueId` but tool expects `restaurant_id`, fix it
    */
-  applyAliases(parameters: Record<string, unknown>, targetSchema?: zod.ZodType): Record<string, unknown> {
+  applyAliases(
+    parameters: Record<string, unknown>,
+    targetSchema?: zod.ZodType,
+  ): Record<string, unknown> {
     const resolved: Record<string, unknown> = { ...parameters };
     let aliasApplied = false;
 
@@ -128,19 +133,21 @@ export class ParameterAliaser {
       ) {
         resolved[primary as string] = resolved[alias];
         delete resolved[alias];
-        console.log(
-          `[ParameterAliaser] Applied alias: ${alias} -> ${primary}`
-        );
+        console.log(`[ParameterAliaser] Applied alias: ${alias} -> ${primary}`);
         this.trackAliasUsage(alias, primary as string);
         aliasApplied = true;
       }
     }
 
     // Tool-specific aliases (from tool definition)
-    if (targetSchema && 'parameter_aliases' in targetSchema._def) {
-      const schemaDef = targetSchema._def as { parameter_aliases?: Record<string, string> };
+    if (targetSchema && "parameter_aliases" in targetSchema._def) {
+      const schemaDef = targetSchema._def as {
+        parameter_aliases?: Record<string, string>;
+      };
       if (schemaDef.parameter_aliases) {
-        for (const [alias, primary] of Object.entries(schemaDef.parameter_aliases)) {
+        for (const [alias, primary] of Object.entries(
+          schemaDef.parameter_aliases,
+        )) {
           if (
             resolved[alias] !== undefined &&
             resolved[primary as string] === undefined
@@ -148,7 +155,7 @@ export class ParameterAliaser {
             resolved[primary as string] = resolved[alias];
             delete resolved[alias];
             console.log(
-              `[ParameterAliaser] Applied tool-specific alias: ${alias} -> ${primary}`
+              `[ParameterAliaser] Applied tool-specific alias: ${alias} -> ${primary}`,
             );
             this.trackAliasUsage(alias, primary as string);
             aliasApplied = true;
@@ -159,7 +166,7 @@ export class ParameterAliaser {
 
     if (aliasApplied) {
       console.log(
-        `[ParameterAliaser] Alias resolution complete. Applied ${Object.keys(resolved).length} parameters`
+        `[ParameterAliaser] Alias resolution complete. Applied ${Object.keys(resolved).length} parameters`,
       );
     }
 
@@ -222,7 +229,10 @@ export class DynamicMcpClientManager {
     // Auto-discover: Check for additional services in environment
     // Pattern: {SERVICE_NAME}_MCP_URL
     for (const [key, value] of Object.entries(process.env)) {
-      if (key.endsWith("_MCP_URL") && !["TABLESTACK", "OPENDELIVER"].some((s) => key.includes(s))) {
+      if (
+        key.endsWith("_MCP_URL") &&
+        !["TABLESTACK", "OPENDELIVER"].some((s) => key.includes(s))
+      ) {
         const serviceName = key.replace("_MCP_URL", "").toLowerCase();
         if (!registry.some((r) => r.name === serviceName)) {
           registry.push({
@@ -242,7 +252,7 @@ export class DynamicMcpClientManager {
    */
   async initialize(): Promise<void> {
     console.log(
-      `[DynamicMcpClient] Initializing ${this.serviceRegistry.length} services`
+      `[DynamicMcpClient] Initializing ${this.serviceRegistry.length} services`,
     );
 
     for (const service of this.serviceRegistry) {
@@ -251,7 +261,7 @@ export class DynamicMcpClientManager {
       } catch (error) {
         console.error(
           `[DynamicMcpClient] Failed to connect to ${service.name}:`,
-          error
+          error,
         );
       }
     }
@@ -264,18 +274,14 @@ export class DynamicMcpClientManager {
    * to prevent malformed tools from crashing the orchestrator
    * TYPE SAFETY: Uses mapJsonSchemaToZod for proper schema conversion
    */
-  private async connectToService(
-    service: ServiceRegistryEntry
-  ): Promise<void> {
+  private async connectToService(service: ServiceRegistryEntry): Promise<void> {
     if (this.clients.has(service.name)) {
-      console.log(
-        `[DynamicMcpClient] Already connected to ${service.name}`
-      );
+      console.log(`[DynamicMcpClient] Already connected to ${service.name}`);
       return;
     }
 
     console.log(
-      `[DynamicMcpClient] Connecting to ${service.name} at ${service.mcpUrl}`
+      `[DynamicMcpClient] Connecting to ${service.name} at ${service.mcpUrl}`,
     );
 
     const client = await createMcpClient(service.mcpUrl);
@@ -285,13 +291,14 @@ export class DynamicMcpClientManager {
     try {
       const tools = await client.listTools();
       console.log(
-        `[DynamicMcpClient] Discovered ${tools.tools.length} tools from ${service.name}`
+        `[DynamicMcpClient] Discovered ${tools.tools.length} tools from ${service.name}`,
       );
 
       // Register tools with strict schema validation
       for (const tool of tools.tools) {
         // TYPE SAFETY: Convert JSON Schema to Zod using mapJsonSchemaToZod
-        let validatedInputSchema: Record<string, unknown> | undefined = undefined;
+        let validatedInputSchema: Record<string, unknown> | undefined =
+          undefined;
         let zodSchema: zod.ZodTypeAny | undefined = undefined;
 
         if (tool.inputSchema) {
@@ -300,29 +307,29 @@ export class DynamicMcpClientManager {
             const schemaObj = tool.inputSchema as unknown;
 
             // Ensure it has the basic JSON Schema structure
-            if (typeof schemaObj === 'object' && schemaObj !== null) {
+            if (typeof schemaObj === "object" && schemaObj !== null) {
               const schemaRecord = schemaObj as Record<string, unknown>;
 
               // Validate 'type' field if present
-              if ('type' in schemaRecord) {
+              if ("type" in schemaRecord) {
                 const schemaType = schemaRecord.type;
-                if (typeof schemaType === 'string' && schemaType !== 'object') {
+                if (typeof schemaType === "string" && schemaType !== "object") {
                   console.warn(
-                    `[DynamicMcpClient] Tool ${tool.name} has non-object inputSchema type: ${schemaType}`
+                    `[DynamicMcpClient] Tool ${tool.name} has non-object inputSchema type: ${schemaType}`,
                   );
                 }
               }
 
               // Validate 'properties' field if present
-              if ('properties' in schemaRecord) {
+              if ("properties" in schemaRecord) {
                 const properties = schemaRecord.properties;
-                if (typeof properties === 'object' && properties !== null) {
+                if (typeof properties === "object" && properties !== null) {
                   validatedInputSchema = schemaRecord;
                   // Convert to Zod schema for strict validation
                   zodSchema = mapJsonSchemaToZod(schemaRecord);
                 } else {
                   console.warn(
-                    `[DynamicMcpClient] Tool ${tool.name} has invalid properties field, skipping schema`
+                    `[DynamicMcpClient] Tool ${tool.name} has invalid properties field, skipping schema`,
                   );
                 }
               } else {
@@ -334,7 +341,9 @@ export class DynamicMcpClientManager {
           } catch (schemaError) {
             console.warn(
               `[DynamicMcpClient] Failed to validate schema for ${tool.name}:`,
-              schemaError instanceof Error ? schemaError.message : String(schemaError)
+              schemaError instanceof Error
+                ? schemaError.message
+                : String(schemaError),
             );
             // Continue without schema validation
           }
@@ -352,7 +361,7 @@ export class DynamicMcpClientManager {
     } catch (error) {
       console.warn(
         `[DynamicMcpClient] Failed to list tools from ${service.name}:`,
-        error
+        error,
       );
     }
   }
@@ -378,14 +387,17 @@ export class DynamicMcpClientManager {
   /**
    * Get discovered tool registry
    */
-  getToolRegistry(): Map<string, { 
-    name: string; 
-    description: string; 
-    inputSchema?: Record<string, unknown>; 
-    zodSchema?: zod.ZodTypeAny;
-    requires_confirmation?: boolean; 
-    origin?: string 
-  }> {
+  getToolRegistry(): Map<
+    string,
+    {
+      name: string;
+      description: string;
+      inputSchema?: Record<string, unknown>;
+      zodSchema?: zod.ZodTypeAny;
+      requires_confirmation?: boolean;
+      origin?: string;
+    }
+  > {
     return this.toolRegistry;
   }
 
@@ -404,7 +416,7 @@ export class DynamicMcpClientManager {
   async executeTool(
     toolName: string | keyof AllToolsMap,
     parameters: Record<string, unknown>,
-    serverName?: string
+    serverName?: string,
   ): Promise<ToolCallResult> {
     // Find the tool in registry
     const toolDef = this.toolRegistry.get(toolName as string);
@@ -416,8 +428,7 @@ export class DynamicMcpClientManager {
     }
 
     // Determine target server
-    const targetServer =
-      serverName || this.findToolServer(toolName as string);
+    const targetServer = serverName || this.findToolServer(toolName as string);
     if (!targetServer) {
       return {
         success: false,
@@ -436,7 +447,7 @@ export class DynamicMcpClientManager {
     try {
       // Validate parameters using Zod schema from registry
       let validatedParams = parameters;
-      
+
       // Use stored Zod schema for validation if available
       if (toolDef.zodSchema) {
         try {
@@ -444,7 +455,9 @@ export class DynamicMcpClientManager {
         } catch (validationError) {
           console.warn(
             `[DynamicMcpClient] Zod validation failed for ${toolName as string}:`,
-            validationError instanceof zod.ZodError ? validationError.errors : validationError
+            validationError instanceof zod.ZodError
+              ? validationError.errors
+              : validationError,
           );
           // Fall back to original parameters
           validatedParams = parameters;
@@ -452,7 +465,10 @@ export class DynamicMcpClientManager {
       } else {
         // Fallback to AllToolsMap validation for known tools
         try {
-          validatedParams = validateToolParams(toolName as keyof AllToolsMap, parameters);
+          validatedParams = validateToolParams(
+            toolName as keyof AllToolsMap,
+            parameters,
+          );
         } catch {
           // Tool not in AllToolsMap or validation failed - use original parameters
           validatedParams = parameters;
@@ -462,12 +478,13 @@ export class DynamicMcpClientManager {
       // Apply parameter aliasing
       const resolvedParams = this.parameterAliaser.applyAliases(
         validatedParams,
-        toolDef.zodSchema || toolDef.inputSchema as unknown as zod.ZodType | undefined
+        toolDef.zodSchema ||
+          (toolDef.inputSchema as unknown as zod.ZodType | undefined),
       ) as Record<string, unknown>;
 
       console.log(
         `[DynamicMcpClient] Executing ${toolName as string} on ${targetServer}`,
-        { original: parameters, resolved: resolvedParams }
+        { original: parameters, resolved: resolvedParams },
       );
 
       // Execute tool
@@ -483,8 +500,7 @@ export class DynamicMcpClientManager {
     } catch (error) {
       return {
         success: false,
-        error:
-          error instanceof Error ? error.message : String(error),
+        error: error instanceof Error ? error.message : String(error),
       };
     }
   }
@@ -495,8 +511,13 @@ export class DynamicMcpClientManager {
   private findToolServer(toolName: string): string | null {
     // Check static TOOLS registry first
     for (const [serverName, tools] of Object.entries(TOOLS)) {
-      for (const [toolKey, toolDef] of Object.entries(tools as Record<string, { name?: string }>)) {
-        if ((toolDef as { name?: string }).name === toolName || toolKey === toolName) {
+      for (const [toolKey, toolDef] of Object.entries(
+        tools as Record<string, { name?: string }>,
+      )) {
+        if (
+          (toolDef as { name?: string }).name === toolName ||
+          toolKey === toolName
+        ) {
           return serverName;
         }
       }
@@ -533,7 +554,7 @@ export class DynamicMcpClientManager {
       } catch (error) {
         console.error(
           `[DynamicMcpClient] Failed to refresh tools from ${name}:`,
-          error
+          error,
         );
       }
     }
@@ -547,34 +568,41 @@ export class DynamicMcpClientManager {
 
 /**
  * Create MCP Client with secure authentication via headers
- * 
+ *
  * SECURITY FIX: Removed secrets from URL query parameters
  * - Previously: token and internal_key were passed via URL (exposed in logs/proxies)
  * - Now: Authentication via HTTP headers only (Authorization + x-internal-key)
  */
 export async function createMcpClient(url: string) {
-  // Sign a service token for authentication
-  const token = await SecurityProvider.signServiceToken({
-    service: "intention-engine",
-    timestamp: Date.now(),
-  });
+  // Sign a service token for authentication using asymmetric JWT (RS256)
+  const token = await signAsymmetricJWT(
+    {
+      service: "intention-engine",
+      timestamp: Date.now(),
+    },
+    {
+      issuer: "intention-engine",
+      audience: "mcp-server",
+      expiresIn: "5m",
+    },
+  );
 
   // SECURITY: Do NOT add secrets to URL query parameters
   // const urlWithAuth = new URL(url);
   // urlWithAuth.searchParams.set("token", token); // REMOVED - insecure
   // urlWithAuth.searchParams.set("internal_key", ...); // REMOVED - insecure
-  
+
   // Use the URL as-is, authentication will be handled via headers in transport
   const transport = new SSEClientTransport(new URL(url), {
     // SECURITY: Pass tokens via HTTP headers instead of URL
     requestInit: {
       headers: {
-        'Authorization': `Bearer ${token}`,
-        'x-internal-key': AppConfig.getInternalSystemKey() || '',
+        Authorization: `Bearer ${token}`,
+        "x-internal-key": AppConfig.getInternalSystemKey() || "",
       },
     },
   });
-  
+
   const client = new Client(
     {
       name: "intention-engine-client",
@@ -582,7 +610,7 @@ export async function createMcpClient(url: string) {
     },
     {
       capabilities: {},
-    }
+    },
   );
 
   await client.connect(transport);
@@ -635,7 +663,7 @@ export async function getMcpClients(): Promise<{
 export async function executeTool(
   toolName: string,
   parameters: Record<string, unknown>,
-  serverName?: string
+  serverName?: string,
 ): Promise<ToolCallResult> {
   const manager = getManager();
   return manager.executeTool(toolName, parameters, serverName);

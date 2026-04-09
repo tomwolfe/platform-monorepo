@@ -27,10 +27,10 @@
  * @since 1.0.0
  */
 
-import type { Database, OutboxTable } from '../types/database';
-import { sql, eq } from 'drizzle-orm';
-import { outbox } from '@repo/database';
-import { QStashService } from './qstash';
+import type { Database, OutboxTable } from "../types/database";
+import { sql, eq } from "drizzle-orm";
+import { outbox } from "@repo/database";
+import { QStashService } from "./qstash";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -53,7 +53,7 @@ export interface ServerlessBridgeConfig {
 }
 
 const DEFAULT_CONFIG: Required<ServerlessBridgeConfig> = {
-  qstashTopic: 'outbox_events',
+  qstashTopic: "outbox_events",
   enableFallbackPolling: true, // CRITICAL: Always use fallback polling (no http extension)
   pollIntervalMs: 5000,
 };
@@ -85,9 +85,9 @@ export class ServerlessPubSubBridge {
   async triggerQStashDelivery(
     outboxId: string,
     executionId: string,
-    eventType: string
+    eventType: string,
   ): Promise<string | null> {
-    const { AppConfig } = await import('../config');
+    const { AppConfig } = await import("../config");
     const baseUrl = AppConfig.getIntentionEngineApiUrl();
     const url = `${baseUrl}/api/engine/outbox-relay`;
 
@@ -99,16 +99,16 @@ export class ServerlessPubSubBridge {
     };
 
     // SECURITY: Generate short-lived JWT for internal service-to-service communication
-    const { signInternalJWT } = await import('@repo/auth');
+    const { signInternalJWT } = await import("@repo/auth");
     const authToken = await signInternalJWT(
-      { action: 'outbox_bridge', executionId, outboxId, eventType },
-      { issuer: 'pubsub-bridge', audience: 'intention-engine' }
+      { action: "outbox_bridge", executionId, outboxId, eventType },
+      { issuer: "pubsub-bridge", audience: "intention-engine" },
     );
 
     const headers = {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${authToken}`,
-      'x-outbox-bridge': 'true',
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`,
+      "x-outbox-bridge": "true",
     };
 
     try {
@@ -120,14 +120,14 @@ export class ServerlessPubSubBridge {
 
       console.log(
         `[ServerlessPubSubBridge] Triggered QStash for outbox ${outboxId} ` +
-        `(execution: ${executionId}, message: ${messageId})`
+          `(execution: ${executionId}, message: ${messageId})`,
       );
 
       return messageId;
     } catch (error) {
       console.error(
-        '[ServerlessPubSubBridge] Failed to trigger QStash:',
-        error instanceof Error ? error.message : String(error)
+        "[ServerlessPubSubBridge] Failed to trigger QStash:",
+        error instanceof Error ? error.message : String(error),
       );
       return null;
     }
@@ -151,10 +151,12 @@ export class ServerlessPubSubBridge {
     const pendingEvents = await this.db
       .select()
       .from(outbox)
-      .where(sql`
+      .where(
+        sql`
         ${outbox.status} = 'pending'
         AND (${outbox.expiresAt} > ${now} OR ${outbox.expiresAt} IS NULL)
-      `)
+      `,
+      )
       .orderBy(outbox.createdAt)
       .limit(limit);
 
@@ -166,11 +168,11 @@ export class ServerlessPubSubBridge {
 
     for (const event of pendingEvents) {
       try {
-        const executionId = (event.payload as any).executionId;
+        const executionId = event.payload.executionId;
         const messageId = await this.triggerQStashDelivery(
           event.id,
           executionId,
-          event.eventType
+          event.eventType,
         );
 
         if (messageId) {
@@ -179,13 +181,13 @@ export class ServerlessPubSubBridge {
       } catch (error) {
         console.error(
           `[ServerlessPubSubBridge] Failed to notify event ${event.id}:`,
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
         );
       }
     }
 
     console.log(
-      `[ServerlessPubSubBridge] Notified ${triggeredCount}/${pendingEvents.length} pending events`
+      `[ServerlessPubSubBridge] Notified ${triggeredCount}/${pendingEvents.length} pending events`,
     );
 
     return triggeredCount;
@@ -203,7 +205,10 @@ export class ServerlessPubSubBridge {
       FROM outbox
       WHERE status = 'pending'
     `);
-    const pendingEvents = parseInt((pendingResult.rows[0] as any)?.count || '0', 10);
+    const pendingEvents = parseInt(
+      (pendingResult.rows[0] as any)?.count || "0",
+      10,
+    );
 
     return {
       pendingEvents,
@@ -219,7 +224,7 @@ let defaultBridge: ServerlessPubSubBridge | null = null;
 
 export function getServerlessPubSubBridge(
   db: Database,
-  config?: ServerlessBridgeConfig
+  config?: ServerlessBridgeConfig,
 ): ServerlessPubSubBridge {
   if (!defaultBridge) {
     defaultBridge = new ServerlessPubSubBridge(db, config);
@@ -229,7 +234,7 @@ export function getServerlessPubSubBridge(
 
 export function createServerlessPubSubBridge(
   db: Database,
-  config?: ServerlessBridgeConfig
+  config?: ServerlessBridgeConfig,
 ): ServerlessPubSubBridge {
   return new ServerlessPubSubBridge(db, config);
 }

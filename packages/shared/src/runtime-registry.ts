@@ -1,15 +1,18 @@
 /**
  * Unified Runtime Registry
- * 
+ *
  * Consolidates tools, MCP, and service registries into a single source of truth.
  * Reduces duplication and drift across apps.
- * 
+ *
  * @see Phase 2.2: Kill Duplicate Registries
  */
 
 import { z } from "zod";
 import { ToolDefinition } from "@repo/shared";
 import { SERVICES } from "./services";
+import { Logger } from "./logger";
+
+const logger = new Logger({ serviceName: "runtime-registry" });
 
 // ============================================================================
 // TOOL REGISTRY
@@ -46,7 +49,10 @@ export class UnifiedToolRegistry implements ToolRegistry {
 
   register(tool: ToolDefinition): void {
     if (this.tools.has(tool.name)) {
-      console.warn(`[UnifiedToolRegistry] Tool ${tool.name} already registered, overwriting`);
+      logger.warn({
+        message: "Tool already registered, overwriting",
+        toolName: tool.name,
+      });
     }
     this.tools.set(tool.name, tool);
   }
@@ -78,7 +84,11 @@ export interface McpRegistry {
   servers: McpServerEntry[];
   getServer(name: string): McpServerEntry | undefined;
   registerServer(entry: McpServerEntry): void;
-  updateStatus(name: string, status: McpServerEntry["status"], error?: string): void;
+  updateStatus(
+    name: string,
+    status: McpServerEntry["status"],
+    error?: string,
+  ): void;
   getToolsForServer(name: string): string[];
   getHealthyServers(): McpServerEntry[];
 }
@@ -109,7 +119,11 @@ export class UnifiedMcpRegistry implements McpRegistry {
     }
   }
 
-  updateStatus(name: string, status: McpServerEntry["status"], error?: string): void {
+  updateStatus(
+    name: string,
+    status: McpServerEntry["status"],
+    error?: string,
+  ): void {
     const idx = this.servers.findIndex((s) => s.name === name);
     if (idx >= 0) {
       this.servers[idx] = {
@@ -188,7 +202,11 @@ export class UnifiedServiceRegistry {
     return this.services.get(name);
   }
 
-  updateStatus(name: string, status: ServiceEntry["status"], latencyMs?: number): void {
+  updateStatus(
+    name: string,
+    status: ServiceEntry["status"],
+    latencyMs?: number,
+  ): void {
     const service = this.services.get(name);
     if (service) {
       this.services.set(name, {
@@ -201,7 +219,9 @@ export class UnifiedServiceRegistry {
   }
 
   getHealthyServices(): ServiceEntry[] {
-    return Array.from(this.services.values()).filter((s) => s.status === "healthy");
+    return Array.from(this.services.values()).filter(
+      (s) => s.status === "healthy",
+    );
   }
 
   getAllServices(): ServiceEntry[] {
@@ -282,7 +302,9 @@ export function getMcpRegistry(): McpRegistry {
   return UnifiedMcpRegistry.getInstance();
 }
 
-export function getServiceRegistry(): ReturnType<typeof UnifiedServiceRegistry.getInstance> {
+export function getServiceRegistry(): ReturnType<
+  typeof UnifiedServiceRegistry.getInstance
+> {
   return UnifiedServiceRegistry.getInstance();
 }
 

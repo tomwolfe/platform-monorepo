@@ -359,7 +359,22 @@ export async function saveExecutionState(
   }
 
   const storage = new ExecutionStateStorage();
-  return storage.saveState(state);
+  const entry = await storage.saveState(state);
+
+  // CRITICAL: Verify the state was actually persisted.
+  // If Redis is down, MemoryClient.store() may return the entry without
+  // persisting it. We must verify persistence and throw if it failed,
+  // so the orchestrator halts rather than continuing with amnesia
+  // (which breaks the Saga compensation pattern).
+  const verified = await storage.loadState(state.execution_id);
+  if (!verified) {
+    throw new Error(
+      `[ExecutionStateStorage] State persistence verification failed for execution ${state.execution_id}. ` +
+        "The storage backend may be unavailable. Halting execution to prevent Saga compensation errors.",
+    );
+  }
+
+  return entry;
 }
 
 export async function loadExecutionState(
@@ -373,7 +388,18 @@ export async function saveExecutionTrace(
   trace: ExecutionTrace,
 ): Promise<MemoryEntry> {
   const storage = new ExecutionTraceStorage();
-  return storage.saveTrace(trace);
+  const entry = await storage.saveTrace(trace);
+
+  // Verify persistence for traces as well
+  const verified = await storage.loadTrace(trace.execution_id);
+  if (!verified) {
+    throw new Error(
+      `[ExecutionTraceStorage] Trace persistence verification failed for execution ${trace.execution_id}. ` +
+        "The storage backend may be unavailable.",
+    );
+  }
+
+  return entry;
 }
 
 export async function loadExecutionTrace(

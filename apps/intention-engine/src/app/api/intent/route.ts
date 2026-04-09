@@ -84,9 +84,11 @@ export const POST = withApiErrorHandler(async (req: NextRequest) => {
         auditLogId = auditLog.id;
 
         // Phase 3: Debuggability & Inspection
+        // NOTE: Logging scrubbed intent (after PrivacyGatewayService redaction)
+        // to prevent PII leaks into the logging provider.
         logger.debug("Intent inference input", { text });
         logger.debug("Inferred intent", {
-          intent: JSON.stringify(intent, null, 2),
+          intent: JSON.stringify(auditLog.intent, null, 2),
         });
         if (plan) {
           logger.debug("Generated plan", {

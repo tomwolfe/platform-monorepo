@@ -267,6 +267,18 @@ export class TimeoutError extends Error {
  * are forwarded transparently via a minimal, symbol-safe Proxy that only
  * intercepts property access for delegation — it does NOT wrap functions
  * with timeouts, preserving Drizzle's internal behavior.
+ *
+ * IMPORTANT: Neon HTTP Driver Limitation
+ * The Neon HTTP driver is stateless — each query is an independent HTTP request.
+ * Promise.race() frees the Node.js thread on timeout, but does NOT cancel the
+ * query executing on the Neon Postgres server. This can lead to connection pool
+ * exhaustion from "zombie" queries under heavy load.
+ *
+ * Mitigation:
+ * - For transactions, use `SET LOCAL statement_timeout = '...'` inside the tx
+ *   (see apps/open-delivery/src/app/customer/actions.ts for an example).
+ * - For individual queries, configure statement_timeout at the database role level:
+ *   `ALTER ROLE your_role SET statement_timeout = '30s';`
  */
 class TimeoutDbWrapper<
   TSchema extends Record<string, unknown> = Record<string, never>,
@@ -281,6 +293,11 @@ class TimeoutDbWrapper<
 
   /**
    * Wrap a promise with a timeout using Promise.race
+   *
+   * NOTE: For the Neon HTTP driver, this rejects the Node.js promise but does
+   * NOT cancel the query on the Postgres server. If timeouts are observed,
+   * consider configuring statement_timeout at the database role level or using
+   * SET LOCAL within transactions.
    */
   #withTimeout<T>(promise: Promise<T>): Promise<T> {
     let timer: NodeJS.Timeout;

@@ -94,14 +94,23 @@ const CHAIN_REGISTRY: Record<number, ChainRpcConfig> = {
     chain: mainnet,
     key: "ethereum",
     getServerRpcUrls: () => {
-      const primary =
-        process.env.ETHEREUM_RPC_URL ||
-        "https://eth-mainnet.g.alchemy.com/v2/demo";
-      return [primary, "https://eth.llamarpc.com"];
+      const primary = process.env.ETHEREUM_RPC_URL;
+      if (!primary && process.env.NODE_ENV === "production") {
+        console.error(
+          "[web3-chains] ETHEREUM_RPC_URL is not configured in production. " +
+            "Transaction verification may fail due to rate-limited public fallbacks.",
+        );
+      }
+      const fallbackUrl = primary || "https://eth.llamarpc.com";
+      return [
+        fallbackUrl,
+        "https://cloudflare-eth.com",
+        "https://rpc.ankr.com/eth",
+      ];
     },
     getClientRpcUrl: () =>
       process.env.NEXT_PUBLIC_ETH_RPC_URL || "https://eth.llamarpc.com",
-    publicRpcUrl: "https://eth-mainnet.g.alchemy.com/v2/demo",
+    publicRpcUrl: "https://eth.llamarpc.com",
   },
 };
 

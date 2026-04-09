@@ -13,7 +13,7 @@ import {
 import { parseEther, formatEther, type Address } from "viem";
 import { base } from "viem/chains";
 import { ESCROW_ABI } from "@repo/shared/utils/escrow-abi";
-import { withCronAuth, Logger, withRedlock } from "@repo/shared";
+import { withCronAuth, Logger, withDistributedLock } from "@repo/shared";
 import { withServerlessTimeout } from "@repo/shared/middleware/serverless-timeout";
 import {
   getEscrowResolverWalletClient,
@@ -653,17 +653,17 @@ async function postCronHandler(req: NextRequest) {
 export const GET = withServerlessTimeout(
   withCronAuth(async (req: NextRequest) => {
     const lockKey = "cron:open-delivery:payouts";
-    const lockValidityMs = 120000; // 2 minutes for payout processing
+    const lockTtlSeconds = 120; // 2 minutes for payout processing
 
     try {
-      return await withRedlock(lockKey, lockValidityMs, async () =>
+      return await withDistributedLock(lockKey, lockTtlSeconds, async () =>
         getCronHandler(req),
       );
     } catch (error) {
       // If lock acquisition fails, return 200 OK to indicate graceful skip
       if (
         error instanceof Error &&
-        error.message.includes("Failed to acquire redlock")
+        error.message.includes("Failed to acquire distributed lock")
       ) {
         logger.info("Payout cron skipped - another instance is running");
         return NextResponse.json({
@@ -681,17 +681,17 @@ export const GET = withServerlessTimeout(
 export const POST = withServerlessTimeout(
   withCronAuth(async (req: NextRequest) => {
     const lockKey = "cron:open-delivery:payouts";
-    const lockValidityMs = 120000; // 2 minutes for payout processing
+    const lockTtlSeconds = 120; // 2 minutes for payout processing
 
     try {
-      return await withRedlock(lockKey, lockValidityMs, async () =>
+      return await withDistributedLock(lockKey, lockTtlSeconds, async () =>
         postCronHandler(req),
       );
     } catch (error) {
       // If lock acquisition fails, return 200 OK to indicate graceful skip
       if (
         error instanceof Error &&
-        error.message.includes("Failed to acquire redlock")
+        error.message.includes("Failed to acquire distributed lock")
       ) {
         logger.info("Payout cron skipped - another instance is running");
         return NextResponse.json({

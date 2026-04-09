@@ -5,7 +5,7 @@ import {
   withApiErrorHandler,
   withCronAuth,
   Logger,
-  withRedlock,
+  withDistributedLock,
 } from "@repo/shared";
 import { verifyTransaction } from "@repo/shared/utils/web3-verification";
 import { type Address } from "viem";
@@ -274,17 +274,17 @@ async function getHandler(req: NextRequest) {
 export const POST = withCronAuth(
   withApiErrorHandler(async (req: NextRequest) => {
     const lockKey = "cron:open-delivery:verify-pending";
-    const lockValidityMs = 120000; // 2 minutes for batch processing
+    const lockTtlSeconds = 120; // 2 minutes for batch processing
 
     try {
-      return await withRedlock(lockKey, lockValidityMs, async () =>
+      return await withDistributedLock(lockKey, lockTtlSeconds, async () =>
         postHandler(req),
       );
     } catch (error) {
       // If lock acquisition fails, return 200 OK to indicate graceful skip
       if (
         error instanceof Error &&
-        error.message.includes("Failed to acquire redlock")
+        error.message.includes("Failed to acquire distributed lock")
       ) {
         logger.info(
           "Verify-pending cron skipped - another instance is running",

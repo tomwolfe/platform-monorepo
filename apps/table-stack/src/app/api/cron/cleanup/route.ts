@@ -6,7 +6,7 @@ import {
   Logger,
   getRedisClient,
   ServiceNamespace,
-  withRedlock,
+  withDistributedLock,
 } from "@repo/shared";
 
 export const runtime = "nodejs";
@@ -91,17 +91,17 @@ async function getCronHandler(req: NextRequest) {
 // Wrap handler with cron authentication and distributed lock
 export const GET = withCronAuth(async (req: NextRequest) => {
   const lockKey = "cron:table-stack:cleanup";
-  const lockValidityMs = 60000; // 1 minute should be enough for cleanup
+  const lockTtlSeconds = 60; // 60 seconds should be enough for cleanup
 
   try {
-    return await withRedlock(lockKey, lockValidityMs, async () =>
+    return await withDistributedLock(lockKey, lockTtlSeconds, async () =>
       getCronHandler(req),
     );
   } catch (error) {
     // If lock acquisition fails, return 200 OK to indicate graceful skip
     if (
       error instanceof Error &&
-      error.message.includes("Failed to acquire redlock")
+      error.message.includes("Failed to acquire distributed lock")
     ) {
       logger.info("Cleanup cron skipped - another instance is running");
       return NextResponse.json({

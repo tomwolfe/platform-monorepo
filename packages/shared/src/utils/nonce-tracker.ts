@@ -142,3 +142,99 @@ export async function resetNonce(
     throw error;
   }
 }
+
+/**
+ * Sync the nonce tracker with the on-chain nonce for a chain + address.
+ *
+ * Use this when:
+ * - A "nonce too low" error is caught (indicates nonce drift)
+ * - The last transaction was > 5 minutes ago (stale tracker)
+ * - After manual blockchain transactions outside this system
+ *
+ * @param chainId - Blockchain chain ID
+ * @param address - Wallet address
+ * @param publicClient - Viem PublicClient for on-chain nonce queries
+ * @returns The current on-chain nonce
+ */
+export async function syncNonceFromChain(
+  chainId: number,
+  address: string,
+  publicClient: PublicClient,
+): Promise<number> {
+  const key = `nonce:${chainId}:${address.toLowerCase()}`;
+  const redis = getRedisClient(ServiceNamespace.SHARED);
+
+  try {
+    const onChainNonce = await publicClient.getTransactionCount({
+      address: address as `0x${string}`,
+      blockTag: "pending",
+    });
+
+    // Reset the Redis nonce tracker to the on-chain value
+    // This ensures the next getNextNonce call will start from the correct value
+    await redis.set(key, String(onChainNonce), { ex: NONCE_TTL });
+
+    logger.info("NonceTracker.syncedFromChain", {
+      chainId,
+      address: address.toLowerCase(),
+      onChainNonce,
+    });
+
+    return onChainNonce;
+  } catch (error) {
+    logger.error("NonceTracker.syncNonceFromChain failed", {
+      chainId,
+      address: address.toLowerCase(),
+      error,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Check if the nonce tracker is potentially stale.
+ * Returns true if the tracker hasn't been updated recently or if the
+ * on-chain nonce differs significantly from the tracked nonce.
+ *
+ * @param chainId - Blockchain chain ID
+ * @param address - Wallet address
+ * @param publicClient - Viem PublicClient
+ * @param staleThresholdMinutes - Minutes since last considered fresh (default: 5)
+ * @returns Object with sync status and recommendations
+ */
+export async function checkNonceSyncStatus(
+  chainId: number,
+  address: string,
+  publicClient: PublicClient,
+  staleThresholdMinutes: number = 5,
+): Promise<{
+  isSynced: boolean;
+  trackedNonce: number | null;
+  onChainNonce: number;
+  needsSync: boolean;
+  reason?: string;
+}> {
+  const trackedNonce = await peekNonce(chainId, address);
+
+  const onChainNonce = await publicClient.getTransactionCount({
+    address: address as `0x${string}`,
+    blockTag: "pending",
+  });
+
+  // Check if nonce drifted (tracked > on-chain means we have pending txs)
+  const nonceDrift = trackedNonce !== null ? trackedNonce - onChainNonce : 0;
+
+  // If tracked nonce is significantly higher than on-chain,
+  // it means we have pending transactions waiting for confirmation
+  const hasPendingTransactions = nonceDrift > 0;
+
+  return {
+    isSynced: nonceDrift <= 1, // Allow 1 nonce drift for in-flight tx
+    trackedNonce,
+    onChainNonce,
+    needsSync: hasPendingTransactions && staleThresholdMinutes > 0,
+    reason: hasPendingTransactions
+      ? `${nonceDrift} pending transaction(s) waiting`
+      : undefined,
+  };
+}

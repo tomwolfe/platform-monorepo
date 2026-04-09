@@ -26,7 +26,18 @@ import {
   type PublicClient,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { getNextNonce, peekNonce, resetNonce } from "./nonce-tracker";
+import {
+  getNextNonce,
+  peekNonce,
+  resetNonce,
+  syncNonceFromChain,
+  checkNonceSyncStatus,
+} from "./nonce-tracker";
+export {
+  createTracedPublicClient,
+  getCurrentTraceId,
+  logWithTraceContext,
+} from "./web3-tracer";
 import {
   getChainConfig,
   isSupportedChain,
@@ -280,4 +291,6 @@ export const nonceManager = {
   ) => getNextNonce(chainId, address, publicClient, startNonce),
   peekNonce,
   resetNonce,
+  syncNonceFromChain,
+  checkNonceSyncStatus,
 };

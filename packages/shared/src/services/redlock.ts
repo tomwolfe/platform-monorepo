@@ -1,38 +1,23 @@
 /**
  * Redlock Algorithm - Distributed Locking with Quorum
  *
- * Problem Solved: Single-Instance Lock Vulnerability
- * - Current locking uses single-instance SETNX (vulnerable to Redis node failures)
- * - If Redis node fails or partition occurs, two lambdas may execute same step
+ * ⚠️  DEPRECATED: This implementation is deprecated and will be removed in a future release.
  *
- * Solution: Redlock Algorithm (Redis Distributed Lock)
- * - Acquire locks on multiple Redis instances (quorum-based)
- * - Requires N/2 + 1 instances to agree for lock acquisition
- * - Tolerates single node failures without split-brain
+ * Reason for Deprecation:
+ * - Redlock requires multiple independent Redis instances for proper quorum
+ * - In serverless environments (Vercel), clock skew and process termination can leave locks stale
+ * - Single Redis with Lua scripts (distributed-lock.ts) provides sufficient safety
+ *   with lower complexity and fewer failure modes
  *
- * Algorithm:
- * 1. Get current time in milliseconds
- * 2. Try to acquire lock on all N Redis instances
- * 3. Calculate elapsed time, check if lock was acquired within validity
- * 4. If acquired on >= N/2 + 1 instances, lock is valid
- * 5. Extend/release requires same quorum
+ * Migration Path:
+ * - Replace `withRedlock(key, validityMs, fn)` with `withDistributedLock(key, ttlSeconds, fn)`
+ * - Replace `createRedlock(options)` with direct usage of `acquireDistributedLock` / `releaseDistributedLock`
  *
- * Usage:
- * ```typescript
- * const redlock = createRedlock({
- *   resources: [redis1, redis2, redis3],
- *   quorum: 2, // N/2 + 1
- *   retryCount: 3,
- * });
+ * The new implementation in `packages/shared/src/services/distributed-lock.ts` uses
+ * Redis Lua scripts for atomicity, which is simpler, more reliable, and better suited
+ * for serverless deployments.
  *
- * const lock = await redlock.acquire('exec:123:lock', 30000);
- * try {
- *   // Critical section
- * } finally {
- *   await lock.release();
- * }
- * ```
- *
+ * @deprecated Use `withDistributedLock` from './distributed-lock' instead
  * @package @repo/shared
  * @since 1.0.0
  */

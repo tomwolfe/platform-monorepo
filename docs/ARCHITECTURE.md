@@ -76,7 +76,7 @@ graph TB
 - Circuit breakers per tool with automatic failure detection
 - Dead Letter Queue (DLQ) for failed task recovery
 - Optimistic Concurrency Control (OCC) via Redis Lua scripts
-- Redlock distributed locks for saga orchestration
+- Distributed locks via Redis Lua scripts (simple, serverless-safe)
 - Structured LLM observability with prompt versioning and fallback routing
 
 ### Table Stack
@@ -255,11 +255,11 @@ Implementation: packages/shared/src/utils/nonce-tracker.ts
 
 ### Redis (Upstash)
 
-| Attribute      | Value                                                                                           |
-| -------------- | ----------------------------------------------------------------------------------------------- |
-| **Provider**   | Upstash                                                                                         |
-| **Namespaces** | IE, OD, TS, SHARED                                                                              |
-| **Uses**       | OCC, task queues, caching, Redlock distributed locks, memory store, idempotency, nonce tracking |
+| Attribute      | Value                                                                                                 |
+| -------------- | ----------------------------------------------------------------------------------------------------- |
+| **Provider**   | Upstash                                                                                               |
+| **Namespaces** | IE, OD, TS, SHARED                                                                                    |
+| **Uses**       | OCC, task queues, caching, distributed locks (Lua scripts), memory store, idempotency, nonce tracking |
 
 **Key Patterns:**
 
@@ -304,7 +304,7 @@ Implementation: packages/shared/src/utils/nonce-tracker.ts
 | **API Security**   | Prompt injection detection, HMAC-signed webhooks    |
 | **Web3**           | EIP-712 typed data signing, nonce tracking          |
 | **Idempotency**    | Redis-backed idempotency keys                       |
-| **Concurrency**    | OCC + Redlock distributed locks                     |
+| **Concurrency**    | OCC + distributed locks via Redis Lua scripts       |
 | **Serverless**     | Timeout middleware (8s cutoff for 10s Vercel limit) |
 
 ## CI/CD Pipeline

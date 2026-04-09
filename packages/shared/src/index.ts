@@ -180,7 +180,19 @@ export {
   withCacheMiddleware,
   type CacheConfig,
 } from "./middleware/cache-middleware";
+// ⚠️  withRedlock is DEPRECATED - use withDistributedLock instead
 export { withRedlock } from "./services/redlock";
+// New unified locking strategy (replaces Redlock)
+export {
+  withDistributedLock,
+  acquireDistributedLock,
+  releaseDistributedLock,
+  getLockInfo,
+  withDistributedLockLegacyCompat,
+  type DistributedLockOptions,
+  type LockResult,
+  type LockInfo,
+} from "./services/distributed-lock";
 export {
   isReplayAllowed,
   rollbackReplayGuard,

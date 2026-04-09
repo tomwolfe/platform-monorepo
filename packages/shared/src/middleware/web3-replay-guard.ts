@@ -2,16 +2,17 @@
  * Global Replay Guard Middleware
  *
  * Purpose: Prevent replay attacks across all Web3-enabled services
- * 
+ *
  * Problem Solved: Cross-Service Replay Vulnerability
  * - Without a unified check, an attacker could use one transaction hash to "pay" for multiple services
  * - Example: Use the same txHash to pay for both a reservation (table-stack) and delivery (open-delivery)
- * 
+ *
  * Solution: Universal Replay Guard
  * - Single source of truth: processed_crypto_transactions table
  * - Check BEFORE any tool logic is initialized
  * - Works for both open-delivery and table-stack
  * - Returns explicit error with details about original processing
+ * - IP-based rate limiting and fraud detection (5 attempts/minute → 1hr ban)
  *
  * Usage in API routes:
  * ```typescript
@@ -20,11 +21,11 @@
  *   txHash: '0x...',
  *   appSource: 'open-delivery', // or 'table-stack'
  * });
- * 
+ *
  * if (!replayGuard.allowed) {
  *   return NextResponse.json({ error: replayGuard.error }, { status: 409 });
  * }
- * 
+ *
  * // Continue with tool logic...
  * ```
  *
@@ -33,7 +34,7 @@
  * // Before executing any crypto-related tool
  * const guard = await createReplayGuardMiddleware();
  * const result = await guard.check(txHash, 'open-delivery');
- * 
+ *
  * if (!result.allowed) {
  *   throw new Error(`Transaction already processed: ${result.error}`);
  * }
@@ -45,6 +46,19 @@
 import { getDb, processed_crypto_transactions, eq } from "@repo/database";
 import type { Hash } from "viem";
 import { getRedisClient, ServiceNamespace } from "../redis";
+import { Logger } from "../logger";
+
+const replayLogger = new Logger({ serviceName: "replay-guard" });
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+const REPLAY_ATTEMPT_WINDOW_SECONDS = 60; // 1 minute window for attempt tracking
+const MAX_REPLAY_ATTEMPTS = 5; // Max attempts before IP ban
+const IP_BAN_DURATION_SECONDS = 3600; // 1 hour IP ban
+const REPLAY_ATTEMPT_KEY_PREFIX = "replay_attempts";
+const IP_BAN_KEY_PREFIX = "ip_banned";
 
 // ============================================================================
 // TYPES
@@ -57,6 +71,8 @@ export interface ReplayGuardCheck {
   appSource: string;
   /** Optional entity ID for additional context */
   entityId?: string;
+  /** Optional IP address for rate limiting and fraud detection */
+  ipAddress?: string;
 }
 
 export interface ReplayGuardResult {
@@ -71,6 +87,12 @@ export interface ReplayGuardResult {
     entityId: string;
     createdAt: Date;
   };
+  /** Whether this request appears suspicious (multiple replay attempts) */
+  isSuspicious?: boolean;
+  /** Number of replay attempts detected from this IP */
+  replayAttemptCount?: number;
+  /** Whether the IP is currently banned */
+  isIpBanned?: boolean;
 }
 
 export interface ReplayGuardMiddleware {
@@ -100,6 +122,100 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
    */
   private getRedisKey(txHash: string): string {
     return `replay_guard:${txHash}`;
+  }
+
+  /**
+   * Redis key for replay attempt tracking
+   * Format: replay_attempts:{txHash}:{ipAddress}
+   */
+  private getReplayAttemptKey(txHash: string, ipAddress: string): string {
+    return `${REPLAY_ATTEMPT_KEY_PREFIX}:${txHash}:${ipAddress}`;
+  }
+
+  /**
+   * Redis key for IP ban tracking
+   */
+  private getIpBanKey(ipAddress: string): string {
+    return `${IP_BAN_KEY_PREFIX}:${ipAddress}`;
+  }
+
+  /**
+   * Check if an IP address is currently banned
+   */
+  async isIpBanned(ipAddress: string): Promise<boolean> {
+    try {
+      const banned = await this.redis.exists(this.getIpBanKey(ipAddress));
+      return banned === 1;
+    } catch (error) {
+      replayLogger.warn(
+        "[ReplayGuard] Redis unavailable for IP ban check:",
+        error,
+      );
+      return false; // Fail open - allow request if Redis is down
+    }
+  }
+
+  /**
+   * Ban an IP address temporarily
+   */
+  private async banIp(ipAddress: string): Promise<void> {
+    try {
+      await this.redis.setex(
+        this.getIpBanKey(ipAddress),
+        IP_BAN_DURATION_SECONDS,
+        "1",
+      );
+      replayLogger.warn({
+        message: "[ReplayGuard] IP address banned",
+        ipAddress,
+        banDurationSeconds: IP_BAN_DURATION_SECONDS,
+      });
+    } catch (error) {
+      replayLogger.error("[ReplayGuard] Failed to ban IP address:", error);
+    }
+  }
+
+  /**
+   * Increment replay attempt counter and check if threshold exceeded
+   */
+  private async trackReplayAttempt(
+    txHash: string,
+    ipAddress: string,
+  ): Promise<{ attemptCount: number; shouldBan: boolean }> {
+    const key = this.getReplayAttemptKey(txHash, ipAddress);
+
+    try {
+      // Atomic increment with TTL
+      const LuaIncrementScript = `
+        local key = KEYS[1]
+        local count = redis.call("INCR", key)
+        if count == 1 then
+          redis.call("EXPIRE", key, tonumber(ARGV[1]))
+        end
+        return count
+      `;
+
+      const attemptCount = await this.redis.eval(
+        LuaIncrementScript,
+        [key],
+        [String(REPLAY_ATTEMPT_WINDOW_SECONDS)],
+      );
+
+      const count = Number(attemptCount);
+      const shouldBan = count >= MAX_REPLAY_ATTEMPTS;
+
+      if (shouldBan) {
+        await this.banIp(ipAddress);
+      }
+
+      return { attemptCount: count, shouldBan };
+    } catch (error) {
+      replayLogger.error(
+        "[ReplayGuard] Failed to track replay attempt:",
+        error,
+      );
+      return { attemptCount: 0, shouldBan: false };
+    }
   }
 
   /**
@@ -143,7 +259,7 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
    * @returns Result indicating if transaction is allowed to proceed
    */
   async check(params: ReplayGuardCheck): Promise<ReplayGuardResult> {
-    const { txHash, appSource, entityId } = params;
+    const { txHash, appSource, entityId, ipAddress } = params;
 
     if (!entityId) {
       return {
@@ -152,21 +268,38 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
       };
     }
 
+    // FRAUD DETECTION: Check if IP is banned
+    if (ipAddress) {
+      const banned = await this.isIpBanned(ipAddress);
+      if (banned) {
+        replayLogger.warn({
+          message: "[ReplayGuard] Blocked request from banned IP",
+          ipAddress,
+          txHash,
+          appSource,
+        });
+        return {
+          allowed: false,
+          error:
+            "Request blocked: IP address is temporarily banned due to suspicious activity",
+          isIpBanned: true,
+        };
+      }
+    }
+
     try {
       // ATOMIC INSERT: Try to register the transaction first
       // This eliminates the TOCTOU race condition
-      await this.db
-        .insert(processed_crypto_transactions)
-        .values({
-          txHash,
-          appSource,
-          entityId,
-        });
+      await this.db.insert(processed_crypto_transactions).values({
+        txHash,
+        appSource,
+        entityId,
+      });
 
       // Insert succeeded - transaction is now registered and allowed to proceed
       console.log(
         `[ReplayGuard] Atomically registered tx ${txHash.substring(0, 10)}... ` +
-        `for ${appSource} entity ${entityId}`
+          `for ${appSource} entity ${entityId}`,
       );
 
       // Cache in Redis for fast middleware pre-checks (24h expiration)
@@ -177,40 +310,78 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
       };
     } catch (error) {
       // Check if this is a duplicate key error (replay attack attempt)
-      const isDuplicateError = error instanceof Error && (
-        error.message.includes('duplicate key') ||
-        error.message.includes('unique constraint') ||
-        error.message.includes('23505') // Postgres unique violation SQLSTATE
-      );
+      const isDuplicateError =
+        error instanceof Error &&
+        (error.message.includes("duplicate key") ||
+          error.message.includes("unique constraint") ||
+          error.message.includes("23505")); // Postgres unique violation SQLSTATE
 
       if (isDuplicateError) {
+        // FRAUD DETECTION: Track replay attempt if IP is provided
+        let attemptCount = 0;
+        let shouldBan = false;
+
+        if (ipAddress) {
+          const attemptResult = await this.trackReplayAttempt(
+            txHash,
+            ipAddress,
+          );
+          attemptCount = attemptResult.attemptCount;
+          shouldBan = attemptResult.shouldBan;
+
+          if (attemptCount >= 2) {
+            // Log as potential fraud indicator
+            replayLogger.warn({
+              message:
+                "[ReplayGuard] Multiple replay attempts detected - potential fraud",
+              ipAddress,
+              txHash,
+              appSource,
+              attemptCount,
+              shouldBan,
+            });
+          }
+        }
+
         // Transaction already exists - look it up to provide details
         try {
-          const existingTx = await this.db.query.processed_crypto_transactions.findFirst({
-            where: eq(processed_crypto_transactions.txHash, txHash),
-          });
+          const existingTx =
+            await this.db.query.processed_crypto_transactions.findFirst({
+              where: eq(processed_crypto_transactions.txHash, txHash),
+            });
 
           return {
             allowed: false,
-            error: `Transaction already processed by ${existingTx?.appSource ?? 'unknown'} for entity ${existingTx?.entityId ?? 'unknown'} on ${existingTx?.createdAt?.toISOString() ?? 'unknown'}`,
-            existingTransaction: existingTx ? {
-              txHash: existingTx.txHash,
-              appSource: existingTx.appSource,
-              entityId: existingTx.entityId,
-              createdAt: existingTx.createdAt,
-            } : undefined,
+            error: `Transaction already processed by ${existingTx?.appSource ?? "unknown"} for entity ${existingTx?.entityId ?? "unknown"} on ${existingTx?.createdAt?.toISOString() ?? "unknown"}`,
+            existingTransaction: existingTx
+              ? {
+                  txHash: existingTx.txHash,
+                  appSource: existingTx.appSource,
+                  entityId: existingTx.entityId,
+                  createdAt: existingTx.createdAt,
+                }
+              : undefined,
+            isSuspicious: attemptCount >= 2,
+            replayAttemptCount: attemptCount,
+            isIpBanned: shouldBan,
           };
         } catch (lookupError) {
           // Fallback if lookup fails - still block as replay
           return {
             allowed: false,
             error: `Transaction already processed (replay detected)`,
+            isSuspicious: attemptCount >= 2,
+            replayAttemptCount: attemptCount,
+            isIpBanned: shouldBan,
           };
         }
       }
 
       // Other database error - fail-closed to prevent potential replay
-      console.error("[ReplayGuard] Database error during atomic replay check:", error);
+      console.error(
+        "[ReplayGuard] Database error during atomic replay check:",
+        error,
+      );
       return {
         allowed: false,
         error: `Replay guard check failed: ${error instanceof Error ? error.message : "Unknown database error"}`,
@@ -256,14 +427,12 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
         .delete(processed_crypto_transactions)
         .where(eq(processed_crypto_transactions.txHash, txHash));
 
-      console.log(
-        `[ReplayGuard] Rolled back tx ${txHash.substring(0, 10)}...`
-      );
+      console.log(`[ReplayGuard] Rolled back tx ${txHash.substring(0, 10)}...`);
     } catch (error) {
       // Log but don't throw - rollback failure is non-fatal
       console.error(
         "[ReplayGuard] Failed to rollback transaction:",
-        error instanceof Error ? error.message : String(error)
+        error instanceof Error ? error.message : String(error),
       );
     }
   }
@@ -332,18 +501,18 @@ export async function isReplayBlockedInRedis(txHash: string): Promise<boolean> {
  * ```typescript
  * export async function POST(req: NextRequest) {
  *   const guard = await createReplayGuardMiddleware();
- *   
+ *
  *   // Check before processing
  *   const result = await guard.check({
  *     txHash: '0x...',
  *     appSource: 'open-delivery',
  *     entityId: orderId,
  *   });
- *   
+ *
  *   if (!result.allowed) {
  *     return NextResponse.json({ error: result.error }, { status: 409 });
  *   }
- *   
+ *
  *   // Continue with processing...
  * }
  * ```
@@ -372,7 +541,9 @@ export async function createReplayGuardMiddleware(): Promise<ReplayGuardMiddlewa
  * // Continue processing - transaction is already registered
  * ```
  */
-export async function isReplayAllowed(params: ReplayGuardCheck): Promise<boolean> {
+export async function isReplayAllowed(
+  params: ReplayGuardCheck,
+): Promise<boolean> {
   const guard = getReplayGuard();
   const result = await guard.check(params);
   return result.allowed;
@@ -411,13 +582,13 @@ export async function rollbackReplayGuard(txHash: Hash): Promise<void> {
  *   if (request.nextUrl.pathname.startsWith('/api/checkout')) {
  *     const guard = await createReplayGuardForMiddleware();
  *     const txHash = request.headers.get('x-tx-hash');
- *     
+ *
  *     if (txHash) {
  *       const result = await guard.check({
  *         txHash: txHash as Hash,
  *         appSource: 'open-delivery',
  *       });
- *       
+ *
  *       if (!result.allowed) {
  *         return NextResponse.json(
  *           { error: result.error },
@@ -426,7 +597,7 @@ export async function rollbackReplayGuard(txHash: Hash): Promise<void> {
  *       }
  *     }
  *   }
- *   
+ *
  *   return NextResponse.next();
  * }
  * ```

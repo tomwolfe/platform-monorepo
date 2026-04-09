@@ -18,6 +18,7 @@ import {
   OutboxService,
   OutboxRelayService,
   isReplayAllowed,
+  rollbackReplayGuard,
   AppConfig,
   getRedisClient,
   ServiceNamespace,
@@ -336,10 +337,10 @@ export async function placeRealOrder(
 
   try {
     // ========================================================================
-    // REFACTORED: Use Drizzle's type-safe queries instead of raw SQL CTE.
-    // Since orderId is pre-generated via randomUUID(), we can safely use
-    // individual queries without interactive transaction concerns.
-    // The Neon HTTP driver handles each query atomically.
+    // ATOMIC TRANSACTION: All database writes are wrapped in a single
+    // transaction to ensure ACID guarantees. If the outbox event fails to
+    // write, the entire order rolls back, allowing the user to safely retry
+    // using their validated Web3 txHash.
     // ========================================================================
 
     const address = deliveryAddress;
@@ -351,97 +352,100 @@ export async function placeRealOrder(
 
     const db = getDb();
 
-    // 1. Upsert user
-    const userName =
-      `${user.firstName || "User"} ${user.lastName || ""}`.trim();
-    await db
-      .insert(users)
-      .values({
-        clerkId: user.id,
-        email: user.emailAddresses[0].emailAddress,
-        name: userName,
-        role: "shopper",
-      })
-      .onConflictDoUpdate({
-        target: users.clerkId,
-        set: {
+    const result = await db.transaction(async (tx) => {
+      // 1. Upsert user
+      const userName =
+        `${user.firstName || "User"} ${user.lastName || ""}`.trim();
+      await tx
+        .insert(users)
+        .values({
+          clerkId: user.id,
           email: user.emailAddresses[0].emailAddress,
           name: userName,
-          updatedAt: new Date(),
-        },
+          role: "shopper",
+        })
+        .onConflictDoUpdate({
+          target: users.clerkId,
+          set: {
+            email: user.emailAddresses[0].emailAddress,
+            name: userName,
+            updatedAt: new Date(),
+          },
+        });
+
+      // 2. Fetch the user ID (needed for order insertion)
+      const fetchedUser = await tx.query.users.findFirst({
+        where: eq(users.clerkId, user.id),
+        columns: { id: true },
       });
 
-    // 2. Fetch the user ID (needed for order insertion)
-    const fetchedUser = await db.query.users.findFirst({
-      where: eq(users.clerkId, user.id),
-      columns: { id: true },
-    });
+      if (!fetchedUser) {
+        throw new Error("Failed to resolve user record after upsert.");
+      }
 
-    if (!fetchedUser) {
-      throw new Error("Failed to resolve user record after upsert.");
-    }
+      // 3. Insert order
+      await tx.insert(orders).values({
+        id: orderId,
+        userId: fetchedUser.id,
+        storeId: vendorId,
+        status: "pending_verification",
+        subtotal: subtotalCrypto,
+        tip: tipCrypto,
+        total: totalCrypto,
+        deliveryAddress: address,
+        pickupAddress: restaurant.address || "Restaurant Location",
+        paymentTxHash: paymentParams?.txHash || null,
+        walletAddress: paymentParams?.walletAddress || null,
+        paymentCurrency: paymentCurrency,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
 
-    // 3. Insert order
-    // Payment hash duplicate check is handled by the unique constraint on paymentTxHash
-    await db.insert(orders).values({
-      id: orderId,
-      userId: fetchedUser.id,
-      storeId: vendorId,
-      status: "pending_verification",
-      subtotal: subtotalCrypto,
-      tip: tipCrypto,
-      total: totalCrypto,
-      deliveryAddress: address,
-      pickupAddress: restaurant.address || "Restaurant Location",
-      paymentTxHash: paymentParams?.txHash || null,
-      walletAddress: paymentParams?.walletAddress || null,
-      paymentCurrency: paymentCurrency,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    // 4. Insert order items
-    if (items.length > 0) {
-      await db.insert(orderItems).values(
-        items.map((item) => ({
-          orderId,
-          name: item.name,
-          quantity: item.quantity,
-          price: item.price,
-          createdAt: new Date(),
-        })),
-      );
-    }
-
-    // 5. Write outbox event
-    await db.insert(outbox).values({
-      eventType: "WORKFLOW_STATE_CHANGED",
-      payload: {
-        executionId: orderId,
-        timestamp: new Date().toISOString(),
-        eventType: "delivery.intent_created",
-        channel: "nervous-system:updates",
-        data: {
-          orderId: orderId,
-          fulfillmentId: orderId,
-          pickupAddress: address,
-          deliveryAddress: address,
-          price: totalCrypto,
-          priority: "standard",
-          items: items.map((item) => ({
+      // 4. Insert order items
+      if (items.length > 0) {
+        await tx.insert(orderItems).values(
+          items.map((item) => ({
+            orderId,
             name: item.name,
             quantity: item.quantity,
             price: item.price,
+            createdAt: new Date(),
           })),
-          payment: {
-            txHash: paymentParams?.txHash,
-            currency: paymentCurrency,
-            walletAddress: paymentParams?.walletAddress,
+        );
+      }
+
+      // 5. Write outbox event (MUST succeed for dispatch to work)
+      await tx.insert(outbox).values({
+        eventType: "WORKFLOW_STATE_CHANGED",
+        payload: {
+          executionId: orderId,
+          timestamp: new Date().toISOString(),
+          eventType: "delivery.intent_created",
+          channel: "nervous-system:updates",
+          data: {
+            orderId: orderId,
+            fulfillmentId: orderId,
+            pickupAddress: address,
+            deliveryAddress: address,
+            price: totalCrypto,
+            priority: "standard",
+            items: items.map((item) => ({
+              name: item.name,
+              quantity: item.quantity,
+              price: item.price,
+            })),
+            payment: {
+              txHash: paymentParams?.txHash,
+              currency: paymentCurrency,
+              walletAddress: paymentParams?.walletAddress,
+            },
           },
         },
-      },
-      status: "pending",
-      createdAt: new Date(),
+        status: "pending",
+        createdAt: new Date(),
+      });
+
+      return fetchedUser;
     });
 
     // Trigger the outbox relay AFTER the transaction commits.
@@ -469,9 +473,10 @@ export async function placeRealOrder(
     };
   } catch (error) {
     // ========================================================================
-    // CRITICAL FIX: If the DB fails AFTER on-chain payment was verified,
-    // we MUST NOT rollback the replay guard. The funds are already captured
-    // by the escrow contract. Instead, route to a DLQ for manual reconciliation.
+    // COMPENSATING ACTION: The DB transaction rolled back, but the replay guard
+    // registration (isReplayAllowed) was committed BEFORE the transaction.
+    // Since funds were captured by the escrow contract, we MUST NOT rollback
+    // the replay guard. Instead, route to a DLQ for manual reconciliation.
     // ========================================================================
     if (paymentParams?.txHash) {
       logger.error(

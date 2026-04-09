@@ -101,10 +101,14 @@ export class OutboxService {
       ? new Date(now.getTime() + event.expiresInSeconds * 1000)
       : new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days default
 
+    // Extract executionId from payload for top-level column indexing
+    const executionId = event.payload.executionId || null;
+
     // Insert outbox record within the transaction
     await tx.insert(outbox).values({
       id: eventId,
       eventType: event.eventType,
+      executionId,
       payload: event.payload,
       status: "pending",
       attempts: 0,
@@ -198,6 +202,7 @@ export class OutboxService {
           await db.insert(outboxDlq).values({
             id: crypto.randomUUID(),
             originalEventId: event.id,
+            executionId: (event.payload as any).executionId || null,
             eventType: event.eventType,
             payload: event.payload,
             status: "failed",
@@ -309,11 +314,10 @@ export class OutboxService {
     limit: number = 10,
   ): Promise<OutboxEvent[]> {
     const db = getDb();
-    // Note: This requires querying JSONB payload - in production, consider adding execution_id column
     const events = await db
       .select()
       .from(outbox)
-      .where(sql`${outbox.payload}->>'executionId' = ${executionId}`)
+      .where(eq(outbox.executionId, executionId as any))
       .orderBy(outbox.createdAt)
       .limit(limit);
 

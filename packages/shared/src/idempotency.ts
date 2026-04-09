@@ -87,7 +87,20 @@ export class IdempotencyService {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, value]) => [key, this.normalizeValue(value)]);
 
-    const sortedParams = JSON.stringify(causalComponents);
+    // CRITICAL: Enforce strict alphabetical sorting of top-level keys
+    // to guarantee deterministic hash output regardless of insertion order.
+    // V8's JSON.stringify uses property insertion order, which can lead
+    // to unpredictable cache misses.
+    const sortedKeys = Object.keys(causalComponents).sort((a, b) =>
+      a.localeCompare(b),
+    );
+    const sortedComponents: Record<string, unknown> = {};
+    for (const key of sortedKeys) {
+      sortedComponents[key] =
+        causalComponents[key as keyof typeof causalComponents];
+    }
+
+    const sortedParams = JSON.stringify(sortedComponents);
 
     // Use Web Crypto API for Edge Runtime compatibility
     const encoder = new TextEncoder();

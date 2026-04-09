@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, eq, lt, and } from "@repo/database";
-import { restaurantReservations, restaurantTables } from "@repo/database";
+import {
+  restaurantReservations,
+  restaurantTables,
+  outboxDlq,
+} from "@repo/database";
 import {
   withCronAuth,
   Logger,
@@ -70,12 +74,20 @@ async function getCronHandler(req: NextRequest) {
       });
     }
 
+    // 4. Clean up expired DLQ (Dead Letter Queue) records older than 30 days
+    // Prevents permanent database bloat from high failure volumes
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const deletedDlqRecords = await getDb()
+      .delete(outboxDlq)
+      .where(lt(outboxDlq.dlqCreatedAt, thirtyDaysAgo));
+
     return NextResponse.json({
       message: "Cleanup successful",
       timestamp: new Date().toISOString(),
       expiredReservationsRemoved: deletedReservations.rowCount,
       dirtyTablesCleaned: cleanedTables.rowCount,
       orphanedConfirmationsRemoved,
+      dlqRecordsRemoved: deletedDlqRecords.rowCount,
     });
   } catch (error) {
     logger.error("Cleanup failed", {

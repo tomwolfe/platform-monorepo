@@ -90,6 +90,14 @@ export class ResendEmailProvider implements ICommunicationProvider {
   constructor() {
     this.apiKey = AppConfig.getResendApiKey();
     this.fromAddress = process.env.EMAIL_FROM || "onboarding@resend.dev";
+
+    // Fail-closed: Throw immediately if API key is missing in production
+    if (AppConfig.isProduction() && !this.apiKey) {
+      throw new Error(
+        "ResendEmailProvider: RESEND_API_KEY is not configured in production. " +
+          "Email communications will fail. Set the RESEND_API_KEY environment variable.",
+      );
+    }
   }
 
   getProviderName(): string {
@@ -171,6 +179,20 @@ export class TwilioSmsProvider implements ICommunicationProvider {
     this.accountSid = process.env.TWILIO_ACCOUNT_SID;
     this.authToken = process.env.TWILIO_AUTH_TOKEN;
     this.fromNumber = process.env.TWILIO_PHONE_NUMBER;
+
+    // Fail-closed: Throw immediately if credentials are missing in production
+    if (AppConfig.isProduction()) {
+      const missing: string[] = [];
+      if (!this.accountSid) missing.push("TWILIO_ACCOUNT_SID");
+      if (!this.authToken) missing.push("TWILIO_AUTH_TOKEN");
+      if (!this.fromNumber) missing.push("TWILIO_PHONE_NUMBER");
+      if (missing.length > 0) {
+        throw new Error(
+          `TwilioSmsProvider: Required environment variables are not configured in production. Missing: ${missing.join(", ")}. ` +
+            `SMS communications will fail. Set the missing environment variables.`,
+        );
+      }
+    }
   }
 
   getProviderName(): string {

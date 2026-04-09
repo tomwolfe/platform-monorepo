@@ -97,7 +97,7 @@
       "prettier --write"
     ],
     "packages/database/src/schema/**/*.ts": [
-      "pnpm db:check"
+      "bash scripts/db-check.sh"
     ]
   },
   "dependencies": {

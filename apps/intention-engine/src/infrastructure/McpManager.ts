@@ -165,17 +165,16 @@ export class McpManager {
 
       // Check if tool name matches a known tool in AllToolsMap
       if (this.isKnownTool(name)) {
-        validatedArgs = validateToolParams(
-          name as keyof AllToolsMap,
-          args,
-        ) as Record<string, unknown>;
+        const knownToolName = name as keyof AllToolsMap;
+        const validationResult = validateToolParams(knownToolName, args);
+        validatedArgs = validationResult as Record<string, unknown>;
       } else {
         // For dynamic/unknown tools, use JSON Schema to Zod conversion
         const schema =
           tool.inputSchema ||
           McpAdapter.parametersToInputSchema(tool.parameters || []);
         const zodSchema = mapJsonSchemaToZod(schema);
-        validatedArgs = zodSchema.parse(args);
+        validatedArgs = zodSchema.parse(args) as Record<string, unknown>;
       }
 
       const result = await tool.execute(validatedArgs);

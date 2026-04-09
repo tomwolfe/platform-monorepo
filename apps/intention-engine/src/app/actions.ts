@@ -39,9 +39,22 @@ export const getPlanWithAvoidance = withServerActionHandler(
 /**
  * Multi-Provider LLM Routing
  * Routes ANALYSIS intents to OpenAI, all others to GLM-4
+ * Supports optional fallback provider for resilience.
  */
 export const getProvider = withServerActionHandler(
-  async (intentType: string) => {
+  async (intentType: string, options?: { useFallback?: boolean }) => {
+    const { useFallback = false } = options ?? {};
+
+    if (useFallback) {
+      const fallbackModel = process.env.LLM_FALLBACK_MODEL || "gpt-4o-mini";
+      return {
+        provider: "openai-fallback",
+        apiKey: process.env.OPENAI_API_KEY || process.env.LLM_API_KEY,
+        model: fallbackModel,
+        baseUrl: "https://api.openai.com/v1",
+      };
+    }
+
     // Phase 3: Multi-Provider Support
     // Use GLM-4 for 'search' and 'booking' intents, but route 'analysis' intents to OpenAI.
     if (intentType === "ANALYSIS") {

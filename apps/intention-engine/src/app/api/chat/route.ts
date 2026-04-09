@@ -514,39 +514,128 @@ export const POST = withApiErrorHandler(async (req: Request) => {
     baseURL: providerConfig.baseUrl,
   });
 
-  const result = streamText({
-    model: customProvider.chat(providerConfig.model),
-    messages: coreMessages,
-    system: systemPrompt,
-    tools: allTools,
-    stopWhen: stepCountIs(5),
-    onFinish: async (event) => {
-      const totalLatency = Date.now() - startTime;
-      try {
-        await updateAuditLog(auditLogId, {
-          final_outcome: event.text,
-          inferenceLatencies: {
-            total: totalLatency,
-          },
-        });
+  // LLM FALLBACK ROUTING: If the primary provider fails (5xx/timeout),
+  // fall back to the configured fallback model to maintain availability.
+  let result: ReturnType<typeof streamText>;
 
-        // Contextual Memory: Save the interaction context for future pronoun resolution
-        if (userId) {
-          const { saveInteractionContextByClerkId, saveInteractionContext } =
-            await import("@/lib/intent");
-          if (clerkId) {
-            await saveInteractionContextByClerkId(clerkId, intent, auditLogId);
-          } else if (userIp !== "anonymous") {
-            await saveInteractionContext(userIp, intent, auditLogId);
+  try {
+    result = streamText({
+      model: customProvider.chat(providerConfig.model),
+      messages: coreMessages,
+      system: systemPrompt,
+      tools: allTools,
+      stopWhen: stepCountIs(5),
+      onFinish: async (event) => {
+        const totalLatency = Date.now() - startTime;
+        try {
+          await updateAuditLog(auditLogId, {
+            final_outcome: event.text,
+            inferenceLatencies: {
+              total: totalLatency,
+            },
+          });
+
+          // Contextual Memory: Save the interaction context for future pronoun resolution
+          if (userId) {
+            const { saveInteractionContextByClerkId, saveInteractionContext } =
+              await import("@/lib/intent");
+            if (clerkId) {
+              await saveInteractionContextByClerkId(
+                clerkId,
+                intent,
+                auditLogId,
+              );
+            } else if (userIp !== "anonymous") {
+              await saveInteractionContext(userIp, intent, auditLogId);
+            }
           }
+        } catch (err) {
+          logger.error("Failed to update final audit log", {
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
-      } catch (err) {
-        logger.error("Failed to update final audit log", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    },
-  });
+      },
+    });
+  } catch (error: unknown) {
+    const isServerError =
+      error instanceof Error &&
+      (error.message.includes("5") ||
+        error.message.includes("timeout") ||
+        error.message.includes("ETIMEDOUT") ||
+        error.message.includes("ECONNREFUSED"));
+
+    if (!isServerError) {
+      throw error;
+    }
+
+    const fallbackModel = process.env.LLM_FALLBACK_MODEL;
+    if (!fallbackModel) {
+      logger.error("Primary LLM failed and no fallback model configured", {
+        error: error instanceof Error ? error.message : String(error),
+        primaryModel: providerConfig.model,
+        intentType: intent.type,
+      });
+      throw error;
+    }
+
+    logger.warn("Primary LLM failed, engaging fallback provider", {
+      error: error instanceof Error ? error.message : String(error),
+      primaryModel: providerConfig.model,
+      fallbackModel,
+      intentType: intent.type,
+    });
+
+    const fallbackProviderConfig = await getProvider(intent.type, {
+      useFallback: true,
+    });
+    const fallbackProvider = createOpenAI({
+      apiKey: fallbackProviderConfig.apiKey,
+      baseURL: fallbackProviderConfig.baseUrl,
+    });
+
+    result = streamText({
+      model: fallbackProvider.chat(fallbackProviderConfig.model),
+      messages: coreMessages,
+      system: `[SERVICE DEGRADED - Using fallback model: ${fallbackModel}]\n\n${systemPrompt}`,
+      tools: allTools,
+      stopWhen: stepCountIs(5),
+      onFinish: async (event) => {
+        const totalLatency = Date.now() - startTime;
+        try {
+          await updateAuditLog(auditLogId, {
+            final_outcome: event.text,
+            inferenceLatencies: {
+              total: totalLatency,
+            },
+            metadata: {
+              fallbackEngaged: true,
+              primaryModel: providerConfig.model,
+              fallbackModel,
+            },
+          });
+
+          // Contextual Memory: Save the interaction context for future pronoun resolution
+          if (userId) {
+            const { saveInteractionContextByClerkId, saveInteractionContext } =
+              await import("@/lib/intent");
+            if (clerkId) {
+              await saveInteractionContextByClerkId(
+                clerkId,
+                intent,
+                auditLogId,
+              );
+            } else if (userIp !== "anonymous") {
+              await saveInteractionContext(userIp, intent, auditLogId);
+            }
+          }
+        } catch (err) {
+          logger.error("Failed to update final audit log after fallback", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      },
+    });
+  }
 
   return result.toUIMessageStreamResponse({
     originalMessages: messages,

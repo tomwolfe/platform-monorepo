@@ -36,7 +36,7 @@ export const IntentSchema = z.object({
   parent_intent_id: z.string().uuid().optional(), // Link to the intent this one supersedes
   type: IntentTypeSchema,
   confidence: z.number().min(0).max(1),
-  parameters: z.record(z.string(), z.any()),
+  parameters: z.record(z.string(), z.unknown()),
   rawText: z.string(),
   explanation: z.string().optional(), // Why this intent was chosen
   hash: z.string().optional(), // SHA-256 hash for immutable linking
@@ -64,16 +64,18 @@ export const StepSchema = z.object({
   step_number: z.number().int().nonnegative(),
   tool_name: z.string(),
   tool_version: z.string().optional(),
-  parameters: z.record(z.string(), z.any()),
+  parameters: z.record(z.string(), z.unknown()),
   dependencies: z.array(z.string().uuid()).default([]),
   description: z.string(),
   requires_confirmation: z.boolean().default(false),
   timeout_ms: z.number().int().positive().default(30000),
   estimated_tokens: z.number().int().nonnegative().optional(),
-  retry_policy: z.object({
-    max_attempts: z.number().int().positive().default(1),
-    backoff_ms: z.number().int().nonnegative().default(1000),
-  }).optional(),
+  retry_policy: z
+    .object({
+      max_attempts: z.number().int().positive().default(1),
+      backoff_ms: z.number().int().nonnegative().default(1000),
+    })
+    .optional(),
 });
 
 export const PlanConstraintsSchema = z.object({

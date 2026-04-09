@@ -9,12 +9,13 @@ import {
 } from "viem";
 import { base } from "viem/chains";
 import { ESCROW_ABI } from "@repo/shared/utils/escrow-abi";
-import { withCronAuth, QStashService } from "@repo/shared";
+import { withCronAuth, QStashService, Logger } from "@repo/shared";
 import { trace, Span, SpanStatusCode } from "@opentelemetry/api";
 
 export const maxDuration = 10; // Vercel Hobby limit
 
 const tracer = trace.getTracer("open-delivery-payouts-cron");
+const logger = new Logger({ serviceName: "open-delivery-verify-payouts" });
 
 // SERVERLESS RESILIENCE: Reduced from 50 to 15 to stay within Vercel's 10s limit.
 // If more than 15 orders exist, a QStash self-trigger recursively processes the rest.
@@ -55,7 +56,10 @@ async function getCronHandler(req: NextRequest) {
         span.setAttribute("http.request.trace_id", traceId);
       }
 
-      console.log("[Verify Payouts Cron] Starting tip release verification...");
+      logger.info(
+        "[Verify Payouts Cron] Starting tip release verification...",
+        { traceId },
+      );
 
       // Get database connection
       const database = getDb();
@@ -105,16 +109,20 @@ async function getCronHandler(req: NextRequest) {
             ...(traceId ? { "x-trace-id": traceId } : {}),
           },
         }).catch((err) => {
-          console.warn(
-            "[Verify Payouts Cron] Failed to schedule QStash self-trigger for remaining orders:",
-            err instanceof Error ? err.message : String(err),
+          logger.warn(
+            "[Verify Payouts Cron] Failed to schedule QStash self-trigger for remaining orders",
+            {
+              error: err instanceof Error ? err.message : String(err),
+              traceId,
+            },
           );
         });
       }
 
       span.setAttribute("cron.released_orders_found", releasedOrders.length);
-      console.log(
+      logger.info(
         `[Verify Payouts Cron] Found ${releasedOrders.length} tip releases to verify`,
+        { traceId },
       );
 
       // RPC URLs with fallbacks for resilience
@@ -146,8 +154,9 @@ async function getCronHandler(req: NextRequest) {
       // Process in batches
       for (let i = 0; i < releasedOrders.length; i += BATCH_SIZE) {
         const batch = releasedOrders.slice(i, i + BATCH_SIZE);
-        console.log(
+        logger.info(
           `[Verify Payouts Cron] Processing batch ${Math.floor(i / BATCH_SIZE) + 1} (${batch.length} tip releases)`,
+          { traceId },
         );
 
         const batchPromises = batch.map(
@@ -195,8 +204,13 @@ async function getCronHandler(req: NextRequest) {
                           driver.toLowerCase() !==
                           order.driverWalletAddress.toLowerCase()
                         ) {
-                          console.error(
-                            `[Verify Payouts Cron] Driver mismatch for order ${order.id}: expected ${order.driverWalletAddress}, got ${driver}`,
+                          logger.error(
+                            `[Verify Payouts Cron] Driver mismatch for order ${order.id}`,
+                            {
+                              expected: order.driverWalletAddress,
+                              got: driver,
+                              orderId: order.id,
+                            },
                           );
                           continue;
                         }
@@ -206,8 +220,13 @@ async function getCronHandler(req: NextRequest) {
                           order.tip ? Math.round(parseFloat(order.tip)) : 0,
                         );
                         if (tipAmount !== expectedTip) {
-                          console.error(
-                            `[Verify Payouts Cron] Tip amount mismatch for order ${order.id}: expected ${expectedTip}, got ${tipAmount}`,
+                          logger.error(
+                            `[Verify Payouts Cron] Tip amount mismatch for order ${order.id}`,
+                            {
+                              expected: expectedTip,
+                              got: tipAmount,
+                              orderId: order.id,
+                            },
                           );
                           continue;
                         }
@@ -217,18 +236,23 @@ async function getCronHandler(req: NextRequest) {
                       }
                     } catch (decodeError) {
                       // Log decode errors but continue checking other logs
-                      console.warn(
-                        `[Verify Payouts Cron] Failed to decode log for order ${order.id}:`,
-                        decodeError instanceof Error
-                          ? decodeError.message
-                          : String(decodeError),
+                      logger.warn(
+                        `[Verify Payouts Cron] Failed to decode log for order ${order.id}`,
+                        {
+                          error:
+                            decodeError instanceof Error
+                              ? decodeError.message
+                              : String(decodeError),
+                          orderId: order.id,
+                        },
                       );
                     }
                   }
 
                   if (!verifiedEventFound) {
-                    console.error(
+                    logger.error(
                       `[Verify Payouts Cron] No valid TipReleased event found for order ${order.id}, marking as failed`,
+                      { orderId: order.id },
                     );
 
                     // Mark as failed due to event verification failure
@@ -245,8 +269,9 @@ async function getCronHandler(req: NextRequest) {
                   }
                 }
 
-                console.log(
+                logger.info(
                   `[Verify Payouts Cron] Tip release confirmed on-chain: ${order.id}`,
+                  { orderId: order.id },
                 );
 
                 // Mark as completed
@@ -260,8 +285,9 @@ async function getCronHandler(req: NextRequest) {
 
                 return { orderId: order.id, status: "completed" as const };
               } else {
-                console.error(
+                logger.error(
                   `[Verify Payouts Cron] Tip release reverted on-chain: ${order.id}`,
+                  { orderId: order.id },
                 );
 
                 // Mark as failed
@@ -279,8 +305,13 @@ async function getCronHandler(req: NextRequest) {
             } catch (error) {
               // Transaction not found yet (still pending) - leave as released
               // It will be picked up on the next cron run
-              console.log(
-                `[Verify Payouts Cron] Tip release still pending: ${order.id} - ${error instanceof Error ? error.message : "Unknown error"}`,
+              logger.info(
+                `[Verify Payouts Cron] Tip release still pending: ${order.id}`,
+                {
+                  orderId: order.id,
+                  error:
+                    error instanceof Error ? error.message : "Unknown error",
+                },
               );
               return { orderId: order.id, status: "pending" as const };
             }
@@ -299,11 +330,15 @@ async function getCronHandler(req: NextRequest) {
             results.push(result.value);
           } else {
             // Promise rejected - log error and return pending status
-            console.error(
-              `[Verify Payouts Cron] Verification promise rejected for ${order.id}:`,
-              result.reason instanceof Error
-                ? result.reason.message
-                : String(result.reason),
+            logger.error(
+              `[Verify Payouts Cron] Verification promise rejected for ${order.id}`,
+              {
+                orderId: order.id,
+                reason:
+                  result.reason instanceof Error
+                    ? result.reason.message
+                    : String(result.reason),
+              },
             );
             results.push({
               orderId: order.id,
@@ -343,7 +378,10 @@ async function getCronHandler(req: NextRequest) {
         timestamp: new Date().toISOString(),
       };
 
-      console.log("[Verify Payouts Cron] Verification completed:", result);
+      logger.info("[Verify Payouts Cron] Verification completed", {
+        result,
+        traceId,
+      });
 
       return NextResponse.json(result);
     } catch (error) {
@@ -354,7 +392,10 @@ async function getCronHandler(req: NextRequest) {
         code: SpanStatusCode.ERROR,
         message: error instanceof Error ? error.message : String(error),
       });
-      console.error("[Verify Payouts Cron] Critical error:", error);
+      logger.error("[Verify Payouts Cron] Critical error", {
+        error: error instanceof Error ? error.message : String(error),
+        traceId,
+      });
       throw error;
     } finally {
       span.end();

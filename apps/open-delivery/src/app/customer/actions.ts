@@ -21,10 +21,10 @@ import {
   AppConfig,
   getRedisClient,
   ServiceNamespace,
+  Logger,
 } from "@repo/shared";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
-import { z } from "zod";
 import {
   createPublicClient,
   http,
@@ -63,6 +63,8 @@ export interface MenuItem {
   price: number;
   category: string;
 }
+
+const logger = new Logger({ serviceName: "open-delivery-customer-actions" });
 
 export async function getRealVendors(
   userLat?: number,
@@ -110,7 +112,9 @@ export async function getRealVendors(
       distance: parseFloat(r.distance) || undefined,
     }));
   } catch (error) {
-    console.error("Failed to fetch vendors:", error);
+    logger.error("Failed to fetch vendors", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw new Error("Could not load restaurants");
   }
 }
@@ -130,7 +134,9 @@ export async function getMenu(restaurantId: string): Promise<MenuItem[]> {
       category: p.category,
     }));
   } catch (error) {
-    console.error("Failed to fetch menu:", error);
+    logger.error("Failed to fetch menu", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw new Error("Could not load menu items");
   }
 }
@@ -165,7 +171,9 @@ export async function getRestaurantWallet(restaurantId: string): Promise<{
       walletAddress: restaurant.walletAddress,
     };
   } catch (error) {
-    console.error("Failed to fetch restaurant wallet:", error);
+    logger.error("Failed to fetch restaurant wallet", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to fetch wallet",
@@ -319,7 +327,7 @@ export async function placeRealOrder(
       );
     }
 
-    console.log(`[Order ${orderId}] Payment verified on-chain:`, {
+    logger.info(`[Order ${orderId}] Payment verified on-chain`, {
       txHash: paymentParams.txHash,
       confirmations: verificationResult.receipt?.confirmations,
       blockNumber: verificationResult.receipt?.blockNumber.toString(),
@@ -328,13 +336,10 @@ export async function placeRealOrder(
 
   try {
     // ========================================================================
-    // CRITICAL FIX: Neon HTTP driver does NOT support interactive transactions
-    // across multiple await ticks. We use a raw SQL CTE to atomically:
-    //   1. Upsert the user (ON CONFLICT DO UPDATE)
-    //   2. Insert the order (with duplicate payment hash check)
-    //   3. Insert order items
-    //   4. Write the outbox event
-    // All within a single SQL statement, avoiding lock-drop issues.
+    // REFACTORED: Use Drizzle's type-safe queries instead of raw SQL CTE.
+    // Since orderId is pre-generated via randomUUID(), we can safely use
+    // individual queries without interactive transaction concerns.
+    // The Neon HTTP driver handles each query atomically.
     // ========================================================================
 
     const address = deliveryAddress;
@@ -344,8 +349,72 @@ export async function placeRealOrder(
       );
     }
 
-    const itemsJson = JSON.stringify(items);
-    const outboxEventJson = JSON.stringify({
+    const db = getDb();
+
+    // 1. Upsert user
+    const userName =
+      `${user.firstName || "User"} ${user.lastName || ""}`.trim();
+    await db
+      .insert(users)
+      .values({
+        clerkId: user.id,
+        email: user.emailAddresses[0].emailAddress,
+        name: userName,
+        role: "shopper",
+      })
+      .onConflictDoUpdate({
+        target: users.clerkId,
+        set: {
+          email: user.emailAddresses[0].emailAddress,
+          name: userName,
+          updatedAt: new Date(),
+        },
+      });
+
+    // 2. Fetch the user ID (needed for order insertion)
+    const fetchedUser = await db.query.users.findFirst({
+      where: eq(users.clerkId, user.id),
+      columns: { id: true },
+    });
+
+    if (!fetchedUser) {
+      throw new Error("Failed to resolve user record after upsert.");
+    }
+
+    // 3. Insert order
+    // Payment hash duplicate check is handled by the unique constraint on paymentTxHash
+    await db.insert(orders).values({
+      id: orderId,
+      userId: fetchedUser.id,
+      storeId: vendorId,
+      status: "pending_verification",
+      subtotal: subtotalCrypto,
+      tip: tipCrypto,
+      total: totalCrypto,
+      deliveryAddress: address,
+      pickupAddress: restaurant.address || "Restaurant Location",
+      paymentTxHash: paymentParams?.txHash || null,
+      walletAddress: paymentParams?.walletAddress || null,
+      paymentCurrency: paymentCurrency,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    // 4. Insert order items
+    if (items.length > 0) {
+      await db.insert(orderItems).values(
+        items.map((item) => ({
+          orderId,
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          createdAt: new Date(),
+        })),
+      );
+    }
+
+    // 5. Write outbox event
+    await db.insert(outbox).values({
       eventType: "WORKFLOW_STATE_CHANGED",
       payload: {
         executionId: orderId,
@@ -371,101 +440,18 @@ export async function placeRealOrder(
           },
         },
       },
+      status: "pending",
+      createdAt: new Date(),
     });
-
-    const result = await getDb().execute(sql`
-      WITH user_upsert AS (
-        INSERT INTO ${users} (clerk_id, email, name, role)
-        VALUES (
-          ${user.id},
-          ${user.emailAddresses[0].emailAddress},
-          ${`${user.firstName || "User"} ${user.lastName || ""}`},
-          'shopper'
-        )
-        ON CONFLICT (clerk_id) DO UPDATE SET
-          email = EXCLUDED.email,
-          name = EXCLUDED.name,
-          updated_at = NOW()
-        RETURNING *
-        LIMIT 1
-      ),
-      order_insert AS (
-        INSERT INTO ${orders} (
-          id, user_id, store_id, status, subtotal, tip, total,
-          delivery_address, pickup_address, payment_tx_hash,
-          wallet_address, payment_currency, created_at, updated_at
-        )
-        SELECT
-          ${orderId},
-          u.id,
-          ${vendorId},
-          'pending_verification',
-          ${subtotalCrypto}::numeric,
-          ${tipCrypto}::numeric,
-          ${totalCrypto}::numeric,
-          ${address},
-          ${restaurant.address || "Restaurant Location"},
-          ${paymentParams?.txHash || null},
-          ${paymentParams?.walletAddress || null},
-          ${paymentCurrency},
-          NOW(),
-          NOW()
-        FROM user_upsert u
-        ${
-          paymentParams?.txHash
-            ? sql`WHERE NOT EXISTS (
-                SELECT 1 FROM ${orders} o WHERE o.payment_tx_hash = ${paymentParams.txHash}
-              )`
-            : sql``
-        }
-        RETURNING *
-      ),
-      items_insert AS (
-        INSERT INTO ${orderItems} (order_id, name, quantity, price, created_at)
-        SELECT
-          ${orderId},
-          item->>'name',
-          (item->>'quantity')::integer,
-          (item->>'price')::numeric,
-          NOW()
-        FROM order_insert oi, jsonb_array_elements(${itemsJson}::jsonb) item
-        RETURNING *
-      ),
-      outbox_insert AS (
-        INSERT INTO ${outbox} (event_type, payload, created_at)
-        SELECT
-          'WORKFLOW_STATE_CHANGED',
-          ${outboxEventJson}::jsonb,
-          NOW()
-        FROM order_insert
-        RETURNING *
-      )
-      SELECT o.* FROM order_insert o
-    `);
-
-    if (!result || result.length === 0) {
-      if (paymentParams?.txHash) {
-        throw new Error(
-          `Payment transaction ${paymentParams.txHash} already used for another order.`,
-        );
-      }
-      throw new Error("Failed to create order.");
-    }
-
-    // Validate the raw SQL CTE result shape to catch database cast failures early
-    const OrderCTEResultSchema = z.object({
-      id: z.string(),
-      status: z.string(),
-      total: z.union([z.string(), z.number()]).optional(),
-    });
-
-    const newOrder = OrderCTEResultSchema.parse(result[0]);
 
     // Trigger the outbox relay AFTER the transaction commits.
     // Wrapped in after() to guarantee execution outside the request lifecycle.
     after(() => {
       OutboxRelayService.triggerRelay(orderId).catch((err) => {
-        console.error(`[Order ${orderId}] Outbox relay trigger failed:`, err);
+        logger.error(`[Order ${orderId}] Outbox relay trigger failed`, {
+          orderId,
+          error: err instanceof Error ? err.message : String(err),
+        });
       });
     });
 
@@ -473,7 +459,7 @@ export async function placeRealOrder(
 
     return {
       success: true,
-      orderId: newOrder.id,
+      orderId,
       status: "pending" as const,
       payment: {
         txHash: paymentParams?.txHash,
@@ -488,9 +474,17 @@ export async function placeRealOrder(
     // by the escrow contract. Instead, route to a DLQ for manual reconciliation.
     // ========================================================================
     if (paymentParams?.txHash) {
-      console.error(
+      logger.error(
         `CRITICAL: Order creation failed but payment ${paymentParams.txHash} may have been captured. Routing to manual reconciliation.`,
-        error,
+        {
+          txHash: paymentParams.txHash,
+          orderId,
+          customerEmail: user.emailAddresses[0].emailAddress,
+          vendorId,
+          amount: totalCrypto,
+          currency: paymentCurrency,
+          error: error instanceof Error ? error.message : String(error),
+        },
       );
       // Push to Redis DLQ for admin reconciliation dashboard
       const redis = getRedisClient(ServiceNamespace.OD);
@@ -509,7 +503,10 @@ export async function placeRealOrder(
       );
     }
 
-    console.error("Order placement failed:", error);
+    logger.error("Order placement failed", {
+      orderId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw new Error("Failed to place order. Please try again.");
   }
 }

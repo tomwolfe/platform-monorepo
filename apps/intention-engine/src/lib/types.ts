@@ -20,13 +20,13 @@ export interface AuditLog {
   validation_error?: string;
   efficiency_flag?: "LOW";
   replanned_count?: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   steps: Array<{
     step_index: number;
     tool_name: string;
     status: "pending" | "executed" | "rejected" | "failed";
-    input: any;
-    output?: any;
+    input: unknown;
+    output?: unknown;
     error?: string;
     confirmed_by_user?: boolean;
     timestamp: string;

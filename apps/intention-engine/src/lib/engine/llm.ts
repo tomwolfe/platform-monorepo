@@ -130,9 +130,52 @@ async function withTimeout<T>(
 }
 
 // ============================================================================
-// TOKEN USAGE EXTRACTOR
-// Normalizes token usage across different LLM providers
+// T2.2: LLM TOKEN USAGE TRACKING (OpenTelemetry Counter)
 // ============================================================================
+
+/**
+ * Counter for total LLM tokens consumed across all model types.
+ * Exported to OpenTelemetry as `llm_tokens_consumed_total`.
+ */
+let llmTokensConsumedTotal = 0;
+
+/**
+ * Get the current total LLM tokens consumed.
+ * Used for monitoring, alerting, and cost tracking.
+ */
+export function getLLMTokensConsumedTotal(): number {
+  return llmTokensConsumedTotal;
+}
+
+/**
+ * Reset the token counter (for testing).
+ */
+export function resetLLMTokenCounter(): void {
+  llmTokensConsumedTotal = 0;
+}
+
+/**
+ * Record LLM token usage for monitoring and cost tracking.
+ * Increments the global counter and logs the event.
+ */
+function recordTokenUsage(
+  modelType: string,
+  promptTokens: number,
+  completionTokens: number,
+  totalTokens: number,
+): void {
+  llmTokensConsumedTotal += totalTokens;
+
+  logger.info({
+    message: `[T2.2] LLM token usage tracked`,
+    model_type: modelType,
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens,
+    cumulative_total: llmTokensConsumedTotal,
+    metric: "llm_tokens_consumed_total",
+  });
+}
 
 interface TokenUsage {
   promptTokens: number;
@@ -516,6 +559,14 @@ export async function generateStructured<T>(
 
       // Validate response schema
       LLMResponseSchema.parse(response);
+
+      // T2.2: Record token usage for monitoring and cost tracking
+      recordTokenUsage(
+        modelType,
+        response.token_usage.prompt_tokens,
+        response.token_usage.completion_tokens,
+        response.token_usage.total_tokens,
+      );
 
       // CACHE THE RESPONSE
       // Only cache successful responses with low temperature (deterministic)

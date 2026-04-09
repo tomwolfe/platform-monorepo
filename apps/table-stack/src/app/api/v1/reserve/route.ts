@@ -276,6 +276,27 @@ async function postHandler(req: NextRequest) {
     // Mark idempotency key as processed
     await idempotencyService.markProcessed(idempotencyKey, "reserve_api");
 
+    // T2.1: Invalidate availability cache for this restaurant
+    // Use after() to avoid blocking the response
+    after(async () => {
+      try {
+        const pattern = `availability:${targetRestaurantId}:*`;
+        const keys = await redis.keys(pattern);
+        if (keys.length > 0) {
+          await redis.del(...keys);
+          logger.info({
+            message: `[T2.1] Invalidated ${keys.length} availability cache entries`,
+            restaurantId: targetRestaurantId,
+          });
+        }
+      } catch (error) {
+        logger.warn({
+          message: "[T2.1] Failed to invalidate availability cache (non-fatal)",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+
     return NextResponse.json(
       formatApiSuccess({
         message: result.isShadow

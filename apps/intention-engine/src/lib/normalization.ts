@@ -8,26 +8,53 @@ import { validateIntentParams, REQUIRED_FIELDS_MAP } from "./resolveAmbiguity";
  */
 export const NormalizationService = {
   /**
-   * Normalize and validate intent parameters against ontology schemas
+   * Normalize and validate intent parameters against ontology schemas.
+   *
+   * For ACTION intents, extracts the `capability` parameter to determine
+   * domain-specific validation rules (e.g. BOOKING, DELIVERY, MOBILITY).
+   * This avoids falling back to brute-force validation against all tools.
    */
   normalizeIntentParameters(
     intentType: IntentType,
-    parameters: Record<string, unknown>
+    parameters: Record<string, unknown>,
   ): { success: boolean; data?: Record<string, unknown>; errors?: string[] } {
-    const { isValid, missingFields } = validateIntentParams(intentType, parameters);
+    // For ACTION intents, check if a domain-specific capability is present
+    // and use that for more precise validation.
+    let effectiveType = intentType;
+    if (intentType === "ACTION") {
+      const capability = String(parameters.capability || "").toLowerCase();
+      if (capability.includes("booking") || capability.includes("reserve")) {
+        effectiveType = "BOOKING";
+      } else if (capability.includes("delivery")) {
+        effectiveType = "DELIVERY";
+      } else if (
+        capability.includes("mobility") ||
+        capability.includes("ride") ||
+        capability.includes("transport")
+      ) {
+        effectiveType = "MOBILITY";
+      }
+    }
+
+    const { isValid, missingFields } = validateIntentParams(
+      effectiveType,
+      parameters,
+    );
 
     if (!isValid) {
       return {
         success: false,
-        errors: [`Missing required fields for ${intentType}: ${missingFields.join(", ")}`]
+        errors: [
+          `Missing required fields for ${effectiveType}: ${missingFields.join(", ")}`,
+        ],
       };
     }
 
     return {
       success: true,
-      data: parameters
+      data: parameters,
     };
-  }
+  },
 };
 
 /**
@@ -40,26 +67,29 @@ export const NormalizationService = {
 export function normalizeIntent(
   candidate: Partial<Intent> & Record<string, unknown>,
   rawText: string,
-  modelId: string
+  modelId: string,
 ): Intent {
   // Pre-validation normalization to handle common LLM jitter
   const normalizedCandidate = { ...candidate };
-  
+
   // 1. Case-insensitive Intent Type
-  if (typeof normalizedCandidate.type === 'string') {
+  if (typeof normalizedCandidate.type === "string") {
     normalizedCandidate.type = normalizedCandidate.type.toUpperCase();
   }
-  
+
   // 2. Coerce confidence to number
-  if (typeof normalizedCandidate.confidence === 'string') {
+  if (typeof normalizedCandidate.confidence === "string") {
     const parsed = parseFloat(normalizedCandidate.confidence);
     if (!isNaN(parsed)) {
       normalizedCandidate.confidence = parsed;
     }
   }
-  
+
   // 3. Ensure parameters is an object
-  if (!normalizedCandidate.parameters || typeof normalizedCandidate.parameters !== 'object') {
+  if (
+    !normalizedCandidate.parameters ||
+    typeof normalizedCandidate.parameters !== "object"
+  ) {
     normalizedCandidate.parameters = {};
   }
 
@@ -73,23 +103,28 @@ export function normalizeIntent(
       timestamp: new Date().toISOString(),
       source: "user_input",
       model_id: modelId,
-    }
+    },
   });
 
   if (!parsed.success) {
-    console.warn("[Normalization] Schema validation failed, returning CLARIFICATION_REQUIRED fallback.");
+    console.warn(
+      "[Normalization] Schema validation failed, returning CLARIFICATION_REQUIRED fallback.",
+    );
     return createFallbackIntent(
-      rawText, 
-      "CLARIFICATION_REQUIRED", 
-      "I encountered an internal error parsing your intent. Could you please rephrase your request?", 
-      modelId
+      rawText,
+      "CLARIFICATION_REQUIRED",
+      "I encountered an internal error parsing your intent. Could you please rephrase your request?",
+      modelId,
     );
   }
 
   const intent = parsed.data;
 
   // 3. Ontology parameter check
-  const { isValid, missingFields } = validateIntentParams(intent.type, intent.parameters);
+  const { isValid, missingFields } = validateIntentParams(
+    intent.type,
+    intent.parameters,
+  );
 
   if (!isValid) {
     return {
@@ -98,20 +133,25 @@ export function normalizeIntent(
       confidence: 0.5,
       parameters: {
         ...intent.parameters,
-        missingFields
+        missingFields,
       },
-      explanation: `Missing required fields: ${missingFields.join(", ")}`
+      explanation: `Missing required fields: ${missingFields.join(", ")}`,
     };
   }
 
   // 4. Chain-of-Thought (CoT) Consistency Verification
   if (intent.explanation) {
     const cot = intent.explanation.toUpperCase();
-    const otherTypes = (Object.keys(REQUIRED_FIELDS_MAP) as IntentType[]).filter(t => t !== intent.type);
-    
+    const otherTypes = (
+      Object.keys(REQUIRED_FIELDS_MAP) as IntentType[]
+    ).filter((t) => t !== intent.type);
+
     for (const otherType of otherTypes) {
       // If the CoT mentions mapping to a different type than the one selected, penalize confidence.
-      if (cot.includes(`MATCH: ${otherType}`) || cot.includes(`ONTOLOGY: ${otherType}`)) {
+      if (
+        cot.includes(`MATCH: ${otherType}`) ||
+        cot.includes(`ONTOLOGY: ${otherType}`)
+      ) {
         intent.confidence *= 0.7; // Significant penalty for internal inconsistency
         intent.explanation += ` [Consistency Alert: CoT suggests ${otherType} but result is ${intent.type}]`;
       }
@@ -120,43 +160,53 @@ export function normalizeIntent(
 
   // 5. Category specific normalization (Deterministic)
   if (intent.type === "SCHEDULE") {
-     if (typeof intent.parameters.action === 'string') {
-       let action = intent.parameters.action.toUpperCase();
-       // Verb Collapsing: Map synonyms to canonical roots
-       if (["BOOK", "SET UP", "ARRANGE", "ORGANIZE", "SETUP"].includes(action)) {
-         action = "SCHEDULE";
-       }
-       intent.parameters.action = action;
-     }
+    if (typeof intent.parameters.action === "string") {
+      let action = intent.parameters.action.toUpperCase();
+      // Verb Collapsing: Map synonyms to canonical roots
+      if (["BOOK", "SET UP", "ARRANGE", "ORGANIZE", "SETUP"].includes(action)) {
+        action = "SCHEDULE";
+      }
+      intent.parameters.action = action;
+    }
 
-     // Deep Semantic Validation: Check if the date is in the past
-     if (intent.parameters.temporal_expression) {
-       const date = new Date(intent.parameters.temporal_expression);
-       if (!isNaN(date.getTime())) {
-         const now = new Date();
-         // Only penalize if it's significantly in the past (more than 1 hour ago)
-         // This allows for current-day requests and slight clock drift.
-         if (date.getTime() < now.getTime() - 3600000) {
-           intent.confidence *= 0.8; // Reduced penalty from 0.5 to 0.8
-           intent.explanation = (intent.explanation || "") + " [Semantic Note: Requested time appears to be in the past]";
-         }
-       }
-     }
+    // Deep Semantic Validation: Check if the date is in the past
+    if (intent.parameters.temporal_expression) {
+      const date = new Date(intent.parameters.temporal_expression);
+      if (!isNaN(date.getTime())) {
+        const now = new Date();
+        // Only penalize if it's significantly in the past (more than 1 hour ago)
+        // This allows for current-day requests and slight clock drift.
+        if (date.getTime() < now.getTime() - 3600000) {
+          intent.confidence *= 0.8; // Reduced penalty from 0.5 to 0.8
+          intent.explanation =
+            (intent.explanation || "") +
+            " [Semantic Note: Requested time appears to be in the past]";
+        }
+      }
+    }
   }
 
   // 6. Transactional Argument Check: Penalize confidence if booking/payment lacks target or amount
   if (intent.type === "ACTION") {
     const capability = (intent.parameters.capability || "").toLowerCase();
     const args = intent.parameters.arguments || {};
-    const isBookingOrPayment = capability.includes("booking") || 
-                               capability.includes("payment") || 
-                               capability.includes("reserve") ||
-                               capability.includes("mobility");
-    
+    const isBookingOrPayment =
+      capability.includes("booking") ||
+      capability.includes("payment") ||
+      capability.includes("reserve") ||
+      capability.includes("mobility");
+
     if (isBookingOrPayment) {
-      if (!args.target_object && !args.amount && !args.restaurant_name && !args.service) {
+      if (
+        !args.target_object &&
+        !args.amount &&
+        !args.restaurant_name &&
+        !args.service
+      ) {
         intent.confidence = Math.max(intent.confidence, 0.4); // Ensure it doesn't drop to 0.1, keep it at least 0.4
-        intent.explanation = (intent.explanation || "") + " [Confidence Note: Missing some specific target/amount details for transactional action]";
+        intent.explanation =
+          (intent.explanation || "") +
+          " [Confidence Note: Missing some specific target/amount details for transactional action]";
       }
     }
   }
@@ -168,7 +218,7 @@ function createFallbackIntent(
   rawText: string,
   type: IntentType,
   explanation: string,
-  modelId: string
+  modelId: string,
 ): Intent {
   return {
     id: crypto.randomUUID(),
@@ -178,12 +228,13 @@ function createFallbackIntent(
     rawText,
     explanation,
     requires_clarification: type === "CLARIFICATION_REQUIRED",
-    clarification_prompt: type === "CLARIFICATION_REQUIRED" ? explanation : undefined,
+    clarification_prompt:
+      type === "CLARIFICATION_REQUIRED" ? explanation : undefined,
     metadata: {
       version: "1.0.0",
       timestamp: new Date().toISOString(),
       source: "system_fallback",
       model_id: modelId,
-    }
+    },
   };
 }

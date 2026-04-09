@@ -135,14 +135,24 @@ export class RateLimiterService {
 
   /**
    * Get or create the in-memory LRU cache for degraded mode fallback.
-   * Max 1000 entries with 5-minute TTL to prevent memory leaks.
+   * Max 1000 entries with TTL based on the endpoint's configured window
+   * to prevent memory leaks and ensure proper stale entry eviction.
    */
   private static getLruCache(): LRUCache<
     string,
     { count: number; resetAt: number }
   > {
     if (!this.lruCache) {
-      this.lruCache = new LRUCache({ max: 1000, ttl: 5 * 60 * 1000 });
+      // Use the chat endpoint's window as the baseline TTL,
+      // since it represents the most common rate-limiting window.
+      const baselineWindowMs = DEFAULT_LIMITS.chat.windowMs;
+      this.lruCache = new LRUCache({
+        max: 1000,
+        ttl: Math.ceil(baselineWindowMs),
+        // Ensure stale entries are purged on access rather than
+        // relying solely on the library's background reaper interval.
+        updateAgeOnGet: false,
+      });
     }
     return this.lruCache;
   }
@@ -177,6 +187,11 @@ export class RateLimiterService {
   ): RateLimitResult {
     const endpointConfig = this.config[endpointType];
     const lru = RateLimiterService.getLruCache();
+
+    // Proactively purge stale entries to prevent memory accumulation
+    // during extended degraded mode operation.
+    lru.purgeStale();
+
     const redisKey = `${endpointConfig.keyPrefix}${userId}`;
     const now = Date.now();
 

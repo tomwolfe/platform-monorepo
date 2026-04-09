@@ -448,6 +448,31 @@ export const POST = withApiErrorHandler(async (req: Request) => {
     throw securityError;
   }
 
+  // Handle structured security rejection from orchestrator
+  if (
+    orchestrationResult.auditLogId === "rejected" &&
+    orchestrationResult.intent.metadata?.source === "security_rejection"
+  ) {
+    return NextResponse.json(
+      formatApiError(
+        new Error("Input blocked for security reasons"),
+        "VALIDATION_ERROR",
+        {
+          message:
+            "Your input contains patterns that may attempt to manipulate the AI system. Please rephrase your request.",
+          riskLevel: "high",
+          ...(process.env.NODE_ENV === "development" && {
+            debug: {
+              attackTypes: ["PROMPT_INJECTION"],
+              explanation: orchestrationResult.intent.explanation,
+            },
+          }),
+        },
+      ),
+      { status: 400 },
+    );
+  }
+
   const {
     intent,
     auditLogId,

@@ -16,15 +16,17 @@
 
 import { randomUUID } from "crypto";
 import { z } from "zod";
-import { promptInjectionMiddleware, type DetectionResult } from "@/lib/middleware/prompt-injection";
-import { fetchLiveOperationalState, type LiveOperationalStateResult } from "./live-state";
+import {
+  promptInjectionMiddleware,
+  type DetectionResult,
+} from "@/lib/middleware/prompt-injection";
+import {
+  fetchLiveOperationalState,
+  type LiveOperationalStateResult,
+} from "./live-state";
 import { inferIntent, type IntentInferenceResult } from "./intent";
 import { NormalizationService } from "@/lib/normalization";
-import {
-  createInitialState,
-  setIntent,
-  setPlan,
-} from "./state-machine";
+import { createInitialState, setIntent, setPlan } from "./state-machine";
 import { saveExecutionState } from "./memory";
 import { generatePlan } from "./unified-planner";
 import { getRegistryManager } from "./registry";
@@ -121,7 +123,7 @@ export class ChatOrchestratorService {
    */
   requiresSagaExecution(intentType: string): boolean {
     return SAGA_INTENT_TYPES.some(
-      (type) => intentType.includes(type) || intentType === type
+      (type) => intentType.includes(type) || intentType === type,
     );
   }
 
@@ -130,12 +132,16 @@ export class ChatOrchestratorService {
    * Scans user input for prompt injection attacks before processing
    */
   async checkSecurity(userText: string): Promise<SecurityCheckResult> {
-    const securityCheck = await promptInjectionMiddleware(userText, this.userContext.userId, {
-      enableHeuristics: true,
-      enableSemanticAnalysis: true,
-      enableEncodingDetection: true,
-      enableAuditLog: true,
-    });
+    const securityCheck = await promptInjectionMiddleware(
+      userText,
+      this.userContext.userId,
+      {
+        enableHeuristics: true,
+        enableSemanticAnalysis: true,
+        enableEncodingDetection: true,
+        enableAuditLog: true,
+      },
+    );
 
     return {
       allowed: securityCheck.allowed,
@@ -149,20 +155,24 @@ export class ChatOrchestratorService {
   async inferIntent(
     userText: string,
     avoidTools: string[],
-    history: Array<{ intentType: string; rawText: string; parameters: Record<string, unknown> }>,
+    history: Array<{
+      intentType: string;
+      rawText: string;
+      parameters: Record<string, unknown>;
+    }>,
     lastInteractionContext?: {
       intentType?: string;
       rawText?: string;
       parameters?: Record<string, unknown>;
       timestamp?: string;
-    } | null
+    } | null,
   ): Promise<IntentInferenceResult & { intent: Intent }> {
     const inferenceResult = await inferIntent(
       userText,
       avoidTools,
       history,
       lastInteractionContext || undefined,
-      this.userContext.clerkId || undefined
+      this.userContext.clerkId || undefined,
     );
 
     const intent = inferenceResult.hypotheses.primary;
@@ -170,7 +180,7 @@ export class ChatOrchestratorService {
     // Normalize intent parameters against schemas
     const normalizationResult = NormalizationService.normalizeIntentParameters(
       intent.type,
-      intent.parameters || {}
+      intent.parameters || {},
     );
 
     if (!normalizationResult.success) {
@@ -205,7 +215,7 @@ export class ChatOrchestratorService {
       partySize?: number;
       requestedTime?: string;
       restaurantId?: string;
-    }
+    },
   ): Promise<LiveOperationalStateResult> {
     return fetchLiveOperationalState(coreMessages, userLocation || undefined, {
       intentType: intentContext?.intentType,
@@ -227,7 +237,7 @@ export class ChatOrchestratorService {
    */
   async triggerAsyncExecution(
     intent: Intent,
-    auditLogId: string
+    auditLogId: string,
   ): Promise<string> {
     const executionId = randomUUID();
 
@@ -298,20 +308,43 @@ export class ChatOrchestratorService {
     userText: string,
     coreMessages: unknown[],
     avoidTools: string[],
-    history: Array<{ intentType: string; rawText: string; parameters: Record<string, unknown> }>,
+    history: Array<{
+      intentType: string;
+      rawText: string;
+      parameters: Record<string, unknown>;
+    }>,
     lastInteractionContext?: {
       intentType?: string;
       rawText?: string;
       parameters?: Record<string, unknown>;
       timestamp?: string;
-    } | null
+    } | null,
   ): Promise<ChatOrchestrationResult> {
     // 1. Security check
     const securityCheck = await this.checkSecurity(userText);
     if (!securityCheck.allowed) {
-      throw new Error(
-        `Input blocked for security reasons: ${securityCheck.detectionResult.explanation}`
-      );
+      // Return structured rejection instead of throwing a raw error
+      const rejectionIntent: Intent = {
+        id: randomUUID(),
+        type: "UNKNOWN",
+        confidence: 0,
+        parameters: {},
+        rawText: userText,
+        explanation: `Input blocked for security reasons: ${securityCheck.detectionResult.explanation}`,
+        requires_clarification: false,
+        metadata: {
+          version: "1.0.0",
+          timestamp: new Date().toISOString(),
+          source: "security_rejection",
+          model_id: "unknown",
+        },
+      };
+
+      return {
+        intent: rejectionIntent,
+        auditLogId: "rejected",
+        requiresAsyncExecution: false,
+      };
     }
 
     // 2. Infer intent
@@ -319,7 +352,7 @@ export class ChatOrchestratorService {
       userText,
       avoidTools,
       history,
-      lastInteractionContext
+      lastInteractionContext,
     );
     const { intent } = inferenceResult;
 
@@ -329,7 +362,7 @@ export class ChatOrchestratorService {
       intent,
       undefined,
       request.userLocation || undefined,
-      this.userContext.userIp
+      this.userContext.userIp,
     );
 
     // 4. Check if async execution is required
@@ -352,7 +385,7 @@ export class ChatOrchestratorService {
         partySize: intent.parameters?.partySize as number | undefined,
         requestedTime: intent.parameters?.time as string | undefined,
         restaurantId: intent.parameters?.restaurantId as string | undefined,
-      }
+      },
     );
 
     return {
@@ -369,7 +402,7 @@ export class ChatOrchestratorService {
  */
 export function createChatOrchestrator(
   internalSystemKey: string,
-  userContext: UserContext
+  userContext: UserContext,
 ): ChatOrchestratorService {
   return new ChatOrchestratorService(internalSystemKey, userContext);
 }

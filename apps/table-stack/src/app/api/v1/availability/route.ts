@@ -168,33 +168,43 @@ export const GET = withApiErrorHandler(
 
       if (availableTables.length === 0) {
         const offsets = [-30, 30, -60, 60];
-        for (const offset of offsets) {
-          const suggestedTime = addMinutes(requestedDate, offset);
-          const suggestedZonedTime = toZonedTime(suggestedTime, timezone);
-          const suggestedTimeStr = format(suggestedZonedTime, "HH:mm", {
-            timeZone: timezone,
-          });
 
-          // Apply same overnight-aware check for suggested slots
-          const suggestedIsClosed = isOvernight
-            ? suggestedTimeStr < openingTime && suggestedTimeStr > closingTime
-            : suggestedTimeStr < openingTime || suggestedTimeStr > closingTime;
+        // Build candidate slots concurrently instead of sequential awaits
+        const candidateResults = await Promise.allSettled(
+          offsets.map(async (offset) => {
+            const suggestedTime = addMinutes(requestedDate, offset);
+            const suggestedZonedTime = toZonedTime(suggestedTime, timezone);
+            const suggestedTimeStr = format(suggestedZonedTime, "HH:mm", {
+              timeZone: timezone,
+            });
 
-          if (suggestedIsClosed) {
-            continue;
-          }
+            const suggestedIsClosed = isOvernight
+              ? suggestedTimeStr < openingTime && suggestedTimeStr > closingTime
+              : suggestedTimeStr < openingTime ||
+                suggestedTimeStr > closingTime;
 
-          const tables = await reservationService.getAvailableTables(
-            targetRestaurantId,
-            suggestedTime,
-            partySize,
-            duration,
-          );
-          if (tables.length > 0) {
-            suggestedSlots.push({
+            if (suggestedIsClosed) {
+              return null;
+            }
+
+            const tables = await reservationService.getAvailableTables(
+              targetRestaurantId,
+              suggestedTime,
+              partySize,
+              duration,
+            );
+            if (tables.length === 0) return null;
+
+            return {
               time: suggestedTime.toISOString(),
               availableTables: tables,
-            });
+            };
+          }),
+        );
+
+        for (const result of candidateResults) {
+          if (result.status === "fulfilled" && result.value) {
+            suggestedSlots.push(result.value);
           }
         }
       }

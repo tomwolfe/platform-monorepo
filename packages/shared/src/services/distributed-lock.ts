@@ -134,7 +134,7 @@ export async function acquireDistributedLock(
     const acquired = await redis.eval(
       LUA_ACQUIRE_SCRIPT,
       [lockKey],
-      [ownerId, String(ttlSeconds)],
+      [ownerId, String(Math.floor(ttlSeconds))],
     );
 
     if (acquired === 1) {

@@ -17,7 +17,11 @@
 import { NextRequest } from "next/server";
 import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.IE);
-import { getToolRegistry } from "@/lib/engine/tools/registry";
+import {
+  getToolRegistry,
+  ToolExecutionContext,
+} from "@/lib/engine/tools/registry";
+import { getDb } from "@repo/database";
 import { loadExecutionState, saveExecutionState } from "@/lib/engine/memory";
 import {
   RealtimeService,
@@ -575,18 +579,35 @@ export class StepExecutionService {
   private createToolExecutor(executionId: string): WorkflowToolExecutor {
     const registry = getToolRegistry();
 
+    // Lazy-initialized shared service instances for dependency injection
+    let injectedRedis: any = null;
+    let injectedDb: any = null;
+    const getInjectedRedis = () => {
+      if (!injectedRedis) injectedRedis = redis;
+      return injectedRedis;
+    };
+    const getInjectedDb = () => {
+      if (!injectedDb) injectedDb = getDb();
+      return injectedDb;
+    };
+
     return {
       async execute(toolName, parameters, timeoutMs, signal) {
         const startTime = performance.now();
 
         try {
-          const result = await registry.execute(toolName, parameters, {
+          const context: ToolExecutionContext = {
             executionId,
             stepId: `step-${toolName}-${Date.now()}`,
             timeoutMs,
             startTime,
             abortSignal: signal,
-          });
+            services: {
+              redis: getInjectedRedis(),
+              db: getInjectedDb(),
+            },
+          };
+          const result = await registry.execute(toolName, parameters, context);
 
           return {
             success: result.success,

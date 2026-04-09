@@ -46,8 +46,25 @@ import {
   getMemoryClient,
 } from "@/lib/engine/memory";
 import { createTracer } from "@/lib/engine/tracing";
-import { getToolRegistry } from "@/lib/engine/tools/registry";
+import {
+  getToolRegistry,
+  ToolExecutionContext,
+} from "@/lib/engine/tools/registry";
 import { getRegistryManager } from "@/lib/engine/registry";
+import { getRedisClient, ServiceNamespace } from "@repo/shared";
+import { getDb } from "@repo/database";
+
+// Lazy-initialized shared service instances for dependency injection
+let _sharedRedis: any = null;
+function getSharedRedis() {
+  if (!_sharedRedis) _sharedRedis = getRedisClient(ServiceNamespace.SHARED);
+  return _sharedRedis;
+}
+let _sharedDb: any = null;
+function getSharedDb() {
+  if (!_sharedDb) _sharedDb = getDb();
+  return _sharedDb;
+}
 import { verifyPlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/verifier";
 
 // Internal system key for QStash-triggered requests - uses strict getter
@@ -103,15 +120,20 @@ function createToolExecutorForExecution(executionId: string): ToolExecutor {
       parameters: Record<string, unknown>,
       timeoutMs: number,
     ) => {
+      const context: ToolExecutionContext = {
+        executionId,
+        stepId: "unknown",
+        timeoutMs,
+        startTime: performance.now(),
+        services: {
+          redis: getSharedRedis(),
+          db: getSharedDb(),
+        },
+      };
       const result = await registry.execute(
         toolName,
         parameters,
-        {
-          executionId,
-          stepId: "unknown",
-          timeoutMs,
-          startTime: performance.now(),
-        },
+        context,
         undefined, // Use latest version
       );
 

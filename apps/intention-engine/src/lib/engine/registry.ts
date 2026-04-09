@@ -1,15 +1,37 @@
-import { ToolRegistry, getToolRegistry } from "./tools/registry";
+import {
+  ToolRegistry,
+  getToolRegistry,
+  ToolExecutionContext,
+} from "./tools/registry";
 import { MCPClient } from "../../infrastructure/mcp/MCPClient";
 import { ToolDefinition } from "./types";
 import { Tracer } from "./tracing";
 import { getMemoryClient } from "./memory";
 import { mcpConfig } from "../mcp-config";
-import { Logger } from "@repo/shared";
+import { Logger, getRedisClient, ServiceNamespace } from "@repo/shared";
+import { getDb } from "@repo/database";
 import { SERVICES } from "@repo/shared/services";
 
 import { listTools as listDomainTools } from "../tools/registry";
 
 const logger = new Logger({ serviceName: "intention-engine" });
+
+// Lazy-initialized shared service instances for dependency injection
+let _sharedRedis: any = null;
+function getSharedRedis() {
+  if (!_sharedRedis) {
+    _sharedRedis = getRedisClient(ServiceNamespace.SHARED);
+  }
+  return _sharedRedis;
+}
+
+let _sharedDb: any = null;
+function getSharedDb() {
+  if (!_sharedDb) {
+    _sharedDb = getDb();
+  }
+  return _sharedDb;
+}
 
 /**
  * RegistryManager coordinates local and remote tool discovery.
@@ -31,12 +53,20 @@ export class RegistryManager {
     const domainTools = listDomainTools();
     for (const tool of domainTools) {
       if (!this.localRegistry.has(tool.name)) {
-        this.localRegistry.register(tool, async (params, _context) => {
-          const result = await tool.execute(params);
+        this.localRegistry.register(tool, async (params, context) => {
+          // Inject services into context if not already present
+          const enrichedContext: ToolExecutionContext = {
+            ...context,
+            services: {
+              redis: context.services?.redis || getSharedRedis(),
+              db: context.services?.db || getSharedDb(),
+            },
+          };
+          const result = await tool.execute(params, enrichedContext);
           return {
             success: result.success,
             output: result.result,
-            error: result.error
+            error: result.error,
           };
         });
       }
@@ -47,7 +77,10 @@ export class RegistryManager {
       this.mcpClients.set("github", new MCPClient(process.env.GITHUB_MCP_URL));
     }
     if (process.env.BRAVE_SEARCH_MCP_URL) {
-      this.mcpClients.set("brave-search", new MCPClient(process.env.BRAVE_SEARCH_MCP_URL));
+      this.mcpClients.set(
+        "brave-search",
+        new MCPClient(process.env.BRAVE_SEARCH_MCP_URL),
+      );
     }
     if (process.env.VERCEL_MCP_URL) {
       this.mcpClients.set("vercel", new MCPClient(process.env.VERCEL_MCP_URL));
@@ -55,11 +88,17 @@ export class RegistryManager {
 
     // OpenDeliver uses mcpConfig for transport
     if (mcpConfig.transport.opendeliver) {
-      this.mcpClients.set("opendeliver", new MCPClient(mcpConfig.transport.opendeliver));
+      this.mcpClients.set(
+        "opendeliver",
+        new MCPClient(mcpConfig.transport.opendeliver),
+      );
     }
 
     if (process.env.TABLESTACK_MCP_URL) {
-      this.mcpClients.set("tablestack", new MCPClient(process.env.TABLESTACK_MCP_URL));
+      this.mcpClients.set(
+        "tablestack",
+        new MCPClient(process.env.TABLESTACK_MCP_URL),
+      );
     }
   }
 
@@ -118,37 +157,45 @@ export class RegistryManager {
 
         for (const tool of remoteTools) {
           this.registerRemoteTool(tool, async (params, context) => {
-            return Tracer.startActiveSpan(`mcp_tool_call:${tool.name}`, async (toolSpan) => {
-              // Check Circuit Breaker
-              const failCount = await memory.getCounter(serverKey);
-              if (failCount >= 3) {
-                return {
-                  success: false,
-                  error: `Circuit breaker tripped for MCP server: ${serviceName}. Too many recent failures.`,
-                };
-              }
+            return Tracer.startActiveSpan(
+              `mcp_tool_call:${tool.name}`,
+              async (toolSpan) => {
+                // Check Circuit Breaker
+                const failCount = await memory.getCounter(serverKey);
+                if (failCount >= 3) {
+                  return {
+                    success: false,
+                    error: `Circuit breaker tripped for MCP server: ${serviceName}. Too many recent failures.`,
+                  };
+                }
 
-              try {
-                const paramsWithTrace: Record<string, unknown> = {
-                  ...params,
-                  _trace_id: context.executionId
-                };
-                const result = await client!.callTool(tool.name, paramsWithTrace, context.abortSignal);
+                try {
+                  const paramsWithTrace: Record<string, unknown> = {
+                    ...params,
+                    _trace_id: context.executionId,
+                  };
+                  const result = await client!.callTool(
+                    tool.name,
+                    paramsWithTrace,
+                    context.abortSignal,
+                  );
 
-                return {
-                  success: true,
-                  output: result,
-                };
-              } catch (error: unknown) {
-                // Increment Failure Counter
-                await memory.incrementCounter(serverKey, 60);
+                  return {
+                    success: true,
+                    output: result,
+                  };
+                } catch (error: unknown) {
+                  // Increment Failure Counter
+                  await memory.incrementCounter(serverKey, 60);
 
-                return {
-                  success: false,
-                  error: error instanceof Error ? error.message : String(error),
-                };
-              }
-            });
+                  return {
+                    success: false,
+                    error:
+                      error instanceof Error ? error.message : String(error),
+                  };
+                }
+              },
+            );
           });
         }
 
@@ -180,37 +227,45 @@ export class RegistryManager {
 
         for (const tool of remoteTools) {
           this.registerRemoteTool(tool, async (params, context) => {
-            return Tracer.startActiveSpan(`mcp_tool_call:${tool.name}`, async (toolSpan) => {
-              // Check Circuit Breaker
-              const failCount = await memory.getCounter(serverKey);
-              if (failCount >= 3) {
-                return {
-                  success: false,
-                  error: `Circuit breaker tripped for MCP server: ${name}. Too many recent failures.`,
-                };
-              }
+            return Tracer.startActiveSpan(
+              `mcp_tool_call:${tool.name}`,
+              async (toolSpan) => {
+                // Check Circuit Breaker
+                const failCount = await memory.getCounter(serverKey);
+                if (failCount >= 3) {
+                  return {
+                    success: false,
+                    error: `Circuit breaker tripped for MCP server: ${name}. Too many recent failures.`,
+                  };
+                }
 
-              try {
-                const paramsWithTrace: Record<string, unknown> = {
-                  ...params,
-                  _trace_id: context.executionId
-                };
-                const result = await client.callTool(tool.name, paramsWithTrace, context.abortSignal);
+                try {
+                  const paramsWithTrace: Record<string, unknown> = {
+                    ...params,
+                    _trace_id: context.executionId,
+                  };
+                  const result = await client.callTool(
+                    tool.name,
+                    paramsWithTrace,
+                    context.abortSignal,
+                  );
 
-                return {
-                  success: true,
-                  output: result,
-                };
-              } catch (error: unknown) {
-                // Increment Failure Counter
-                await memory.incrementCounter(serverKey, 60);
+                  return {
+                    success: true,
+                    output: result,
+                  };
+                } catch (error: unknown) {
+                  // Increment Failure Counter
+                  await memory.incrementCounter(serverKey, 60);
 
-                return {
-                  success: false,
-                  error: error instanceof Error ? error.message : String(error),
-                };
-              }
-            });
+                  return {
+                    success: false,
+                    error:
+                      error instanceof Error ? error.message : String(error),
+                  };
+                }
+              },
+            );
           });
         }
 
@@ -231,7 +286,10 @@ export class RegistryManager {
    */
   private registerRemoteTool(
     tool: ToolDefinition,
-    executor: (params: Record<string, unknown>, context: any) => Promise<{ success: boolean; output?: unknown; error?: string }>
+    executor: (
+      params: Record<string, unknown>,
+      context: any,
+    ) => Promise<{ success: boolean; output?: unknown; error?: string }>,
   ): void {
     this.localRegistry.register(tool, executor);
   }
@@ -247,7 +305,7 @@ export class RegistryManager {
    * Gets tool names for planning constraints.
    */
   getAllToolNames(): string[] {
-    return this.listAllTools().map(t => t.name);
+    return this.listAllTools().map((t) => t.name);
   }
 }
 

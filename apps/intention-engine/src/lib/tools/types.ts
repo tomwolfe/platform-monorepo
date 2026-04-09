@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { ToolDefinition as EngineToolDefinition, ToolParameter } from "../engine/types";
+import {
+  ToolDefinition as EngineToolDefinition,
+  ToolParameter,
+} from "../engine/types";
+import type { ToolExecutionContext } from "../engine/tools/registry";
 
 /**
  * Tool definition metadata without execute function.
@@ -16,7 +20,10 @@ export interface ToolDefinitionMetadata extends EngineToolDefinition {
  */
 export interface ToolDefinition extends ToolDefinitionMetadata {
   /** Execution function for the tool */
-  execute: (params: any) => Promise<{ success: boolean; result?: any; error?: string }>;
+  execute: (
+    params: any,
+    context?: ToolExecutionContext,
+  ) => Promise<{ success: boolean; result?: any; error?: string }>;
 }
 
 export type ExecuteToolResult = {

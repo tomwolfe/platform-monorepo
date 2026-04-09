@@ -26,7 +26,7 @@ import { mapJsonSchemaToZod } from "../schema-utils";
 import { getUserProfileProvider } from "../../context/user-profile";
 import { Logger } from "@repo/shared";
 
-const logger = new Logger({ serviceName: 'intention-engine' });
+const logger = new Logger({ serviceName: "intention-engine" });
 
 // ============================================================================
 // TOOL FUNCTION TYPE
@@ -35,7 +35,7 @@ const logger = new Logger({ serviceName: 'intention-engine' });
 
 export type ToolFunction = (
   parameters: Record<string, unknown>,
-  context: ToolExecutionContext
+  context: ToolExecutionContext,
 ) => Promise<{
   success: boolean;
   output?: unknown;
@@ -53,6 +53,10 @@ export interface ToolExecutionContext {
   timeoutMs: number;
   startTime: number;
   abortSignal?: AbortSignal;
+  services?: {
+    redis?: any; // @upstash/redis Redis client
+    db?: any; // Drizzle database client
+  };
 }
 
 // ============================================================================
@@ -84,7 +88,7 @@ export class ToolRegistry {
 
     if (this.tools.has(key)) {
       throw new Error(
-        `Tool ${definition.name}@${definition.version} is already registered`
+        `Tool ${definition.name}@${definition.version} is already registered`,
       );
     }
 
@@ -150,7 +154,7 @@ export class ToolRegistry {
     name: string,
     parameters: Record<string, unknown>,
     context: ToolExecutionContext,
-    version?: string
+    version?: string,
   ): Promise<{
     success: boolean;
     output?: unknown;
@@ -176,11 +180,17 @@ export class ToolRegistry {
       let finalParameters = { ...parameters };
       const requiredFields = tool.definition.inputSchema.required || [];
       if (requiredFields.length > 0) {
-        finalParameters = await getUserProfileProvider().hydrateParameters(finalParameters, requiredFields);
+        finalParameters = await getUserProfileProvider().hydrateParameters(
+          finalParameters,
+          requiredFields,
+        );
       }
 
       // Validate input parameters
-      const validationResult = this.validateInput(tool.definition, finalParameters);
+      const validationResult = this.validateInput(
+        tool.definition,
+        finalParameters,
+      );
       if (!validationResult.valid) {
         throw EngineErrorSchema.parse({
           code: "TOOL_VALIDATION_FAILED",
@@ -200,14 +210,14 @@ export class ToolRegistry {
         tool.implementation,
         finalParameters,
         context,
-        tool.definition.timeout_ms
+        tool.definition.timeout_ms,
       );
 
       // Validate output if schema provided
       if (result.success && tool.definition.return_schema) {
         const outputValidation = this.validateOutput(
           tool.definition.return_schema,
-          result.output
+          result.output,
         );
         if (!outputValidation.valid) {
           throw EngineErrorSchema.parse({
@@ -235,7 +245,12 @@ export class ToolRegistry {
       const latencyMs = Math.round(endTime - startTime);
 
       // If it's already an EngineError, pass it through
-      if (error && typeof error === "object" && "code" in error && "message" in error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        "message" in error
+      ) {
         return {
           success: false,
           error: String(error.message),
@@ -246,7 +261,9 @@ export class ToolRegistry {
       return {
         success: false,
         error:
-          error instanceof Error ? error.message : "Unknown tool execution error",
+          error instanceof Error
+            ? error.message
+            : "Unknown tool execution error",
         latency_ms: latencyMs,
       };
     }
@@ -255,10 +272,7 @@ export class ToolRegistry {
   /**
    * Get tool for execution
    */
-  private getTool(
-    name: string,
-    version?: string
-  ): RegisteredTool | undefined {
+  private getTool(name: string, version?: string): RegisteredTool | undefined {
     if (version) {
       return this.tools.get(this.getToolKey(name, version));
     }
@@ -269,7 +283,10 @@ export class ToolRegistry {
 
     Array.from(this.tools.entries()).forEach(([key, tool]) => {
       if (tool.definition.name === name) {
-        if (!latest || this.compareVersions(tool.definition.version, latestVersion) > 0) {
+        if (
+          !latest ||
+          this.compareVersions(tool.definition.version, latestVersion) > 0
+        ) {
           latest = tool;
           latestVersion = tool.definition.version;
         }
@@ -309,7 +326,7 @@ export class ToolRegistry {
    */
   private validateInput(
     definition: ToolDefinition,
-    parameters: Record<string, unknown>
+    parameters: Record<string, unknown>,
   ): { valid: boolean; error?: string } {
     try {
       // Automatic Source-of-Truth Validation: Prefer reflected DB schemas
@@ -326,10 +343,13 @@ export class ToolRegistry {
       if (error instanceof z.ZodError) {
         return {
           valid: false,
-          error: error.issues.map((e) => `${e.path.join(".")}: ${e.message}`).join("; "),
+          error: error.issues
+            .map((e) => `${e.path.join(".")}: ${e.message}`)
+            .join("; "),
         };
       }
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       return {
         valid: false,
         error: errorMessage || "Unknown validation error",
@@ -342,7 +362,7 @@ export class ToolRegistry {
    */
   private validateOutput(
     schema: Record<string, unknown>,
-    output: unknown
+    output: unknown,
   ): { valid: boolean; error?: string } {
     try {
       // For output, we don't always have the table name,
@@ -354,10 +374,13 @@ export class ToolRegistry {
       if (error instanceof z.ZodError) {
         return {
           valid: false,
-          error: error.issues.map((e) => `${e.path.join(".")}: ${e.message}`).join("; "),
+          error: error.issues
+            .map((e) => `${e.path.join(".")}: ${e.message}`)
+            .join("; "),
         };
       }
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       return {
         valid: false,
         error: errorMessage || "Unknown validation error",
@@ -372,15 +395,15 @@ export class ToolRegistry {
     implementation: ToolFunction,
     parameters: Record<string, unknown>,
     context: ToolExecutionContext,
-    timeoutMs: number
+    timeoutMs: number,
   ): Promise<{ success: boolean; output?: unknown; error?: string }> {
     const abortController = new AbortController();
     const signal = abortController.signal;
-    
+
     // Create a new context with the abort signal
     const contextWithSignal: ToolExecutionContext = {
       ...context,
-      abortSignal: signal
+      abortSignal: signal,
     };
 
     return new Promise((resolve, reject) => {
@@ -392,7 +415,7 @@ export class ToolRegistry {
             message: `Tool execution timed out after ${timeoutMs}ms`,
             recoverable: false,
             timestamp: new Date().toISOString(),
-          })
+          }),
         );
       }, timeoutMs);
 
@@ -410,7 +433,7 @@ export class ToolRegistry {
                 message: `Tool execution was aborted due to timeout (${timeoutMs}ms)`,
                 recoverable: false,
                 timestamp: new Date().toISOString(),
-              })
+              }),
             );
           } else {
             reject(error);
@@ -426,7 +449,7 @@ export class ToolRegistry {
     execute: (
       toolName: string,
       parameters: Record<string, unknown>,
-      timeoutMs: number
+      timeoutMs: number,
     ) => Promise<{
       success: boolean;
       output?: unknown;
@@ -472,7 +495,7 @@ export function resetToolRegistry(): void {
 
 export function registerTool(
   definition: ToolDefinition,
-  implementation: ToolFunction
+  implementation: ToolFunction,
 ): void {
   getToolRegistry().register(definition, implementation);
 }
@@ -481,7 +504,7 @@ export function executeTool(
   name: string,
   parameters: Record<string, unknown>,
   context: ToolExecutionContext,
-  version?: string
+  version?: string,
 ): Promise<{
   success: boolean;
   output?: unknown;
@@ -515,7 +538,10 @@ export const BuiltInTools: ToolDefinition[] = [
       },
       required: ["duration_ms"],
     },
-    return_schema: { type: "object", properties: { waited_ms: { type: "number" } } },
+    return_schema: {
+      type: "object",
+      properties: { waited_ms: { type: "number" } },
+    },
     timeout_ms: 60000,
     category: "calculation",
     requires_confirmation: false,
@@ -539,7 +565,10 @@ export const BuiltInTools: ToolDefinition[] = [
       },
       required: ["message"],
     },
-    return_schema: { type: "object", properties: { logged: { type: "boolean" } } },
+    return_schema: {
+      type: "object",
+      properties: { logged: { type: "boolean" } },
+    },
     timeout_ms: 5000,
     category: "data",
     requires_confirmation: false,
@@ -547,18 +576,23 @@ export const BuiltInTools: ToolDefinition[] = [
   {
     name: "self_reflect",
     version: "1.0.0",
-    description: "Access execution history to self-reflect on previous state transitions. Use this when stuck in a loop or needing to understand past decisions.",
+    description:
+      "Access execution history to self-reflect on previous state transitions. Use this when stuck in a loop or needing to understand past decisions.",
     inputSchema: {
       type: "object",
       properties: {
         intentId: {
           type: "string",
-          description: "The ID of the current intent/execution to retrieve history for.",
+          description:
+            "The ID of the current intent/execution to retrieve history for.",
         },
       },
       required: ["intentId"],
     },
-    return_schema: { type: "object", properties: { history: { type: "array" } } },
+    return_schema: {
+      type: "object",
+      properties: { history: { type: "array" } },
+    },
     timeout_ms: 10000,
     category: "data",
     requires_confirmation: false,
@@ -606,7 +640,8 @@ export function registerBuiltInTools(): void {
         output: { history },
       };
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       return {
         success: false,
         error: `Failed to retrieve history: ${errorMessage}`,

@@ -56,9 +56,12 @@ CREATE TABLE IF NOT EXISTS outbox (
 );
 
 -- Step 3: Create index for efficient polling (used by OutboxRelayService fallback)
-CREATE INDEX IF NOT EXISTS outbox_status_pending_idx
-  ON outbox (status, created_at)
-  WHERE status = 'pending';
+-- NOTE: This index has been superseded by migration 0013 which covers both
+-- 'pending' and 'processing' statuses for DLQ recovery sweeps.
+-- The original definition was:
+--   CREATE INDEX IF NOT EXISTS outbox_status_pending_idx
+--     ON outbox (status, created_at)
+--     WHERE status = 'pending';
 
 -- ============================================================================
 -- VERIFICATION QUERIES

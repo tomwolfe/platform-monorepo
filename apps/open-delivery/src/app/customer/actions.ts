@@ -353,6 +353,9 @@ export async function placeRealOrder(
     const db = getDb();
 
     const result = await db.transaction(async (tx) => {
+      // Enforce strict DB-level timeout to prevent dangling locks if Lambda dies
+      await tx.execute(sql`SET LOCAL statement_timeout = '7000'`);
+
       // 1. Upsert user
       const userName =
         `${user.firstName || "User"} ${user.lastName || ""}`.trim();

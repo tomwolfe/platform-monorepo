@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { WeatherDataSchema } from "@repo/mcp-protocol";
+import { fetchWithTracing } from "../fetch";
+import { ToolExecutionContext } from "../engine/tools/registry";
 
 export const weatherReturnSchema = {
   location: "string",
@@ -13,6 +15,7 @@ export type WeatherDataParams = z.infer<typeof WeatherDataSchema>;
 
 export async function get_weather_data(
   params: WeatherDataParams,
+  context?: ToolExecutionContext,
 ): Promise<{ success: boolean; result?: any; error?: string }> {
   const validated = WeatherDataSchema.safeParse(params);
   if (!validated.success) {
@@ -31,9 +34,11 @@ export async function get_weather_data(
     const timeoutId = setTimeout(() => controller.abort(), 4000);
 
     try {
-      const response = await fetch(
+      const response = await fetchWithTracing(
         `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=temperature_2m,relativehumidity_2m,windspeed_10m`,
         { signal: controller.signal },
+        context?.executionId,
+        context?.abortSignal || controller.signal,
       );
 
       clearTimeout(timeoutId);
@@ -60,7 +65,10 @@ export async function get_weather_data(
       throw error;
     }
   } catch (error: unknown) {
-    return { success: false, error: error.message };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 

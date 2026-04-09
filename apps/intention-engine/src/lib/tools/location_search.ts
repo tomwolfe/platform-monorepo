@@ -20,6 +20,7 @@ import {
   withNervousSystemTracing,
   injectTracingHeaders,
 } from "@repo/shared/tracing";
+import { ToolExecutionContext } from "../engine/tools/registry";
 
 const logger = new Logger({ serviceName: "location-search" });
 
@@ -74,6 +75,7 @@ export interface PhotonLocation {
  */
 export async function geocode_location_photon(
   params: z.infer<typeof GeocodeSchema>,
+  context?: ToolExecutionContext,
 ): Promise<{
   success: boolean;
   result?: { lat: number; lon: number; displayName?: string };
@@ -119,6 +121,9 @@ export async function geocode_location_photon(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
 
+    // Merge context abortSignal with local timeout
+    const effectiveSignal = context?.abortSignal || controller.signal;
+
     return await withNervousSystemTracing(async ({ correlationId }) => {
       const response = await photonBreaker.execute(async () => {
         return await fetch(url, {
@@ -126,7 +131,7 @@ export async function geocode_location_photon(
             "User-Agent": "IntentionEngine/1.0",
             ...injectTracingHeaders({}, correlationId),
           },
-          signal: controller.signal,
+          signal: effectiveSignal,
         });
       });
 
@@ -180,6 +185,7 @@ export async function geocode_location_photon(
  */
 export async function geocode_location_nominatim(
   params: z.infer<typeof GeocodeSchema>,
+  context?: ToolExecutionContext,
 ): Promise<{
   success: boolean;
   result?: { lat: number; lon: number; displayName?: string };
@@ -224,6 +230,8 @@ export async function geocode_location_nominatim(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
 
+    const effectiveSignal = context?.abortSignal || controller.signal;
+
     return await withNervousSystemTracing(async ({ correlationId }) => {
       const response = await nominatimBreaker.execute(async () => {
         return await fetch(url, {
@@ -231,7 +239,7 @@ export async function geocode_location_nominatim(
             "User-Agent": "IntentionEngine/1.0",
             ...injectTracingHeaders({}, correlationId),
           },
-          signal: controller.signal,
+          signal: effectiveSignal,
         });
       });
 
@@ -264,6 +272,7 @@ export async function geocode_location(params: z.infer<typeof GeocodeSchema>) {
 
 export async function search_restaurant(
   params: z.infer<typeof SearchRestaurantSchema>,
+  context?: ToolExecutionContext,
 ) {
   const validated = SearchRestaurantSchema.safeParse(params);
   if (!validated.success)
@@ -343,6 +352,8 @@ export async function search_restaurant(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
 
+    const effectiveSignal = context?.abortSignal || controller.signal;
+
     return await withNervousSystemTracing(async ({ correlationId }) => {
       let overpassRes: Response;
 
@@ -350,7 +361,7 @@ export async function search_restaurant(
         overpassRes = await overpassBreaker.execute(async () => {
           return await fetch(overpassUrl, {
             headers: injectTracingHeaders({}, correlationId),
-            signal: controller.signal,
+            signal: effectiveSignal,
           });
         });
       } catch (fetchError: unknown) {
@@ -505,6 +516,7 @@ export async function search_restaurant(
 
 export async function search_web(
   query: string,
+  context?: ToolExecutionContext,
 ): Promise<{ success: boolean; result?: any; error?: string }> {
   logger.info({ message: "Searching web", query });
 
@@ -523,6 +535,9 @@ export async function search_web(
             5000,
           );
 
+          const effectiveSignal =
+            context?.abortSignal || tavilyController.signal;
+
           const response = await fetch("https://api.tavily.com/search", {
             method: "POST",
             headers: {
@@ -535,7 +550,7 @@ export async function search_web(
               search_depth: "basic",
               max_results: 3,
             }),
-            signal: tavilyController.signal,
+            signal: effectiveSignal,
           });
 
           clearTimeout(tavilyTimeoutId);

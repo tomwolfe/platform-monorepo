@@ -1,23 +1,37 @@
 /**
  * POST /api/mesh/resume - Durable Execution Resume Endpoint
- * 
+ *
  * Listens for CONTINUE_EXECUTION events from Ably to resume
  * segmented execution where a previous Vercel lambda left off.
- * 
+ *
  * This bypasses Vercel's 10s timeout by chaining lambdas via Ably.
- * 
+ *
  * Security: Requires service token authentication.
  * Observability: Propagates trace ID for distributed tracing.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAsymmetricJWT } from "@repo/auth";
-import { resumeFromCheckpoint, ToolExecutor, WorkflowResult } from "@/lib/engine/workflow-machine";
+import {
+  resumeFromCheckpoint,
+  ToolExecutor,
+  WorkflowResult,
+} from "@/lib/engine/workflow-machine";
 import { loadExecutionState } from "@/lib/engine/memory";
 import { getMcpClients, ToolCallResult } from "@/lib/mcp-client";
-import { RealtimeService, withApiErrorHandler, formatApiSuccess, formatApiError } from "@repo/shared";
+import {
+  RealtimeService,
+  withApiErrorHandler,
+  formatApiSuccess,
+  formatApiError,
+} from "@repo/shared";
 import { Tracer } from "@/lib/engine/tracing";
-import { getToolRegistry } from "@/lib/engine/tools/registry";
+import {
+  getToolRegistry,
+  ToolExecutionContext,
+} from "@/lib/engine/tools/registry";
+import { getRedisClient, ServiceNamespace } from "@repo/shared";
+import { getDb } from "@repo/database";
 import { Plan } from "@/lib/engine/types";
 
 const RESUME_REQUEST_SCHEMA = {
@@ -34,20 +48,29 @@ async function meshResumeHandler(req: NextRequest) {
   // ========================================================================
 
   const authHeader = req.headers.get("authorization");
-  const token = authHeader?.toLowerCase().startsWith("bearer ") ? authHeader.substring(7).trim() : authHeader;
+  const token = authHeader?.toLowerCase().startsWith("bearer ")
+    ? authHeader.substring(7).trim()
+    : authHeader;
 
   if (!token) {
     return NextResponse.json(
       formatApiError(new Error("Missing authorization token"), "UNAUTHORIZED"),
-      { status: 401 }
+      { status: 401 },
     );
   }
 
-  const verified = await verifyAsymmetricJWT(token, 'intention-engine', 'mesh-resume');
+  const verified = await verifyAsymmetricJWT(
+    token,
+    "intention-engine",
+    "mesh-resume",
+  );
   if (!verified) {
     return NextResponse.json(
-      formatApiError(new Error("Invalid or expired service token"), "UNAUTHORIZED"),
-      { status: 403 }
+      formatApiError(
+        new Error("Invalid or expired service token"),
+        "UNAUTHORIZED",
+      ),
+      { status: 403 },
     );
   }
 
@@ -60,16 +83,20 @@ async function meshResumeHandler(req: NextRequest) {
 
   if (!executionId) {
     return NextResponse.json(
-      formatApiError(new Error("Missing required field: executionId"), "VALIDATION_ERROR", {
-        details: { schema: RESUME_REQUEST_SCHEMA },
-      }),
-      { status: 400 }
+      formatApiError(
+        new Error("Missing required field: executionId"),
+        "VALIDATION_ERROR",
+        {
+          details: { schema: RESUME_REQUEST_SCHEMA },
+        },
+      ),
+      { status: 400 },
     );
   }
 
   console.log(
     `[MeshResume] Received resume request for ${executionId}` +
-    (traceId ? ` [trace: ${traceId}]` : "")
+      (traceId ? ` [trace: ${traceId}]` : ""),
   );
 
   // ========================================================================
@@ -90,15 +117,21 @@ async function meshResumeHandler(req: NextRequest) {
     const state = await loadExecutionState(executionId);
     if (!state) {
       return NextResponse.json(
-        formatApiError(new Error(`No execution state found for ${executionId}`), "NOT_FOUND"),
-        { status: 404 }
+        formatApiError(
+          new Error(`No execution state found for ${executionId}`),
+          "NOT_FOUND",
+        ),
+        { status: 404 },
       );
     }
 
     if (!state.plan) {
       return NextResponse.json(
-        formatApiError(new Error("Execution has no plan associated with it"), "VALIDATION_ERROR"),
-        { status: 400 }
+        formatApiError(
+          new Error("Execution has no plan associated with it"),
+          "VALIDATION_ERROR",
+        ),
+        { status: 400 },
       );
     }
 
@@ -108,10 +141,12 @@ async function meshResumeHandler(req: NextRequest) {
         formatApiSuccess({
           message: "Execution already in terminal state",
           status: state.status,
-          completed_steps: state.step_states.filter(s => s.status === "completed").length,
+          completed_steps: state.step_states.filter(
+            (s) => s.status === "completed",
+          ).length,
           total_steps: state.plan!.steps.length,
         }),
-        { status: 200 }
+        { status: 200 },
       );
     }
 
@@ -145,7 +180,11 @@ async function meshResumeHandler(req: NextRequest) {
       stepIndex: result.completedSteps,
       totalSteps: result.totalSteps,
       stepName: "execution_segment",
-      status: result.success ? "completed" : result.failedSteps > 0 ? "failed" : "in_progress",
+      status: result.success
+        ? "completed"
+        : result.failedSteps > 0
+          ? "failed"
+          : "in_progress",
       message: result.isPartial
         ? `Segment completed, ${result.completedSteps}/${result.totalSteps} steps done`
         : result.success
@@ -186,7 +225,7 @@ async function meshResumeHandler(req: NextRequest) {
         durationMs: Date.now() - startTime,
         traceId,
       }),
-      { status: 200 }
+      { status: 200 },
     );
   });
 }
@@ -201,7 +240,10 @@ export const POST = withApiErrorHandler(meshResumeHandler, {
 // Creates a tool executor that uses MCP clients and local tools
 // ============================================================================
 
-async function buildToolExecutor(traceId?: string, executionId?: string): Promise<ToolExecutor> {
+async function buildToolExecutor(
+  traceId?: string,
+  executionId?: string,
+): Promise<ToolExecutor> {
   const { manager } = await getMcpClients();
   const toolRegistry = getToolRegistry();
 
@@ -214,14 +256,14 @@ async function buildToolExecutor(traceId?: string, executionId?: string): Promis
         const result = await Promise.race([
           manager.executeTool(toolName, parameters as Record<string, unknown>),
           new Promise<ToolCallResult>((_, reject) => {
-            signal?.addEventListener('abort', () => {
-              reject(new Error('AbortError: Tool call cancelled'));
+            signal?.addEventListener("abort", () => {
+              reject(new Error("AbortError: Tool call cancelled"));
             });
-            setTimeout(() => reject(new Error('Tool timeout')), timeoutMs);
-          })
+            setTimeout(() => reject(new Error("Tool timeout")), timeoutMs);
+          }),
         ]);
 
-        if (result && 'success' in result && result.success) {
+        if (result && "success" in result && result.success) {
           return {
             success: true,
             output: result.output,
@@ -241,17 +283,33 @@ async function buildToolExecutor(traceId?: string, executionId?: string): Promis
 
         console.log(`[MeshResume] Executing local tool ${toolName}`);
 
+        // Lazy-initialized services for this execution
+        let _injRedis: any = null;
+        let _injDb: any = null;
+        const getInjRedis = () => {
+          if (!_injRedis) _injRedis = getRedisClient(ServiceNamespace.SHARED);
+          return _injRedis;
+        };
+        const getInjDb = () => {
+          if (!_injDb) _injDb = getDb();
+          return _injDb;
+        };
+
         // Execute local tool using the engine's standard execution context
         const stepId = `resume:${toolName}:${Date.now()}`;
 
         try {
-          const output = await localTool.execute(parameters, {
-            executionId: executionId || 'unknown',
+          const ctx: ToolExecutionContext = {
+            executionId: executionId || "unknown",
             stepId,
             timeoutMs,
             startTime: Date.now(),
-            traceId,
-          });
+            services: {
+              redis: getInjRedis(),
+              db: getInjDb(),
+            },
+          };
+          const output = await localTool.execute(parameters, ctx);
 
           return {
             success: true,
@@ -259,7 +317,8 @@ async function buildToolExecutor(traceId?: string, executionId?: string): Promis
             latency_ms: Date.now() - startTime,
           };
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
           return {
             success: false,
             error: errorMessage,
@@ -267,7 +326,8 @@ async function buildToolExecutor(traceId?: string, executionId?: string): Promis
           };
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
         return {
           success: false,
           error: errorMessage,

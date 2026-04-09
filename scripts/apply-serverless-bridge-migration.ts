@@ -6,23 +6,23 @@
  * via OutboxRelayService — no Postgres extensions or triggers required.
  */
 
-import { neon } from '@neondatabase/serverless';
+import { neon } from "@neondatabase/serverless";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 
 if (!DATABASE_URL) {
-  console.error('DATABASE_URL not set');
+  console.error("DATABASE_URL not set");
   process.exit(1);
 }
 
 async function applyMigration() {
   const sql = neon(DATABASE_URL);
 
-  console.log('🔧 Applying Serverless Outbox Table migration...\n');
+  console.log("🔧 Applying Serverless Outbox Table migration...\n");
 
   try {
     // Step 0: Check if outbox table exists, create if not
-    console.log('📦 Step 0: Checking for outbox table...');
+    console.log("📦 Step 0: Checking for outbox table...");
     const outboxCheck = await sql`
       SELECT EXISTS (
         SELECT 1 FROM information_schema.tables
@@ -32,7 +32,7 @@ async function applyMigration() {
     const outboxExists = (outboxCheck[0] as any).exists;
 
     if (!outboxExists) {
-      console.log('⚠️  outbox table not found. Creating it now...');
+      console.log("⚠️  outbox table not found. Creating it now...");
 
       // Create enum first
       await sql`
@@ -58,50 +58,67 @@ async function applyMigration() {
         )
       `;
 
-      console.log('✅ outbox table created\n');
+      console.log("✅ outbox table created\n");
     } else {
-      console.log('✅ outbox table exists\n');
+      console.log("✅ outbox table exists\n");
     }
 
     // Step 1: Create polling index (always useful for fallback)
-    console.log('📦 Step 1: Creating index for efficient polling...');
+    console.log("📦 Step 1: Creating index for efficient polling...");
+    // Drop old index if it exists, then create new one covering both statuses
+    await sql`DROP INDEX IF EXISTS outbox_status_pending_idx`;
     await sql`
-      CREATE INDEX IF NOT EXISTS outbox_status_pending_idx
+      CREATE INDEX IF NOT EXISTS outbox_status_polling_idx
         ON outbox (status, created_at)
-        WHERE status = 'pending'
+        WHERE status IN ('pending', 'processing')
     `;
 
-    console.log('✅ Index created\n');
+    console.log("✅ Index created\n");
 
     // Step 2: Verify installation
-    console.log('📦 Step 2: Verifying installation...\n');
+    console.log("📦 Step 2: Verifying installation...\n");
 
     const indexExists = await sql`
       SELECT EXISTS (
         SELECT 1 FROM pg_indexes
-        WHERE indexname = 'outbox_status_pending_idx'
+        WHERE indexname = 'outbox_status_polling_idx'
       ) as exists
     `;
 
-    console.log('   Outbox Table: ✅ Exists');
-    console.log('   Polling Index:', (indexExists[0] as any).exists ? '✅ Installed' : '❌ Not Installed');
+    console.log("   Outbox Table: ✅ Exists");
+    console.log(
+      "   Polling Index:",
+      (indexExists[0] as any).exists ? "✅ Installed" : "❌ Not Installed",
+    );
 
-    console.log('\n✅ Serverless Outbox Table setup complete!\n');
-    console.log('📝 Note: Outbox processing uses application-layer QStash triggers');
-    console.log('   - OutboxRelayService.triggerRelay() is called after DB commit');
-    console.log('   - QStash delivers to /api/engine/outbox-relay endpoint');
-    console.log('   - No Postgres extensions or triggers required (Neon compatible)\n');
-    console.log('📝 Next steps:');
-    console.log('   1. Set QSTASH_TOKEN and INTERNAL_SYSTEM_KEY environment variables');
-    console.log('   2. Ensure OutboxRelayService is initialized at app startup\n');
-
+    console.log("\n✅ Serverless Outbox Table setup complete!\n");
+    console.log(
+      "📝 Note: Outbox processing uses application-layer QStash triggers",
+    );
+    console.log(
+      "   - OutboxRelayService.triggerRelay() is called after DB commit",
+    );
+    console.log("   - QStash delivers to /api/engine/outbox-relay endpoint");
+    console.log(
+      "   - No Postgres extensions or triggers required (Neon compatible)\n",
+    );
+    console.log("📝 Next steps:");
+    console.log(
+      "   1. Set QSTASH_TOKEN and INTERNAL_SYSTEM_KEY environment variables",
+    );
+    console.log(
+      "   2. Ensure OutboxRelayService is initialized at app startup\n",
+    );
   } catch (error: unknown) {
-    console.error('❌ Migration failed:', error instanceof Error ? error.message : String(error));
+    console.error(
+      "❌ Migration failed:",
+      error instanceof Error ? error.message : String(error),
+    );
     if ((error as any).detail) {
-      console.error('   Detail:', (error as any).detail);
+      console.error("   Detail:", (error as any).detail);
     }
     if ((error as any).hint) {
-      console.error('   Hint:', (error as any).hint);
+      console.error("   Hint:", (error as any).hint);
     }
     process.exit(1);
   }

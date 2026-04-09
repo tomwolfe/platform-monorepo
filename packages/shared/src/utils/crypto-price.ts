@@ -20,10 +20,24 @@ import { getRedisClient, ServiceNamespace } from "../redis";
 import { getDb, cryptoPrices, eq, lt, gt, and } from "@repo/database";
 import { sql } from "drizzle-orm";
 import { parseUnits, formatUnits } from "viem";
+import {
+  CircuitBreaker,
+  CircuitBreakerOpenError,
+} from "../services/circuit-breaker";
 
 const COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price";
 const COINBASE_API = "https://api.coinbase.com/v2/exchange-rates";
 const BINANCE_API = "https://api.binance.com/api/v3/ticker/24hr";
+
+// Circuit breaker for the crypto price oracle to prevent cascade failures
+// when external APIs (CoinGecko, Coinbase, Binance) degrade
+const oracleBreaker = new CircuitBreaker("crypto-oracle", {
+  failureThreshold: 3,
+  resetTimeoutMs: 30000,
+  requestTimeoutMs: 5000,
+  ignoredErrors: ["CLIENT_ERROR", "VALIDATION_ERROR", "Invalid price data"],
+  debug: false,
+});
 
 // CoinGecko API IDs for supported tokens
 const COIN_IDS = {
@@ -198,44 +212,56 @@ export async function getCryptoPrices(options?: {
     );
   }
 
-  // Try CoinGecko (primary)
+  // Try CoinGecko (primary) — protected by circuit breaker
   try {
-    const url = `${COINGECKO_API}?ids=${COIN_IDS.ETH},${COIN_IDS.MATIC}&vs_currencies=usd&include_24hr_change=true`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const prices = await oracleBreaker.execute(async () => {
+      const url = `${COINGECKO_API}?ids=${COIN_IDS.ETH},${COIN_IDS.MATIC}&vs_currencies=usd&include_24hr_change=true`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
 
-    const response = await fetch(url, {
-      headers: {
-        Accept: "application/json",
-      },
-      signal: controller.signal,
+      const response = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+        },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`CoinGecko API error: ${response.status}`);
+      }
+
+      const data: PriceResponse = await response.json();
+
+      const result = {
+        ETH: data.ethereum?.usd ?? 0,
+        MATIC: data["matic-network"]?.usd ?? 0,
+        timestamp: Date.now(),
+      };
+
+      // Validate prices are non-zero
+      if (result.ETH === 0 || result.MATIC === 0) {
+        throw new Error("Invalid price data from CoinGecko");
+      }
+
+      return result;
     });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error(`CoinGecko API error: ${response.status}`);
-    }
-
-    const data: PriceResponse = await response.json();
-
-    const prices = {
-      ETH: data.ethereum?.usd ?? 0,
-      MATIC: data["matic-network"]?.usd ?? 0,
-      timestamp: Date.now(),
-    };
-
-    // Validate prices are non-zero
-    if (prices.ETH === 0 || prices.MATIC === 0) {
-      throw new Error("Invalid price data from CoinGecko");
-    }
 
     // Cache the result
     await redis.setex("@apps:crypto-prices", CACHE_TTL, JSON.stringify(prices));
 
     return { ...prices, source: "coingecko" as const, isStale: false };
   } catch (coingeckoError) {
-    console.warn("CoinGecko failed, trying Coinbase:", coingeckoError);
+    // If circuit breaker is OPEN, skip network timeout and go straight to fallbacks
+    const isBreakerOpen = coingeckoError instanceof CircuitBreakerOpenError;
+    if (!isBreakerOpen) {
+      console.warn("CoinGecko failed, trying Coinbase:", coingeckoError);
+    } else {
+      console.warn(
+        "[CryptoPrice] CoinGecko circuit breaker OPEN, skipping to fallback",
+      );
+    }
 
     // Try Coinbase (secondary fallback)
     try {

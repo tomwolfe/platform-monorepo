@@ -9,12 +9,16 @@ import {
 } from "viem";
 import { base } from "viem/chains";
 import { ESCROW_ABI } from "@repo/shared/utils/escrow-abi";
-import { withCronAuth } from "@repo/shared";
+import { withCronAuth, QStashService } from "@repo/shared";
 import { trace, Span, SpanStatusCode } from "@opentelemetry/api";
 
 export const maxDuration = 10; // Vercel Hobby limit
 
 const tracer = trace.getTracer("open-delivery-payouts-cron");
+
+// SERVERLESS RESILIENCE: Reduced from 50 to 15 to stay within Vercel's 10s limit.
+// If more than 15 orders exist, a QStash self-trigger recursively processes the rest.
+const MAX_ORDERS_PER_RUN = 15;
 
 /**
  * Verify Tip Releases Cron Endpoint
@@ -41,9 +45,6 @@ const tracer = trace.getTracer("open-delivery-payouts-cron");
  * Headers:
  *   Authorization: Bearer <CRON_SECRET>
  */
-
-// Maximum orders to verify per run (prevent timeout)
-const MAX_ORDERS_PER_RUN = 50;
 
 async function getCronHandler(req: NextRequest) {
   const traceId = req.headers.get("x-trace-id") || undefined;
@@ -87,6 +88,27 @@ async function getCronHandler(req: NextRequest) {
           verifiedCount: 0,
           completedCount: 0,
           failedCount: 0,
+        });
+      }
+
+      // QSTASH SELF-TRIGGER: If we hit the batch limit, schedule another run
+      // to process remaining orders without exceeding the 10s serverless timeout.
+      const hasMoreOrders = releasedOrders.length >= MAX_ORDERS_PER_RUN;
+      if (hasMoreOrders) {
+        const traceId = req.headers.get("x-trace-id") || undefined;
+        QStashService.publish({
+          url: `${process.env.NEXT_PUBLIC_APP_URL || "https://your-domain.com"}/api/cron/verify-payouts`,
+          body: JSON.stringify({ triggeredBy: "qstash-self-trigger" }),
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.CRON_SECRET || ""}`,
+            ...(traceId ? { "x-trace-id": traceId } : {}),
+          },
+        }).catch((err) => {
+          console.warn(
+            "[Verify Payouts Cron] Failed to schedule QStash self-trigger for remaining orders:",
+            err instanceof Error ? err.message : String(err),
+          );
         });
       }
 

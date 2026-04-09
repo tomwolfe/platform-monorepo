@@ -6,6 +6,7 @@ import {
   withCronAuth,
   Logger,
   withDistributedLock,
+  QStashService,
 } from "@repo/shared";
 import { verifyTransaction } from "@repo/shared/utils/web3-verification";
 import { type Address } from "viem";
@@ -16,6 +17,10 @@ export const maxDuration = 10; // Vercel Hobby limit
 
 const logger = new Logger({ serviceName: "verify-pending-cron" });
 const tracer = trace.getTracer("open-delivery-cron");
+
+// SERVERLESS RESILIENCE: Reduced from 50 to 15 to stay within Vercel's 10s limit.
+// If more than 15 orders exist, a QStash self-trigger recursively processes the rest.
+const MAX_ORDERS_PER_RUN = 15;
 
 /**
  * Background Verification Sweeper Endpoint
@@ -42,13 +47,12 @@ const tracer = trace.getTracer("open-delivery-cron");
 
 // RELIABILITY FIX: Process orders in batches to avoid RPC rate limits
 const BATCH_SIZE = 5;
-const MAX_ORDERS_PER_RUN = 50;
 
 async function postHandler(req: NextRequest) {
   const traceId = req.headers.get("x-trace-id") || undefined;
   const requestLogger = traceId ? logger.child({ traceId }) : logger;
 
-  requestLogger.info({ message: "Starting background verification sweep" });
+  requestLogger.info("Starting background verification sweep");
 
   return tracer.startActiveSpan("verify-pending-sweep", async (span: Span) => {
     try {
@@ -61,8 +65,7 @@ async function postHandler(req: NextRequest) {
         maxTransactions: 10,
       });
       if (speedUpResult.speedUpCount > 0) {
-        requestLogger.info({
-          message: "Sped up stuck transactions",
+        requestLogger.info("Sped up stuck transactions", {
           speedUpCount: speedUpResult.speedUpCount,
           failedCount: speedUpResult.failedCount,
         });
@@ -103,7 +106,7 @@ async function postHandler(req: NextRequest) {
             eq(orders.status, "pending_verification"), // New intermediate state
           ),
         )
-        .limit(50); // Process up to 50 orders per sweep
+        .limit(MAX_ORDERS_PER_RUN); // Process up to MAX_ORDERS_PER_RUN orders per sweep
 
       if (pendingOrders.length === 0) {
         span.setAttribute("cron.pending_orders_found", 0);
@@ -115,9 +118,31 @@ async function postHandler(req: NextRequest) {
         });
       }
 
+      // QSTASH SELF-TRIGGER: If we hit the batch limit, schedule another run
+      // to process remaining orders without exceeding the 10s serverless timeout.
+      const hasMoreOrders = pendingOrders.length >= MAX_ORDERS_PER_RUN;
+      if (hasMoreOrders) {
+        const traceId = req.headers.get("x-trace-id") || undefined;
+        QStashService.publish({
+          url: `${process.env.NEXT_PUBLIC_APP_URL || "https://your-domain.com"}/api/cron/verify-pending`,
+          body: JSON.stringify({ triggeredBy: "qstash-self-trigger" }),
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.CRON_SECRET || ""}`,
+            ...(traceId ? { "x-trace-id": traceId } : {}),
+          },
+        }).catch((err) => {
+          requestLogger.warn(
+            "Failed to schedule QStash self-trigger for remaining orders",
+            {
+              error: err instanceof Error ? err.message : String(err),
+            },
+          );
+        });
+      }
+
       span.setAttribute("cron.pending_orders_found", pendingOrders.length);
-      logger.info({
-        message: "Found pending orders to verify",
+      logger.info("Found pending orders to verify", {
         pendingCount: pendingOrders.length,
       });
 
@@ -129,8 +154,7 @@ async function postHandler(req: NextRequest) {
       // Processing 50 orders sequentially with RPC calls would exceed this limit
       for (let i = 0; i < pendingOrders.length; i += BATCH_SIZE) {
         const batch = pendingOrders.slice(i, i + BATCH_SIZE);
-        logger.info({
-          message: "Processing verification batch",
+        logger.info("Processing verification batch", {
           batchNumber: Math.floor(i / BATCH_SIZE) + 1,
           batchSize: batch.length,
         });
@@ -152,8 +176,7 @@ async function postHandler(req: NextRequest) {
             });
 
             if (!verificationResult.success) {
-              logger.warn({
-                message: "Order verification failed",
+              logger.warn("Order verification failed", {
                 orderId: order.id,
                 error: verificationResult.error,
               });
@@ -191,14 +214,12 @@ async function postHandler(req: NextRequest) {
               },
             );
 
-            logger.info({
-              message: "Order verified and driver dispatched",
+            logger.info("Order verified and driver dispatched", {
               orderId: order.id,
             });
             return { orderId: order.id, success: true };
           } catch (error: unknown) {
-            logger.error({
-              message: "Error verifying order",
+            logger.error("Error verifying order", {
               orderId: order.id,
               error: error instanceof Error ? error.message : String(error),
             });
@@ -239,8 +260,7 @@ async function postHandler(req: NextRequest) {
         timestamp: new Date().toISOString(),
       };
 
-      logger.info({
-        message: "Verification sweep completed",
+      logger.info("Verification sweep completed", {
         verifiedCount,
         failedCount,
         processedCount: pendingOrders.length,

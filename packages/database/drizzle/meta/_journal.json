@@ -31,10 +31,52 @@
       "breakpoints": true
     },
     {
+      "idx": 4,
+      "version": "7",
+      "when": 1774120000000,
+      "tag": "0004_remove_old_store_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1774121000000,
+      "tag": "0005_add_order_tip_subtotal",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1774122000000,
+      "tag": "0006_add_web3_payment_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1774123000000,
+      "tag": "0007_add_driver_wallet",
+      "breakpoints": true
+    },
+    {
       "idx": 8,
       "version": "7",
       "when": 1743811200000,
       "tag": "0008_escrow_to_non_custodial",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1774110000000,
+      "tag": "0009_wise_nebula",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1774124000000,
+      "tag": "0010_fix_orders_store_fk",
       "breakpoints": true
     }
   ]

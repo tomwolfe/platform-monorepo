@@ -28,9 +28,260 @@ import { Logger } from "@repo/shared";
 const logger = new Logger({ serviceName: "intention-engine" });
 
 // ============================================================================
+// CONFIDENCE THRESHOLD & FALLBACK CONFIGURATION
+// T1.2: LLM Confidence Fallback & Rule-Based Routing
+// ============================================================================
+
+/**
+ * Minimum confidence threshold for accepting LLM intent classification.
+ * If confidence drops below this value, the system falls back to
+ * deterministic keyword matching to prevent silent failures.
+ */
+export const INTENT_CONFIDENCE_THRESHOLD = 0.65;
+
+/**
+ * Keyword-to-intent mapping for deterministic fallback routing.
+ * Ordered by priority — earlier matches take precedence.
+ */
+const KEYWORD_INTENT_MAP: Record<string, IntentType> = {
+  // SCHEDULE keywords
+  schedule: "SCHEDULE",
+  meeting: "SCHEDULE",
+  calendar: "SCHEDULE",
+  appointment: "SCHEDULE",
+  remind: "SCHEDULE",
+  "set up": "SCHEDULE",
+
+  // BOOKING keywords
+  book: "ACTION",
+  booking: "ACTION",
+  reserve: "ACTION",
+  reservation: "ACTION",
+  table: "ACTION",
+  restaurant: "ACTION",
+  order: "ACTION",
+
+  // DELIVERY keywords
+  deliver: "ACTION",
+  delivery: "ACTION",
+  shipping: "ACTION",
+  track: "QUERY",
+  status: "QUERY",
+
+  // SEARCH keywords
+  find: "SEARCH",
+  search: "SEARCH",
+  look: "SEARCH",
+  discover: "SEARCH",
+
+  // QUERY keywords
+  what: "QUERY",
+  when: "QUERY",
+  where: "QUERY",
+  how: "QUERY",
+  weather: "QUERY",
+  who: "QUERY",
+  why: "QUERY",
+
+  // PLANNING keywords
+  plan: "PLANNING",
+  trip: "PLANNING",
+  itinerary: "PLANNING",
+  organize: "PLANNING",
+
+  // ANALYSIS keywords
+  analyze: "ANALYSIS",
+  compare: "ANALYSIS",
+  summary: "ANALYSIS",
+  evaluate: "ANALYSIS",
+  review: "ANALYSIS",
+};
+
+/**
+ * Fallback intent types for specialized scenarios
+ */
+const FALLBACK_KEYWORDS: Record<string, IntentType> = {
+  help: "QUERY",
+  cancel: "ACTION",
+  stop: "ACTION",
+  hello: "QUERY",
+  hi: "QUERY",
+  hey: "QUERY",
+  thanks: "QUERY",
+  thank: "QUERY",
+};
+
+// ============================================================================
+// METRICS TRACKING
+// T1.2: Track fallback events for monitoring
+// ============================================================================
+
+/**
+ * Counter for LLM fallback triggers.
+ * Incremented each time the system falls back to rule-based routing.
+ * Should be exported to OpenTelemetry in production.
+ */
+let llmFallbackTriggerCount = 0;
+
+/**
+ * Get the current LLM fallback trigger count.
+ * Used for monitoring and alerting.
+ */
+export function getLLMFallbackCount(): number {
+  return llmFallbackTriggerCount;
+}
+
+/**
+ * Reset the fallback counter (for testing).
+ */
+export function resetLLMFallbackCount(): void {
+  llmFallbackTriggerCount = 0;
+}
+
+/**
+ * Record a fallback event for monitoring.
+ * Logs the event and increments the counter.
+ */
+function recordFallbackEvent(
+  reason: "low_confidence" | "llm_error" | "llm_5xx",
+  originalInput: string,
+  confidence?: number,
+): void {
+  llmFallbackTriggerCount++;
+
+  logger.warn({
+    message: `[T1.2] LLM fallback triggered — routing to rule-based intent`,
+    reason,
+    confidence,
+    input_preview: originalInput.slice(0, 100),
+    fallback_count: llmFallbackTriggerCount,
+    metric: "llm_fallback_triggered",
+    timestamp: new Date().toISOString(),
+  });
+
+  // In production, this would emit to OpenTelemetry:
+  // metrics.counter('llm_fallback_triggered', { reason }).add(1);
+}
+
+// ============================================================================
 // INTENT HASHING
 // Deterministic hashing for immutable intent linking
 // ============================================================================
+
+/**
+ * Deterministic keyword-based intent classification.
+ * Used as a fallback when LLM confidence is too low or the service is unavailable.
+ *
+ * @param input - User input text
+ * @returns Classified intent type
+ */
+export function classifyIntentByKeywords(input: string): {
+  type: IntentType;
+  confidence: number;
+} {
+  const normalizedInput = input.toLowerCase().trim();
+  const words = normalizedInput.split(/\s+/);
+
+  // Check multi-word keywords first (higher priority)
+  for (const [keyword, intentType] of Object.entries(KEYWORD_INTENT_MAP)) {
+    if (keyword.includes(" ") && normalizedInput.includes(keyword)) {
+      return { type: intentType, confidence: 0.7 };
+    }
+  }
+
+  // Check single-word keywords
+  const matchedKeywords: Array<{ keyword: string; intentType: IntentType }> =
+    [];
+
+  for (const [keyword, intentType] of Object.entries(KEYWORD_INTENT_MAP)) {
+    if (!keyword.includes(" ") && words.includes(keyword)) {
+      matchedKeywords.push({ keyword, intentType });
+    }
+  }
+
+  // Check fallback keywords
+  for (const [keyword, intentType] of Object.entries(FALLBACK_KEYWORDS)) {
+    if (words.includes(keyword)) {
+      matchedKeywords.push({ keyword, intentType });
+    }
+  }
+
+  if (matchedKeywords.length === 0) {
+    return { type: "UNKNOWN", confidence: 0.3 };
+  }
+
+  // Use the most common intent type among matched keywords
+  const intentCounts: Record<string, number> = {};
+  for (const { intentType } of matchedKeywords) {
+    intentCounts[intentType] = (intentCounts[intentType] || 0) + 1;
+  }
+
+  let bestIntent: IntentType = matchedKeywords[0].intentType;
+  let bestCount = 0;
+
+  for (const [intentType, count] of Object.entries(intentCounts)) {
+    if (count > bestCount) {
+      bestCount = count;
+      bestIntent = intentType as IntentType;
+    }
+  }
+
+  // Confidence scales with number of matching keywords (max 0.85)
+  const keywordConfidence = Math.min(0.5 + matchedKeywords.length * 0.1, 0.85);
+
+  return { type: bestIntent, confidence: keywordConfidence };
+}
+
+/**
+ * Extract parameters from user input using basic pattern matching.
+ * Used as a fallback when LLM parameter extraction is unavailable.
+ */
+function extractParametersByKeywords(input: string): Record<string, unknown> {
+  const normalizedInput = input.toLowerCase();
+  const params: Record<string, unknown> = {};
+
+  // Extract time patterns (e.g., "at 2pm", "at 14:00")
+  const timeMatch = normalizedInput.match(
+    /\bat\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i,
+  );
+  if (timeMatch) {
+    params.time = timeMatch[1];
+  }
+
+  // Extract date patterns (e.g., "tomorrow", "next Monday", "Jan 15")
+  const datePatterns = [
+    { pattern: /\b(tomorrow|today|tonight)\b/i, key: "date" },
+    {
+      pattern:
+        /\b(next\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i,
+      key: "date",
+    },
+    { pattern: /\b(\w+\s+\d{1,2}(?:st|nd|rd|th)?)\b/i, key: "date" },
+  ];
+
+  for (const { pattern, key } of datePatterns) {
+    const match = normalizedInput.match(pattern);
+    if (match && !params[key]) {
+      params[key] = match[1];
+    }
+  }
+
+  // Extract numbers (e.g., party size, quantity)
+  const numberMatch = normalizedInput.match(
+    /\b(for\s+)?(\d{1,2})\s*(?:people|persons?|pax|guests?)?\b/i,
+  );
+  if (numberMatch) {
+    params.party_size = parseInt(numberMatch[2], 10);
+  }
+
+  // Extract quoted strings as named entities
+  const quotedMatch = input.match(/"([^"]+)"/);
+  if (quotedMatch) {
+    params.query = quotedMatch[1];
+  }
+
+  return params;
+}
 
 /**
  * Generates a deterministic SHA-256 hash for an intent.
@@ -232,22 +483,44 @@ export async function parseIntent(
         error instanceof Error &&
         (error.message.includes("timeout") ||
           error.message.includes("deadline"));
+
+      // Check if this might be a 5xx error pattern
+      const isServerError =
+        error instanceof Error &&
+        (error.message.includes("5") ||
+          error.message.includes("internal server") ||
+          error.message.includes("service unavailable"));
+
+      const fallbackReason = isTimeout
+        ? ("llm_timeout" as const)
+        : isServerError
+          ? ("llm_5xx" as const)
+          : ("llm_error" as const);
+
       logger.warn({
-        message: `[Intent Engine] Structured generation failed (${isTimeout ? "TIMEOUT" : "ERROR"}), falling back to SERVICE_DEGRADED`,
+        message: `[Intent Engine] Structured generation failed (${isTimeout ? "TIMEOUT" : "ERROR"}), falling back to rule-based classification`,
         error: error instanceof Error ? error.message : String(error),
       });
 
-      // Build a fallback service degraded intent
+      recordFallbackEvent(fallbackReason, input);
+
+      // Fall back to deterministic keyword matching
+      const keywordResult = classifyIntentByKeywords(input);
+      const fallbackParams = extractParametersByKeywords(input);
+
+      // Build a fallback intent using rule-based classification
       const fallbackParsedIntent: ParsedIntent = {
-        type: "SERVICE_DEGRADED",
-        confidence: 0.3,
-        parameters: {},
+        type: keywordResult.type,
+        confidence: keywordResult.confidence,
+        parameters: fallbackParams,
         explanation: isTimeout
-          ? "The intent parsing service timed out. Switching to degraded mode."
-          : "The intent parsing service encountered an error. Switching to degraded mode.",
-        requires_clarification: true,
+          ? `The intent parsing service timed out. Switching to rule-based classification (detected: ${keywordResult.type}).`
+          : `The intent parsing service encountered an error. Switching to rule-based classification (detected: ${keywordResult.type}).`,
+        requires_clarification: keywordResult.type === "UNKNOWN",
         clarification_prompt:
-          "I'm having some trouble processing your request right now. Could you please try again in a moment, or simplify your request?",
+          keywordResult.type === "UNKNOWN"
+            ? "I'm having some trouble processing your request right now. Could you please try again or simplify your request?"
+            : undefined,
       };
 
       const intent: Intent = IntentSchema.parse({
@@ -264,7 +537,8 @@ export async function parseIntent(
         metadata: IntentMetadataSchema.parse({
           version: "1.0.0",
           timestamp,
-          source: "system_fallback",
+          source: "rule_based_fallback",
+          fallback_reason: fallbackReason,
         }),
         requires_clarification: fallbackParsedIntent.requires_clarification,
         clarification_prompt: fallbackParsedIntent.clarification_prompt,
@@ -276,7 +550,7 @@ export async function parseIntent(
       const traceEntry: TraceEntry = TraceEntrySchema.parse({
         timestamp,
         phase: "intent",
-        event: "intent_parse_fallback",
+        event: "intent_parse_fallback_error",
         input: { rawText: input.trim(), context },
         output: intent,
         latency_ms: latencyMs,
@@ -301,6 +575,82 @@ export async function parseIntent(
 
     const parsedIntent = generationResult.data;
     const llmResponse = generationResult.response;
+
+    // ============================================================================
+    // T1.2: CONFIDENCE THRESHOLD CHECK
+    // If LLM confidence is below threshold, fall back to rule-based routing
+    // ============================================================================
+    if (parsedIntent.confidence < INTENT_CONFIDENCE_THRESHOLD) {
+      recordFallbackEvent("low_confidence", input, parsedIntent.confidence);
+
+      // Fall back to deterministic keyword matching
+      const keywordResult = classifyIntentByKeywords(input);
+      const fallbackParams = extractParametersByKeywords(input);
+
+      const fallbackParsedIntent: ParsedIntent = {
+        type: keywordResult.type,
+        confidence: keywordResult.confidence,
+        parameters: fallbackParams,
+        explanation: `LLM confidence (${parsedIntent.confidence}) below threshold (${INTENT_CONFIDENCE_THRESHOLD}). Falling back to rule-based keyword classification.`,
+        requires_clarification: keywordResult.type === "UNKNOWN",
+        clarification_prompt:
+          keywordResult.type === "UNKNOWN"
+            ? "I'm having trouble understanding your request. Could you please rephrase it?"
+            : undefined,
+      };
+
+      const intent: Intent = IntentSchema.parse({
+        id: randomUUID(),
+        type: fallbackParsedIntent.type,
+        confidence: fallbackParsedIntent.confidence,
+        parameters: fallbackParsedIntent.parameters,
+        rawText: input.trim(),
+        explanation: fallbackParsedIntent.explanation,
+        hash: generateIntentHash(
+          fallbackParsedIntent.type,
+          fallbackParsedIntent.parameters,
+        ),
+        metadata: IntentMetadataSchema.parse({
+          version: "1.0.0",
+          timestamp,
+          source: "rule_based_fallback",
+          model_id: llmResponse.model_id,
+          execution_id: context.execution_id,
+          fallback_reason: "low_confidence",
+          original_llm_confidence: parsedIntent.confidence,
+        }),
+        requires_clarification: fallbackParsedIntent.requires_clarification,
+        clarification_prompt: fallbackParsedIntent.clarification_prompt,
+      });
+
+      const endTime = performance.now();
+      const latencyMs = Math.round(endTime - startTime);
+
+      const traceEntry: TraceEntry = TraceEntrySchema.parse({
+        timestamp,
+        phase: "intent",
+        event: "intent_parse_fallback_keyword",
+        input: { rawText: input.trim(), context },
+        output: intent,
+        latency_ms: latencyMs,
+        token_usage: {
+          prompt_tokens: llmResponse.token_usage.prompt_tokens,
+          completion_tokens: llmResponse.token_usage.completion_tokens,
+          total_tokens: llmResponse.token_usage.total_tokens,
+        },
+      });
+
+      return {
+        intent,
+        trace_entry: traceEntry,
+        latency_ms: latencyMs,
+        token_usage: {
+          prompt_tokens: llmResponse.token_usage.prompt_tokens,
+          completion_tokens: llmResponse.token_usage.completion_tokens,
+          total_tokens: llmResponse.token_usage.total_tokens,
+        },
+      };
+    }
 
     // Build the canonical Intent
     const intent: Intent = IntentSchema.parse({

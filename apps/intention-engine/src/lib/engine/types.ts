@@ -64,6 +64,9 @@ export const IntentMetadataSchema = z.object({
   source: z.string().default("user_input"),
   model_id: z.string().optional(),
   execution_id: z.string().uuid().optional(),
+  // T1.2: Fallback tracking metadata
+  fallback_reason: z.string().optional(),
+  original_llm_confidence: z.number().optional(),
 });
 
 export type IntentMetadata = z.infer<typeof IntentMetadataSchema>;

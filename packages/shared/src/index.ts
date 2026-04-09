@@ -29,7 +29,17 @@ export {
 // ============================================================================
 // LOGGER (Isomorphic structured logging)
 // ============================================================================
-export { Logger, type LogContext, type LogLevel } from "./logger";
+export {
+  Logger,
+  getLogger,
+  withRequestLogging,
+  createTraceHeaders,
+  tracedFetch,
+  setTracingStorage,
+  getTracingStorage,
+  type LogContext,
+  type LogLevel,
+} from "./logger";
 
 // ============================================================================
 // SCHEMAS & VALIDATION (Isomorphic Zod schemas)
@@ -76,6 +86,7 @@ export {
   createStepCompletedEntry,
   createStepFailedEntry,
   createErrorEntry,
+  tracingStorage,
   emitTrace,
   getGlobalTraceEmitter,
   setGlobalTraceEmitter,

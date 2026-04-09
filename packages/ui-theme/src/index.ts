@@ -11,6 +11,7 @@ export * from "./components/MerchantCard";
 export * from "./components/ProductList";
 export * from "./components/StreamingProgressStepper";
 export * from "./components/NervousSystemPulse";
+export * from "./components/SagaDebugger";
 export * from "./hooks/use-toast";
 export * from "./hooks/use-api-error";
 export * from "./hooks/useNervousSystem";

@@ -51,6 +51,7 @@
     "container:restart": "tsx scripts/container-services.ts restart",
     "container:help": "tsx scripts/container-services.ts help",
     "setup:local": "tsx scripts/setup-local-dev.ts",
+    "setup:fast": "pnpm install && pnpm validate:env --generate && pnpm container:up && pnpm db:migrate",
     "db:generate": "turbo run db:generate --filter=@repo/database",
     "db:migrate": "turbo run db:migrate --filter=@repo/database",
     "db:studio": "turbo run db:studio --filter=@repo/database",

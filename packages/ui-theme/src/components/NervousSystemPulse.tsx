@@ -20,10 +20,24 @@
 "use client";
 
 import React, { useState, useCallback } from "react";
-import { CheckCircle2, Circle, Loader2, XCircle, Bell, BellOff, ChevronDown, ChevronUp, Zap } from "lucide-react";
-import { useNervousSystemContext, NervousSystemProvider } from "../hooks/useNervousSystem";
+import {
+  CheckCircle2,
+  Circle,
+  Loader2,
+  XCircle,
+  Bell,
+  BellOff,
+  ChevronDown,
+  ChevronUp,
+  Zap,
+} from "lucide-react";
+import {
+  useNervousSystemContext,
+  NervousSystemProvider,
+} from "../hooks/useNervousSystem";
 import { StreamingProgressStepper } from "./StreamingProgressStepper";
 import { Button } from "./ui/button";
+import { SagaDebugger } from "./SagaDebugger";
 
 // ============================================================================
 // TYPES
@@ -58,6 +72,7 @@ const NervousSystemPulseInternal: React.FC<NervousSystemPulseInternalProps> = ({
 
   const [isMinimized, setIsMinimized] = useState(true);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [showDebugger, setShowDebugger] = useState(false);
   const [lastActivity, setLastActivity] = useState(Date.now());
   const [mounted, setMounted] = useState(false);
 
@@ -107,7 +122,7 @@ const NervousSystemPulseInternal: React.FC<NervousSystemPulseInternalProps> = ({
         dismissSaga();
       }, 3000);
     },
-    [onComplete, dismissSaga]
+    [onComplete, dismissSaga],
   );
 
   // Don't render if not mounted or no active saga
@@ -115,7 +130,8 @@ const NervousSystemPulseInternal: React.FC<NervousSystemPulseInternalProps> = ({
 
   // Determine status color and icon
   const getStatusColor = () => {
-    if (activeSaga.failoverSuggestion) return "bg-amber-500 border-amber-500/50";
+    if (activeSaga.failoverSuggestion)
+      return "bg-amber-500 border-amber-500/50";
     switch (activeSaga.status) {
       case "COMPLETED":
         return "bg-green-500 border-green-500/50";
@@ -175,10 +191,10 @@ const NervousSystemPulseInternal: React.FC<NervousSystemPulseInternalProps> = ({
                   step.status === "completed"
                     ? "bg-green-400"
                     : step.status === "in_progress"
-                    ? "bg-amber-400 animate-pulse"
-                    : step.status === "failed"
-                    ? "bg-red-400"
-                    : "bg-gray-600"
+                      ? "bg-amber-400 animate-pulse"
+                      : step.status === "failed"
+                        ? "bg-red-400"
+                        : "bg-gray-600"
                 }`}
               />
             ))}
@@ -277,7 +293,8 @@ const NervousSystemPulseInternal: React.FC<NervousSystemPulseInternalProps> = ({
           initialSteps={activeSaga.steps.map((s) => ({
             stepIndex: s.stepIndex,
             stepName: s.stepName,
-            status: s.status === "awaiting_confirmation" ? "in_progress" : s.status,
+            status:
+              s.status === "awaiting_confirmation" ? "in_progress" : s.status,
             message: s.message,
           }))}
           autoSubscribe={true}
@@ -293,18 +310,64 @@ const NervousSystemPulseInternal: React.FC<NervousSystemPulseInternalProps> = ({
         </div>
       )}
 
+      {/* Saga Debugger */}
+      {showDebugger && activeSaga.traceId && (
+        <div className="mt-3 pt-3 border-t border-gray-700">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-xs font-semibold text-gray-300 uppercase">
+              Execution Details
+            </h4>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-5 w-5 p-0 text-gray-400 hover:text-white"
+              onClick={() => setShowDebugger(false)}
+              aria-label="Close debugger"
+            >
+              <ChevronDown size={12} />
+            </Button>
+          </div>
+          <SagaDebugger
+            traceId={activeSaga.traceId}
+            compact={true}
+            refreshInterval={
+              activeSaga.status === "EXECUTING" ||
+              activeSaga.status === "PLANNING"
+                ? 3000
+                : 0
+            }
+          />
+        </div>
+      )}
+
       {/* Footer Actions */}
       <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-700">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-xs text-gray-400 hover:text-white"
-          onClick={() => setIsExpanded(!isExpanded)}
-        >
-          {isExpanded ? "Show Less" : "Show Details"}
-          {isExpanded ? <ChevronDown size={12} className="ml-1" /> : <ChevronUp size={12} className="ml-1" />}
-        </Button>
-        {activeSaga.traceId && (
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs text-gray-400 hover:text-white"
+            onClick={() => setIsExpanded(!isExpanded)}
+          >
+            {isExpanded ? "Show Less" : "Show Details"}
+            {isExpanded ? (
+              <ChevronDown size={12} className="ml-1" />
+            ) : (
+              <ChevronUp size={12} className="ml-1" />
+            )}
+          </Button>
+          {activeSaga.traceId && !showDebugger && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs text-emerald-400 hover:text-emerald-300"
+              onClick={() => setShowDebugger(true)}
+            >
+              View Execution Details
+            </Button>
+          )}
+        </div>
+        {activeSaga.traceId && !showDebugger && (
           <span className="text-xs text-gray-500 font-mono">
             Trace: {activeSaga.traceId.slice(0, 8)}...
           </span>

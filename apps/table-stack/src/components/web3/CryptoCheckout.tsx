@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import {
   useAccount,
   useSendTransaction,
@@ -42,6 +43,8 @@ interface CryptoCheckoutProps {
   }) => void;
   onError: (error: string) => void;
   onCancel: () => void;
+  /** Enable redirect to pending verification page when backend takes > 5s */
+  enablePendingFlow?: boolean;
 }
 
 // EIP-712 Domain and Types for typed data signing
@@ -75,9 +78,11 @@ export function CryptoCheckout({
   onCheckoutComplete,
   onError,
   onCancel,
+  enablePendingFlow = true,
 }: CryptoCheckoutProps) {
   const { address, chain } = useAccount();
   const { defaultChainId, usdcContractAddress } = useWeb3();
+  const router = useRouter();
 
   // CRITICAL: EIP-712 typed data signing for front-running prevention
   const {
@@ -105,6 +110,8 @@ export function CryptoCheckout({
   >("review");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [redirectedToPending, setRedirectedToPending] = useState(false);
+  const verificationTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Fetch ETH price dynamically on mount from server-side oracle
   useEffect(() => {
@@ -229,6 +236,16 @@ export function CryptoCheckout({
       setStep("confirming");
       setIsVerifying(true);
 
+      // PHASE 2.1: Set timeout to redirect to pending page after 5 seconds
+      // This prevents user panic when backend verification takes longer than expected
+      if (enablePendingFlow && !redirectedToPending) {
+        verificationTimerRef.current = setTimeout(() => {
+          // Only redirect if still in confirming state (i.e., verification hasn't completed yet)
+          setRedirectedToPending(true);
+          router.push(`/checkout/pending/${reservationId}`);
+        }, 5000);
+      }
+
       // Calculate expected amount based on currency
       const expectedAmount =
         paymentCurrency === "USDC"
@@ -249,6 +266,12 @@ export function CryptoCheckout({
       })
         .then((res) => res.json())
         .then((data) => {
+          // Clear the pending redirect timeout
+          if (verificationTimerRef.current) {
+            clearTimeout(verificationTimerRef.current);
+            verificationTimerRef.current = null;
+          }
+
           setIsVerifying(false);
           if (data.success) {
             setStep("completed");
@@ -263,11 +286,25 @@ export function CryptoCheckout({
           }
         })
         .catch((err) => {
+          // Clear the pending redirect timeout
+          if (verificationTimerRef.current) {
+            clearTimeout(verificationTimerRef.current);
+            verificationTimerRef.current = null;
+          }
+
           setIsVerifying(false);
           setErrorMessage(err.message || "Network error");
           setStep("error");
         });
     }
+
+    // Cleanup timeout on unmount or dependency change
+    return () => {
+      if (verificationTimerRef.current) {
+        clearTimeout(verificationTimerRef.current);
+        verificationTimerRef.current = null;
+      }
+    };
   }, [
     isConfirmed,
     receipt,
@@ -277,6 +314,9 @@ export function CryptoCheckout({
     paymentCurrency,
     onCheckoutComplete,
     signature,
+    enablePendingFlow,
+    redirectedToPending,
+    router,
   ]);
 
   // Handle errors - include contract errors for USDC

@@ -67,8 +67,17 @@ import {
   getPendingSteps,
   getFailedSteps,
 } from "./state-machine";
-import { saveExecutionState, loadExecutionState, getMemoryClient } from "./memory";
-import { RealtimeService, MemoryClient, getMemoryClient as getSharedMemoryClient, AppConfig } from "@repo/shared";
+import {
+  saveExecutionState,
+  loadExecutionState,
+  getMemoryClient,
+} from "./memory";
+import {
+  RealtimeService,
+  MemoryClient,
+  getMemoryClient as getSharedMemoryClient,
+  AppConfig,
+} from "@repo/shared";
 import { getAblyClient, TaskState, TaskStatus } from "@repo/shared";
 import { Tracer } from "./tracing";
 import { getToolRegistry } from "./tools/registry";
@@ -91,7 +100,15 @@ import {
   validateToolParams,
   type AllToolsMap,
 } from "@repo/mcp-protocol";
-import { NormalizationService, createFailoverPolicyEngine, FailoverPolicyEngine, getLLMFailureTriageService, createLLMFailureTriageService, getRedisClient, ServiceNamespace } from "@repo/shared";
+import {
+  NormalizationService,
+  createFailoverPolicyEngine,
+  FailoverPolicyEngine,
+  getLLMFailureTriageService,
+  createLLMFailureTriageService,
+  getRedisClient,
+  ServiceNamespace,
+} from "@repo/shared";
 import { verifyPlan, DEFAULT_SAFETY_POLICY, SafetyPolicy } from "./verifier";
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
@@ -109,9 +126,9 @@ const redis = getRedisClient(ServiceNamespace.IE);
 // ============================================================================
 
 const LLM_CIRCUIT_BREAKER_CONFIG = {
-  maxAttempts: 3,              // Max correction attempts before tripping
-  windowMs: 60 * 1000,         // 60 second window for attempt counting
-  ttlSeconds: 120,             // TTL for circuit breaker keys in Redis
+  maxAttempts: 3, // Max correction attempts before tripping
+  windowMs: 60 * 1000, // 60 second window for attempt counting
+  ttlSeconds: 120, // TTL for circuit breaker keys in Redis
   openTimeoutMs: 5 * 60 * 1000, // 5 minutes before circuit can be tried again
 };
 
@@ -193,7 +210,11 @@ export interface WorkflowCheckpoint {
   // Correlation ID for linking related events
   correlationId?: string;
   // Reason for checkpoint
-  reason: "TIMEOUT_APPROACHING" | "SEGMENT_COMPLETE" | "ERROR_RECOVERY" | "COMPENSATION";
+  reason:
+    | "TIMEOUT_APPROACHING"
+    | "SEGMENT_COMPLETE"
+    | "ERROR_RECOVERY"
+    | "COMPENSATION";
   // Saga context if applicable
   sagaContext?: {
     sagaId: string;
@@ -205,10 +226,13 @@ export interface WorkflowCheckpoint {
   };
   // ENHANCEMENT: Semantic Checksum Versioning for Tools
   // Tracks tool versions at checkpoint time to detect schema evolution
-  toolVersions?: Record<string, {
-    version: string;
-    schemaHash: string;
-  }>;
+  toolVersions?: Record<
+    string,
+    {
+      version: string;
+      schemaHash: string;
+    }
+  >;
 }
 
 // ============================================================================
@@ -259,7 +283,7 @@ export interface ToolExecutor {
     toolName: string,
     parameters: Record<string, unknown>,
     timeoutMs: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<{
     success: boolean;
     output?: unknown;
@@ -363,7 +387,7 @@ export class WorkflowMachine {
       correlationId?: string;
       idempotencyService?: IdempotencyService;
       safetyPolicy?: SafetyPolicy;
-    }
+    },
   ) {
     this.executionId = executionId;
     this.workflowId = options?.workflowId || `workflow:${executionId}`;
@@ -375,7 +399,10 @@ export class WorkflowMachine {
     this.idempotencyService = options?.idempotencyService;
     this.safetyPolicy = options?.safetyPolicy || DEFAULT_SAFETY_POLICY;
     this.failoverPolicyEngine = createFailoverPolicyEngine();
-    this.llmTriageService = getLLMFailureTriageService({ generateObjectFn: generateObject, openaiProvider: openai });
+    this.llmTriageService = getLLMFailureTriageService({
+      generateObjectFn: generateObject,
+      openaiProvider: openai,
+    });
 
     // Initialize or load state
     if (options?.initialState) {
@@ -470,12 +497,12 @@ export class WorkflowMachine {
       for (const step of this.plan.steps) {
         const validationResult = NormalizationService.validateToolParameters(
           step.tool_name,
-          step.parameters
+          step.parameters,
         );
 
         if (!validationResult.success) {
           const errorMessages = validationResult.errors
-            .map(e => `${e.path}: ${e.message}`)
+            .map((e) => `${e.path}: ${e.message}`)
             .join("; ");
           return {
             valid: false,
@@ -495,19 +522,20 @@ export class WorkflowMachine {
 
   /**
    * FINANCIAL GUARDRAIL - Assert budget safety before LLM calls
-   * 
+   *
    * Enforces hard USD cost ceiling per execution to prevent runaway token spend.
    * Throws EngineError with BUDGET_EXCEEDED code if limit would be exceeded.
-   * 
+   *
    * @param estimatedTokens - Estimated tokens for upcoming LLM call
    * @throws EngineError if budget would be exceeded
    */
   private async assertBudgetSafety(estimatedTokens?: number): Promise<void> {
     const budget = this.state.budget;
-    
+
     // Check token limit
     if (estimatedTokens) {
-      const projectedTotal = this.state.token_usage.total_tokens + estimatedTokens;
+      const projectedTotal =
+        this.state.token_usage.total_tokens + estimatedTokens;
       if (projectedTotal > budget.token_limit) {
         throw EngineErrorSchema.parse({
           code: "BUDGET_EXCEEDED",
@@ -522,13 +550,15 @@ export class WorkflowMachine {
     // Pricing: $0.50 / 1M input tokens, $1.50 / 1M output tokens (GPT-4o-mini approx)
     const INPUT_COST_PER_TOKEN = 0.0000005; // $0.50 per 1M
     const OUTPUT_COST_PER_TOKEN = 0.0000015; // $1.50 per 1M
-    
-    const estimatedInputCost = (estimatedTokens || 0) * 0.7 * INPUT_COST_PER_TOKEN; // Assume 70% input
-    const estimatedOutputCost = (estimatedTokens || 0) * 0.3 * OUTPUT_COST_PER_TOKEN; // Assume 30% output
+
+    const estimatedInputCost =
+      (estimatedTokens || 0) * 0.7 * INPUT_COST_PER_TOKEN; // Assume 70% input
+    const estimatedOutputCost =
+      (estimatedTokens || 0) * 0.3 * OUTPUT_COST_PER_TOKEN; // Assume 30% output
     const estimatedCost = estimatedInputCost + estimatedOutputCost;
-    
+
     const projectedCost = budget.current_cost_usd + estimatedCost;
-    
+
     if (projectedCost > budget.cost_limit_usd) {
       throw EngineErrorSchema.parse({
         code: "BUDGET_EXCEEDED",
@@ -542,7 +572,11 @@ export class WorkflowMachine {
   /**
    * Update budget tracking after LLM call
    */
-  private updateBudgetTracking(tokenUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }): void {
+  private updateBudgetTracking(tokenUsage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  }): void {
     const INPUT_COST_PER_TOKEN = 0.0000005;
     const OUTPUT_COST_PER_TOKEN = 0.0000015;
 
@@ -553,9 +587,13 @@ export class WorkflowMachine {
     this.state = {
       ...this.state,
       token_usage: {
-        prompt_tokens: this.state.token_usage.prompt_tokens + tokenUsage.prompt_tokens,
-        completion_tokens: this.state.token_usage.completion_tokens + tokenUsage.completion_tokens,
-        total_tokens: this.state.token_usage.total_tokens + tokenUsage.total_tokens,
+        prompt_tokens:
+          this.state.token_usage.prompt_tokens + tokenUsage.prompt_tokens,
+        completion_tokens:
+          this.state.token_usage.completion_tokens +
+          tokenUsage.completion_tokens,
+        total_tokens:
+          this.state.token_usage.total_tokens + tokenUsage.total_tokens,
       },
       budget: {
         ...this.state.budget,
@@ -596,72 +634,85 @@ export class WorkflowMachine {
    */
   private async preWarmNextLambda(
     nextStepIndex: number,
-    elapsedInSegment: number
+    elapsedInSegment: number,
   ): Promise<void> {
     // Check if we're approaching the predictive pinger threshold
-    const timeRemaining = ADAPTIVE_BATCHING_CONFIG.vercelHardTimeoutMs - elapsedInSegment;
+    const timeRemaining =
+      ADAPTIVE_BATCHING_CONFIG.vercelHardTimeoutMs - elapsedInSegment;
     const nextStep = this.plan?.steps[nextStepIndex];
-    const estimatedNextStepTime = this.estimateStepLatency(nextStep?.tool_name || 'unknown');
+    const estimatedNextStepTime = this.estimateStepLatency(
+      nextStep?.tool_name || "unknown",
+    );
 
     // Only pre-warm if we predict the next step will push us over the threshold
-    if (elapsedInSegment + estimatedNextStepTime > ADAPTIVE_BATCHING_CONFIG.vercelHardTimeoutMs * ADAPTIVE_BATCHING_CONFIG.predictivePingerThreshold) {
+    if (
+      elapsedInSegment + estimatedNextStepTime >
+      ADAPTIVE_BATCHING_CONFIG.vercelHardTimeoutMs *
+        ADAPTIVE_BATCHING_CONFIG.predictivePingerThreshold
+    ) {
       const baseUrl = AppConfig.getIntentionEngineApiUrl();
       const preWarmUrl = `${baseUrl}/api/engine/execute-step`;
 
       // ENHANCEMENT: Generate pre-warm hint based on next step's tool type
-      const preWarmHint = this.generatePreWarmHint(nextStep?.tool_name || '');
+      const preWarmHint = this.generatePreWarmHint(nextStep?.tool_name || "");
 
       // INFRASTRUCTURE-AWARE WARMING: Fire multiple warm endpoints in parallel
       // SECURITY: Use JWT authentication instead of raw internal key
-      const { signInternalJWT } = await import('@repo/auth');
+      const { signInternalJWT } = await import("@repo/auth");
       const authToken = await signInternalJWT(
-        { action: 'pre_warm', executionId: this.executionId, nextStepIndex },
-        { issuer: 'workflow-machine', audience: 'intention-engine' }
+        { action: "pre_warm", executionId: this.executionId, nextStepIndex },
+        { issuer: "workflow-machine", audience: "intention-engine" },
       );
 
       const warmPromises = [
         // Warm lambda endpoint WITH PRE-WARM HINT
         fetch(preWarmUrl, {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'Authorization': `Bearer ${authToken}`,
-            'x-preflight-ping': 'true',
-            'x-execution-id': this.executionId,
-            'x-next-step-index': nextStepIndex.toString(),
-            'x-pre-warm-hint': preWarmHint,
-            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`,
+            "x-preflight-ping": "true",
+            "x-execution-id": this.executionId,
+            "x-next-step-index": nextStepIndex.toString(),
+            "x-pre-warm-hint": preWarmHint,
+            "Content-Type": "application/json",
           },
-          signal: AbortSignal.timeout(ADAPTIVE_BATCHING_CONFIG.preWarmTimeoutMs),
+          signal: AbortSignal.timeout(
+            ADAPTIVE_BATCHING_CONFIG.preWarmTimeoutMs,
+          ),
           body: JSON.stringify({
             executionId: this.executionId,
             hint: preWarmHint,
             nextStepIndex,
             nextToolName: nextStep?.tool_name,
           }),
-        }).catch(() => { /* Ignore */ }),
+        }).catch(() => {
+          /* Ignore */
+        }),
 
         // Warm database connection pool WITH HINT
         fetch(`${baseUrl}/api/warm-db`, {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'Authorization': `Bearer ${authToken}`,
-            'x-execution-id': this.executionId,
-            'x-pre-warm-hint': preWarmHint,
+            Authorization: `Bearer ${authToken}`,
+            "x-execution-id": this.executionId,
+            "x-pre-warm-hint": preWarmHint,
           },
           signal: AbortSignal.timeout(1000),
           body: JSON.stringify({
             executionId: this.executionId,
             hint: preWarmHint,
           }),
-        }).catch(() => { /* Ignore */ }),
+        }).catch(() => {
+          /* Ignore */
+        }),
 
         // Warm Redis cache with execution state AND HINT
         fetch(`${baseUrl}/api/warm-cache`, {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'Authorization': `Bearer ${authToken}`,
-            'x-execution-id': this.executionId,
-            'x-pre-warm-hint': preWarmHint,
+            Authorization: `Bearer ${authToken}`,
+            "x-execution-id": this.executionId,
+            "x-pre-warm-hint": preWarmHint,
           },
           signal: AbortSignal.timeout(1000),
           body: JSON.stringify({
@@ -670,14 +721,20 @@ export class WorkflowMachine {
             hint: preWarmHint,
             nextToolName: nextStep?.tool_name,
           }),
-        }).catch(() => { /* Ignore */ }),
+        }).catch(() => {
+          /* Ignore */
+        }),
       ];
 
       // RELIABILITY FIX: Use next/server's after() to prevent Vercel from freezing lambdas
       // Without after(), these fetch requests would be terminated mid-flight
-      if (typeof after === 'function') {
+      if (typeof after === "function") {
         // Production: Use after() to keep lambda alive for background tasks
-        after(() => Promise.all(warmPromises).catch(() => { /* Ignore errors */ }));
+        after(() =>
+          Promise.all(warmPromises).catch(() => {
+            /* Ignore errors */
+          }),
+        );
       } else {
         // Fallback for non-Next.js environments (tests, local dev)
         void Promise.all(warmPromises);
@@ -706,32 +763,52 @@ export class WorkflowMachine {
     const toolType = toolName.toLowerCase();
 
     // Reservation/booking operations
-    if (toolType.includes('book') || toolType.includes('reserve') || toolType.includes('reservation')) {
-      return 'DB_RESERVATION_LOAD';
+    if (
+      toolType.includes("book") ||
+      toolType.includes("reserve") ||
+      toolType.includes("reservation")
+    ) {
+      return "DB_RESERVATION_LOAD";
     }
 
     // User-related operations
-    if (toolType.includes('user') || toolType.includes('profile') || toolType.includes('preference')) {
-      return 'DB_USER_LOAD';
+    if (
+      toolType.includes("user") ||
+      toolType.includes("profile") ||
+      toolType.includes("preference")
+    ) {
+      return "DB_USER_LOAD";
     }
 
     // Payment operations
-    if (toolType.includes('payment') || toolType.includes('charge') || toolType.includes('refund')) {
-      return 'DB_PAYMENT_LOAD';
+    if (
+      toolType.includes("payment") ||
+      toolType.includes("charge") ||
+      toolType.includes("refund")
+    ) {
+      return "DB_PAYMENT_LOAD";
     }
 
     // Search operations
-    if (toolType.includes('search') || toolType.includes('find') || toolType.includes('lookup')) {
-      return 'DB_SEARCH_LOAD';
+    if (
+      toolType.includes("search") ||
+      toolType.includes("find") ||
+      toolType.includes("lookup")
+    ) {
+      return "DB_SEARCH_LOAD";
     }
 
     // Cancellation operations
-    if (toolType.includes('cancel') || toolType.includes('delete') || toolType.includes('remove')) {
-      return 'DB_CANCELLATION_LOAD';
+    if (
+      toolType.includes("cancel") ||
+      toolType.includes("delete") ||
+      toolType.includes("remove")
+    ) {
+      return "DB_CANCELLATION_LOAD";
     }
 
     // Default generic warm-up
-    return 'GENERIC';
+    return "GENERIC";
   }
 
   /**
@@ -748,22 +825,38 @@ export class WorkflowMachine {
     const toolType = toolName.toLowerCase();
 
     // Fast operations (< 500ms)
-    if (toolType.includes('search') || toolType.includes('lookup') || toolType.includes('get')) {
+    if (
+      toolType.includes("search") ||
+      toolType.includes("lookup") ||
+      toolType.includes("get")
+    ) {
       return 400;
     }
 
     // Medium operations (500ms - 1500ms)
-    if (toolType.includes('book') || toolType.includes('reserve') || toolType.includes('create')) {
+    if (
+      toolType.includes("book") ||
+      toolType.includes("reserve") ||
+      toolType.includes("create")
+    ) {
       return 1200;
     }
 
     // Slow operations (1500ms - 3000ms)
-    if (toolType.includes('payment') || toolType.includes('charge') || toolType.includes('process')) {
+    if (
+      toolType.includes("payment") ||
+      toolType.includes("charge") ||
+      toolType.includes("process")
+    ) {
       return 2000;
     }
 
     // LLM-heavy operations (2000ms - 4000ms)
-    if (toolType.includes('reflect') || toolType.includes('analyze') || toolType.includes('plan')) {
+    if (
+      toolType.includes("reflect") ||
+      toolType.includes("analyze") ||
+      toolType.includes("plan")
+    ) {
       return 3000;
     }
 
@@ -784,7 +877,9 @@ export class WorkflowMachine {
    */
   private shouldYieldExecution(elapsedInSegment: number): boolean {
     // Don't yield before minimum elapsed time
-    if (elapsedInSegment < ADAPTIVE_BATCHING_CONFIG.minElapsedBeforeYieldCheck) {
+    if (
+      elapsedInSegment < ADAPTIVE_BATCHING_CONFIG.minElapsedBeforeYieldCheck
+    ) {
       return false;
     }
 
@@ -798,7 +893,10 @@ export class WorkflowMachine {
     const estimatedTimeForNext = this.estimateStepLatency(nextStep.tool_name);
 
     // CRITICAL: Predict if we'll timeout, not just if we've hit a threshold
-    const predictedTotalTime = elapsedInSegment + estimatedTimeForNext + ADAPTIVE_BATCHING_CONFIG.yieldBufferMs;
+    const predictedTotalTime =
+      elapsedInSegment +
+      estimatedTimeForNext +
+      ADAPTIVE_BATCHING_CONFIG.yieldBufferMs;
 
     if (predictedTotalTime > ADAPTIVE_BATCHING_CONFIG.vercelHardTimeoutMs) {
       logger.info({
@@ -858,7 +956,89 @@ export class WorkflowMachine {
    * } else if (result.success) {
    *   console.log(`Workflow completed: ${result.completedSteps} steps`);
    * } else {
-   *   console.error(`Workflow failed at step ${result.failedSteps}`);
+  /**
+   * Execute the workflow with yield-and-resume pattern optimized for Vercel Hobby Tier.
+   *
+   * ## Recursive Self-Trigger Pattern
+   *
+   * This method implements a "Recursive Self-Trigger" architecture that allows
+   * long-running sagas to execute on serverless infrastructure with a 10-second
+   * hard timeout (Vercel Hobby tier).
+   *
+   * ### How It Works
+   *
+   * ```mermaid
+   * sequenceDiagram
+   *   participant API as API Route
+   *   participant WM as WorkflowMachine.execute()
+   *   participant Redis as Redis (State Store)
+   *   participant QS as QStash (Message Queue)
+   *   participant Tool as MCP Tool
+   *
+   *   API->>WM: Initial trigger
+   *   WM->>WM: Load state from Redis
+   *   loop For each batch of steps
+   *     WM->>Tool: Execute step
+   *     Tool-->>WM: Step result
+   *     WM->>Redis: Check elapsed time
+   *     alt Elapsed > 6s (checkpoint threshold)
+   *       WM->>Redis: Save checkpoint state
+   *       WM->>QS: Trigger self via QStash message
+   *       QS-->>API: POST /api/engine/resume (new lambda)
+   *       API->>WM: New invocation
+   *       WM->>Redis: Load checkpoint state
+   *     else Elapsed < 6s
+   *       WM->>WM: Continue to next batch
+   *     end
+   *   end
+   *   WM-->>API: Return WorkflowResult
+   * ```
+   *
+   * ### Key Mechanisms
+   *
+   * 1. **Checkpoint & Yield**: At 6 seconds (CHECKPOINT_THRESHOLD_MS), the workflow
+   *    atomically saves its state to Redis and yields via QStash.
+   *
+   * 2. **Self-Resume**: QStash triggers `/api/engine/resume` which creates a NEW
+   *    lambda invocation that loads the checkpoint and continues from where it left off.
+   *
+   * 3. **Predictive Pinger**: At 80% of the estimated time for the next step, an
+   *    unawaited `after()` call pre-warms the next lambda to reduce cold start latency.
+   *
+   * 4. **Saga Compensation**: If a step fails, the workflow executes compensation
+   *    actions in reverse order to undo previously completed steps.
+   *
+   * ### State Transitions
+   *
+   * ```
+   * CREATED → PLANNED → EXECUTING → [YIELDING → RESUMED]* → COMPLETED|FAILED
+   *                              ↘ COMPENSATING → COMPENSATED
+   * ```
+   *
+   * ### Timeout Configuration
+   *
+   * - Vercel hard timeout: 10,000ms (platform limit)
+   * - Checkpoint threshold: 6,000ms (save state with 4s buffer)
+   * - Segment timeout: 8,500ms (abort individual steps)
+   * - Saga timeout: 120,000ms (max total execution time)
+   *
+   * @returns WorkflowResult containing completion status, step counts, and error details
+   * @throws EngineError if plan validation fails or budget guardrails are exceeded
+   *
+   * @example
+   * ```typescript
+   * const machine = new WorkflowMachine(executionId, toolExecutor);
+   * machine.setPlan(plan);
+   *
+   * try {
+   *   const result = await machine.execute();
+   *   console.log(`Completed ${result.completedSteps}/${result.totalSteps} steps`);
+   *
+   *   if (result.sagaCompensation) {
+   *     console.warn('Saga compensation was triggered');
+   *   }
+   * } catch (error) {
+   *   console.error('Workflow failed:', error);
    * }
    * ```
    */
@@ -929,8 +1109,8 @@ export class WorkflowMachine {
               // Check if any steps failed
               if (failedCount > 0) {
                 // Trigger compensation if this is a saga
-                const hasCompensatableSteps = this.plan?.steps.some(step =>
-                  needsCompensation(step.tool_name)
+                const hasCompensatableSteps = this.plan?.steps.some((step) =>
+                  needsCompensation(step.tool_name),
                 );
 
                 if (hasCompensatableSteps) {
@@ -941,12 +1121,17 @@ export class WorkflowMachine {
               }
 
               // All steps completed successfully
-              return this.createResult(true, startTime, "Workflow completed successfully");
+              return this.createResult(
+                true,
+                startTime,
+                "Workflow completed successfully",
+              );
             } else {
               // Deadlock detected
               throw EngineErrorSchema.parse({
                 code: "PLAN_CIRCULAR_DEPENDENCY",
-                message: "Execution deadlock detected: pending steps exist but none are ready",
+                message:
+                  "Execution deadlock detected: pending steps exist but none are ready",
                 recoverable: false,
                 timestamp: new Date().toISOString(),
               });
@@ -955,7 +1140,7 @@ export class WorkflowMachine {
 
           // Get step objects for the batch
           const stepsToExecute = batch.stepIds
-            .map(stepId => this.plan?.steps.find(s => s.id === stepId))
+            .map((stepId) => this.plan?.steps.find((s) => s.id === stepId))
             .filter((s): s is PlanStep => s !== undefined);
 
           if (stepsToExecute.length === 0) {
@@ -970,7 +1155,7 @@ export class WorkflowMachine {
           }
 
           // Execute batch steps in parallel
-          const stepIds = stepsToExecute.map(s => s.id);
+          const stepIds = stepsToExecute.map((s) => s.id);
           const stepResultsSettled = await Promise.allSettled(
             stepsToExecute.map((step) =>
               this.executeStep({
@@ -981,8 +1166,8 @@ export class WorkflowMachine {
                 traceId: this.traceId,
                 correlationId: this.correlationId,
                 idempotencyService: this.idempotencyService,
-              })
-            )
+              }),
+            ),
           );
 
           // Log execution results
@@ -992,7 +1177,11 @@ export class WorkflowMachine {
 
             if (result.status === "fulfilled") {
               const stepResult = result.value;
-              this.state = updateStepState(this.state, stepId, stepResult.stepState);
+              this.state = updateStepState(
+                this.state,
+                stepId,
+                stepResult.stepState,
+              );
 
               // Register compensation if provided
               if (stepResult.compensation) {
@@ -1013,7 +1202,10 @@ export class WorkflowMachine {
             } else {
               logger.error({
                 message: `[WorkflowMachine] Step ${stepId} failed with exception`,
-                error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+                error:
+                  result.reason instanceof Error
+                    ? result.reason.message
+                    : String(result.reason),
               });
             }
           }
@@ -1021,7 +1213,10 @@ export class WorkflowMachine {
           // Check if any step failed and needs compensation
           const failedStep = stepsToExecute.find((step, i) => {
             const result = stepResultsSettled[i];
-            return result.status === "fulfilled" && result.value.stepState.status === "failed";
+            return (
+              result.status === "fulfilled" &&
+              result.value.stepState.status === "failed"
+            );
           });
 
           if (failedStep) {
@@ -1033,7 +1228,11 @@ export class WorkflowMachine {
               }
 
               // Non-compensatable failure
-              return this.createResult(false, startTime, `Step ${failedStep.id} failed`);
+              return this.createResult(
+                false,
+                startTime,
+                `Step ${failedStep.id} failed`,
+              );
             }
           }
 
@@ -1053,28 +1252,34 @@ export class WorkflowMachine {
           }
         }
       } catch (error) {
-        span.recordException(error instanceof Error ? error : new Error(String(error)));
+        span.recordException(
+          error instanceof Error ? error : new Error(String(error)),
+        );
 
         this.state = setExecutionError(
           this.state,
           error instanceof Error ? error.message : String(error),
-          this.traceId
+          this.traceId,
         );
 
-        return this.createResult(false, startTime, error instanceof Error ? error.message : String(error));
+        return this.createResult(
+          false,
+          startTime,
+          error instanceof Error ? error.message : String(error),
+        );
       }
     });
   }
 
   /**
    * Execute a single step - Serverless Recursive Pattern
-   * 
+   *
    * Vercel Hobby Tier Optimization:
    * - Executes ONE step and returns immediately
    * - Does NOT loop or recurse internally
    * - Caller is responsible for triggering next step via recursive fetch
    * - Used by /api/engine/execute-step for infinite-duration sagas
-   * 
+   *
    * @param stepIndex - Optional index of step to execute (defaults to next pending)
    * @returns Result of single step execution
    */
@@ -1098,9 +1303,12 @@ export class WorkflowMachine {
     const timestamp = new Date().toISOString();
 
     // Find the step to execute
-    const completedStepIds = getCompletedSteps(this.state).map(s => s.step_id);
-    const targetStep = this.plan.steps.find((step, idx) => 
-      idx >= (stepIndex || 0) && !completedStepIds.includes(step.id)
+    const completedStepIds = getCompletedSteps(this.state).map(
+      (s) => s.step_id,
+    );
+    const targetStep = this.plan.steps.find(
+      (step, idx) =>
+        idx >= (stepIndex || 0) && !completedStepIds.includes(step.id),
     );
 
     if (!targetStep) {
@@ -1164,327 +1372,84 @@ export class WorkflowMachine {
   /**
    * Execute a single step with checkpointing
    */
-  private async executeStep(
-    context: StepExecutionContext
-  ): Promise<{
+  private async executeStep(context: StepExecutionContext): Promise<{
     stepState: StepExecutionState;
     compensation?: {
       toolName: string;
       parameters?: Record<string, unknown>;
     };
   }> {
-    const { state, step, toolExecutor, segmentStartTime, traceId, correlationId, idempotencyService } = context;
+    const {
+      state,
+      step,
+      toolExecutor,
+      segmentStartTime,
+      traceId,
+      correlationId,
+      idempotencyService,
+    } = context;
     const stepStartTime = performance.now();
     const timestamp = new Date().toISOString();
-    const stepIndex = state.step_states.findIndex(s => s.step_id === step.id) ?? 0;
+    const stepIndex =
+      state.step_states.findIndex((s) => s.step_id === step.id) ?? 0;
     const totalSteps = state.step_states.length;
 
-    return await Tracer.startActiveSpan(`execute_step:${step.tool_name}`, async (span) => {
-      const toolDef = getToolRegistry().getDefinition(step.tool_name);
-      span.setAttributes({
-        intent_id: this.intentId || "unknown",
-        step_type: step.tool_name,
-        mcp_server_origin: toolDef?.origin || "local",
-        trace_id: traceId || "unknown",
-        correlation_id: correlationId,
-      });
-
-      try {
-        let stepState = updateStepState(state, step.id, {
-          status: "in_progress",
-          started_at: timestamp,
-          attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+    return await Tracer.startActiveSpan(
+      `execute_step:${step.tool_name}`,
+      async (span) => {
+        const toolDef = getToolRegistry().getDefinition(step.tool_name);
+        span.setAttributes({
+          intent_id: this.intentId || "unknown",
+          step_type: step.tool_name,
+          mcp_server_origin: toolDef?.origin || "local",
+          trace_id: traceId || "unknown",
+          correlation_id: correlationId,
         });
 
-        // Resolve parameter references BEFORE idempotency check
-        const resolvedParameters = this.resolveStepParameters(step, stepState);
-
-        // Dynamic Parameter Bridge
-        if (toolDef?.parameter_aliases) {
-          for (const [alias, primary] of Object.entries(toolDef.parameter_aliases)) {
-            if (resolvedParameters[alias] !== undefined && resolvedParameters[primary] === undefined) {
-              resolvedParameters[primary] = resolvedParameters[alias];
-            }
-          }
-        }
-
-        // TYPE-SAFE PARAMETER VALIDATION
-        // Validate resolved parameters against Zod schema from @repo/mcp-protocol
-        // This replaces all `any` types with strictly inferred types from the tool registry
         try {
-          const validatedParams = validateToolParams(step.tool_name, resolvedParameters);
-          // Replace resolvedParameters with validated (type-safe) version
-          Object.assign(resolvedParameters, validatedParams);
-        } catch (validationError) {
-          logger.error({
-            message: `[WorkflowMachine] Parameter validation failed for step ${step.id} (${step.tool_name})`,
-            error: validationError instanceof Error ? validationError.message : String(validationError),
+          let stepState = updateStepState(state, step.id, {
+            status: "in_progress",
+            started_at: timestamp,
+            attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
           });
 
-          return {
-            stepState: {
-              step_id: step.id,
-              status: "failed",
-              error: {
-                code: "PARAMETER_VALIDATION_FAILED",
-                message: validationError instanceof Error ? validationError.message : "Parameter validation failed",
-                httpCode: 400,
-              },
-              completed_at: new Date().toISOString(),
-              latency_ms: 0,
-              attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-            },
-          };
-        }
-
-        // IDEMPOTENCY CHECK - Enhanced with Semantic Checksum
-        // Uses SHA-256(toolName + sortedParameters) for stricter idempotency
-        // CRITICAL FIX: Salt hash with userId to prevent cross-user blocking
-        const idempotencyKey = `${this.intentId || this.executionId}:${stepIndex}`;
-        const userId = (state.context?.userId as string) || undefined;
-        if (idempotencyService) {
-          const isDuplicate = await idempotencyService.isDuplicate(
-            idempotencyKey,
-            step.tool_name,
-            resolvedParameters,
-            userId
-          );
-          if (isDuplicate) {
-            const keyHash = await idempotencyService.getKey(
-              idempotencyKey,
-              step.tool_name,
-              resolvedParameters,
-              userId
-            );
-            logger.info({
-              message: `[Idempotency] Step ${step.tool_name} (${step.id}) already executed, skipping. Key: ${keyHash}`,
-            });
-            span.setAttributes({ idempotency_skip: true });
-
-            await RealtimeService.publishStreamingStatusUpdate({
-              executionId: this.executionId,
-              stepIndex,
-              totalSteps,
-              stepName: step.tool_name,
-              status: 'completed',
-              message: 'Skipped (idempotent)',
-              timestamp: new Date().toISOString(),
-              traceId: span?.spanContext()?.traceId,
-            });
-
-            return {
-              stepState: {
-                step_id: step.id,
-                status: "completed",
-                output: { skipped: true, reason: "Already executed (idempotent)" },
-                completed_at: new Date().toISOString(),
-                latency_ms: 0,
-                attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-              },
-            };
-          }
-        }
-
-        // HITL: Check if step requires confirmation before execution
-        // ENHANCEMENT: Interrupted Sagas with Confirmation Tokens
-        if (step.requires_confirmation) {
-          logger.info({
-            message: `[WorkflowMachine] Step ${step.id} (${step.tool_name}) requires confirmation`,
-          });
-
-          // Assess risk level based on tool type and parameters
-          const riskAssessment = this.assessStepRisk(step, resolvedParameters);
-
-          // Create confirmation token and suspend saga
-          const confirmationResult = await this.createConfirmationAndSuspend(
+          // Resolve parameter references BEFORE idempotency check
+          const resolvedParameters = this.resolveStepParameters(
             step,
-            stepIndex,
-            riskAssessment
+            stepState,
           );
 
-          // Return suspended state - execution will resume when user confirms
-          return {
-            stepState: {
-              step_id: step.id,
-              status: "suspended",
-              output: {
-                requiresConfirmation: true,
-                confirmationToken: confirmationResult.token,
-                expiresAt: confirmationResult.expiresAt,
-                riskAssessment,
-              },
-              completed_at: new Date().toISOString(),
-              latency_ms: 0,
-              attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-            },
-          };
-        }
-
-        // Validation before execution using DB_REFLECTED_SCHEMAS
-        const validationResult = await validateBeforeExecution(step, resolvedParameters);
-        if (!validationResult.valid) {
-          return {
-            stepState: {
-              step_id: step.id,
-              status: "failed",
-              error: {
-                code: "VALIDATION_FAILED",
-                message: validationResult.error || "Pre-execution validation failed",
-              },
-              completed_at: new Date().toISOString(),
-              latency_ms: 0,
-              attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-            },
-          };
-        }
-
-        // PRE-EMPTIVE CHECKPOINTING - Save before tool call
-        stepState = updateStepState(stepState, step.id, {
-          input: resolvedParameters,
-        });
-        await saveExecutionState(stepState);
-
-        // STREAMING STATUS UPDATE - Step Start
-        await RealtimeService.publishStreamingStatusUpdate({
-          executionId: this.executionId,
-          stepIndex,
-          totalSteps,
-          stepName: step.tool_name,
-          status: 'in_progress',
-          message: `Starting ${step.description || step.tool_name}...`,
-          timestamp: new Date().toISOString(),
-          traceId: traceId,
-        });
-
-        // ABORT CONTROLLER WITH 8500MS TIMEOUT
-        const abortController = new AbortController();
-        const timeoutId = setTimeout(() => {
-          logger.warn({
-            message: `[WorkflowMachine] Step ${step.tool_name} approaching Vercel timeout, aborting...`,
-          });
-          abortController.abort();
-        }, SEGMENT_TIMEOUT_MS);
-
-        let toolResult: Awaited<ReturnType<ToolExecutor["execute"]>>;
-        try {
-          toolResult = await toolExecutor.execute(
-            step.tool_name,
-            resolvedParameters,
-            step.timeout_ms,
-            abortController.signal
-          );
-        } finally {
-          clearTimeout(timeoutId);
-        }
-
-        const stepEndTime = performance.now();
-        const latencyMs = Math.round(stepEndTime - stepStartTime);
-
-        if (toolResult.success) {
-          await RealtimeService.publishStreamingStatusUpdate({
-            executionId: this.executionId,
-            stepIndex,
-            totalSteps,
-            stepName: step.tool_name,
-            status: 'completed',
-            message: `Completed ${step.description || step.tool_name}`,
-            timestamp: new Date().toISOString(),
-            traceId: traceId,
-          });
-
-          // AUTO-REGISTER COMPENSATION
-          let compensation: { toolName: string; parameters?: Record<string, unknown> } | undefined;
-          if (!compensation && needsCompensation(step.tool_name)) {
-            const compDef = getCompensation(step.tool_name);
-            if (compDef && compDef.toolName) {
-              const mappedParams = mapCompensationParameters(
-                step.tool_name,
-                resolvedParameters,
-                toolResult.output
-              );
-              compensation = {
-                toolName: compDef.toolName,
-                parameters: mappedParams,
-              };
-              logger.info({
-                message: `[WorkflowMachine] Registered compensation for ${step.tool_name}: ${compDef.toolName}`,
-              });
-            }
-          }
-
-          return {
-            stepState: {
-              step_id: step.id,
-              status: "completed",
-              output: toolResult.output,
-              completed_at: new Date().toISOString(),
-              latency_ms: latencyMs,
-              attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-            },
-            compensation,
-          };
-        } else {
-          // Error recovery
-          const errorCode = extractErrorCode(toolResult.error);
-          if (isClientOrServerError(errorCode) && toolResult.error) {
-            const recoveryResult = await attemptErrorRecovery(
-              step,
-              resolvedParameters,
-              toolResult.error,
-              errorCode
-            );
-
-            if (recoveryResult.recovered && recoveryResult.correctedParameters) {
-              const retryResult = await toolExecutor.execute(
-                step.tool_name,
-                recoveryResult.correctedParameters,
-                step.timeout_ms
-              );
-
-              if (retryResult.success) {
-                await RealtimeService.publishStreamingStatusUpdate({
-                  executionId: this.executionId,
-                  stepIndex,
-                  totalSteps,
-                  stepName: step.tool_name,
-                  status: 'completed',
-                  message: `Completed ${step.description || step.tool_name} (after retry)`,
-                  timestamp: new Date().toISOString(),
-                  traceId: traceId,
-                });
-
-                return {
-                  stepState: {
-                    step_id: step.id,
-                    status: "completed",
-                    output: retryResult.output,
-                    completed_at: new Date().toISOString(),
-                    latency_ms: latencyMs,
-                    attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-                  },
-                };
+          // Dynamic Parameter Bridge
+          if (toolDef?.parameter_aliases) {
+            for (const [alias, primary] of Object.entries(
+              toolDef.parameter_aliases,
+            )) {
+              if (
+                resolvedParameters[alias] !== undefined &&
+                resolvedParameters[primary] === undefined
+              ) {
+                resolvedParameters[primary] = resolvedParameters[alias];
               }
             }
           }
 
-          // FAILOVER POLICY ENGINE: Check for semantic recovery options before marking as failed
-          const failoverResult = await this.evaluateFailoverPolicy(step, resolvedParameters, toolResult.error, errorCode);
-
-          // Handle circuit breaker trip - escalate to human
-          if (failoverResult.circuitBroken) {
-            logger.warn({
-              message: `[WorkflowMachine] LLM correction circuit breaker tripped for ${step.tool_name}. Escalating to human intervention.`,
-            });
-
-            await RealtimeService.publishStreamingStatusUpdate({
-              executionId: this.executionId,
-              stepIndex,
-              totalSteps,
-              stepName: step.tool_name,
-              status: 'failed',
-              message: 'Automatic correction exhausted. Human intervention required.',
-              timestamp: new Date().toISOString(),
-              traceId: traceId,
+          // TYPE-SAFE PARAMETER VALIDATION
+          // Validate resolved parameters against Zod schema from @repo/mcp-protocol
+          // This replaces all `any` types with strictly inferred types from the tool registry
+          try {
+            const validatedParams = validateToolParams(
+              step.tool_name,
+              resolvedParameters,
+            );
+            // Replace resolvedParameters with validated (type-safe) version
+            Object.assign(resolvedParameters, validatedParams);
+          } catch (validationError) {
+            logger.error({
+              message: `[WorkflowMachine] Parameter validation failed for step ${step.id} (${step.tool_name})`,
+              error:
+                validationError instanceof Error
+                  ? validationError.message
+                  : String(validationError),
             });
 
             return {
@@ -1492,10 +1457,379 @@ export class WorkflowMachine {
                 step_id: step.id,
                 status: "failed",
                 error: {
-                  code: "LLM_CIRCUIT_BROKEN",
-                  message: "Automatic correction failed multiple times. Human intervention required.",
-                  httpCode: 409,
-                  suggestions: failoverResult.suggestions,
+                  code: "PARAMETER_VALIDATION_FAILED",
+                  message:
+                    validationError instanceof Error
+                      ? validationError.message
+                      : "Parameter validation failed",
+                  httpCode: 400,
+                },
+                completed_at: new Date().toISOString(),
+                latency_ms: 0,
+                attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+              },
+            };
+          }
+
+          // IDEMPOTENCY CHECK - Enhanced with Semantic Checksum
+          // Uses SHA-256(toolName + sortedParameters) for stricter idempotency
+          // CRITICAL FIX: Salt hash with userId to prevent cross-user blocking
+          const idempotencyKey = `${this.intentId || this.executionId}:${stepIndex}`;
+          const userId = (state.context?.userId as string) || undefined;
+          if (idempotencyService) {
+            const isDuplicate = await idempotencyService.isDuplicate(
+              idempotencyKey,
+              step.tool_name,
+              resolvedParameters,
+              userId,
+            );
+            if (isDuplicate) {
+              const keyHash = await idempotencyService.getKey(
+                idempotencyKey,
+                step.tool_name,
+                resolvedParameters,
+                userId,
+              );
+              logger.info({
+                message: `[Idempotency] Step ${step.tool_name} (${step.id}) already executed, skipping. Key: ${keyHash}`,
+              });
+              span.setAttributes({ idempotency_skip: true });
+
+              await RealtimeService.publishStreamingStatusUpdate({
+                executionId: this.executionId,
+                stepIndex,
+                totalSteps,
+                stepName: step.tool_name,
+                status: "completed",
+                message: "Skipped (idempotent)",
+                timestamp: new Date().toISOString(),
+                traceId: span?.spanContext()?.traceId,
+              });
+
+              return {
+                stepState: {
+                  step_id: step.id,
+                  status: "completed",
+                  output: {
+                    skipped: true,
+                    reason: "Already executed (idempotent)",
+                  },
+                  completed_at: new Date().toISOString(),
+                  latency_ms: 0,
+                  attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+                },
+              };
+            }
+          }
+
+          // HITL: Check if step requires confirmation before execution
+          // ENHANCEMENT: Interrupted Sagas with Confirmation Tokens
+          if (step.requires_confirmation) {
+            logger.info({
+              message: `[WorkflowMachine] Step ${step.id} (${step.tool_name}) requires confirmation`,
+            });
+
+            // Assess risk level based on tool type and parameters
+            const riskAssessment = this.assessStepRisk(
+              step,
+              resolvedParameters,
+            );
+
+            // Create confirmation token and suspend saga
+            const confirmationResult = await this.createConfirmationAndSuspend(
+              step,
+              stepIndex,
+              riskAssessment,
+            );
+
+            // Return suspended state - execution will resume when user confirms
+            return {
+              stepState: {
+                step_id: step.id,
+                status: "suspended",
+                output: {
+                  requiresConfirmation: true,
+                  confirmationToken: confirmationResult.token,
+                  expiresAt: confirmationResult.expiresAt,
+                  riskAssessment,
+                },
+                completed_at: new Date().toISOString(),
+                latency_ms: 0,
+                attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+              },
+            };
+          }
+
+          // Validation before execution using DB_REFLECTED_SCHEMAS
+          const validationResult = await validateBeforeExecution(
+            step,
+            resolvedParameters,
+          );
+          if (!validationResult.valid) {
+            return {
+              stepState: {
+                step_id: step.id,
+                status: "failed",
+                error: {
+                  code: "VALIDATION_FAILED",
+                  message:
+                    validationResult.error || "Pre-execution validation failed",
+                },
+                completed_at: new Date().toISOString(),
+                latency_ms: 0,
+                attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+              },
+            };
+          }
+
+          // PRE-EMPTIVE CHECKPOINTING - Save before tool call
+          stepState = updateStepState(stepState, step.id, {
+            input: resolvedParameters,
+          });
+          await saveExecutionState(stepState);
+
+          // STREAMING STATUS UPDATE - Step Start
+          await RealtimeService.publishStreamingStatusUpdate({
+            executionId: this.executionId,
+            stepIndex,
+            totalSteps,
+            stepName: step.tool_name,
+            status: "in_progress",
+            message: `Starting ${step.description || step.tool_name}...`,
+            timestamp: new Date().toISOString(),
+            traceId: traceId,
+          });
+
+          // ABORT CONTROLLER WITH 8500MS TIMEOUT
+          const abortController = new AbortController();
+          const timeoutId = setTimeout(() => {
+            logger.warn({
+              message: `[WorkflowMachine] Step ${step.tool_name} approaching Vercel timeout, aborting...`,
+            });
+            abortController.abort();
+          }, SEGMENT_TIMEOUT_MS);
+
+          let toolResult: Awaited<ReturnType<ToolExecutor["execute"]>>;
+          try {
+            toolResult = await toolExecutor.execute(
+              step.tool_name,
+              resolvedParameters,
+              step.timeout_ms,
+              abortController.signal,
+            );
+          } finally {
+            clearTimeout(timeoutId);
+          }
+
+          const stepEndTime = performance.now();
+          const latencyMs = Math.round(stepEndTime - stepStartTime);
+
+          if (toolResult.success) {
+            await RealtimeService.publishStreamingStatusUpdate({
+              executionId: this.executionId,
+              stepIndex,
+              totalSteps,
+              stepName: step.tool_name,
+              status: "completed",
+              message: `Completed ${step.description || step.tool_name}`,
+              timestamp: new Date().toISOString(),
+              traceId: traceId,
+            });
+
+            // AUTO-REGISTER COMPENSATION
+            let compensation:
+              | { toolName: string; parameters?: Record<string, unknown> }
+              | undefined;
+            if (!compensation && needsCompensation(step.tool_name)) {
+              const compDef = getCompensation(step.tool_name);
+              if (compDef && compDef.toolName) {
+                const mappedParams = mapCompensationParameters(
+                  step.tool_name,
+                  resolvedParameters,
+                  toolResult.output,
+                );
+                compensation = {
+                  toolName: compDef.toolName,
+                  parameters: mappedParams,
+                };
+                logger.info({
+                  message: `[WorkflowMachine] Registered compensation for ${step.tool_name}: ${compDef.toolName}`,
+                });
+              }
+            }
+
+            return {
+              stepState: {
+                step_id: step.id,
+                status: "completed",
+                output: toolResult.output,
+                completed_at: new Date().toISOString(),
+                latency_ms: latencyMs,
+                attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+              },
+              compensation,
+            };
+          } else {
+            // Error recovery
+            const errorCode = extractErrorCode(toolResult.error);
+            if (isClientOrServerError(errorCode) && toolResult.error) {
+              const recoveryResult = await attemptErrorRecovery(
+                step,
+                resolvedParameters,
+                toolResult.error,
+                errorCode,
+              );
+
+              if (
+                recoveryResult.recovered &&
+                recoveryResult.correctedParameters
+              ) {
+                const retryResult = await toolExecutor.execute(
+                  step.tool_name,
+                  recoveryResult.correctedParameters,
+                  step.timeout_ms,
+                );
+
+                if (retryResult.success) {
+                  await RealtimeService.publishStreamingStatusUpdate({
+                    executionId: this.executionId,
+                    stepIndex,
+                    totalSteps,
+                    stepName: step.tool_name,
+                    status: "completed",
+                    message: `Completed ${step.description || step.tool_name} (after retry)`,
+                    timestamp: new Date().toISOString(),
+                    traceId: traceId,
+                  });
+
+                  return {
+                    stepState: {
+                      step_id: step.id,
+                      status: "completed",
+                      output: retryResult.output,
+                      completed_at: new Date().toISOString(),
+                      latency_ms: latencyMs,
+                      attempts:
+                        (getStepState(state, step.id)?.attempts || 0) + 1,
+                    },
+                  };
+                }
+              }
+            }
+
+            // FAILOVER POLICY ENGINE: Check for semantic recovery options before marking as failed
+            const failoverResult = await this.evaluateFailoverPolicy(
+              step,
+              resolvedParameters,
+              toolResult.error,
+              errorCode,
+            );
+
+            // Handle circuit breaker trip - escalate to human
+            if (failoverResult.circuitBroken) {
+              logger.warn({
+                message: `[WorkflowMachine] LLM correction circuit breaker tripped for ${step.tool_name}. Escalating to human intervention.`,
+              });
+
+              await RealtimeService.publishStreamingStatusUpdate({
+                executionId: this.executionId,
+                stepIndex,
+                totalSteps,
+                stepName: step.tool_name,
+                status: "failed",
+                message:
+                  "Automatic correction exhausted. Human intervention required.",
+                timestamp: new Date().toISOString(),
+                traceId: traceId,
+              });
+
+              return {
+                stepState: {
+                  step_id: step.id,
+                  status: "failed",
+                  error: {
+                    code: "LLM_CIRCUIT_BROKEN",
+                    message:
+                      "Automatic correction failed multiple times. Human intervention required.",
+                    httpCode: 409,
+                    suggestions: failoverResult.suggestions,
+                  },
+                  completed_at: new Date().toISOString(),
+                  latency_ms: latencyMs,
+                  attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
+                },
+              };
+            }
+
+            if (failoverResult.shouldRetry) {
+              logger.info({
+                message: `[WorkflowMachine] Failover policy triggered for ${step.tool_name}: ${failoverResult.policyName}`,
+              });
+
+              // Try the failover action (e.g., alternative time, alternative restaurant)
+              if (failoverResult.retryParameters) {
+                const retryResult = await toolExecutor.execute(
+                  step.tool_name,
+                  failoverResult.retryParameters,
+                  step.timeout_ms,
+                );
+
+                if (retryResult.success) {
+                  // RESET CIRCUIT BREAKER on successful recovery
+                  await this.resetCircuitBreaker(this.executionId, step.id);
+
+                  await RealtimeService.publishStreamingStatusUpdate({
+                    executionId: this.executionId,
+                    stepIndex,
+                    totalSteps,
+                    stepName: step.tool_name,
+                    status: "completed",
+                    message: `Completed ${step.description || step.tool_name} (failover recovery)`,
+                    timestamp: new Date().toISOString(),
+                    traceId: traceId,
+                  });
+
+                  return {
+                    stepState: {
+                      step_id: step.id,
+                      status: "completed",
+                      output: retryResult.output,
+                      completed_at: new Date().toISOString(),
+                      latency_ms: latencyMs,
+                      attempts:
+                        (getStepState(state, step.id)?.attempts || 0) + 1,
+                    },
+                  };
+                }
+              }
+            }
+
+            await RealtimeService.publishStreamingStatusUpdate({
+              executionId: this.executionId,
+              stepIndex,
+              totalSteps,
+              stepName: step.tool_name,
+              status: "failed",
+              message: `Failed: ${typeof toolResult.error === "string" ? toolResult.error : "Unknown error"}${failoverResult.policyName ? ` [${failoverResult.policyName}]` : ""}`,
+              timestamp: new Date().toISOString(),
+              traceId: traceId,
+            });
+
+            const isValidationError = toolResult.error
+              ?.toLowerCase()
+              .includes("invalid parameters");
+            return {
+              stepState: {
+                step_id: step.id,
+                status: "failed",
+                error: {
+                  code: isValidationError
+                    ? "TOOL_VALIDATION_FAILED"
+                    : "TOOL_EXECUTION_FAILED",
+                  message: toolResult.error || "Unknown tool execution error",
+                  httpCode: errorCode,
+                  failoverPolicy: failoverResult.policyName,
+                  failoverSuggestions: failoverResult.suggestions,
                 },
                 completed_at: new Date().toISOString(),
                 latency_ms: latencyMs,
@@ -1503,71 +1837,31 @@ export class WorkflowMachine {
               },
             };
           }
+        } catch (error) {
+          const stepEndTime = performance.now();
+          const latencyMs = Math.round(stepEndTime - stepStartTime);
 
-          if (failoverResult.shouldRetry) {
-            logger.info({
-              message: `[WorkflowMachine] Failover policy triggered for ${step.tool_name}: ${failoverResult.policyName}`,
-            });
-
-            // Try the failover action (e.g., alternative time, alternative restaurant)
-            if (failoverResult.retryParameters) {
-              const retryResult = await toolExecutor.execute(
-                step.tool_name,
-                failoverResult.retryParameters,
-                step.timeout_ms
-              );
-
-              if (retryResult.success) {
-                // RESET CIRCUIT BREAKER on successful recovery
-                await this.resetCircuitBreaker(this.executionId, step.id);
-
-                await RealtimeService.publishStreamingStatusUpdate({
-                  executionId: this.executionId,
-                  stepIndex,
-                  totalSteps,
-                  stepName: step.tool_name,
-                  status: 'completed',
-                  message: `Completed ${step.description || step.tool_name} (failover recovery)`,
-                  timestamp: new Date().toISOString(),
-                  traceId: traceId,
-                });
-
-                return {
-                  stepState: {
-                    step_id: step.id,
-                    status: "completed",
-                    output: retryResult.output,
-                    completed_at: new Date().toISOString(),
-                    latency_ms: latencyMs,
-                    attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-                  },
-                };
-              }
-            }
-          }
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
 
           await RealtimeService.publishStreamingStatusUpdate({
             executionId: this.executionId,
             stepIndex,
             totalSteps,
             stepName: step.tool_name,
-            status: 'failed',
-            message: `Failed: ${typeof toolResult.error === 'string' ? toolResult.error : 'Unknown error'}${failoverResult.policyName ? ` [${failoverResult.policyName}]` : ''}`,
+            status: "failed",
+            message: `Error: ${errorMessage}`,
             timestamp: new Date().toISOString(),
             traceId: traceId,
           });
 
-          const isValidationError = toolResult.error?.toLowerCase().includes("invalid parameters");
           return {
             stepState: {
               step_id: step.id,
               status: "failed",
               error: {
-                code: isValidationError ? "TOOL_VALIDATION_FAILED" : "TOOL_EXECUTION_FAILED",
-                message: toolResult.error || "Unknown tool execution error",
-                httpCode: errorCode,
-                failoverPolicy: failoverResult.policyName,
-                failoverSuggestions: failoverResult.suggestions,
+                code: "STEP_EXECUTION_FAILED",
+                message: errorMessage,
               },
               completed_at: new Date().toISOString(),
               latency_ms: latencyMs,
@@ -1575,38 +1869,8 @@ export class WorkflowMachine {
             },
           };
         }
-      } catch (error) {
-        const stepEndTime = performance.now();
-        const latencyMs = Math.round(stepEndTime - stepStartTime);
-
-        const errorMessage = error instanceof Error ? error.message : String(error);
-
-        await RealtimeService.publishStreamingStatusUpdate({
-          executionId: this.executionId,
-          stepIndex,
-          totalSteps,
-          stepName: step.tool_name,
-          status: 'failed',
-          message: `Error: ${errorMessage}`,
-          timestamp: new Date().toISOString(),
-          traceId: traceId,
-        });
-
-        return {
-          stepState: {
-            step_id: step.id,
-            status: "failed",
-            error: {
-              code: "STEP_EXECUTION_FAILED",
-              message: errorMessage,
-            },
-            completed_at: new Date().toISOString(),
-            latency_ms: latencyMs,
-            attempts: (getStepState(state, step.id)?.attempts || 0) + 1,
-          },
-        };
-      }
-    });
+      },
+    );
   }
 
   /**
@@ -1619,7 +1883,9 @@ export class WorkflowMachine {
     const readySteps: PlanStep[] = [];
 
     for (const pendingStep of pendingSteps) {
-      const planStep = this.plan.steps.find((s) => s.id === pendingStep.step_id);
+      const planStep = this.plan.steps.find(
+        (s) => s.id === pendingStep.step_id,
+      );
       if (planStep && this.isStepReady(planStep)) {
         readySteps.push(planStep);
       }
@@ -1651,7 +1917,7 @@ export class WorkflowMachine {
    */
   private resolveStepParameters(
     step: PlanStep,
-    state: ExecutionState
+    state: ExecutionState,
   ): Record<string, unknown> {
     const resolved: Record<string, unknown> = {};
 
@@ -1700,9 +1966,12 @@ export class WorkflowMachine {
    * Check if the LLM correction circuit breaker is open
    * Returns true if circuit is open (should NOT call LLM)
    */
-  private async isCircuitBreakerOpen(executionId: string, stepId: string): Promise<boolean> {
+  private async isCircuitBreakerOpen(
+    executionId: string,
+    stepId: string,
+  ): Promise<boolean> {
     const circuitKey = `llm:circuit:${executionId}:${stepId}`;
-    
+
     try {
       const circuitState = await redis.get<{
         isOpen: boolean;
@@ -1716,7 +1985,10 @@ export class WorkflowMachine {
 
       // Check if circuit has timed out
       const now = Date.now();
-      if (circuitState.isOpen && (now - circuitState.openedAt) > LLM_CIRCUIT_BREAKER_CONFIG.openTimeoutMs) {
+      if (
+        circuitState.isOpen &&
+        now - circuitState.openedAt > LLM_CIRCUIT_BREAKER_CONFIG.openTimeoutMs
+      ) {
         // Circuit timeout expired - allow half-open state (one test call)
         logger.info({
           message: `[CircuitBreaker] Circuit timeout expired for ${stepId}, allowing test call`,
@@ -1738,27 +2010,33 @@ export class WorkflowMachine {
    * Record an LLM correction attempt
    * Trips the circuit breaker if max attempts exceeded
    */
-  private async recordCorrectionAttempt(executionId: string, stepId: string): Promise<{
+  private async recordCorrectionAttempt(
+    executionId: string,
+    stepId: string,
+  ): Promise<{
     shouldProceed: boolean;
     attemptCount: number;
   }> {
     const circuitKey = `llm:circuit:${executionId}:${stepId}`;
     const windowKey = `llm:window:${executionId}:${stepId}`;
-    
+
     try {
       // Use a sliding window to count attempts
       const now = Date.now();
       const windowStart = now - LLM_CIRCUIT_BREAKER_CONFIG.windowMs;
-      
+
       // Add current attempt to sorted set with timestamp as score
-      await redis.zadd(windowKey, { score: now, member: `${now}-${crypto.randomUUID()}` });
-      
+      await redis.zadd(windowKey, {
+        score: now,
+        member: `${now}-${crypto.randomUUID()}`,
+      });
+
       // Remove old attempts outside the window
       await redis.zremrangebyscore(windowKey, 0, windowStart);
-      
+
       // Count attempts in current window
       const attemptCount = await redis.zcard(windowKey);
-      
+
       // Set TTL on window key
       await redis.expire(windowKey, LLM_CIRCUIT_BREAKER_CONFIG.ttlSeconds);
 
@@ -1773,7 +2051,7 @@ export class WorkflowMachine {
             openedAt: now,
             attemptCount,
             reason: `Exceeded ${LLM_CIRCUIT_BREAKER_CONFIG.maxAttempts} attempts in ${LLM_CIRCUIT_BREAKER_CONFIG.windowMs / 1000}s`,
-          })
+          }),
         );
 
         logger.warn({
@@ -1796,7 +2074,10 @@ export class WorkflowMachine {
   /**
    * Reset the circuit breaker after successful recovery
    */
-  private async resetCircuitBreaker(executionId: string, stepId: string): Promise<void> {
+  private async resetCircuitBreaker(
+    executionId: string,
+    stepId: string,
+  ): Promise<void> {
     const circuitKey = `llm:circuit:${executionId}:${stepId}`;
     const windowKey = `llm:window:${executionId}:${stepId}`;
 
@@ -1817,14 +2098,14 @@ export class WorkflowMachine {
   /**
    * Evaluate failover policy for step failure
    * Maps tool errors to failure reasons and checks for semantic recovery options
-   * 
+   *
    * Integrated with LLM Circuit Breaker to prevent budget bleed from correction loops
    */
   private async evaluateFailoverPolicy(
     step: PlanStep,
     parameters: Record<string, unknown>,
     error: string | undefined,
-    errorCode: number | undefined
+    errorCode: number | undefined,
   ): Promise<{
     shouldRetry: boolean;
     policyName?: string;
@@ -1833,7 +2114,10 @@ export class WorkflowMachine {
     circuitBroken?: boolean;
   }> {
     // CIRCUIT BREAKER CHECK - Prevent LLM budget bleed
-    const circuitOpen = await this.isCircuitBreakerOpen(this.executionId, step.id);
+    const circuitOpen = await this.isCircuitBreakerOpen(
+      this.executionId,
+      step.id,
+    );
     if (circuitOpen) {
       logger.warn({
         message: `[WorkflowMachine] Circuit breaker OPEN for ${step.tool_name} (${step.id}). Skipping LLM-based failover correction. Escalating to human intervention.`,
@@ -1841,27 +2125,31 @@ export class WorkflowMachine {
       return {
         shouldRetry: false,
         circuitBroken: true,
-        suggestions: [{
-          type: 'human_intervention',
-          value: {
-            reason: 'LLM correction loop detected',
-            message: 'Automatic correction failed multiple times. Human review required.',
+        suggestions: [
+          {
+            type: "human_intervention",
+            value: {
+              reason: "LLM correction loop detected",
+              message:
+                "Automatic correction failed multiple times. Human review required.",
+            },
+            confidence: 1.0,
           },
-          confidence: 1.0,
-        }],
+        ],
       };
     }
 
     // Map error message to failure reason using LLM-powered triage
     const triageContext = {
-      error: error || 'Unknown error',
+      error: error || "Unknown error",
       toolName: step.tool_name,
       toolDescription: step.description,
       parameters,
       errorCode,
     };
 
-    const triageResult = await this.llmTriageService.triageFailure(triageContext);
+    const triageResult =
+      await this.llmTriageService.triageFailure(triageContext);
 
     logger.info({
       message: `[WorkflowMachine] LLM Triage: ${triageResult.category} (confidence: ${triageResult.confidence.toFixed(2)}, recoverable: ${triageResult.isRecoverable}) - ${triageResult.explanation}`,
@@ -1870,15 +2158,17 @@ export class WorkflowMachine {
     if (!triageResult.isRecoverable) {
       return {
         shouldRetry: false,
-        suggestions: [{
-          type: 'llm_triage',
-          value: {
-            category: triageResult.category,
-            explanation: triageResult.explanation,
-            suggestedAction: triageResult.suggestedAction,
+        suggestions: [
+          {
+            type: "llm_triage",
+            value: {
+              category: triageResult.category,
+              explanation: triageResult.explanation,
+              suggestedAction: triageResult.suggestedAction,
+            },
+            confidence: triageResult.confidence,
           },
-          confidence: triageResult.confidence,
-        }],
+        ],
       };
     }
 
@@ -1896,7 +2186,10 @@ export class WorkflowMachine {
     }
 
     // RECORD CORRECTION ATTEMPT - May trip circuit breaker
-    const correctionResult = await this.recordCorrectionAttempt(this.executionId, step.id);
+    const correctionResult = await this.recordCorrectionAttempt(
+      this.executionId,
+      step.id,
+    );
     if (!correctionResult.shouldProceed) {
       logger.warn({
         message: `[WorkflowMachine] Correction attempt blocked by circuit breaker for ${step.tool_name}. Attempt #${correctionResult.attemptCount}`,
@@ -1904,15 +2197,17 @@ export class WorkflowMachine {
       return {
         shouldRetry: false,
         circuitBroken: true,
-        suggestions: [{
-          type: 'human_intervention',
-          value: {
-            reason: 'Max correction attempts exceeded',
-            attempts: correctionResult.attemptCount,
-            message: 'Automatic correction exhausted. Human review required.',
+        suggestions: [
+          {
+            type: "human_intervention",
+            value: {
+              reason: "Max correction attempts exceeded",
+              attempts: correctionResult.attemptCount,
+              message: "Automatic correction exhausted. Human review required.",
+            },
+            confidence: 1.0,
           },
-          confidence: 1.0,
-        }],
+        ],
       };
     }
 
@@ -1931,13 +2226,13 @@ export class WorkflowMachine {
     };
 
     // Extract context from parameters
-    if (typeof parameters.party_size === 'number') {
+    if (typeof parameters.party_size === "number") {
       context.party_size = parameters.party_size;
     }
-    if (typeof parameters.time === 'string') {
+    if (typeof parameters.time === "string") {
       context.requested_time = parameters.time;
     }
-    if (typeof parameters.restaurant_tags === 'string') {
+    if (typeof parameters.restaurant_tags === "string") {
       context.restaurant_tags = [parameters.restaurant_tags];
     }
 
@@ -1957,13 +2252,13 @@ export class WorkflowMachine {
       result.recommended_action.type,
       step,
       parameters,
-      result
+      result,
     );
 
     // Get alternative suggestions
     const suggestions = this.failoverPolicyEngine.getAlternativeSuggestions(
       context as any,
-      result
+      result,
     );
 
     return {
@@ -1979,41 +2274,67 @@ export class WorkflowMachine {
    */
   private mapErrorToFailureReason(
     error: string | undefined,
-    errorCode: number | undefined
+    errorCode: number | undefined,
   ): string | null {
     if (!error) return null;
 
     const errorLower = error.toLowerCase();
 
-    if (errorLower.includes('full') || errorLower.includes('no availability') || errorLower.includes('fully booked')) {
-      return 'RESTAURANT_FULL';
+    if (
+      errorLower.includes("full") ||
+      errorLower.includes("no availability") ||
+      errorLower.includes("fully booked")
+    ) {
+      return "RESTAURANT_FULL";
     }
-    if (errorLower.includes('unavailable') || errorLower.includes('not available')) {
-      return 'TABLE_UNAVAILABLE';
+    if (
+      errorLower.includes("unavailable") ||
+      errorLower.includes("not available")
+    ) {
+      return "TABLE_UNAVAILABLE";
     }
-    if (errorLower.includes('overload') || errorLower.includes('busy') || errorLower.includes('high volume')) {
-      return 'KITCHEN_OVERLOADED';
+    if (
+      errorLower.includes("overload") ||
+      errorLower.includes("busy") ||
+      errorLower.includes("high volume")
+    ) {
+      return "KITCHEN_OVERLOADED";
     }
-    if (errorLower.includes('payment') || errorLower.includes('card') || errorLower.includes('charge')) {
-      return 'PAYMENT_FAILED';
+    if (
+      errorLower.includes("payment") ||
+      errorLower.includes("card") ||
+      errorLower.includes("charge")
+    ) {
+      return "PAYMENT_FAILED";
     }
-    if (errorLower.includes('delivery') && (errorLower.includes('unavailable') || errorLower.includes('not available'))) {
-      return 'DELIVERY_UNAVAILABLE';
+    if (
+      errorLower.includes("delivery") &&
+      (errorLower.includes("unavailable") ||
+        errorLower.includes("not available"))
+    ) {
+      return "DELIVERY_UNAVAILABLE";
     }
-    if (errorLower.includes('time slot') || errorLower.includes('time not available')) {
-      return 'TIME_SLOT_UNAVAILABLE';
+    if (
+      errorLower.includes("time slot") ||
+      errorLower.includes("time not available")
+    ) {
+      return "TIME_SLOT_UNAVAILABLE";
     }
-    if (errorLower.includes('party size') || errorLower.includes('too large') || errorLower.includes('exceeds')) {
-      return 'PARTY_SIZE_TOO_LARGE';
+    if (
+      errorLower.includes("party size") ||
+      errorLower.includes("too large") ||
+      errorLower.includes("exceeds")
+    ) {
+      return "PARTY_SIZE_TOO_LARGE";
     }
-    if (errorLower.includes('invalid') || errorLower.includes('validation')) {
-      return 'VALIDATION_FAILED';
+    if (errorLower.includes("invalid") || errorLower.includes("validation")) {
+      return "VALIDATION_FAILED";
     }
-    if (errorLower.includes('timeout')) {
-      return 'TIMEOUT';
+    if (errorLower.includes("timeout")) {
+      return "TIMEOUT";
     }
     if (errorCode && errorCode >= 500) {
-      return 'SERVICE_ERROR';
+      return "SERVICE_ERROR";
     }
 
     return null;
@@ -2024,21 +2345,37 @@ export class WorkflowMachine {
    */
   private mapToolNameToIntentType(toolName: string): string | null {
     const toolLower = toolName.toLowerCase();
-    
-    if (toolLower.includes('reserve') || toolLower.includes('book') || toolLower.includes('table')) {
-      return 'BOOKING';
+
+    if (
+      toolLower.includes("reserve") ||
+      toolLower.includes("book") ||
+      toolLower.includes("table")
+    ) {
+      return "BOOKING";
     }
-    if (toolLower.includes('delivery') || toolLower.includes('dispatch') || toolLower.includes('fulfill')) {
-      return 'DELIVERY';
+    if (
+      toolLower.includes("delivery") ||
+      toolLower.includes("dispatch") ||
+      toolLower.includes("fulfill")
+    ) {
+      return "DELIVERY";
     }
-    if (toolLower.includes('waitlist')) {
-      return 'WAITLIST';
+    if (toolLower.includes("waitlist")) {
+      return "WAITLIST";
     }
-    if (toolLower.includes('modify') || toolLower.includes('update') || toolLower.includes('cancel')) {
-      return 'RESERVATION_MODIFY';
+    if (
+      toolLower.includes("modify") ||
+      toolLower.includes("update") ||
+      toolLower.includes("cancel")
+    ) {
+      return "RESERVATION_MODIFY";
     }
-    if (toolLower.includes('payment') || toolLower.includes('charge') || toolLower.includes('stripe')) {
-      return 'PAYMENT';
+    if (
+      toolLower.includes("payment") ||
+      toolLower.includes("charge") ||
+      toolLower.includes("stripe")
+    ) {
+      return "PAYMENT";
     }
 
     return null;
@@ -2061,62 +2398,65 @@ export class WorkflowMachine {
         id: string;
         name: string;
       };
-    }
+    },
   ): Promise<Record<string, unknown> | null> {
     switch (actionType) {
-      case 'SUGGEST_ALTERNATIVE_TIME': {
+      case "SUGGEST_ALTERNATIVE_TIME": {
         // Try alternative time slots based on policy parameters
-        const offsets = (policyResult.recommended_action.parameters?.time_offset_minutes as number[]) || [-30, 30];
+        const offsets = (policyResult.recommended_action.parameters
+          ?.time_offset_minutes as number[]) || [-30, 30];
         const originalTime = originalParams.time as string | undefined;
-        
+
         if (!originalTime) return null;
-        
+
         // Parse time and apply first offset (simplified - in production would try all)
-        const [hours, minutes] = originalTime.split(':').map(Number);
+        const [hours, minutes] = originalTime.split(":").map(Number);
         const baseMinutes = hours * 60 + minutes;
         const offsetMinutes = offsets[0] || 30;
         const newMinutes = baseMinutes + offsetMinutes;
-        
+
         if (newMinutes >= 0 && newMinutes < 24 * 60) {
           const newHours = Math.floor(newMinutes / 60);
           const newMins = newMinutes % 60;
-          const newTime = `${newHours.toString().padStart(2, '0')}:${newMins.toString().padStart(2, '0')}`;
-          
+          const newTime = `${newHours.toString().padStart(2, "0")}:${newMins.toString().padStart(2, "0")}`;
+
           return {
             ...originalParams,
             time: newTime,
           };
         }
-        
+
         return null;
       }
 
-      case 'TRIGGER_DELIVERY': {
+      case "TRIGGER_DELIVERY": {
         // Convert booking to delivery - this would require a different tool
         // For now, return null to let the booking fail and trigger delivery as separate step
         return null;
       }
 
-      case 'TRIGGER_WAITLIST': {
+      case "TRIGGER_WAITLIST": {
         // Would trigger add_to_waitlist tool instead
         return null;
       }
 
-      case 'DOWNGRADE_PARTY_SIZE': {
-        const maxSize = (policyResult.recommended_action.parameters?.max_table_size as number) || 8;
+      case "DOWNGRADE_PARTY_SIZE": {
+        const maxSize =
+          (policyResult.recommended_action.parameters
+            ?.max_table_size as number) || 8;
         const currentSize = originalParams.party_size as number | undefined;
-        
+
         if (currentSize && currentSize > maxSize) {
           return {
             ...originalParams,
             party_size: maxSize,
           };
         }
-        
+
         return null;
       }
 
-      case 'RETRY_WITH_BACKOFF': {
+      case "RETRY_WITH_BACKOFF": {
         // Just retry with same parameters - backoff is handled by caller
         return originalParams;
       }
@@ -2153,7 +2493,7 @@ export class WorkflowMachine {
    */
   private assessStepRisk(
     step: PlanStep,
-    parameters: Record<string, unknown>
+    parameters: Record<string, unknown>,
   ): {
     level: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
     reason: string;
@@ -2172,8 +2512,14 @@ export class WorkflowMachine {
       toolName.includes("transaction") ||
       (toolName.includes("payment") && parameters.txHash)
     ) {
-      const cryptoAmount = (parameters.total as string) || (parameters.token_amount as string) || "0";
-      const tokenSymbol = (parameters.currency as string) || (parameters.token_symbol as string) || "USDC";
+      const cryptoAmount =
+        (parameters.total as string) ||
+        (parameters.token_amount as string) ||
+        "0";
+      const tokenSymbol =
+        (parameters.currency as string) ||
+        (parameters.token_symbol as string) ||
+        "USDC";
       const usdValue = (parameters.usd_equivalent as number) || 0;
 
       // CRITICAL: High-value crypto transactions (> $1000 USD equivalent)
@@ -2204,7 +2550,8 @@ export class WorkflowMachine {
       toolName.includes("refund") ||
       toolName.includes("stripe")
     ) {
-      const amount = (parameters.amount as number) || (parameters.total as number) || 0;
+      const amount =
+        (parameters.amount as number) || (parameters.total as number) || 0;
       if (amount > 500) {
         return {
           level: "CRITICAL",
@@ -2231,9 +2578,10 @@ export class WorkflowMachine {
       if (depositAmount > 100 || partySize > 8) {
         return {
           level: "HIGH",
-          reason: depositAmount > 100
-            ? `Large deposit of $${depositAmount.toFixed(2)} requires confirmation`
-            : `Large party size (${partySize}) requires confirmation`,
+          reason:
+            depositAmount > 100
+              ? `Large deposit of $${depositAmount.toFixed(2)} requires confirmation`
+              : `Large party size (${partySize}) requires confirmation`,
           amount: depositAmount,
         };
       }
@@ -2268,18 +2616,25 @@ export class WorkflowMachine {
   /**
    * Yield execution and save checkpoint
    */
-  private async yieldExecution(reason: WorkflowCheckpoint["reason"]): Promise<WorkflowResult> {
+  private async yieldExecution(
+    reason: WorkflowCheckpoint["reason"],
+  ): Promise<WorkflowResult> {
     const nextStepIndex = this.getNextStepIndex();
 
     // ENHANCEMENT: Capture tool versions for schema evolution detection
-    const toolVersions: Record<string, { version: string; schemaHash: string }> = {};
+    const toolVersions: Record<
+      string,
+      { version: string; schemaHash: string }
+    > = {};
     if (this.plan) {
       const registry = getToolRegistry();
       for (const step of this.plan.steps) {
         const toolDef = registry.getDefinition(step.tool_name);
         if (toolDef) {
           // Generate schema hash for version detection
-          const schemaHash = await this.generateSchemaHash(toolDef.inputSchema || {});
+          const schemaHash = await this.generateSchemaHash(
+            toolDef.inputSchema || {},
+          );
           toolVersions[step.tool_name] = {
             version: toolDef.version || "1.0.0",
             schemaHash,
@@ -2301,10 +2656,13 @@ export class WorkflowMachine {
       traceId: this.traceId,
       correlationId: this.correlationId,
       reason,
-      sagaContext: this.compensationsRegistered.length > 0 ? {
-        sagaId: `saga:${this.executionId}`,
-        compensationsRegistered: this.compensationsRegistered,
-      } : undefined,
+      sagaContext:
+        this.compensationsRegistered.length > 0
+          ? {
+              sagaId: `saga:${this.executionId}`,
+              compensationsRegistered: this.compensationsRegistered,
+            }
+          : undefined,
       toolVersions,
     };
 
@@ -2340,12 +2698,19 @@ export class WorkflowMachine {
   /**
    * Generate a hash of a tool's schema for version detection
    */
-  private async generateSchemaHash(schema: Record<string, unknown>): Promise<string> {
+  private async generateSchemaHash(
+    schema: Record<string, unknown>,
+  ): Promise<string> {
     const encoder = new TextEncoder();
-    const data = encoder.encode(JSON.stringify(schema, Object.keys(schema).sort()));
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const data = encoder.encode(
+      JSON.stringify(schema, Object.keys(schema).sort()),
+    );
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 16);
+    return hashArray
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("")
+      .substring(0, 16);
   }
 
   /**
@@ -2370,14 +2735,13 @@ export class WorkflowMachine {
       level: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
       reason: string;
       amount?: number;
-    }
+    },
   ): Promise<{
     token: string;
     expiresAt: string;
   }> {
-    const { ConfirmationService } = await import(
-      "@/lib/engine/confirmation-service"
-    );
+    const { ConfirmationService } =
+      await import("@/lib/engine/confirmation-service");
 
     const userId = (this.state.context?.userId as string) || undefined;
     const clerkId = (this.state.context?.clerkId as string) || undefined;
@@ -2391,7 +2755,7 @@ export class WorkflowMachine {
       step.parameters,
       riskAssessment,
       userId,
-      clerkId
+      clerkId,
     );
 
     // Update step state to suspended
@@ -2447,7 +2811,7 @@ export class WorkflowMachine {
         expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
         timestamp,
       },
-      undefined
+      undefined,
     );
 
     logger.info({
@@ -2508,13 +2872,13 @@ export class WorkflowMachine {
           // Apply exponential backoff for retries
           if (attempt > 1) {
             const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-            await new Promise(resolve => setTimeout(resolve, backoffMs));
+            await new Promise((resolve) => setTimeout(resolve, backoffMs));
           }
 
           const result = await this.toolExecutor.execute(
             comp.compensationTool,
             comp.parameters,
-            30000
+            30000,
           );
 
           if (result.success) {
@@ -2570,22 +2934,27 @@ export class WorkflowMachine {
             successfulCompensations: compensated,
             totalCompensations: this.compensationsRegistered.length,
             requiresHumanIntervention: true,
-            interventionReason: "Compensation actions exhausted all retry attempts",
+            interventionReason:
+              "Compensation actions exhausted all retry attempts",
             timestamp: new Date().toISOString(),
             traceId: this.traceId,
           },
-          this.traceId
+          this.traceId,
         );
 
         // Also publish to system alerts channel for monitoring dashboards
-        await RealtimeService.publish('system:alerts', 'saga_compensation_failed', {
-          workflowId: this.workflowId,
-          executionId: this.executionId,
-          failedCompensations: compensationFailures,
-          severity: 'HIGH',
-          requiresAction: true,
-          timestamp: new Date().toISOString(),
-        });
+        await RealtimeService.publish(
+          "system:alerts",
+          "saga_compensation_failed",
+          {
+            workflowId: this.workflowId,
+            executionId: this.executionId,
+            failedCompensations: compensationFailures,
+            severity: "HIGH",
+            requiresAction: true,
+            timestamp: new Date().toISOString(),
+          },
+        );
 
         logger.info({
           message: `[WorkflowMachine] Published SAGA_MANUAL_INTERVENTION_REQUIRED event for ${this.executionId}`,
@@ -2593,7 +2962,10 @@ export class WorkflowMachine {
       } catch (publishError) {
         logger.error({
           message: `[WorkflowMachine] Failed to publish intervention event`,
-          error: publishError instanceof Error ? publishError.message : String(publishError),
+          error:
+            publishError instanceof Error
+              ? publishError.message
+              : String(publishError),
         });
       }
     }
@@ -2642,10 +3014,14 @@ export class WorkflowMachine {
         totalCompensations: this.compensationsRegistered.length,
         timestamp: new Date().toISOString(),
       },
-      this.traceId
+      this.traceId,
     );
 
-    return this.createResult(false, performance.now(), `Compensated ${compensated} steps, ${failed} failed`);
+    return this.createResult(
+      false,
+      performance.now(),
+      `Compensated ${compensated} steps, ${failed} failed`,
+    );
   }
 
   /**
@@ -2659,7 +3035,8 @@ export class WorkflowMachine {
         segment_number: checkpoint.segmentNumber,
         next_step_index: checkpoint.nextStepIndex,
         workflow_id: this.workflowId,
-        compensations_registered: checkpoint.sagaContext?.compensationsRegistered,
+        compensations_registered:
+          checkpoint.sagaContext?.compensationsRegistered,
         tool_versions: checkpoint.toolVersions,
       });
 
@@ -2686,8 +3063,9 @@ export class WorkflowMachine {
   private async scheduleResume(checkpoint: WorkflowCheckpoint): Promise<void> {
     try {
       // PERFECT GRADE: Check if we can execute parallel branches
-      const canExecuteParallel = await this.tryExecuteParallelBranches(checkpoint);
-      
+      const canExecuteParallel =
+        await this.tryExecuteParallelBranches(checkpoint);
+
       if (canExecuteParallel) {
         // Parallel execution was triggered - no need to schedule sequential resume
         return;
@@ -2715,7 +3093,7 @@ export class WorkflowMachine {
           traceId: this.traceId,
           timestamp: new Date().toISOString(),
         },
-        this.traceId
+        this.traceId,
       );
 
       logger.info({
@@ -2736,7 +3114,9 @@ export class WorkflowMachine {
    * @param checkpoint - Current checkpoint
    * @returns true if parallel execution was triggered, false if fallback to sequential
    */
-  private async tryExecuteParallelBranches(checkpoint: WorkflowCheckpoint): Promise<boolean> {
+  private async tryExecuteParallelBranches(
+    checkpoint: WorkflowCheckpoint,
+  ): Promise<boolean> {
     if (!this.plan || !this.batchPlanner) {
       return false;
     }
@@ -2744,7 +3124,7 @@ export class WorkflowMachine {
     try {
       // Get analysis from batch planner
       const analysis = this.batchPlanner.getAnalysis();
-      
+
       // Check if there are parallelizable groups remaining
       const remainingBatches = analysis.parallelizableGroups || 0;
       if (remainingBatches === 0) {
@@ -2759,16 +3139,16 @@ export class WorkflowMachine {
 
       // Convert step IDs to indices
       const stepIndices = nextBatch.stepIds
-        .map(stepId => this.plan!.steps.findIndex(s => s.id === stepId))
-        .filter(idx => idx >= 0);
+        .map((stepId) => this.plan!.steps.findIndex((s) => s.id === stepId))
+        .filter((idx) => idx >= 0);
 
       if (stepIndices.length <= 1) {
         return false;
       }
 
       // PERFECT GRADE: Trigger parallel execution via QStash
-      const { QStashService } = await import('@repo/shared');
-      
+      const { QStashService } = await import("@repo/shared");
+
       const messageIds = await QStashService.triggerParallelSteps({
         executionId: this.executionId,
         stepIndices,
@@ -2778,7 +3158,7 @@ export class WorkflowMachine {
 
       if (messageIds.length > 0) {
         logger.info({
-          message: `[WorkflowMachine] SPECULATIVE EXECUTION: Triggered ${messageIds.length} parallel branches for ${this.executionId} (steps: ${nextBatch.stepIds.join(', ')})`,
+          message: `[WorkflowMachine] SPECULATIVE EXECUTION: Triggered ${messageIds.length} parallel branches for ${this.executionId} (steps: ${nextBatch.stepIds.join(", ")})`,
         });
 
         // Publish parallel execution event to Ably
@@ -2792,7 +3172,7 @@ export class WorkflowMachine {
             traceId: this.traceId,
             timestamp: new Date().toISOString(),
           },
-          this.traceId
+          this.traceId,
         );
 
         // Advance batch planner since we've triggered these steps
@@ -2818,7 +3198,7 @@ export class WorkflowMachine {
     if (!this.plan) return 0;
 
     const completedStepIds = new Set(
-      getCompletedSteps(this.state).map(s => s.step_id)
+      getCompletedSteps(this.state).map((s) => s.step_id),
     );
 
     // Find first incomplete step
@@ -2837,7 +3217,7 @@ export class WorkflowMachine {
   private createResult(
     success: boolean,
     startTime: number,
-    summary: string
+    summary: string,
   ): WorkflowResult {
     const completedSteps = getCompletedSteps(this.state).length;
     const failedSteps = getFailedSteps(this.state).length;
@@ -2852,7 +3232,8 @@ export class WorkflowMachine {
       executionTimeMs: Math.round(performance.now() - startTime),
       isPartial: false,
       summary,
-      wasCompensated: this.state.context["compensationStatus"] === "COMPENSATED",
+      wasCompensated:
+        this.state.context["compensationStatus"] === "COMPENSATED",
       compensatedSteps: this.compensationsRegistered.length,
     };
   }
@@ -2875,7 +3256,7 @@ export class WorkflowMachine {
     options?: {
       traceId?: string;
       correlationId?: string;
-    }
+    },
   ): Promise<WorkflowResult> {
     const memoryClient = getSharedMemoryClient()!;
 
@@ -2885,7 +3266,8 @@ export class WorkflowMachine {
         throw new Error(`No checkpoint found for execution ${executionId}`);
       }
 
-      const executionState = taskState.context.execution_state as ExecutionState;
+      const executionState = taskState.context
+        .execution_state as ExecutionState;
       if (!executionState) {
         throw new Error("Invalid execution state in checkpoint");
       }
@@ -2897,7 +3279,9 @@ export class WorkflowMachine {
       const machine = new WorkflowMachine(executionId, toolExecutor, {
         initialState: executionState,
         intentId: taskState.intent_id,
-        traceId: options?.traceId || taskState.context.trace_id as string | undefined,
+        traceId:
+          options?.traceId ||
+          (taskState.context.trace_id as string | undefined),
         correlationId: options?.correlationId,
       });
 
@@ -2911,12 +3295,18 @@ export class WorkflowMachine {
       machine["segmentStartTime"] = Date.now();
 
       // ENHANCEMENT: Check for schema evolution
-      const checkpointToolVersions = (taskState.context.tool_versions as Record<string, { version: string; schemaHash: string }>) || {};
+      const checkpointToolVersions =
+        (taskState.context.tool_versions as Record<
+          string,
+          { version: string; schemaHash: string }
+        >) || {};
       if (Object.keys(checkpointToolVersions).length > 0) {
-        const schemaChanges = await machine.checkSchemaEvolution(checkpointToolVersions);
+        const schemaChanges = await machine.checkSchemaEvolution(
+          checkpointToolVersions,
+        );
         if (schemaChanges.length > 0) {
           logger.warn({
-            message: `[WorkflowMachine] Detected schema evolution for ${schemaChanges.length} tools: ${schemaChanges.map(s => s.toolName).join(", ")}`,
+            message: `[WorkflowMachine] Detected schema evolution for ${schemaChanges.length} tools: ${schemaChanges.map((s) => s.toolName).join(", ")}`,
           });
 
           // Transition to REFLECTING state to allow LLM to adjust plan
@@ -2925,7 +3315,8 @@ export class WorkflowMachine {
             ...machine.state.context,
             schemaEvolutionDetected: true,
             schemaChanges,
-            reflectionReason: "Tool schema evolution detected - plan adjustment required",
+            reflectionReason:
+              "Tool schema evolution detected - plan adjustment required",
           };
 
           // Publish notification to Ably
@@ -2937,17 +3328,18 @@ export class WorkflowMachine {
               requiresReplan: true,
               timestamp: new Date().toISOString(),
             },
-            undefined
+            undefined,
           );
         }
       }
 
       // PERFECT GRADE: Logic Drift Detection with Shadow Dry-Run
-      const { createSchemaVersioningService, createShadowDryRunService } = await import('@repo/shared');
+      const { createSchemaVersioningService, createShadowDryRunService } =
+        await import("@repo/shared");
       const schemaVersioning = createSchemaVersioningService();
       const driftResult = await schemaVersioning.detectDrift(
         executionId,
-        machine.plan?.steps.map(s => s.tool_name) || []
+        machine.plan?.steps.map((s) => s.tool_name) || [],
       );
 
       if (driftResult.hasOrchestratorDrift) {
@@ -2957,14 +3349,14 @@ export class WorkflowMachine {
 
         // Trigger shadow dry-run
         const shadowDryRun = createShadowDryRunService();
-        
+
         // Capture state snapshot first
         // Note: We cast to any to avoid type conflicts between different ExecutionState definitions
         await shadowDryRun.captureSnapshot(
           executionId,
           machine.state as any,
-          driftResult.oldOrchestratorSha || 'unknown',
-          checkpointToolVersions
+          driftResult.oldOrchestratorSha || "unknown",
+          checkpointToolVersions,
         );
 
         // Execute dry-run
@@ -2973,11 +3365,11 @@ export class WorkflowMachine {
           plan: machine.plan!,
           stateSnapshot: machine.state as any,
           checkpointMetadata: {
-            orchestratorGitSha: driftResult.oldOrchestratorSha || 'unknown',
+            orchestratorGitSha: driftResult.oldOrchestratorSha || "unknown",
             toolVersions: checkpointToolVersions,
           },
           currentMetadata: {
-            orchestratorGitSha: driftResult.newOrchestratorSha || 'unknown',
+            orchestratorGitSha: driftResult.newOrchestratorSha || "unknown",
             toolVersions: {}, // Will be populated by dry-run service
           },
         });
@@ -2987,7 +3379,7 @@ export class WorkflowMachine {
         });
 
         // Handle based on recommendation
-        if (dryRunResult.recommendation === 'BLOCK_RESUME') {
+        if (dryRunResult.recommendation === "BLOCK_RESUME") {
           // Block resume and flag for human review
           machine.state = transitionState(machine.state, "FAILED");
           machine.state.context = {
@@ -3019,17 +3411,21 @@ export class WorkflowMachine {
               requiresHumanIntervention: true,
               timestamp: new Date().toISOString(),
             },
-            undefined
+            undefined,
           );
 
           logger.error({
             message: `[WorkflowMachine] BLOCKED resume due to logic drift. Divergence: ${dryRunResult.divergencePercentage.toFixed(1)}%`,
           });
 
-          return machine.createResult(false, performance.now(), dryRunResult.details);
+          return machine.createResult(
+            false,
+            performance.now(),
+            dryRunResult.details,
+          );
         }
 
-        if (dryRunResult.recommendation === 'REVIEW_REQUIRED') {
+        if (dryRunResult.recommendation === "REVIEW_REQUIRED") {
           // Allow resume but flag for monitoring
           machine.state.context = {
             ...machine.state.context,
@@ -3062,15 +3458,17 @@ export class WorkflowMachine {
    * Check for schema evolution by comparing checkpoint versions with current registry
    */
   private async checkSchemaEvolution(
-    checkpointVersions: Record<string, { version: string; schemaHash: string }>
-  ): Promise<Array<{
-    toolName: string;
-    oldVersion: string;
-    newVersion: string;
-    oldSchemaHash: string;
-    newSchemaHash: string;
-    changed: boolean;
-  }>> {
+    checkpointVersions: Record<string, { version: string; schemaHash: string }>,
+  ): Promise<
+    Array<{
+      toolName: string;
+      oldVersion: string;
+      newVersion: string;
+      oldSchemaHash: string;
+      newSchemaHash: string;
+      changed: boolean;
+    }>
+  > {
     const registry = getToolRegistry();
     const changes: Array<{
       toolName: string;
@@ -3081,14 +3479,18 @@ export class WorkflowMachine {
       changed: boolean;
     }> = [];
 
-    for (const [toolName, checkpointVersion] of Object.entries(checkpointVersions)) {
+    for (const [toolName, checkpointVersion] of Object.entries(
+      checkpointVersions,
+    )) {
       const toolDef = registry.getDefinition(toolName);
       if (!toolDef) {
         continue; // Tool no longer exists
       }
 
       const currentVersion = toolDef.version || "1.0.0";
-      const currentSchemaHash = await this.generateSchemaHash(toolDef.inputSchema || {});
+      const currentSchemaHash = await this.generateSchemaHash(
+        toolDef.inputSchema || {},
+      );
 
       const versionChanged = checkpointVersion.version !== currentVersion;
       const schemaChanged = checkpointVersion.schemaHash !== currentSchemaHash;
@@ -3115,7 +3517,7 @@ export class WorkflowMachine {
 function setExecutionError(
   state: ExecutionState,
   errorMessage: string,
-  traceId?: string
+  traceId?: string,
 ): ExecutionState {
   try {
     const failedState = transitionState(state, "FAILED");
@@ -3149,7 +3551,7 @@ export async function executeWorkflow(
     correlationId?: string;
     idempotencyService?: IdempotencyService;
     safetyPolicy?: SafetyPolicy;
-  } = {}
+  } = {},
 ): Promise<WorkflowResult> {
   const executionId = options.executionId || crypto.randomUUID();
 
@@ -3167,7 +3569,7 @@ export async function executeWorkflow(
 
 /**
  * Resume workflow from checkpoint
- * 
+ *
  * @param executionId - The execution ID to resume
  * @param toolExecutor - Tool executor for executing steps
  * @param options - Optional tracing and idempotency configuration
@@ -3180,24 +3582,24 @@ export async function resumeFromCheckpoint(
     traceCallback?: (entry: TraceEntry) => void;
     idempotencyService?: IdempotencyService;
     traceId?: string;
-  } = {}
+  } = {},
 ): Promise<WorkflowResult> {
   const memory = getSharedMemoryClient()!;
-  
+
   // Load task state to get checkpoint info
   const taskState = await memory.getTaskState(executionId);
-  
+
   if (!taskState) {
     throw new Error(`No task state found for execution ${executionId}`);
   }
-  
+
   // Load execution state from Redis
   const executionState = await loadExecutionState(executionId);
-  
+
   if (!executionState) {
     throw new Error(`No execution state found for execution ${executionId}`);
   }
-  
+
   if (!executionState.plan) {
     throw new Error(`No plan found in execution state for ${executionId}`);
   }
@@ -3213,7 +3615,7 @@ export async function resumeFromCheckpoint(
     traceId: options.traceId,
     idempotencyService: options.idempotencyService,
   });
-  
+
   machine.setPlan(executionState.plan);
   return await machine.execute();
 }

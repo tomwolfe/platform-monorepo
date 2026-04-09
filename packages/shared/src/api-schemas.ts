@@ -297,6 +297,14 @@ export const CheckoutRequestSchema = z
       .string()
       .regex(/^\d+$/, "Invalid signedAmount format")
       .optional(),
+
+    // Phase 2.2: Webhook callback URL for missed frontend callbacks
+    // Allows external frontends to receive payment confirmation even if
+    // the initial HTTP connection dropped
+    frontendCallbackUrl: z
+      .string()
+      .url("Invalid callback URL format")
+      .optional(),
   })
   .refine((data) => data.orderId || data.reservationId, {
     message: "Either orderId or reservationId must be provided",

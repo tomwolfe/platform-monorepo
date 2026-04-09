@@ -4,21 +4,81 @@
  * Provides JSON-formatted structured logging for all services.
  * Supports request/response logging, performance timing, and log levels.
  *
+ * Features:
+ * - Automatic traceId/executionId injection from AsyncLocalStorage context
+ * - Child logger creation with bound context
+ * - Request/response logging with header propagation
+ *
  * Usage:
  * ```typescript
- * // Create logger instance
- * const logger = new Logger({ serviceName: 'table-stack' });
+ * // Create logger instance with context
+ * const logger = getLogger({ serviceName: 'table-stack', traceId: 'abc-123' });
+ *
+ * // Or use with AsyncLocalStorage context (auto-injected)
+ * const logger = getLogger({ serviceName: 'table-stack' });
  *
  * // Log at different levels
- * logger.info({ message: 'Request received', path: req.url });
- * logger.error({ message: 'Database error', code: 'DB_ERROR' });
+ * logger.info('Request received', { path: req.url });
+ * logger.error('Database error', { code: 'DB_ERROR' });
  *
  * // Use request logging middleware
  * export const middleware = withRequestLogging(baseMiddleware);
  * ```
  *
- * @see Phase 1.2: Error Handling & Logging
+ * @see Phase 1.1: Standardize Structured Logging Context
  */
+
+// ============================================================================
+// ASYNC LOCAL STORAGE REFERENCE
+// Tracing storage is set once during server initialization.
+// In browser/edge contexts, this remains null and tracing context
+// must be provided explicitly via LogContext or createTraceHeaders options.
+// ============================================================================
+
+let _tracingStorage: {
+  getStore: () =>
+    | { correlationId?: string; traceId?: string; executionId?: string }
+    | undefined;
+} | null = null;
+
+/**
+ * Set the AsyncLocalStorage reference for automatic trace context injection.
+ * Should be called once during server initialization.
+ *
+ * @param storage - AsyncLocalStorage instance from tracing module
+ *
+ * @example
+ * ```ts
+ * // In server initialization
+ * import { tracingStorage } from '@repo/shared/tracing';
+ * import { setTracingStorage } from '@repo/shared';
+ * setTracingStorage(tracingStorage);
+ * ```
+ */
+export function setTracingStorage(storage: {
+  getStore: () =>
+    | { correlationId?: string; traceId?: string; executionId?: string }
+    | undefined;
+}): void {
+  _tracingStorage = storage;
+}
+
+/**
+ * Get the current tracing storage reference.
+ * Returns null in browser/edge contexts where AsyncLocalStorage is unavailable.
+ */
+export function getTracingStorage() {
+  return _tracingStorage;
+}
+
+// ============================================================================
+// TRACE HEADER CONSTANTS (copied to avoid import cycle)
+// These must match the values in ./tracing.ts exactly
+// ============================================================================
+
+const TRACE_ID_HEADER = "x-trace-id";
+const CORRELATION_ID_HEADER = "x-correlation-id";
+const EXECUTION_ID_HEADER = "x-execution-id";
 
 // ============================================================================
 // LOG LEVELS
@@ -63,6 +123,8 @@ export interface LogEntry {
   correlationId?: string;
   /** Trace ID for distributed tracing */
   traceId?: string;
+  /** Execution ID for saga/workflow tracking */
+  executionId?: string;
   /** Span ID for distributed tracing */
   spanId?: string;
   /** Additional structured data */
@@ -256,18 +318,36 @@ export class Logger {
     message: string,
     data?: Record<string, unknown>,
   ): LogEntry {
+    // Attempt to retrieve tracing context from AsyncLocalStorage
+    const asyncStore = _tracingStorage?.getStore();
+
+    // Priority: explicit data > metadata > AsyncLocalStorage
+    const traceId =
+      data?.traceId ||
+      data?.trace_id ||
+      this.metadata.traceId ||
+      asyncStore?.traceId;
+
+    const executionId =
+      data?.executionId || this.metadata.executionId || asyncStore?.executionId;
+
+    const correlationId =
+      data?.correlationId ||
+      this.metadata.correlationId ||
+      asyncStore?.correlationId;
+
     return {
       timestamp: new Date().toISOString(),
       level: LogLevelString[level],
       service: this.serviceName,
       message,
+      traceId,
+      executionId,
+      correlationId,
       environment: this.environment,
       version: this.version,
       ...this.metadata,
       ...data,
-      // Ensure trace_id is always present for Grafana log-trace correlation
-      trace_id:
-        data?.traceId || data?.trace_id || this.metadata?.traceId || "no-trace",
     };
   }
 
@@ -613,6 +693,123 @@ export function withRequestLogging<T extends (...args: any[]) => Promise<any>>(
 }
 
 // ============================================================================
+// TRACE HEADER PROPAGATION FOR DOWNSTREAM CALLS
+// Helper for propagating trace context to external services
+// ============================================================================
+
+/**
+ * Create fetch headers object with trace context injection.
+ * Use this when making downstream HTTP calls to ensure trace continuity.
+ *
+ * @param existingHeaders - Optional existing headers to merge
+ * @param options - Optional trace ID overrides
+ * @returns Headers object with trace context injected
+ *
+ * @example
+ * ```typescript
+ * // In an API route handler
+ * const headers = createTraceHeaders(req.headers, { executionId: 'exec-123' });
+ * const response = await fetch('https://other-service/api', { headers });
+ * ```
+ */
+export function createTraceHeaders(
+  existingHeaders?: Headers | Record<string, string>,
+  options?: { traceId?: string; correlationId?: string; executionId?: string },
+): Record<string, string> {
+  const headers: Record<string, string> = {};
+
+  // Copy existing headers
+  if (existingHeaders) {
+    if (existingHeaders instanceof Headers) {
+      existingHeaders.forEach((value, key) => {
+        headers[key] = value;
+      });
+    } else {
+      Object.assign(headers, existingHeaders);
+    }
+  }
+
+  // Attempt to retrieve tracing context from AsyncLocalStorage
+  const asyncStore = _tracingStorage?.getStore();
+
+  // Priority: explicit options > AsyncLocalStorage > existing headers
+  const traceId =
+    options?.traceId ||
+    asyncStore?.traceId ||
+    (existingHeaders instanceof Headers
+      ? existingHeaders.get(TRACE_ID_HEADER)
+      : existingHeaders?.[TRACE_ID_HEADER]);
+
+  const correlationId =
+    options?.correlationId ||
+    asyncStore?.correlationId ||
+    (existingHeaders instanceof Headers
+      ? existingHeaders.get(CORRELATION_ID_HEADER)
+      : existingHeaders?.[CORRELATION_ID_HEADER]);
+
+  const executionId =
+    options?.executionId ||
+    asyncStore?.executionId ||
+    (existingHeaders instanceof Headers
+      ? existingHeaders.get(EXECUTION_ID_HEADER)
+      : existingHeaders?.[EXECUTION_ID_HEADER]);
+
+  // Inject trace headers (always set, even if undefined, to ensure downstream gets them)
+  if (traceId) headers[TRACE_ID_HEADER] = traceId;
+  if (correlationId) headers[CORRELATION_ID_HEADER] = correlationId;
+  if (executionId) headers[EXECUTION_ID_HEADER] = executionId;
+
+  return headers;
+}
+
+/**
+ * Wrapped fetch function that automatically injects trace headers.
+ * Use this for all downstream HTTP calls to ensure trace continuity.
+ *
+ * @param url - URL to fetch
+ * @param init - Fetch options
+ * @param traceContext - Optional trace context overrides
+ * @returns Fetch response
+ *
+ * @example
+ * ```typescript
+ * import { tracedFetch } from '@repo/shared';
+ *
+ * // Automatic trace injection from current context
+ * const response = await tracedFetch('https://other-service/api', {
+ *   method: 'POST',
+ *   body: JSON.stringify(data),
+ * });
+ *
+ * // With explicit trace context override
+ * const response = await tracedFetch('https://other-service/api', {
+ *   method: 'POST',
+ *   body: JSON.stringify(data),
+ * }, { traceId: 'custom-trace-id' });
+ * ```
+ */
+export async function tracedFetch(
+  url: string,
+  init: RequestInit = {},
+  traceContext?: {
+    traceId?: string;
+    correlationId?: string;
+    executionId?: string;
+  },
+): Promise<Response> {
+  const existingHeaders = (init.headers as Record<string, string>) || {};
+  const headersWithTrace = createTraceHeaders(
+    existingHeaders instanceof Headers ? existingHeaders : existingHeaders,
+    traceContext,
+  );
+
+  return fetch(url, {
+    ...init,
+    headers: headersWithTrace,
+  });
+}
+
+// ============================================================================
 // GLOBAL LOGGER INSTANCE
 // ============================================================================
 
@@ -640,4 +837,107 @@ export function getGlobalLogger(serviceName: string = "app"): Logger {
  */
 export function setGlobalLogger(logger: Logger): void {
   globalLogger = logger;
+}
+
+// ============================================================================
+// LOG CONTEXT & GETLOGGER HELPER
+// Simplified logger creation with automatic context injection
+// ============================================================================
+
+/**
+ * Context object for creating a logger instance.
+ * Used by getLogger() to pre-bind metadata including tracing context.
+ */
+export interface LogContext {
+  /** Service name (required) */
+  serviceName: string;
+  /** Trace ID from request headers or AsyncLocalStorage */
+  traceId?: string;
+  /** Execution ID for saga/workflow tracking */
+  executionId?: string;
+  /** Correlation ID for cross-service request tracking */
+  correlationId?: string;
+  /** User ID if authenticated */
+  userId?: string;
+  /** Additional metadata to include in all log entries */
+  metadata?: Record<string, unknown>;
+  /** Minimum log level (default: INFO in production, DEBUG otherwise) */
+  minLevel?: LogLevel;
+  /** Enable pretty printing (default: true in development) */
+  prettyPrint?: boolean;
+}
+
+/**
+ * Create a logger instance with automatic context injection.
+ *
+ * This is the preferred way to create loggers throughout the codebase.
+ * It automatically injects traceId, executionId, and correlationId from:
+ * 1. Explicitly provided values in the context
+ * 2. AsyncLocalStorage context (if running within withNervousSystemTracing)
+ * 3. Request headers (if running in a request context)
+ *
+ * @param context - Log context containing service name and optional tracing metadata
+ * @returns Configured Logger instance with pre-bound tracing metadata
+ *
+ * @example
+ * ```typescript
+ * // Basic usage
+ * const logger = getLogger({ serviceName: 'table-stack' });
+ *
+ * // With explicit trace context
+ * const logger = getLogger({
+ *   serviceName: 'table-stack',
+ *   traceId: 'abc-123',
+ *   executionId: 'exec-456',
+ *   userId: 'user-789',
+ * });
+ *
+ * // Within a request context (auto-injects from AsyncLocalStorage)
+ * const logger = getLogger({ serviceName: 'checkout', userId: req.userId });
+ * logger.info('Payment processed', { amount: 50 });
+ * // Log entry will include: { traceId: '...', executionId: '...', userId: 'user-789' }
+ * ```
+ */
+export function getLogger(context: LogContext): Logger {
+  const {
+    serviceName,
+    traceId,
+    executionId,
+    correlationId,
+    userId,
+    metadata = {},
+    minLevel,
+    prettyPrint,
+  } = context;
+
+  // Attempt to retrieve tracing context from AsyncLocalStorage
+  const asyncStore = _tracingStorage?.getStore();
+
+  // Priority: explicit context > AsyncLocalStorage > fallback
+  const resolvedTraceId = traceId || asyncStore?.traceId;
+  const resolvedExecutionId = executionId || asyncStore?.executionId;
+  const resolvedCorrelationId = correlationId || asyncStore?.correlationId;
+
+  // Build metadata object with tracing context
+  const enrichedMetadata: Record<string, unknown> = {
+    ...metadata,
+    ...(resolvedTraceId && { traceId: resolvedTraceId }),
+    ...(resolvedExecutionId && { executionId: resolvedExecutionId }),
+    ...(resolvedCorrelationId && { correlationId: resolvedCorrelationId }),
+    ...(userId && { userId }),
+  };
+
+  const options: Parameters<typeof Logger>[0] = {
+    serviceName,
+    metadata: enrichedMetadata,
+  };
+
+  if (minLevel !== undefined) {
+    options.minLevel = minLevel;
+  }
+  if (prettyPrint !== undefined) {
+    options.prettyPrint = prettyPrint;
+  }
+
+  return new Logger(options);
 }

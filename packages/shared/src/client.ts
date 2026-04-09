@@ -33,7 +33,13 @@ export {
 // ============================================================================
 // LOGGER (Browser-safe structured logging)
 // ============================================================================
-export { Logger, type LogContext, type LogLevel } from "./logger";
+export {
+  Logger,
+  getLogger,
+  withRequestLogging,
+  type LogContext,
+  type LogLevel,
+} from "./logger";
 
 // ============================================================================
 // SCHEMAS & VALIDATION (Browser-safe Zod schemas)

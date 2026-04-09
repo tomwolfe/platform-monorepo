@@ -24,6 +24,7 @@ import {
   withApiErrorHandler,
   Logger,
   AppConfig,
+  withRetry,
 } from "@repo/shared";
 import {
   isReplayAllowed,
@@ -33,6 +34,77 @@ import {
 export const runtime = "nodejs";
 
 const logger = new Logger({ serviceName: "table-stack" });
+
+// ============================================================================
+// WEBHOOK CONFIGURATION
+// Phase 2.2: Webhook Fallback for Missed Frontend Callbacks
+// ============================================================================
+
+/**
+ * Send a webhook notification to the frontend callback URL.
+ * This allows external frontends (or mobile apps) to update their state
+ * even if the initial HTTP connection dropped.
+ *
+ * @param webhookUrl - The frontend callback URL
+ * @param payload - The webhook payload
+ * @param logger - Logger instance for tracking
+ */
+async function sendWebhookCallback(
+  webhookUrl: string,
+  payload: {
+    success: boolean;
+    reservationId: string;
+    txHash?: string;
+    status?: string;
+    message?: string;
+    timestamp: string;
+  },
+  logger: Logger,
+): Promise<void> {
+  try {
+    await withRetry(
+      async () => {
+        const response = await fetch(webhookUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Webhook-Source": "table-stack-checkout",
+            "X-Reservation-Id": payload.reservationId,
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(10000), // 10 second timeout
+        });
+
+        if (!response.ok) {
+          throw new Error(
+            `Webhook returned ${response.status}: ${response.statusText}`,
+          );
+        }
+      },
+      {
+        maxRetries: 2,
+        initialDelay: 1000,
+        maxDelay: 5000,
+        shouldRetry: (error) => {
+          // Don't retry client errors (4xx)
+          return !error.message?.includes("returned 4");
+        },
+      },
+    );
+
+    logger.info("Webhook callback sent successfully", {
+      webhookUrl,
+      reservationId: payload.reservationId,
+    });
+  } catch (error) {
+    // Log but don't fail the request - webhook is best-effort
+    logger.warn("Webhook callback failed (non-fatal)", {
+      webhookUrl,
+      reservationId: payload.reservationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 // EIP-712 Domain for signature verification (must match client)
 const EIP712_DOMAIN = {
@@ -91,6 +163,7 @@ async function postHandler(req: NextRequest) {
     chainId,
     deadline,
     signedAmount,
+    frontendCallbackUrl,
   } = validation.data;
 
   // Use reservationId for table-stack (orderId is for open-delivery)
@@ -424,6 +497,27 @@ async function postHandler(req: NextRequest) {
     reservationId: targetReservationId,
     txHash,
   });
+
+  // PHASE 2.2: Send webhook callback if provided
+  // This allows external frontends to update their state even if the
+  // initial HTTP connection dropped (e.g., user closed browser tab)
+  if (frontendCallbackUrl) {
+    // Send webhook in background (don't block the response)
+    sendWebhookCallback(
+      frontendCallbackUrl,
+      {
+        success: true,
+        reservationId: targetReservationId,
+        txHash,
+        status: "confirmed",
+        message: "Crypto payment verified successfully",
+        timestamp: new Date().toISOString(),
+      },
+      logger,
+    ).catch(() => {
+      // Already logged in sendWebhookCallback
+    });
+  }
 
   // Build response and validate with CheckoutResponseSchema
   const responseData = successResponse(

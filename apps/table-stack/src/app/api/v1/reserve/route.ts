@@ -24,6 +24,101 @@ export const runtime = "nodejs";
 const redis = getRedisClient(ServiceNamespace.TS);
 const logger = new Logger({ serviceName: "table-stack" });
 
+/**
+ * POST /api/v1/reserve - Create a Restaurant Reservation
+ *
+ * ## Outbox Pattern Implementation
+ *
+ * This route implements the **Outbox Pattern** to ensure reliable event delivery
+ * when creating reservations. The outbox pattern decouples database transactions
+ * from external side effects (email notifications) while maintaining consistency.
+ *
+ * ### How It Works
+ *
+ * ```mermaid
+ * sequenceDiagram
+ *   participant Client
+ *   participant API as POST /api/v1/reserve
+ *   participant DB as Database
+ *   participant Outbox as Outbox Table
+ *   participant Relay as Outbox Relay (background)
+ *   participant Email as Email Service (Resend)
+ *
+ *   Client->>API: POST /api/v1/reserve
+ *   API->>DB: BEGIN TRANSACTION
+ *   API->>DB: INSERT reservation
+ *   API->>Outbox: INSERT outbox_event (email notification)
+ *   API->>DB: COMMIT
+ *   API-->>Client: 200 OK (reservation created)
+ *   Note over API,Email: Decoupled via after()
+ *   Relay->>Outbox: Poll for new events
+ *   Outbox-->>Relay: Return pending events
+ *   Relay->>Email: Send email notification
+ *   Relay->>Outbox: Mark event as sent
+ * ```
+ *
+ * ### Why Use the Outbox Pattern?
+ *
+ * 1. **Atomicity**: The reservation and the intent to send an email are committed
+ *    in a single database transaction. Either both succeed or both fail.
+ *
+ * 2. **Reliability**: Even if the email service is temporarily unavailable, the
+ *    outbox event persists in the database and will be retried by the background
+ *    relay process.
+ *
+ * 3. **Performance**: The API response is returned immediately after the DB commit.
+ *    Email sending happens asynchronously via `after()`, avoiding blocking the response.
+ *
+ * ### Implementation Details
+ *
+ * - **`after()` Hook**: Next.js `after()` is used to schedule background work that
+ *   continues after the HTTP response is sent. This is serverless-safe and ensures
+ *   notifications don't block the critical path.
+ *
+ * - **Idempotency**: The `IdempotencyService` prevents duplicate reservations from
+ *   client retries. Keys are stored in Redis with a TTL.
+ *
+ * - **Shadow Restaurant Discovery**: If the restaurant doesn't exist in the database,
+ *   a "shadow" restaurant is automatically created and the owner is notified via email
+ *   to claim it.
+ *
+ * - **Serverless Timeout Protection**: The route is wrapped with `withServerlessTimeout(8000)`
+ *   to ensure it completes before Vercel's 10-second hard limit.
+ *
+ * ### Request Schema
+ *
+ * ```json
+ * {
+ *   "restaurantId": "uuid",
+ *   "restaurantName": "Restaurant Name",
+ *   "restaurantEmail": "owner@example.com",
+ *   "tableId": "uuid",
+ *   "guestName": "John Doe",
+ *   "guestEmail": "john@example.com",
+ *   "partySize": 4,
+ *   "startTime": "2024-01-15T19:00:00Z",
+ *   "metadata": { "specialRequests": "Window seat preferred" }
+ * }
+ * ```
+ *
+ * ### Response Schema
+ *
+ * ```json
+ * {
+ *   "success": true,
+ *   "data": {
+ *     "message": "Reservation created. Please check your email to verify.",
+ *     "bookingId": "uuid"
+ *   }
+ * }
+ * ```
+ *
+ * @throws 400 - Validation error or missing idempotency key
+ * @throws 401 - Unauthorized (invalid session)
+ * @throws 403 - Forbidden (accessing another restaurant)
+ * @throws 409 - Conflict (table already booked or duplicate request)
+ * @throws 500 - Internal server error
+ */
 async function postHandler(req: NextRequest) {
   // Auth validation
   const { error, status, context } = await validateRequest(req);

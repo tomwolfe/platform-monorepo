@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { acceptDelivery, linkDriverWallet, getDriverWallet } from "./actions";
 import Link from "next/link";
-import { ConnectWallet } from "@open-delivery/components/ConnectWallet";
+import { ConnectWallet } from "@repo/ui-theme";
 import { useAccount } from "wagmi";
 import { useApiError } from "@repo/ui-theme";
 

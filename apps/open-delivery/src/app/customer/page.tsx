@@ -15,10 +15,17 @@ import {
   DollarSign,
   Wallet,
 } from "lucide-react";
-import { getRealVendors, placeRealOrder, getMenu, Vendor, MenuItem, getRestaurantWallet } from "./actions";
+import {
+  getRealVendors,
+  placeRealOrder,
+  getMenu,
+  Vendor,
+  MenuItem,
+  getRestaurantWallet,
+} from "./actions";
 import { useUser } from "@clerk/nextjs";
 import { reverseGeocode } from "@repo/shared/utils/geo";
-import { ConnectWallet } from "@open-delivery/components/ConnectWallet";
+import { ConnectWallet } from "@repo/ui-theme";
 import { CryptoCheckout } from "@open-delivery/components/CryptoCheckout";
 import { useAccount } from "wagmi";
 
@@ -55,20 +62,27 @@ export default function CustomerDashboard() {
   const [isLoadingMenu, setIsLoadingMenu] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [showMenuModal, setShowMenuModal] = useState(false);
-  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(
+    null,
+  );
   const [cityLabel, setCityLabel] = useState("Detecting location...");
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [tip, setTip] = useState(5.0); // Default $5 tip
 
   // Web3 checkout state
   const [showCryptoCheckout, setShowCryptoCheckout] = useState(false);
-  const [restaurantWalletAddress, setRestaurantWalletAddress] = useState<string | null>(null);
+  const [restaurantWalletAddress, setRestaurantWalletAddress] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
-          const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          const coords = {
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          };
           setLocation(coords);
           // Reverse geocode to get city name for UI
           try {
@@ -94,7 +108,7 @@ export default function CustomerDashboard() {
           // No fallback to San Francisco - show empty state instead
           setCityLabel("Location needed");
           setLocation(null);
-        }
+        },
       );
     } else {
       // Geolocation not available - show empty state
@@ -112,9 +126,7 @@ export default function CustomerDashboard() {
         const data = await getRealVendors(location.lat, location.lng);
         setVendors(data);
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to load vendors"
-        );
+        setError(err instanceof Error ? err.message : "Failed to load vendors");
       } finally {
         setIsLoadingVendors(false);
       }
@@ -148,7 +160,7 @@ export default function CustomerDashboard() {
                       },
                     ],
                   }
-                : null
+                : null,
             );
           }
         };
@@ -189,7 +201,7 @@ export default function CustomerDashboard() {
         setMenuItems(items);
         setCart([]);
         setShowMenuModal(true);
-        
+
         // Fetch restaurant wallet address for direct payment
         const walletResult = await getRestaurantWallet(vendor.id);
         if (walletResult.success && walletResult.walletAddress) {
@@ -201,7 +213,7 @@ export default function CustomerDashboard() {
         setIsLoadingMenu(false);
       }
     },
-    [isSignedIn]
+    [isSignedIn],
   );
 
   const handleAddToCart = useCallback((item: MenuItem) => {
@@ -209,7 +221,7 @@ export default function CustomerDashboard() {
       const existing = prev.find((i) => i.id === item.id);
       if (existing) {
         return prev.map((i) =>
-          i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
+          i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i,
         );
       }
       return [...prev, { ...item, quantity: 1 }];
@@ -221,7 +233,7 @@ export default function CustomerDashboard() {
       const existing = prev.find((i) => i.id === itemId);
       if (existing && existing.quantity > 1) {
         return prev.map((i) =>
-          i.id === itemId ? { ...i, quantity: i.quantity - 1 } : i
+          i.id === itemId ? { ...i, quantity: i.quantity - 1 } : i,
         );
       }
       return prev.filter((i) => i.id !== itemId);
@@ -230,57 +242,64 @@ export default function CustomerDashboard() {
 
   const handleCheckout = useCallback(() => {
     if (!selectedVendor || cart.length === 0) return;
-    
+
     // Show crypto checkout modal instead of placing order directly
     setShowCryptoCheckout(true);
   }, [selectedVendor, cart]);
 
-  const handleCryptoCheckoutComplete = useCallback(async (result: { orderId: string; txHash?: string }) => {
-    if (!selectedVendor || cart.length === 0) return;
+  const handleCryptoCheckoutComplete = useCallback(
+    async (result: { orderId: string; txHash?: string }) => {
+      if (!selectedVendor || cart.length === 0) return;
 
-    setIsPlacingOrder(true);
-    setError(null);
+      setIsPlacingOrder(true);
+      setError(null);
 
-    try {
-      const orderItems = cart.map((item) => ({
-        id: item.id,
-        name: item.name,
-        price: item.price,
-        quantity: item.quantity,
-      }));
-      
-      // Place order with Web3 payment params
-      const placeOrderResult = await placeRealOrder(
-        selectedVendor.id,
-        orderItems,
-        deliveryAddress || undefined,
-        tip,
-        {
-          txHash: result.txHash || "",
-          walletAddress: "", // Will be populated by the component
-          paymentCurrency: "USDC",
-          chainId: 8453, // Base mainnet
-          restaurantWalletAddress: restaurantWalletAddress || undefined,
-        }
-      );
+      try {
+        const orderItems = cart.map((item) => ({
+          id: item.id,
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+        }));
 
-      setActiveOrder({
-        orderId: placeOrderResult.orderId,
-        status: "pending",
-        vendor: selectedVendor.name,
-        total: cart.reduce((sum, item) => sum + item.price * item.quantity, 0) + tip,
-        events: [{ timestamp: new Date().toISOString(), event: "order_created" }],
-      });
-      setShowCryptoCheckout(false);
-      setShowMenuModal(false);
-      setCart([]);
-      setTip(5.0); // Reset tip for next order
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Order failed");
-    } finally {
-      setIsPlacingOrder(false);
-    }
-  }, [selectedVendor, cart, deliveryAddress, tip]);
+        // Place order with Web3 payment params
+        const placeOrderResult = await placeRealOrder(
+          selectedVendor.id,
+          orderItems,
+          deliveryAddress || undefined,
+          tip,
+          {
+            txHash: result.txHash || "",
+            walletAddress: "", // Will be populated by the component
+            paymentCurrency: "USDC",
+            chainId: 8453, // Base mainnet
+            restaurantWalletAddress: restaurantWalletAddress || undefined,
+          },
+        );
+
+        setActiveOrder({
+          orderId: placeOrderResult.orderId,
+          status: "pending",
+          vendor: selectedVendor.name,
+          total:
+            cart.reduce((sum, item) => sum + item.price * item.quantity, 0) +
+            tip,
+          events: [
+            { timestamp: new Date().toISOString(), event: "order_created" },
+          ],
+        });
+        setShowCryptoCheckout(false);
+        setShowMenuModal(false);
+        setCart([]);
+        setTip(5.0); // Reset tip for next order
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Order failed");
+      } finally {
+        setIsPlacingOrder(false);
+      }
+    },
+    [selectedVendor, cart, deliveryAddress, tip],
+  );
 
   const handleOrderNow = useCallback(
     async (vendor: Vendor) => {
@@ -294,19 +313,23 @@ export default function CustomerDashboard() {
       const MOCK_TOTAL = 24.99;
 
       try {
-        const result = await placeRealOrder(vendor.id, [{
-          id: "mock-item",
-          name: `Chef's Special at ${vendor.name}`,
-          price: MOCK_TOTAL,
-          quantity: 1,
-        }]);
+        const result = await placeRealOrder(vendor.id, [
+          {
+            id: "mock-item",
+            name: `Chef's Special at ${vendor.name}`,
+            price: MOCK_TOTAL,
+            quantity: 1,
+          },
+        ]);
 
         setActiveOrder({
           orderId: result.orderId,
           status: "pending",
           vendor: vendor.name,
           total: MOCK_TOTAL,
-          events: [{ timestamp: new Date().toISOString(), event: "order_created" }],
+          events: [
+            { timestamp: new Date().toISOString(), event: "order_created" },
+          ],
         });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Order failed");
@@ -314,7 +337,7 @@ export default function CustomerDashboard() {
         setIsPlacingOrder(false);
       }
     },
-    [isSignedIn]
+    [isSignedIn],
   );
 
   if (!isLoaded) {
@@ -334,9 +357,7 @@ export default function CustomerDashboard() {
         <div className="flex items-center gap-4">
           <div className="bg-white px-4 py-2 rounded-full shadow-sm flex items-center gap-2">
             <MapPin size={18} className="text-red-500" />
-            <span className="text-sm font-medium">
-              {cityLabel}
-            </span>
+            <span className="text-sm font-medium">{cityLabel}</span>
           </div>
           <ConnectWallet />
         </div>
@@ -454,7 +475,9 @@ export default function CustomerDashboard() {
                     )}
                   </div>
                   <div>
-                    <p className="font-bold text-gray-900">{activeOrder.vendor}</p>
+                    <p className="font-bold text-gray-900">
+                      {activeOrder.vendor}
+                    </p>
                     <p className="text-sm text-gray-500 capitalize">
                       {activeOrder.status.replace("_", " ")}
                     </p>
@@ -508,7 +531,9 @@ export default function CustomerDashboard() {
             <div className="p-6 border-b flex justify-between items-center">
               <div>
                 <h2 className="text-2xl font-bold">{selectedVendor.name}</h2>
-                <p className="text-sm text-gray-500">Select items to add to your order</p>
+                <p className="text-sm text-gray-500">
+                  Select items to add to your order
+                </p>
               </div>
               <button
                 onClick={() => {
@@ -543,9 +568,15 @@ export default function CustomerDashboard() {
                           className="flex justify-between items-center p-4 border rounded-xl hover:border-blue-300 transition-colors"
                         >
                           <div className="flex-1">
-                            <h3 className="font-semibold text-gray-900">{item.name}</h3>
-                            <p className="text-sm text-gray-500">{item.description || "No description"}</p>
-                            <p className="text-blue-600 font-bold mt-1">${item.price.toFixed(2)}</p>
+                            <h3 className="font-semibold text-gray-900">
+                              {item.name}
+                            </h3>
+                            <p className="text-sm text-gray-500">
+                              {item.description || "No description"}
+                            </p>
+                            <p className="text-blue-600 font-bold mt-1">
+                              ${item.price.toFixed(2)}
+                            </p>
                           </div>
                           <div className="flex items-center gap-2">
                             {inCart ? (
@@ -556,7 +587,9 @@ export default function CustomerDashboard() {
                                 >
                                   -
                                 </button>
-                                <span className="w-8 text-center font-semibold">{inCart.quantity}</span>
+                                <span className="w-8 text-center font-semibold">
+                                  {inCart.quantity}
+                                </span>
                               </>
                             ) : null}
                             <button
@@ -587,10 +620,15 @@ export default function CustomerDashboard() {
                 ) : (
                   <div className="space-y-4">
                     {cart.map((item) => (
-                      <div key={item.id} className="flex justify-between items-start">
+                      <div
+                        key={item.id}
+                        className="flex justify-between items-start"
+                      >
                         <div className="flex-1">
                           <p className="font-medium text-sm">{item.name}</p>
-                          <p className="text-xs text-gray-500">Qty: {item.quantity}</p>
+                          <p className="text-xs text-gray-500">
+                            Qty: {item.quantity}
+                          </p>
                         </div>
                         <p className="font-semibold text-sm">
                           ${(item.price * item.quantity).toFixed(2)}
@@ -623,7 +661,8 @@ export default function CustomerDashboard() {
                           </label>
                         </div>
                         <p className="text-xs text-gray-500 mb-3">
-                          Higher tips attract drivers faster and prioritize your order
+                          Higher tips attract drivers faster and prioritize your
+                          order
                         </p>
                         <div className="grid grid-cols-4 gap-2 mb-3">
                           {[0, 3, 5, 8].map((amount) => (
@@ -647,7 +686,11 @@ export default function CustomerDashboard() {
                             min="0"
                             step="0.5"
                             value={tip}
-                            onChange={(e) => setTip(Math.max(0, parseFloat(e.target.value) || 0))}
+                            onChange={(e) =>
+                              setTip(
+                                Math.max(0, parseFloat(e.target.value) || 0),
+                              )
+                            }
                             className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                           />
                         </div>
@@ -657,22 +700,36 @@ export default function CustomerDashboard() {
                         <div className="flex justify-between text-sm">
                           <span className="text-gray-500">Subtotal</span>
                           <span className="font-medium">
-                            ${cart.reduce((sum, item) => sum + item.price * item.quantity, 0).toFixed(2)}
+                            $
+                            {cart
+                              .reduce(
+                                (sum, item) => sum + item.price * item.quantity,
+                                0,
+                              )
+                              .toFixed(2)}
                           </span>
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-gray-500">Driver Tip</span>
-                          <span className="font-medium text-emerald-600">${tip.toFixed(2)}</span>
+                          <span className="font-medium text-emerald-600">
+                            ${tip.toFixed(2)}
+                          </span>
                         </div>
                         <div className="flex justify-between items-center pt-2">
                           <span className="font-bold text-gray-900">Total</span>
                           <span className="text-xl font-black text-blue-600">
-                            ${(cart.reduce((sum, item) => sum + item.price * item.quantity, 0) + tip).toFixed(2)}
+                            $
+                            {(
+                              cart.reduce(
+                                (sum, item) => sum + item.price * item.quantity,
+                                0,
+                              ) + tip
+                            ).toFixed(2)}
                           </span>
                         </div>
                       </div>
                     </div>
-                    
+
                     {/* Crypto Checkout or Traditional Checkout */}
                     {showCryptoCheckout ? (
                       <CryptoCheckout
@@ -691,21 +748,24 @@ export default function CustomerDashboard() {
                     ) : (
                       <button
                         onClick={handleCheckout}
-                        disabled={isPlacingOrder || cart.length === 0 || !isWalletConnected}
+                        disabled={
+                          isPlacingOrder ||
+                          cart.length === 0 ||
+                          !isWalletConnected
+                        }
                         className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                       >
                         {isPlacingOrder ? (
                           <>
-                            Processing <Loader2 className="animate-spin h-4 w-4" />
+                            Processing{" "}
+                            <Loader2 className="animate-spin h-4 w-4" />
                           </>
                         ) : !isWalletConnected ? (
                           <>
                             <Wallet className="h-4 w-4" /> Connect Wallet to Pay
                           </>
                         ) : (
-                          <>
-                            Pay with Crypto
-                          </>
+                          <>Pay with Crypto</>
                         )}
                       </button>
                     )}

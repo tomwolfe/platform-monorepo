@@ -1,11 +1,14 @@
 import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { NervousSystemProvider, NervousSystemPulse } from "@repo/ui-theme";
-import { Web3Provider } from "@/components/web3/Web3Provider";
+import {
+  NervousSystemProvider,
+  NervousSystemPulse,
+  Web3Provider,
+} from "@repo/ui-theme";
 import "./globals.css";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -34,7 +37,7 @@ export default function RootLayout({
           className={`${geistSans.variable} ${geistMono.variable} antialiased`}
           suppressHydrationWarning
         >
-          <Web3Provider>
+          <Web3Provider appName="Table-Stack" appLogoUrl="🍽️">
             <NervousSystemProvider autoSubscribe={true}>
               {children}
               <NervousSystemPulse includeProvider={false} />

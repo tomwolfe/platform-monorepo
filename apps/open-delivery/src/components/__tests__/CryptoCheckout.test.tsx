@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { CryptoCheckout } from "../CryptoCheckout";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Web3Provider } from "../Web3Provider";
+import { Web3Provider } from "@repo/ui-theme";
 
 // Mock @repo/database to avoid bridge schema initialization
 // Provide minimal drizzle table definitions with Zod column shapes

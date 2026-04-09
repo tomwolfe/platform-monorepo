@@ -31,7 +31,7 @@ import {
   Wallet,
   Settings,
 } from "lucide-react";
-import { useWeb3 } from "./Web3Provider";
+import { useWeb3 } from "@repo/ui-theme";
 import { ERC20_ABI } from "@repo/shared/utils/erc20-abi";
 import { ESCROW_ABI } from "@repo/shared/utils/escrow-abi";
 

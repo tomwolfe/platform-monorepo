@@ -1,8 +1,11 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
-import { NervousSystemProvider, NervousSystemPulse } from "@repo/ui-theme";
-import { Web3Provider } from "@open-delivery/components/Web3Provider";
+import {
+  NervousSystemProvider,
+  NervousSystemPulse,
+  Web3Provider,
+} from "@repo/ui-theme";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -23,8 +26,9 @@ export const metadata: Metadata = {
 // Use environment key with a properly formatted fallback for CI/build
 // Clerk requires keys to start with pk_test_ or pk_live_ followed by valid base58 characters
 // This key is a valid format for build-time and CI testing (won't actually authenticate)
-const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
-  || "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k";
+const publishableKey =
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
+  "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k";
 
 export default function RootLayout({
   children,
@@ -38,7 +42,13 @@ export default function RootLayout({
           className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         >
           <NervousSystemProvider autoSubscribe={true}>
-            <Web3Provider>
+            <Web3Provider
+              appName="OpenDeliver"
+              appLogoUrl="🚚"
+              escrowContractAddress={
+                process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || ""
+              }
+            >
               {children}
             </Web3Provider>
             <NervousSystemPulse includeProvider={false} />

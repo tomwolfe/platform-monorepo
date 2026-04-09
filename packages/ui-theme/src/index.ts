@@ -17,3 +17,6 @@ export * from "./hooks/use-api-error";
 export * from "./hooks/useNervousSystem";
 export * from "./lib/utils";
 export * from "./lib/query-client";
+
+// T3.1: Consolidated Web3 Components
+export * from "./components/web3";

@@ -286,7 +286,12 @@ async function postHandler(req: NextRequest) {
       // SLIPPAGE CHECK: After verifying the signature, ensure the signed amount
       // is within acceptable slippage bounds of the current market rate.
       // This prevents stale signatures from being used when prices have moved significantly.
-      if (signedAmount && paymentCurrency === "ETH") {
+      // Only applies in DIRECT_P2P mode (escrow handles slippage differently).
+      if (
+        signedAmount &&
+        paymentCurrency === "ETH" &&
+        AppConfig.isDirectP2PMode()
+      ) {
         const expectedValue = await usdToCryptoBigInt(
           BigInt(depositUsdCentsForSig),
           "ETH",
@@ -352,15 +357,37 @@ async function postHandler(req: NextRequest) {
   }
 
   // ============================================================================
-  // SERVER-SIDE CALCULATION: Never trust client for financial data
+  // T1.3: CONFIG-DRIVEN PAYMENT MODE VALIDATION
   // ============================================================================
 
-  // Enforce restaurant wallet address exists (direct P2P requirement)
-  if (!reservation.restaurant?.walletAddress) {
+  // In DIRECT_P2P mode, enforce restaurant wallet address exists
+  if (AppConfig.isDirectP2PMode() && !reservation.restaurant?.walletAddress) {
     return NextResponse.json(
       errorResponse(
         "VALIDATION_ERROR",
         "Restaurant wallet address not configured - cannot accept P2P payment",
+      ),
+      { status: 400 },
+    );
+  }
+
+  // In ESCROW mode, ensure escrow contract is configured
+  if (AppConfig.isEscrowMode() && !AppConfig.getEscrowContractAddress()) {
+    return NextResponse.json(
+      errorResponse(
+        "VALIDATION_ERROR",
+        "Escrow contract address not configured - cannot process escrow payment",
+      ),
+      { status: 400 },
+    );
+  }
+
+  // In DISABLED mode, reject Web3 checkout
+  if (AppConfig.isPaymentDisabled()) {
+    return NextResponse.json(
+      errorResponse(
+        "VALIDATION_ERROR",
+        "Web3 payments are disabled. Please use traditional payment methods.",
       ),
       { status: 400 },
     );
@@ -420,19 +447,24 @@ async function postHandler(req: NextRequest) {
   }
 
   // Zero-Trust On-Chain Verification using shared utility
-  // isEscrowPayment=false because TableStack uses direct P2P to restaurant
+  // T1.3: Read payment mode from AppConfig instead of hardcoding
   const { verifyTransaction } =
     await import("@repo/shared/utils/web3-verification");
 
+  const isEscrowPayment = AppConfig.isEscrowMode();
   const slippageBps =
-    paymentCurrency === "ETH" ? AppConfig.getSlippageBps() : undefined;
+    paymentCurrency === "ETH" && !isEscrowPayment
+      ? AppConfig.getSlippageBps()
+      : undefined;
   const verificationResult = await verifyTransaction({
     txHash: txHash as `0x${string}`,
     expectedValue,
-    expectedRecipient: reservation.restaurant.walletAddress as `0x${string}`,
+    expectedRecipient: isEscrowPayment
+      ? (AppConfig.getEscrowContractAddress() as `0x${string}`)
+      : (reservation.restaurant.walletAddress as `0x${string}`),
     paymentCurrency,
     orderId: targetReservationId,
-    isEscrowPayment: false, // Direct P2P to restaurant wallet
+    isEscrowPayment,
     slippageBps,
   });
 

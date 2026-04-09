@@ -78,6 +78,11 @@ const BaseConfigSchema = z.object({
   NEXT_PUBLIC_USDC_CONTRACT_ADDRESS: z.string().optional(),
   NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS: z.string().optional(),
   NEXT_PUBLIC_PLATFORM_FEE_WALLET: z.string().optional(),
+  // T1.3: Payment mode standardization
+  PAYMENT_MODE: z
+    .enum(["DIRECT_P2P", "ESCROW", "DISABLED"])
+    .optional()
+    .default("DIRECT_P2P"),
 
   // Platform / Fees
   CRON_SECRET: z.string().optional(),
@@ -547,6 +552,48 @@ export class AppConfig {
   static getPlatformFeeWallet(): string | undefined {
     const config = this.init();
     return config.NEXT_PUBLIC_PLATFORM_FEE_WALLET;
+  }
+
+  // ========================================================================
+  // T1.3: PAYMENT MODE
+  // ========================================================================
+
+  /**
+   * Get the configured payment mode for Web3 payments.
+   *
+   * - `DIRECT_P2P`: Payments go directly to merchant/restaurant wallet.
+   *   Default for TableStack.
+   * - `ESCROW`: Payments go through a non-custodial escrow smart contract.
+   *   Default for Open-Delivery.
+   * - `DISABLED`: Web3 payments are disabled; use traditional methods.
+   *
+   * Set via `PAYMENT_MODE` environment variable.
+   * Defaults to `DIRECT_P2P` if not configured.
+   */
+  static getAppPaymentMode(): "DIRECT_P2P" | "ESCROW" | "DISABLED" {
+    const config = this.init();
+    return config.PAYMENT_MODE;
+  }
+
+  /**
+   * Check if escrow payment mode is active.
+   */
+  static isEscrowMode(): boolean {
+    return this.getAppPaymentMode() === "ESCROW";
+  }
+
+  /**
+   * Check if direct P2P payment mode is active.
+   */
+  static isDirectP2PMode(): boolean {
+    return this.getAppPaymentMode() === "DIRECT_P2P";
+  }
+
+  /**
+   * Check if Web3 payments are disabled.
+   */
+  static isPaymentDisabled(): boolean {
+    return this.getAppPaymentMode() === "DISABLED";
   }
 
   // ========================================================================

@@ -22,6 +22,37 @@
 import { base, polygon, mainnet, type Chain } from "viem/chains";
 
 // ============================================================================
+// PAYMENT MODE ENUM
+// T1.3: Standardize Web3 Payment Config & Feature Flags
+// ============================================================================
+
+/**
+ * Payment mode enum defining how Web3 payments are processed.
+ *
+ * - `DIRECT_P2P`: Payments go directly from customer to merchant wallet.
+ *   Used by TableStack for restaurant reservation deposits.
+ * - `ESCROW`: Payments are deposited into a non-custodial escrow smart contract
+ *   that instantly routes subtotal to restaurant and locks the driver's tip.
+ *   Used by Open-Delivery for food delivery orders.
+ * - `DISABLED`: Web3 payments are disabled. The app should fall back to
+ *   traditional payment methods (credit card, etc.).
+ */
+export enum PaymentMode {
+  /** Direct peer-to-peer payment to merchant/restaurant wallet */
+  DIRECT_P2P = "DIRECT_P2P",
+  /** Non-custodial escrow smart contract payment */
+  ESCROW = "ESCROW",
+  /** Web3 payments disabled; use traditional payment methods */
+  DISABLED = "DISABLED",
+}
+
+/**
+ * Default payment mode if not explicitly configured.
+ * TableStack uses DIRECT_P2P; Open-Delivery overrides to ESCROW.
+ */
+export const DEFAULT_PAYMENT_MODE: PaymentMode = PaymentMode.DIRECT_P2P;
+
+// ============================================================================
 // TYPES
 // ============================================================================
 

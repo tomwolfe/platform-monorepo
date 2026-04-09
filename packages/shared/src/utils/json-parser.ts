@@ -54,24 +54,12 @@ export function sanitizeJsonOutput(content: string): string {
     return sanitized;
   }
 
-  // Prefer regex-based balanced bracket extraction over indexOf fallback
-  // Handles nested objects/arrays without breaking on conversational curly braces
-  const jsonObjectMatch = sanitized.match(/\{(?:[^{}]|(?:\{[^{}]*\}))*\}/);
-  const jsonArrayMatch = sanitized.match(/\[(?:[^\[\]]|(?:\[[^\[\]]*\]))*\]/);
-
-  if (jsonObjectMatch) {
+  // Use a safe, iterative stack-based bracket extractor to avoid ReDoS
+  const extracted = extractJsonSubstrings(sanitized);
+  if (extracted.length > 0) {
     try {
-      JSON.parse(jsonObjectMatch[0]);
-      return jsonObjectMatch[0];
-    } catch (e) {
-      // Fall through if invalid
-    }
-  }
-
-  if (jsonArrayMatch) {
-    try {
-      JSON.parse(jsonArrayMatch[0]);
-      return jsonArrayMatch[0];
+      JSON.parse(extracted[0]);
+      return extracted[0];
     } catch (e) {
       // Fall through if invalid
     }
@@ -103,6 +91,57 @@ export function sanitizeJsonOutput(content: string): string {
 
   // Return original if no JSON structure found
   return sanitized;
+}
+
+/**
+ * Safely extract JSON substrings using an iterative stack-based approach.
+ * This avoids ReDoS vulnerabilities from complex regex patterns on nested structures.
+ *
+ * @param text - Input text potentially containing JSON
+ * @returns Array of extracted JSON substrings (empty if none found)
+ */
+function extractJsonSubstrings(text: string): string[] {
+  let startIndex = text.indexOf("{");
+  const arrayStartIndex = text.indexOf("[");
+  if (
+    arrayStartIndex !== -1 &&
+    (startIndex === -1 || arrayStartIndex < startIndex)
+  ) {
+    startIndex = arrayStartIndex;
+  }
+  if (startIndex === -1) return [];
+
+  let depth = 0;
+  let inString = false;
+  let escapeNext = false;
+  const startChar = text[startIndex];
+  const endChar = startChar === "{" ? "}" : "]";
+
+  for (let i = startIndex; i < text.length; i++) {
+    const char = text[i];
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    if (char === "\\") {
+      escapeNext = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (!inString) {
+      if (char === startChar) depth++;
+      else if (char === endChar) depth--;
+
+      if (depth === 0) {
+        return [text.substring(startIndex, i + 1)];
+      }
+    }
+  }
+  return [];
 }
 
 /**

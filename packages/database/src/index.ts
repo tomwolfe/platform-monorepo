@@ -1,5 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
+import type { NeonHttpDatabase } from "drizzle-orm/neon-http";
 import * as tablestackSchema from "./schema/tablestack";
 import * as pgvectorSchema from "./schema/pgvector";
 
@@ -186,7 +187,7 @@ export function resetQueryStats(): void {
 
 // Standard Next.js global caching to prevent connection bloat during HMR
 const globalForDb = globalThis as unknown as {
-  _dbInstance: ReturnType<typeof drizzle> | null;
+  _dbInstance: any;
 };
 
 /**
@@ -225,9 +226,9 @@ export function getDb() {
   const client = neon(databaseUrl);
   const baseDb = drizzle(client, { schema });
 
-  // DB-03: Wrap with timeout proxy
+  // DB-03: Wrap with timeout-safe wrapper (composition-based, not method-wrapping Proxy)
   const timeoutMs = dbConfig.queryTimeout || 30000; // Default 30 seconds
-  globalForDb._dbInstance = createTimeoutProxy(baseDb, timeoutMs);
+  globalForDb._dbInstance = createTimeoutDbWrapper(baseDb, timeoutMs);
 
   // Log initialization
   console.log(
@@ -255,66 +256,91 @@ export class TimeoutError extends Error {
 }
 
 /**
- * Creates a proxy around the Drizzle client that enforces query timeouts.
- * Wraps execute() and query methods with Promise.race timeout.
- * Also wraps the transaction() method to ensure tx objects also have timeout enforcement.
+ * DB-03: Composition-based timeout wrapper for Drizzle's NeonDatabase.
+ *
+ * Replaces the previous Proxy-based approach which broke Drizzle's internal
+ * symbol-based state tracking (e.g., transaction context, query builders).
+ *
+ * This wrapper holds a reference to the real Drizzle instance and delegates
+ * all operations to it. Only execute() and transaction() are overridden
+ * to enforce timeouts. All other properties (including internal symbols)
+ * are forwarded transparently via a minimal, symbol-safe Proxy that only
+ * intercepts property access for delegation — it does NOT wrap functions
+ * with timeouts, preserving Drizzle's internal behavior.
  */
-function createTimeoutProxy<T extends Record<string, any>>(
-  db: T,
-  timeoutMs: number,
-): T {
+class TimeoutDbWrapper<
+  TSchema extends Record<string, unknown> = Record<string, never>,
+> {
+  readonly #db: NeonHttpDatabase<TSchema>;
+  readonly #timeoutMs: number;
+
+  constructor(db: NeonHttpDatabase<TSchema>, timeoutMs: number) {
+    this.#db = db;
+    this.#timeoutMs = timeoutMs;
+  }
+
+  /**
+   * Wrap a promise with a timeout using Promise.race
+   */
+  #withTimeout<T>(promise: Promise<T>): Promise<T> {
+    let timer: NodeJS.Timeout;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(
+          new TimeoutError(
+            `Query timed out after ${this.#timeoutMs}ms`,
+            this.#timeoutMs,
+          ),
+        );
+      }, this.#timeoutMs);
+    });
+
+    return Promise.race([promise, timeoutPromise]).finally(() => {
+      clearTimeout(timer!);
+    }) as Promise<T>;
+  }
+
+  /**
+   * Execute a query with timeout enforcement
+   */
+  execute(...queries: any[]): Promise<any> {
+    return this.#withTimeout(
+      (this.#db.execute as (...args: any[]) => Promise<any>)(...queries),
+    );
+  }
+
+  /**
+   * Run a transaction with timeout enforcement on the transaction callback.
+   * The tx object passed to the callback is the raw Drizzle tx (no proxy),
+   * ensuring all internal Drizzle symbol-based state tracking works correctly.
+   */
+  transaction<T>(fn: (...args: any[]) => Promise<T>): Promise<T> {
+    return this.#withTimeout((this.#db.transaction as any)(fn));
+  }
+}
+
+// Make the wrapper behave like the underlying Drizzle instance for all
+// property accesses, using a Proxy that ONLY forwards — it does NOT wrap
+// methods with timeouts (unlike the old createTimeoutProxy). The only
+// timeout-wrapped methods are execute() and transaction() defined above.
+function createTimeoutDbWrapper<
+  TSchema extends Record<string, unknown> = Record<string, never>,
+>(db: NeonHttpDatabase<TSchema>, timeoutMs: number): NeonHttpDatabase<TSchema> {
+  const wrapper = new TimeoutDbWrapper(db, timeoutMs);
+
   return new Proxy(db, {
-    get(target, prop: string) {
-      const value = target[prop];
-
-      // If it's not a function, return as-is
-      if (typeof value !== "function") {
-        return value;
+    get(target, prop: string | symbol) {
+      // Check if the wrapper defines the property (execute, transaction with timeout)
+      if (prop === "execute") {
+        return wrapper.execute.bind(wrapper);
       }
-
-      // Special handling for transaction method
       if (prop === "transaction") {
-        return async function (
-          fn: (...args: any[]) => Promise<any>,
-          ...txArgs: any[]
-        ) {
-          return await value.call(
-            target,
-            async (tx: any) => {
-              // Wrap the transaction object with timeout proxy
-              const wrappedTx = createTimeoutProxy(tx, timeoutMs);
-              return fn(wrappedTx);
-            },
-            ...txArgs,
-          );
-        };
+        return wrapper.transaction.bind(wrapper);
       }
-
-      // Wrap the function with timeout
-      return async function (...args: any[]) {
-        let timer: NodeJS.Timeout;
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timer = setTimeout(() => {
-            reject(
-              new TimeoutError(
-                `Query timed out after ${timeoutMs}ms`,
-                timeoutMs,
-              ),
-            );
-          }, timeoutMs);
-        });
-
-        try {
-          return await Promise.race([
-            value.apply(target, args),
-            timeoutPromise,
-          ]);
-        } finally {
-          clearTimeout(timer!);
-        }
-      };
+      // Otherwise, delegate to the underlying Drizzle instance
+      return (target as any)[prop];
     },
-  });
+  }) as NeonHttpDatabase<TSchema>;
 }
 
 export type { InferSelectModel, InferInsertModel } from "drizzle-orm";

@@ -81,13 +81,18 @@ export async function getRealVendors(
     const RADIUS_LIMIT = 0.7;
 
     // Use PostgreSQL to calculate distance and sort by proximity
-    // Distance = sqrt( (lat2-lat1)^2 + (lng2-lng1)^2 )
-    // lat/lng are now numeric columns (precision 10, scale 7) - no casting needed
+    // Haversine formula for accurate geospatial distance on a sphere (Earth radius = 6371 km)
+    // lat/lng are numeric columns (precision 10, scale 7)
     const data = await getDb().execute(sql`
       SELECT id, name, address, slug, lat, lng,
-        sqrt(
-          pow(lat::double precision - ${userLat}::double precision, 2) +
-          pow(lng::double precision - ${userLng}::double precision, 2)
+        (
+          6371 * acos(
+            cos(radians(${userLat}::double precision)) *
+            cos(radians(lat::double precision)) *
+            cos(radians(lng::double precision) - radians(${userLng}::double precision)) +
+            sin(radians(${userLat}::double precision)) *
+            sin(radians(lat::double precision))
+          )
         ) as distance
       FROM restaurants
       WHERE is_shadow = false
@@ -95,7 +100,7 @@ export async function getRealVendors(
         -- Filter out restaurants with invalid coordinates
         AND lat IS NOT NULL
         AND lng IS NOT NULL
-        -- Hard radius limit: only show restaurants within ~50 miles
+        -- Hard radius limit: only show restaurants within ~80km (50 miles)
         AND lat::double precision BETWEEN ${userLat - RADIUS_LIMIT}::double precision AND ${userLat + RADIUS_LIMIT}::double precision
         AND lng::double precision BETWEEN ${userLng - RADIUS_LIMIT}::double precision AND ${userLng + RADIUS_LIMIT}::double precision
       ORDER BY distance ASC

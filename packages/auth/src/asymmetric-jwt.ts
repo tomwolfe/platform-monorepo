@@ -386,13 +386,11 @@ INTENTION ENGINE (Signing Service):
 -----------------------------------
 Set the following environment variable:
 
-  INTENTION_ENGINE_PRIVATE_KEY="<private key below>"
+  INTENTION_ENGINE_PRIVATE_KEY="<INSERT_PRIVATE_KEY_HERE>"
 
-${keyPair.privateKey}
-
-⚠️  SECURITY WARNING: Never commit this private key to version control!
-    Store in Vercel Environment Variables (encrypted at rest) or
-    AWS Secrets Manager.
+⚠️  SECURITY WARNING: Extract the private key from the return value of generateServiceKeyPair()
+    and store it securely (e.g., Vercel Environment Variables, AWS Secrets Manager).
+    NEVER commit this private key to version control or log it!
 
 SATELLITE SERVICES (Verification):
 ----------------------------------

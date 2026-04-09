@@ -265,6 +265,9 @@ export class Logger {
       version: this.version,
       ...this.metadata,
       ...data,
+      // Ensure trace_id is always present for Grafana log-trace correlation
+      trace_id:
+        data?.traceId || data?.trace_id || this.metadata?.traceId || "no-trace",
     };
   }
 

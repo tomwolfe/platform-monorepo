@@ -12,12 +12,23 @@ processors:
     send_batch_size: 1024
     send_batch_max_size: 2048
 
-  # Add trace IDs for better correlation
+  # Add service name and environment for better correlation
   resource:
     attributes:
       - key: service.name
         value: "apps-monorepo"
         action: upsert
+      - key: deployment.environment
+        value: "development"
+        action: upsert
+
+  # Extract trace ID for log correlation
+  transform:
+    log_statements:
+      - context: log
+        statements:
+          - set(resource.attributes["trace_id"], TraceId()) where TraceId() != ""
+          - set(resource.attributes["span_id"], SpanId()) where SpanId() != ""
 
 exporters:
   debug:
@@ -28,9 +39,28 @@ exporters:
     tls:
       insecure: true
 
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    default_labels_enabled:
+      level: true
+      service: true
+    labels:
+      attributes:
+        - trace_id
+        - executionId
+        - span_id
+        - service.name
+    tls:
+      insecure: true
+
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch, resource]
       exporters: [otlphttp/tempo, debug]
+    
+    logs:
+      receivers: [otlp]
+      processors: [batch, resource, transform]
+      exporters: [loki, debug]

@@ -137,18 +137,28 @@ jobs:
           exit 1
 
       - name: Run performance budget tests
-        run: k6 run k6/scripts/performance-budgets.js
+        run: |
+          k6 run k6/scripts/performance-budgets.js \
+            --out json=perf-results.json \
+            --summary-trend-stats="avg,min,med,max,p(90),p(95)"
         env:
           BASE_URL: http://localhost:3000
           TEST_USER_ID: github-actions-test
           INTERNAL_SYSTEM_KEY: test-key
-      
+
+      - name: Validate Performance Thresholds
+        run: |
+          node scripts/validate-perf-thresholds.js perf-results.json
+        env:
+          NODE_PATH: .
+
       - name: Upload k6 results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: k6-results
           path: |
+            perf-results.json
             k6-results.json
             *.log
           retention-days: 30

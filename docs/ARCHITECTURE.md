@@ -323,4 +323,6 @@ Implementation: packages/shared/src/utils/nonce-tracker.ts
 ## Further Reading
 
 - [Production Runbooks](./RUNBOOKS.md) - Operational procedures for common failure modes
+- [Shadow Restaurant Discovery](./flows/shadow-restaurant-discovery.md) - Sequence diagrams and state machine for restaurant discovery flow
+- [Saga Orchestration & Checkpointing](./flows/saga-checkpointing.md) - WorkflowMachine state transitions and Redis persistence
 - [README](../README.md) - Quickstart and local development setup

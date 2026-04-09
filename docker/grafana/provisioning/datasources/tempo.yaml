@@ -11,14 +11,70 @@ datasources:
     jsonData:
       httpMethod: GET
       tracesToLogs:
-        datasourceUid: ''
-        tags: ['trace_id']
+        datasourceUid: 'loki'
+        tags: ['trace_id', 'executionId', 'stepIndex']
+        mappedTags: [{ key: 'service.name', value: 'service' }]
+        filterByTraceID: true
+        filterBySpanID: false
+        spanEndTimeShift: '5m'
+        spanStartTimeShift: '5m'
+        limit: 100
       tracesToMetrics:
-        datasourceUid: ''
+        datasourceUid: 'prometheus'
         tags: [{ key: 'service.name', value: 'service' }]
       lokiSearch:
-        datasourceUid: ''
+        datasourceUid: 'loki'
       serviceMap:
-        datasourceUid: ''
+        datasourceUid: 'tempo'
       nodeGraph:
         enabled: true
+      search:
+        hide: false
+      traceQuery:
+        timeShiftEnabled: true
+        spanStartTimeShift: '1h'
+        spanEndTimeShift: '-1h'
+      derivedFields:
+        - name: 'trace_id'
+          matcherType: 'label'
+          matcherRegex: 'trace_id'
+          url: '$${__value.raw}'
+          datasourceUid: 'tempo'
+          urlDisplayLabel: 'View Trace'
+        - name: 'executionId'
+          matcherType: 'label'
+          matcherRegex: 'executionId'
+          url: '$${__value.raw}'
+          datasourceUid: 'tempo'
+          urlDisplayLabel: 'View Workflow'
+
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: true
+    uid: loki
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        - name: 'trace_id'
+          matcherRegex: 'trace_id[":\\s]+([a-f0-9-]+)'
+          url: '$${__value.raw}'
+          datasourceUid: 'tempo'
+          urlDisplayLabel: 'View Trace'
+        - name: 'executionId'
+          matcherRegex: 'executionId[":\\s]+(wf_[a-z0-9_]+)'
+          url: '/d/workflow-dashboard?var-executionId=$${__value.raw}'
+          urlDisplayLabel: 'View Workflow'
+      alertmanager:
+        handleGrafanaManagedAlerts: true
+
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    editable: true
+    uid: prometheus
+    jsonData:
+      timeInterval: '15s'
+      httpMethod: 'POST'

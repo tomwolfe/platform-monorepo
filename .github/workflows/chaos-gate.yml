@@ -136,13 +136,27 @@ jobs:
           EXIT_DB=0
 
           echo "🔬 Running Latency Spike Chaos Test..."
-          k6 run --summary-export=k6-results-latency.json k6/scripts/chaos-latency.js || EXIT_LATENCY=$?
-          
+          k6 run k6/scripts/chaos-latency.js \
+            --out json=k6-results-latency.json \
+            --summary-export=k6-results-latency-summary.json \
+            --thresholds "http_req_duration=p(95)<5000" \
+            --thresholds "http_req_failed=rate<0.80" \
+            --thresholds "checks=rate>=0.95" \
+            --thresholds "unexpected_errors=rate<0.05" || EXIT_LATENCY=$?
+
           echo "🔬 Running Redis Failure Chaos Test..."
-          k6 run --summary-export=k6-results-redis.json k6/scripts/chaos-redis-failure.js || EXIT_REDIS=$?
-          
+          k6 run k6/scripts/chaos-redis-failure.js \
+            --out json=k6-results-redis.json \
+            --summary-export=k6-results-redis-summary.json \
+            --thresholds "http_req_failed=rate<0.01" \
+            --thresholds "checks=rate>=0.95" || EXIT_REDIS=$?
+
           echo "🔬 Running Database Connection Chaos Test..."
-          k6 run --summary-export=k6-results-db.json k6/scripts/chaos-db-connection.js || EXIT_DB=$?
+          k6 run k6/scripts/chaos-db-connection.js \
+            --out json=k6-results-db.json \
+            --summary-export=k6-results-db-summary.json \
+            --thresholds "http_req_failed=rate<0.01" \
+            --thresholds "checks=rate>=0.95" || EXIT_DB=$?
 
           # Store overall status for the final check
           if [ $EXIT_LATENCY -ne 0 ] || [ $EXIT_REDIS -ne 0 ] || [ $EXIT_DB -ne 0 ]; then

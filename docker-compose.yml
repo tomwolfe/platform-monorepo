@@ -105,6 +105,24 @@ services:
       - emulators
 
   # ─────────────────────────────────────────────────────────────
+  # Grafana Loki (Log Aggregation)
+  # ─────────────────────────────────────────────────────────────
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: apps-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./docker/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki_data:/tmp/loki
+    ports:
+      - "3100:3100"  # Loki API
+    networks:
+      - apps-network
+    profiles:
+      - observability
+
+  # ─────────────────────────────────────────────────────────────
   # OpenTelemetry Collector
   # ─────────────────────────────────────────────────────────────
   otel-collector:
@@ -120,6 +138,7 @@ services:
       - "55679:55679" # Health check
     depends_on:
       - tempo
+      - loki
     networks:
       - apps-network
     profiles:
@@ -163,6 +182,7 @@ services:
       - "3001:3000"  # Using 3001 to avoid conflict with Next.js
     depends_on:
       - tempo
+      - loki
     networks:
       - apps-network
     profiles:
@@ -177,4 +197,5 @@ volumes:
   redis_data:
   qstash_data:
   tempo_data:
+  loki_data:
   grafana_data:

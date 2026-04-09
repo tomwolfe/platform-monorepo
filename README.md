@@ -89,6 +89,118 @@ The platform consists of three core applications:
 
 **Infrastructure:** Upstash Redis (caching, queues, locks), Neon PostgreSQL (persistence), Ably (realtime), Base (Web3 payouts)
 
+## Web3 Local Development
+
+Testing Web3 features (escrow contracts, payouts, transaction verification) requires a local Ethereum testnet. We use [Anvil](https://book.getfoundry.sh/anvil/) from the Foundry toolkit.
+
+### Prerequisites
+
+| Requirement | Version   | Purpose                |
+| ----------- | --------- | ---------------------- |
+| Foundry     | Latest    | Local Ethereum testnet |
+| cast        | (bundled) | Web3 CLI for testing   |
+
+Install Foundry:
+
+```bash
+curl -L https://foundry.paradigm.xyz | bash
+foundryup
+```
+
+### Quick Start
+
+1. **Start Anvil (local Ethereum testnet):**
+
+```bash
+anvil --chain-id 31337 --host 0.0.0.0 --port 8545
+```
+
+This starts a local blockchain with 10 pre-funded test accounts (each with 10,000 ETH).
+
+2. **Fund test wallets from Anvil's rich accounts:**
+
+```bash
+# Send ETH from Anvil's first account to your test driver wallet
+cast send <DRIVER_WALLET_ADDRESS> --value 1ether \
+  --rpc-url http://localhost:8545 \
+  --private-key <ANVIL_ACCOUNT_PRIVATE_KEY>
+
+# Or use the fund-test-wallets script:
+bash scripts/fund-test-wallets.sh
+```
+
+3. **Deploy the escrow contract (if applicable):**
+
+```bash
+# Deploy to local Anvil
+forge create src/Escrow.sol:Escrow \
+  --rpc-url http://localhost:8545 \
+  --private-key <DEPLOYER_PRIVATE_KEY>
+```
+
+4. **Configure environment variables:**
+
+```bash
+# In .env.local:
+ESCROW_RESOLVER_PRIVATE_KEY=0x...          # Your test wallet private key
+NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS=0x...   # Deployed contract address
+ETH_RPC_URL=http://localhost:8545           # Anvil RPC endpoint
+```
+
+5. **Fund USDC for testing (if using ERC-20):**
+
+```bash
+# Mint test USDC to your wallet (if contract supports it)
+cast send <USDC_CONTRACT_ADDRESS> "mint(address,uint256)" \
+  <YOUR_WALLET_ADDRESS> 1000000000000 \
+  --rpc-url http://localhost:8545 \
+  --private-key <MINTER_PRIVATE_KEY>
+```
+
+### Anvil Test Accounts
+
+Anvil provides 10 accounts with 10,000 ETH each by default. To view them:
+
+```bash
+anvil --chain-id 31337 | head -40
+# Look for "Available Accounts" and "Private Keys"
+```
+
+Use these accounts for testing driver wallets, user wallets, and contract deployers.
+
+### Web3 Cron Jobs
+
+The platform includes several Web3-related cron jobs:
+
+| Endpoint                   | Purpose                                  |
+| -------------------------- | ---------------------------------------- |
+| `/api/cron/payouts`        | Release driver tips from escrow contract |
+| `/api/cron/verify-pending` | Verify pending transactions on-chain     |
+| `/api/cron/verify-payouts` | Verify on-chain TipReleased events       |
+| `/api/cron/sync-nonces`    | Sync Redis nonce tracker with on-chain   |
+
+To trigger them locally:
+
+```bash
+# Example: Trigger payout cron
+curl -X POST http://localhost:3002/api/cron/payouts \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+### Troubleshooting Web3
+
+**Problem:** `nonce too low` error
+
+- **Solution:** Reset the nonce tracker: call `/api/cron/sync-nonces` or delete the Redis key `shared:nonce:{chainId}:{address}`
+
+**Problem:** `transaction reverted` on contract call
+
+- **Solution:** Use `cast call` to debug: `cast call <CONTRACT> "function()" --rpc-url http://localhost:8545`
+
+**Problem:** Gas estimation failed
+
+- **Solution:** Ensure Anvil is running and the contract is deployed to the correct address
+
 ## Documentation
 
 | Document                             | Description                                                                    |

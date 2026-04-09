@@ -443,6 +443,9 @@ export class ReservationService {
           ? [assignedTableId]
           : combinedTableIds || [];
 
+        // CRITICAL FIX: Prevent Drizzle/PostgreSQL crash on empty arrays in ANY()
+        const hasTablesToCheck = tablesToCheck.length > 0;
+
         const conflict = await tx.query.restaurantReservations.findFirst({
           where: and(
             eq(restaurantReservations.restaurantId, restaurantId),
@@ -464,10 +467,10 @@ export class ReservationService {
               assignedTableId
                 ? sql`${restaurantReservations.combinedTableIds} @> ${JSON.stringify([assignedTableId])}::jsonb`
                 : undefined,
-              combinedTableIds
+              combinedTableIds && hasTablesToCheck
                 ? sql`${restaurantReservations.tableId} = ANY(${tablesToCheck}::uuid[])`
                 : undefined,
-              combinedTableIds
+              combinedTableIds && hasTablesToCheck
                 ? sql`${restaurantReservations.combinedTableIds} && ${tablesToCheck}::uuid[]`
                 : undefined,
             ),

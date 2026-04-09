@@ -70,18 +70,13 @@ export {
   type ExecutionTraceEntry as TraceEntry,
   InMemoryTraceEmitter,
   type TraceEmitter,
-  withNervousSystemTracing,
   getCorrelationId,
   getTraceId,
   injectTracingHeaders,
-  createTraceEntry,
-  createStepCompletedEntry,
-  createStepFailedEntry,
-  createErrorEntry,
   emitTrace,
   getGlobalTraceEmitter,
   setGlobalTraceEmitter,
-} from "./tracing";
+} from "./tracing-types";
 
 // ============================================================================
 // RUNTIME REGISTRY (Browser-safe registry types)

@@ -1,9 +1,9 @@
 /**
  * Standardized Error Classes
- * 
+ *
  * Provides a unified error handling system across all services.
  * All errors extend AppError for consistent error codes, status codes, and metadata.
- * 
+ *
  * @package @repo/shared
  * @since 1.0.0
  */
@@ -17,41 +17,41 @@
  */
 export const ErrorCode = {
   // Validation Errors (400)
-  VALIDATION_ERROR: 'VALIDATION_ERROR',
-  INVALID_INPUT: 'INVALID_INPUT',
-  MISSING_REQUIRED_FIELD: 'MISSING_REQUIRED_FIELD',
-  INVALID_FORMAT: 'INVALID_FORMAT',
-  
+  VALIDATION_ERROR: "VALIDATION_ERROR",
+  INVALID_INPUT: "INVALID_INPUT",
+  MISSING_REQUIRED_FIELD: "MISSING_REQUIRED_FIELD",
+  INVALID_FORMAT: "INVALID_FORMAT",
+
   // Authentication Errors (401, 403)
-  UNAUTHORIZED: 'UNAUTHORIZED',
-  INVALID_TOKEN: 'INVALID_TOKEN',
-  TOKEN_EXPIRED: 'TOKEN_EXPIRED',
-  FORBIDDEN: 'FORBIDDEN',
-  INSUFFICIENT_PERMISSIONS: 'INSUFFICIENT_PERMISSIONS',
-  
+  UNAUTHORIZED: "UNAUTHORIZED",
+  INVALID_TOKEN: "INVALID_TOKEN",
+  TOKEN_EXPIRED: "TOKEN_EXPIRED",
+  FORBIDDEN: "FORBIDDEN",
+  INSUFFICIENT_PERMISSIONS: "INSUFFICIENT_PERMISSIONS",
+
   // Resource Errors (404, 409)
-  NOT_FOUND: 'NOT_FOUND',
-  CONFLICT: 'CONFLICT',
-  ALREADY_EXISTS: 'ALREADY_EXISTS',
-  RESOURCE_UNAVAILABLE: 'RESOURCE_UNAVAILABLE',
-  
+  NOT_FOUND: "NOT_FOUND",
+  CONFLICT: "CONFLICT",
+  ALREADY_EXISTS: "ALREADY_EXISTS",
+  RESOURCE_UNAVAILABLE: "RESOURCE_UNAVAILABLE",
+
   // Rate Limiting (429)
-  RATE_LIMITED: 'RATE_LIMITED',
-  
+  RATE_LIMITED: "RATE_LIMITED",
+
   // Execution Errors (500)
-  EXECUTION_FAILED: 'EXECUTION_FAILED',
-  TIMEOUT: 'TIMEOUT',
-  SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
-  DATABASE_ERROR: 'DATABASE_ERROR',
-  EXTERNAL_SERVICE_ERROR: 'EXTERNAL_SERVICE_ERROR',
-  
+  EXECUTION_FAILED: "EXECUTION_FAILED",
+  TIMEOUT: "TIMEOUT",
+  SERVICE_UNAVAILABLE: "SERVICE_UNAVAILABLE",
+  DATABASE_ERROR: "DATABASE_ERROR",
+  EXTERNAL_SERVICE_ERROR: "EXTERNAL_SERVICE_ERROR",
+
   // Saga/Workflow Errors
-  SAGA_COMPENSATION_FAILED: 'SAGA_COMPENSATION_FAILED',
-  STATE_TRANSITION_INVALID: 'STATE_TRANSITION_INVALID',
-  
+  SAGA_COMPENSATION_FAILED: "SAGA_COMPENSATION_FAILED",
+  STATE_TRANSITION_INVALID: "STATE_TRANSITION_INVALID",
+
   // Business Logic Errors
-  BUSINESS_RULE_VIOLATION: 'BUSINESS_RULE_VIOLATION',
-  CLARIFICATION_REQUIRED: 'CLARIFICATION_REQUIRED',
+  BUSINESS_RULE_VIOLATION: "BUSINESS_RULE_VIOLATION",
+  CLARIFICATION_REQUIRED: "CLARIFICATION_REQUIRED",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -95,10 +95,10 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
 
 /**
  * Base application error class
- * 
+ *
  * All custom errors extend this class for consistent error handling.
  * Provides error codes, HTTP status codes, and optional metadata.
- * 
+ *
  * @example
  * ```typescript
  * throw new AppError(
@@ -114,47 +114,47 @@ export class AppError extends Error {
    * Machine-readable error code
    */
   public readonly code: ErrorCode;
-  
+
   /**
    * HTTP status code
    */
   public readonly statusCode: number;
-  
+
   /**
    * Optional metadata for additional context
    */
   public readonly details?: Record<string, unknown>;
-  
+
   /**
    * Timestamp when the error occurred
    */
   public readonly timestamp: string;
-  
+
   /**
    * Optional stack trace (for server-side debugging)
    */
   public readonly stackTrace?: string;
-  
+
   constructor(
     code: ErrorCode,
     message: string,
     statusCode: number = 500,
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
   ) {
     super(message);
-    this.name = 'AppError';
+    this.name = "AppError";
     this.code = code;
     this.statusCode = statusCode;
     this.details = details;
     this.timestamp = new Date().toISOString();
-    
+
     // Capture stack trace
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, AppError);
     }
     this.stackTrace = this.stack;
   }
-  
+
   /**
    * Convert error to JSON for API responses
    */
@@ -169,13 +169,13 @@ export class AppError extends Error {
       timestamp: this.timestamp,
     };
   }
-  
+
   /**
    * Convert error to log entry
    */
   toLogEntry(): Record<string, unknown> {
     return {
-      type: 'APP_ERROR',
+      type: "APP_ERROR",
       code: this.code,
       message: this.message,
       statusCode: this.statusCode,
@@ -194,12 +194,9 @@ export class AppError extends Error {
  * Validation error for invalid input
  */
 export class ValidationError extends AppError {
-  constructor(
-    message: string,
-    details?: Record<string, unknown>
-  ) {
+  constructor(message: string, details?: Record<string, unknown>) {
     super(ErrorCode.VALIDATION_ERROR, message, 400, details);
-    this.name = 'ValidationError';
+    this.name = "ValidationError";
   }
 }
 
@@ -207,17 +204,14 @@ export class ValidationError extends AppError {
  * Error for missing required fields
  */
 export class MissingFieldError extends AppError {
-  constructor(
-    fieldName: string,
-    details?: Record<string, unknown>
-  ) {
+  constructor(fieldName: string, details?: Record<string, unknown>) {
     super(
       ErrorCode.MISSING_REQUIRED_FIELD,
       `Missing required field: ${fieldName}`,
       400,
-      { field: fieldName, ...details }
+      { field: fieldName, ...details },
     );
-    this.name = 'MissingFieldError';
+    this.name = "MissingFieldError";
   }
 }
 
@@ -228,15 +222,15 @@ export class InvalidFormatError extends AppError {
   constructor(
     fieldName: string,
     expectedFormat: string,
-    actualValue?: unknown
+    actualValue?: unknown,
   ) {
     super(
       ErrorCode.INVALID_FORMAT,
       `Invalid format for field: ${fieldName}. Expected: ${expectedFormat}`,
       400,
-      { field: fieldName, expectedFormat, actualValue }
+      { field: fieldName, expectedFormat, actualValue },
     );
-    this.name = 'InvalidFormatError';
+    this.name = "InvalidFormatError";
   }
 }
 
@@ -249,11 +243,11 @@ export class InvalidFormatError extends AppError {
  */
 export class UnauthorizedError extends AppError {
   constructor(
-    message: string = 'Unauthorized',
-    details?: Record<string, unknown>
+    message: string = "Unauthorized",
+    details?: Record<string, unknown>,
   ) {
     super(ErrorCode.UNAUTHORIZED, message, 401, details);
-    this.name = 'UnauthorizedError';
+    this.name = "UnauthorizedError";
   }
 }
 
@@ -262,11 +256,11 @@ export class UnauthorizedError extends AppError {
  */
 export class InvalidTokenError extends AppError {
   constructor(
-    message: string = 'Invalid or expired token',
-    details?: Record<string, unknown>
+    message: string = "Invalid or expired token",
+    details?: Record<string, unknown>,
   ) {
     super(ErrorCode.INVALID_TOKEN, message, 401, details);
-    this.name = 'InvalidTokenError';
+    this.name = "InvalidTokenError";
   }
 }
 
@@ -274,16 +268,14 @@ export class InvalidTokenError extends AppError {
  * Token expired error
  */
 export class TokenExpiredError extends AppError {
-  constructor(
-    expiredAt?: Date
-  ) {
+  constructor(expiredAt?: Date) {
     super(
       ErrorCode.TOKEN_EXPIRED,
-      'Token has expired',
+      "Token has expired",
       401,
-      expiredAt ? { expiredAt: expiredAt.toISOString() } : undefined
+      expiredAt ? { expiredAt: expiredAt.toISOString() } : undefined,
     );
-    this.name = 'TokenExpiredError';
+    this.name = "TokenExpiredError";
   }
 }
 
@@ -292,11 +284,11 @@ export class TokenExpiredError extends AppError {
  */
 export class ForbiddenError extends AppError {
   constructor(
-    message: string = 'Forbidden',
-    details?: Record<string, unknown>
+    message: string = "Forbidden",
+    details?: Record<string, unknown>,
   ) {
     super(ErrorCode.FORBIDDEN, message, 403, details);
-    this.name = 'ForbiddenError';
+    this.name = "ForbiddenError";
   }
 }
 
@@ -304,19 +296,16 @@ export class ForbiddenError extends AppError {
  * Insufficient permissions error
  */
 export class InsufficientPermissionsError extends AppError {
-  constructor(
-    requiredPermission?: string,
-    details?: Record<string, unknown>
-  ) {
+  constructor(requiredPermission?: string, details?: Record<string, unknown>) {
     super(
       ErrorCode.INSUFFICIENT_PERMISSIONS,
-      requiredPermission 
+      requiredPermission
         ? `Insufficient permissions. Required: ${requiredPermission}`
-        : 'Insufficient permissions',
+        : "Insufficient permissions",
       403,
-      { requiredPermission, ...details }
+      { requiredPermission, ...details },
     );
-    this.name = 'InsufficientPermissionsError';
+    this.name = "InsufficientPermissionsError";
   }
 }
 
@@ -331,17 +320,17 @@ export class NotFoundError extends AppError {
   constructor(
     resourceType: string,
     identifier?: string,
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
   ) {
     super(
       ErrorCode.NOT_FOUND,
-      identifier 
+      identifier
         ? `${resourceType} not found: ${identifier}`
         : `${resourceType} not found`,
       404,
-      { resourceType, identifier, ...details }
+      { resourceType, identifier, ...details },
     );
-    this.name = 'NotFoundError';
+    this.name = "NotFoundError";
   }
 }
 
@@ -349,12 +338,9 @@ export class NotFoundError extends AppError {
  * Conflict error (409)
  */
 export class ConflictError extends AppError {
-  constructor(
-    message: string,
-    details?: Record<string, unknown>
-  ) {
+  constructor(message: string, details?: Record<string, unknown>) {
     super(ErrorCode.CONFLICT, message, 409, details);
-    this.name = 'ConflictError';
+    this.name = "ConflictError";
   }
 }
 
@@ -365,15 +351,15 @@ export class AlreadyExistsError extends AppError {
   constructor(
     resourceType: string,
     identifier: string,
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
   ) {
     super(
       ErrorCode.ALREADY_EXISTS,
       `${resourceType} already exists: ${identifier}`,
       409,
-      { resourceType, identifier, ...details }
+      { resourceType, identifier, ...details },
     );
-    this.name = 'AlreadyExistsError';
+    this.name = "AlreadyExistsError";
   }
 }
 
@@ -384,17 +370,17 @@ export class ResourceUnavailableError extends AppError {
   constructor(
     resourceType: string,
     reason?: string,
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
   ) {
     super(
       ErrorCode.RESOURCE_UNAVAILABLE,
-      reason 
+      reason
         ? `${resourceType} unavailable: ${reason}`
         : `${resourceType} unavailable`,
       409,
-      { resourceType, reason, ...details }
+      { resourceType, reason, ...details },
     );
-    this.name = 'ResourceUnavailableError';
+    this.name = "ResourceUnavailableError";
   }
 }
 
@@ -406,17 +392,14 @@ export class ResourceUnavailableError extends AppError {
  * Rate limit exceeded error (429)
  */
 export class RateLimitError extends AppError {
-  constructor(
-    retryAfter?: number,
-    details?: Record<string, unknown>
-  ) {
+  constructor(retryAfter?: number, details?: Record<string, unknown>) {
     super(
       ErrorCode.RATE_LIMITED,
-      'Too many requests. Please try again later.',
+      "Too many requests. Please try again later.",
       429,
-      { retryAfter, ...details }
+      { retryAfter, ...details },
     );
-    this.name = 'RateLimitError';
+    this.name = "RateLimitError";
   }
 }
 
@@ -428,12 +411,9 @@ export class RateLimitError extends AppError {
  * General execution failure error
  */
 export class ExecutionError extends AppError {
-  constructor(
-    message: string,
-    details?: Record<string, unknown>
-  ) {
+  constructor(message: string, details?: Record<string, unknown>) {
     super(ErrorCode.EXECUTION_FAILED, message, 500, details);
-    this.name = 'ExecutionError';
+    this.name = "ExecutionError";
   }
 }
 
@@ -444,15 +424,15 @@ export class TimeoutError extends AppError {
   constructor(
     operation: string,
     timeoutMs?: number,
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
   ) {
     super(
       ErrorCode.TIMEOUT,
-      `Operation timed out: ${operation}${timeoutMs ? ` after ${timeoutMs}ms` : ''}`,
+      `Operation timed out: ${operation}${timeoutMs ? ` after ${timeoutMs}ms` : ""}`,
       504,
-      { operation, timeoutMs, ...details }
+      { operation, timeoutMs, ...details },
     );
-    this.name = 'TimeoutError';
+    this.name = "TimeoutError";
   }
 }
 
@@ -463,17 +443,17 @@ export class ServiceUnavailableError extends AppError {
   constructor(
     serviceName?: string,
     reason?: string,
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
   ) {
     super(
       ErrorCode.SERVICE_UNAVAILABLE,
-      reason 
-        ? `Service unavailable: ${serviceName || 'Unknown'} - ${reason}`
-        : `Service unavailable: ${serviceName || 'Unknown'}`,
+      reason
+        ? `Service unavailable: ${serviceName || "Unknown"} - ${reason}`
+        : `Service unavailable: ${serviceName || "Unknown"}`,
       503,
-      { serviceName, reason, ...details }
+      { serviceName, reason, ...details },
     );
-    this.name = 'ServiceUnavailableError';
+    this.name = "ServiceUnavailableError";
   }
 }
 
@@ -481,12 +461,9 @@ export class ServiceUnavailableError extends AppError {
  * Database error
  */
 export class DatabaseError extends AppError {
-  constructor(
-    message: string,
-    details?: Record<string, unknown>
-  ) {
+  constructor(message: string, details?: Record<string, unknown>) {
     super(ErrorCode.DATABASE_ERROR, message, 500, details);
-    this.name = 'DatabaseError';
+    this.name = "DatabaseError";
   }
 }
 
@@ -497,15 +474,15 @@ export class ExternalServiceError extends AppError {
   constructor(
     serviceName: string,
     message: string,
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
   ) {
     super(
       ErrorCode.EXTERNAL_SERVICE_ERROR,
       `External service error (${serviceName}): ${message}`,
       500,
-      { serviceName, ...details }
+      { serviceName, ...details },
     );
-    this.name = 'ExternalServiceError';
+    this.name = "ExternalServiceError";
   }
 }
 
@@ -520,15 +497,15 @@ export class SagaCompensationFailedError extends AppError {
   constructor(
     sagaId: string,
     failedStep: string,
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
   ) {
     super(
       ErrorCode.SAGA_COMPENSATION_FAILED,
       `Saga compensation failed: ${sagaId} at step ${failedStep}`,
       500,
-      { sagaId, failedStep, ...details }
+      { sagaId, failedStep, ...details },
     );
-    this.name = 'SagaCompensationFailedError';
+    this.name = "SagaCompensationFailedError";
   }
 }
 
@@ -539,15 +516,15 @@ export class StateTransitionInvalidError extends AppError {
   constructor(
     currentState: string,
     targetState: string,
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
   ) {
     super(
       ErrorCode.STATE_TRANSITION_INVALID,
       `Invalid state transition: ${currentState} -> ${targetState}`,
       500,
-      { currentState, targetState, ...details }
+      { currentState, targetState, ...details },
     );
-    this.name = 'StateTransitionInvalidError';
+    this.name = "StateTransitionInvalidError";
   }
 }
 
@@ -562,15 +539,15 @@ export class BusinessRuleViolationError extends AppError {
   constructor(
     ruleName: string,
     message: string,
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
   ) {
     super(
       ErrorCode.BUSINESS_RULE_VIOLATION,
       `Business rule violation (${ruleName}): ${message}`,
       400,
-      { ruleName, ...details }
+      { ruleName, ...details },
     );
-    this.name = 'BusinessRuleViolationError';
+    this.name = "BusinessRuleViolationError";
   }
 }
 
@@ -581,15 +558,13 @@ export class ClarificationRequiredError extends AppError {
   constructor(
     message: string,
     clarificationsNeeded: string[],
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
   ) {
-    super(
-      ErrorCode.CLARIFICATION_REQUIRED,
-      message,
-      400,
-      { clarificationsNeeded, ...details }
-    );
-    this.name = 'ClarificationRequiredError';
+    super(ErrorCode.CLARIFICATION_REQUIRED, message, 400, {
+      clarificationsNeeded,
+      ...details,
+    });
+    this.name = "ClarificationRequiredError";
   }
 }
 
@@ -623,12 +598,12 @@ export function getErrorStatusCode(error: unknown): number {
 export function toAppError(
   error: unknown,
   defaultCode: ErrorCode = ErrorCode.INTERNAL_ERROR as any,
-  defaultMessage: string = 'An unexpected error occurred'
+  defaultMessage: string = "An unexpected error occurred",
 ): AppError {
   if (error instanceof AppError) {
     return error;
   }
-  
+
   const message = error instanceof Error ? error.message : String(error);
   return new AppError(defaultCode, defaultMessage, 500, {
     originalError: message,
@@ -637,7 +612,7 @@ export function toAppError(
 
 /**
  * Create error handler middleware wrapper
- * 
+ *
  * @example
  * ```typescript
  * export const POST = withErrorHandler(async (req: NextRequest) => {
@@ -648,7 +623,7 @@ export function toAppError(
  */
 export function withErrorHandler<T extends (...args: any[]) => Promise<any>>(
   handler: T,
-  defaultCode?: ErrorCode
+  defaultCode?: ErrorCode,
 ) {
   return async (...args: Parameters<T>): Promise<ReturnType<T>> => {
     try {
@@ -658,3 +633,6 @@ export function withErrorHandler<T extends (...args: any[]) => Promise<any>>(
     }
   };
 }
+
+// Re-export withApiErrorHandler from error-handler for convenience
+export { withApiErrorHandler } from "./error-handler";

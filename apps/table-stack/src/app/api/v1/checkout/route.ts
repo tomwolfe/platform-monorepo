@@ -170,8 +170,11 @@ async function postHandler(req: NextRequest) {
           "ETH",
         );
       } else {
+        // CRITICAL: Use integer math to avoid float division precision loss
+        const dollars = Math.floor(depositUsdCentsForSig / 100);
+        const centsRemainder = depositUsdCentsForSig % 100;
         amountToVerify = parseUnits(
-          (depositUsdCentsForSig / 100).toFixed(6),
+          `${dollars}.${String(centsRemainder).padStart(2, "0")}0000`,
           6,
         );
       }
@@ -290,7 +293,6 @@ async function postHandler(req: NextRequest) {
 
   // Fetch deposit amount from database (in USD cents)
   const depositUsdCents = reservation.depositAmount || 0;
-  const depositUsd = depositUsdCents / 100; // Convert cents to dollars
 
   // Fetch live crypto prices from oracle
   const prices = await getCryptoPrices();
@@ -303,7 +305,13 @@ async function postHandler(req: NextRequest) {
     expectedValue = await usdToCryptoBigInt(BigInt(depositUsdCents), "ETH");
   } else {
     // USDC: 6 decimals, 1 USD = 1 USDC
-    expectedValue = parseUnits(depositUsd.toFixed(6), 6);
+    // CRITICAL: Use integer math to avoid float division precision loss
+    const dollars = Math.floor(depositUsdCents / 100);
+    const centsRemainder = depositUsdCents % 100;
+    expectedValue = parseUnits(
+      `${dollars}.${String(centsRemainder).padStart(2, "0")}0000`,
+      6,
+    );
   }
 
   // REPLAY GUARD: Check if this transaction hash has already been used

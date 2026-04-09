@@ -7,11 +7,23 @@ const nextConfig = {
     "@opentelemetry/sdk-node",
     "@opentelemetry/instrumentation",
     "ably",
+    "async_hooks",
+    "node:crypto",
     "worker_threads",
     "fs",
     "path",
     "crypto",
   ],
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      // Mark node: built-in modules as external
+      config.externals = config.externals || [];
+      config.externals.push({
+        'node:crypto': 'commonjs node:crypto'
+      });
+    }
+    return config;
+  },
   eslint: {
     ignoreDuringBuilds: false,
   },

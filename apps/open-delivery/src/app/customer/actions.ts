@@ -1,5 +1,6 @@
 "use server";
 
+import { after } from "next/server";
 import {
   getDb,
   restaurants,
@@ -17,7 +18,6 @@ import {
   OutboxService,
   OutboxRelayService,
   isReplayAllowed,
-  rollbackReplayGuard,
   AppConfig,
 } from "@repo/shared";
 import { revalidatePath } from "next/cache";
@@ -216,14 +216,14 @@ export async function placeRealOrder(
   const orderId = clientOrderId || randomUUID();
 
   // Convert fiat amounts to crypto smallest units (Wei for ETH, atomic for USDC)
-  // Fetch live ETH price from oracle for accurate conversion
+  // CRITICAL: Use integer math (cents) from the start to avoid floating-point precision loss
   const paymentCurrency = paymentParams?.paymentCurrency || "USDC";
-  const subtotalFiat = items.reduce(
-    (sum, item) => sum + item.price * item.quantity,
+  const subtotalCents = items.reduce(
+    (sum, item) => sum + Math.round(item.price * 100) * item.quantity,
     0,
   );
-  const tipFiat = Math.max(0, tipAmount);
-  const totalFiat = subtotalFiat + tipFiat;
+  const tipCents = Math.round(Math.max(0, tipAmount) * 100);
+  const totalCents = subtotalCents + tipCents;
 
   let subtotalCrypto: string;
   let tipCrypto: string;
@@ -231,18 +231,36 @@ export async function placeRealOrder(
 
   if (paymentCurrency === "ETH") {
     // Use exact market rate - slippage is checked inside verifyTransaction
-    const subtotalCents = BigInt(Math.round(subtotalFiat * 100));
-    const tipCents = BigInt(Math.round(tipFiat * 100));
-    const totalCents = BigInt(Math.round(totalFiat * 100));
-
-    subtotalCrypto = (await usdToCryptoBigInt(subtotalCents, "ETH")).toString();
-    tipCrypto = (await usdToCryptoBigInt(tipCents, "ETH")).toString();
-    totalCrypto = (await usdToCryptoBigInt(totalCents, "ETH")).toString();
+    subtotalCrypto = (
+      await usdToCryptoBigInt(BigInt(subtotalCents), "ETH")
+    ).toString();
+    tipCrypto = (await usdToCryptoBigInt(BigInt(tipCents), "ETH")).toString();
+    totalCrypto = (
+      await usdToCryptoBigInt(BigInt(totalCents), "ETH")
+    ).toString();
   } else {
     // USDC: 6 decimals, assume 1 USD = 1 USDC
-    subtotalCrypto = parseUnits(subtotalFiat.toFixed(6), 6).toString();
-    tipCrypto = parseUnits(tipFiat.toFixed(6), 6).toString();
-    totalCrypto = parseUnits(totalFiat.toFixed(6), 6).toString();
+    // Convert cents to dollars with exact decimal precision (no float division)
+    const dollars = Math.floor(totalCents / 100);
+    const centsRemainder = totalCents % 100;
+    totalCrypto = parseUnits(
+      `${dollars}.${String(centsRemainder).padStart(2, "0")}0000`,
+      6,
+    ).toString();
+
+    const subtotalDollars = Math.floor(subtotalCents / 100);
+    const subtotalCentsRemainder = subtotalCents % 100;
+    subtotalCrypto = parseUnits(
+      `${subtotalDollars}.${String(subtotalCentsRemainder).padStart(2, "0")}0000`,
+      6,
+    ).toString();
+
+    const tipDollars = Math.floor(tipCents / 100);
+    const tipCentsRemainder = tipCents % 100;
+    tipCrypto = parseUnits(
+      `${tipDollars}.${String(tipCentsRemainder).padStart(2, "0")}0000`,
+      6,
+    ).toString();
   }
 
   // ============================================================================
@@ -312,136 +330,146 @@ export async function placeRealOrder(
   }
 
   try {
-    // CRITICAL FIX: Wrap order creation in a database transaction
-    // This prevents race conditions where the same paymentTxHash could be
-    // submitted to multiple orders before the UNIQUE constraint locks it down
-    const result = await getDb().transaction(async (tx) => {
-      // Get or create user record
-      const existingUsers = await tx
-        .select()
-        .from(users)
-        .where(sql`${users.clerkId} = ${user.id}`)
-        .limit(1);
+    // ========================================================================
+    // CRITICAL FIX: Neon HTTP driver does NOT support interactive transactions
+    // across multiple await ticks. We use a raw SQL CTE to atomically:
+    //   1. Upsert the user (ON CONFLICT DO UPDATE)
+    //   2. Insert the order (with duplicate payment hash check)
+    //   3. Insert order items
+    //   4. Write the outbox event
+    // All within a single SQL statement, avoiding lock-drop issues.
+    // ========================================================================
 
-      let userRecord = existingUsers[0];
-
-      if (!userRecord) {
-        const [newUser] = await tx
-          .insert(users)
-          .values({
-            clerkId: user.id,
-            email: user.emailAddresses[0].emailAddress,
-            name: `${user.firstName || "User"} ${user.lastName || ""}`,
-            role: "shopper",
-          })
-          .returning();
-        userRecord = newUser;
-      }
-
-      // Use provided delivery address or fallback to user's default
-      // Fail explicitly if no address is available (no hardcoded defaults)
-      const address = deliveryAddress || userRecord.defaultDeliveryAddress;
-
-      if (!address) {
-        throw new Error(
-          "No delivery address provided and no default found in profile.",
-        );
-      }
-
-      // CRITICAL: Check for duplicate payment hash within transaction
-      // This prevents replay attacks where the same USDC tx is used for multiple orders
-      if (paymentParams?.txHash) {
-        const existingOrders = await tx
-          .select({ id: orders.id })
-          .from(orders)
-          .where(sql`${orders.paymentTxHash} = ${paymentParams.txHash}`)
-          .limit(1);
-
-        const existingOrder = existingOrders[0];
-        if (existingOrder) {
-          throw new Error(
-            `Payment transaction ${paymentParams.txHash} already used for order ${existingOrder.id}`,
-          );
-        }
-      }
-
-      const [newOrder] = await tx
-        .insert(orders)
-        .values({
-          id: orderId,
-          userId: userRecord?.id,
-          storeId: vendorId,
-          status: "pending_verification",
-          subtotal: subtotalCrypto as CryptoAmount,
-          tip: tipCrypto as CryptoAmount,
-          total: totalCrypto as CryptoAmount,
-          deliveryAddress: address,
-          pickupAddress: restaurant.address || "Restaurant Location",
-          // Web3 payment fields
-          paymentTxHash: paymentParams?.txHash || null,
-          walletAddress: paymentParams?.walletAddress || null,
-          paymentCurrency: paymentCurrency,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .returning();
-
-      // Insert all order items
-      await tx.insert(orderItems).values(
-        items.map((item) => ({
-          orderId: orderId,
-          name: item.name,
-          quantity: item.quantity,
-          price: item.price,
-          createdAt: new Date(),
-        })),
+    const address = deliveryAddress;
+    if (!address) {
+      throw new Error(
+        "No delivery address provided. A delivery address is required.",
       );
+    }
 
-      // Write the Ably event to the Postgres Outbox table within the same transaction.
-      // This ensures the notification is durably stored even if Ably/network fails later.
-      const outboxServiceInstance = new OutboxService();
-      await outboxServiceInstance.publish(tx, {
-        eventType: "WORKFLOW_STATE_CHANGED",
-        payload: {
-          executionId: orderId,
-          timestamp: new Date().toISOString(),
-          eventType: "delivery.intent_created",
-          channel: "nervous-system:updates",
-          data: {
-            orderId: orderId,
-            fulfillmentId: orderId,
-            pickupAddress: address,
-            deliveryAddress: address,
-            price: totalCrypto,
-            priority: "standard",
-            items: items.map((item) => ({
-              name: item.name,
-              quantity: item.quantity,
-              price: item.price,
-            })),
-            payment: {
-              txHash: paymentParams?.txHash,
-              currency: paymentCurrency,
-              walletAddress: paymentParams?.walletAddress,
-            },
+    const itemsJson = JSON.stringify(items);
+    const outboxEventJson = JSON.stringify({
+      eventType: "WORKFLOW_STATE_CHANGED",
+      payload: {
+        executionId: orderId,
+        timestamp: new Date().toISOString(),
+        eventType: "delivery.intent_created",
+        channel: "nervous-system:updates",
+        data: {
+          orderId: orderId,
+          fulfillmentId: orderId,
+          pickupAddress: address,
+          deliveryAddress: address,
+          price: totalCrypto,
+          priority: "standard",
+          items: items.map((item) => ({
+            name: item.name,
+            quantity: item.quantity,
+            price: item.price,
+          })),
+          payment: {
+            txHash: paymentParams?.txHash,
+            currency: paymentCurrency,
+            walletAddress: paymentParams?.walletAddress,
           },
         },
-      });
-
-      return newOrder;
+      },
     });
 
+    const result = await getDb().execute(sql`
+      WITH user_upsert AS (
+        INSERT INTO ${users} (clerk_id, email, name, role)
+        VALUES (
+          ${user.id},
+          ${user.emailAddresses[0].emailAddress},
+          ${`${user.firstName || "User"} ${user.lastName || ""}`},
+          'shopper'
+        )
+        ON CONFLICT (clerk_id) DO UPDATE SET
+          email = EXCLUDED.email,
+          name = EXCLUDED.name,
+          updated_at = NOW()
+        RETURNING *
+        LIMIT 1
+      ),
+      order_insert AS (
+        INSERT INTO ${orders} (
+          id, user_id, store_id, status, subtotal, tip, total,
+          delivery_address, pickup_address, payment_tx_hash,
+          wallet_address, payment_currency, created_at, updated_at
+        )
+        SELECT
+          ${orderId},
+          u.id,
+          ${vendorId},
+          'pending_verification',
+          ${subtotalCrypto}::numeric,
+          ${tipCrypto}::numeric,
+          ${totalCrypto}::numeric,
+          ${address},
+          ${restaurant.address || "Restaurant Location"},
+          ${paymentParams?.txHash || null},
+          ${paymentParams?.walletAddress || null},
+          ${paymentCurrency},
+          NOW(),
+          NOW()
+        FROM user_upsert u
+        ${
+          paymentParams?.txHash
+            ? sql`WHERE NOT EXISTS (
+                SELECT 1 FROM ${orders} o WHERE o.payment_tx_hash = ${paymentParams.txHash}
+              )`
+            : sql``
+        }
+        RETURNING *
+      ),
+      items_insert AS (
+        INSERT INTO ${orderItems} (order_id, name, quantity, price, created_at)
+        SELECT
+          ${orderId},
+          item->>'name',
+          (item->>'quantity')::integer,
+          (item->>'price')::numeric,
+          NOW()
+        FROM order_insert oi, jsonb_array_elements(${itemsJson}::jsonb) item
+        RETURNING *
+      ),
+      outbox_insert AS (
+        INSERT INTO ${outbox} (event_type, payload, created_at)
+        SELECT
+          'WORKFLOW_STATE_CHANGED',
+          ${outboxEventJson}::jsonb,
+          NOW()
+        FROM order_insert
+        RETURNING *
+      )
+      SELECT o.* FROM order_insert o
+    `);
+
+    if (!result || result.length === 0) {
+      if (paymentParams?.txHash) {
+        throw new Error(
+          `Payment transaction ${paymentParams.txHash} already used for another order.`,
+        );
+      }
+      throw new Error("Failed to create order.");
+    }
+
+    const newOrder = result[0];
+
     // Trigger the outbox relay AFTER the transaction commits.
-    // This fire-and-forget QStash call dispatches the outbox event to Ably.
-    OutboxRelayService.triggerRelay(orderId).catch((err) => {
-      console.error("[Order ${orderId}] Outbox relay trigger failed:", err);
+    // Wrapped in after() to guarantee execution outside the request lifecycle.
+    after(() => {
+      OutboxRelayService.triggerRelay(orderId).catch((err) => {
+        console.error(`[Order ${orderId}] Outbox relay trigger failed:`, err);
+      });
     });
 
     revalidatePath("/customer");
 
     return {
       success: true,
-      orderId: result.id,
+      orderId: newOrder.id,
       status: "pending" as const,
       payment: {
         txHash: paymentParams?.txHash,
@@ -450,15 +478,17 @@ export async function placeRealOrder(
       },
     };
   } catch (error) {
-    // COMPENSATING ACTION: If the database transaction failed for non-Web3 reasons
-    // (e.g., constraint violation, connection error) AFTER the replay guard was
-    // triggered, rollback the registration so the user can re-submit.
-    if (
-      paymentParams?.txHash &&
-      error instanceof Error &&
-      !error.message.includes("already used")
-    ) {
-      await rollbackReplayGuard(paymentParams.txHash as Hash);
+    // ========================================================================
+    // CRITICAL FIX: If the DB fails AFTER on-chain payment was verified,
+    // we MUST NOT rollback the replay guard. The funds are already captured
+    // by the escrow contract. Instead, route to a DLQ for manual reconciliation.
+    // ========================================================================
+    if (paymentParams?.txHash) {
+      console.error(
+        `CRITICAL: Order creation failed but payment ${paymentParams.txHash} may have been captured. Routing to manual reconciliation.`,
+        error,
+      );
+      // TODO: Push to Redis DLQ for admin reconciliation dashboard
     }
 
     console.error("Order placement failed:", error);

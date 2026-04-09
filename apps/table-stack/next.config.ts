@@ -7,7 +7,16 @@ const bundleAnalyzer = withBundleAnalyzer({
 
 const nextConfig: NextConfig = {
   transpilePackages: ["@repo/ui-theme", "@repo/mcp-protocol", "@repo/database"],
-  serverExternalPackages: ["ably"],
+  serverExternalPackages: ["ably", "async_hooks", "node:crypto"],
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      config.externals = [
+        ...(config.externals || []),
+        { "node:crypto": "commonjs node:crypto" },
+      ];
+    }
+    return config;
+  },
   eslint: {
     ignoreDuringBuilds: true,
   },

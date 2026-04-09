@@ -170,7 +170,10 @@ export {
   type CacheConfig,
 } from "./middleware/cache-middleware";
 export { withRedlock } from "./services/redlock";
-export { isReplayAllowed, rollbackReplayGuard } from "./middleware/web3-replay-guard";
+export {
+  isReplayAllowed,
+  rollbackReplayGuard,
+} from "./middleware/web3-replay-guard";
 
 // ============================================================================
 // WEB3 / CRYPTO - ISOMORPHIC SCHEMAS ONLY
@@ -211,4 +214,59 @@ export { IdempotencyService } from "./idempotency";
 export {
   withServerActionHandler,
   type ServerActionResponse,
+  formatApiError,
+  formatApiSuccess,
+  type ApiErrorResponse,
+  type ApiSuccessResponse,
+  createApiError,
+  validateErrorResponse,
+  getErrorStatusCode,
 } from "./utils/api-error";
+
+// ============================================================================
+// SERVICES (Server-side utilities)
+// ============================================================================
+export { SERVICES } from "./services";
+export { OutboxRelayService } from "./outbox-relay";
+export { getOutboxListener } from "./services/outbox-listener";
+export { getOutboxService } from "./outbox";
+export { createSchemaEvolutionService } from "./services/schema-evolution";
+export { createDLQMonitoringService } from "./services/dlq-monitoring";
+export { createHeartbeatService } from "./services/heartbeat";
+export { QStashService } from "./services/qstash";
+export { NormalizationService } from "./normalization";
+export {
+  FailoverPolicyEngine,
+  createFailoverPolicyEngine,
+} from "./policies/failover-policy";
+export {
+  getLLMFailureTriageService,
+  createLLMFailureTriageService,
+} from "./services/llm-failure-triage";
+export { createRepairAgent } from "./services/repair-agent";
+
+// ============================================================================
+// MIDDLEWARE (Additional server-side utilities)
+// ============================================================================
+export { withCronAuth } from "./middleware/cron-auth";
+export { withQStashAuth } from "./services/qstash-webhook";
+
+// ============================================================================
+// OBSERVABILITY
+// ============================================================================
+export { registerObservabilityFlush } from "./error-handler";
+
+// ============================================================================
+// EVENT TYPES
+// ============================================================================
+export * from "./types/events";
+
+// ============================================================================
+// CLIENTS
+// ============================================================================
+export { getResendClient, getAblyClient } from "./clients";
+
+// ============================================================================
+// LLM CACHE
+// ============================================================================
+export { DEFAULT_TTL_SECONDS } from "./llm-cache";

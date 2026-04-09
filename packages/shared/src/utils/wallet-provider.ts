@@ -22,51 +22,17 @@ import {
   http,
   fallback,
   type Address,
-  type Chain,
   type WalletClient,
   type PublicClient,
-  type Transport,
-  type Account,
-  type CustomTransport,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { base, polygon, mainnet } from "viem/chains";
 import { getNextNonce, peekNonce, resetNonce } from "./nonce-tracker";
-
-// ============================================================================
-// CONFIGURATION
-// ============================================================================
-
-interface ChainConfig {
-  chain: Chain;
-  rpcUrls: string[];
-}
-
-const CHAIN_CONFIG: Record<number, ChainConfig> = {
-  [base.id]: {
-    chain: base,
-    rpcUrls: [
-      process.env.BASE_RPC_URL || "https://mainnet.base.org",
-      "https://base.llamarpc.com",
-      "https://base.publicnode.com",
-    ],
-  },
-  [polygon.id]: {
-    chain: polygon,
-    rpcUrls: [
-      process.env.POLYGON_RPC_URL || "https://polygon-rpc.com",
-      "https://polygon.llamarpc.com",
-    ],
-  },
-  [mainnet.id]: {
-    chain: mainnet,
-    rpcUrls: [
-      process.env.ETHEREUM_RPC_URL ||
-        "https://eth-mainnet.g.alchemy.com/v2/demo",
-      "https://eth.llamarpc.com",
-    ],
-  },
-};
+import {
+  getChainConfig,
+  isSupportedChain,
+  SUPPORTED_CHAIN_IDS,
+  DEFAULT_CHAIN_ID,
+} from "../config/web3-chains";
 
 // ============================================================================
 // TYPES
@@ -97,19 +63,20 @@ export type PublicClientInstance = ReturnType<typeof createPublicClient>;
  *
  * @example
  * ```typescript
- * const walletClient = await getEscrowResolverWalletClient(base.id);
+ * const walletClient = await getEscrowResolverWalletClient(DEFAULT_CHAIN_ID);
  * const hash = await walletClient.writeContract({ ... });
  * ```
  */
 export async function getEscrowResolverWalletClient(
-  chainId: number = base.id,
+  chainId: number = DEFAULT_CHAIN_ID,
 ): Promise<WalletClient> {
-  const chainConfig = CHAIN_CONFIG[chainId];
-  if (!chainConfig) {
+  if (!isSupportedChain(chainId)) {
     throw new Error(
-      `Unsupported chain ID: ${chainId}. Supported chains: ${Object.keys(CHAIN_CONFIG).join(", ")}`,
+      `Unsupported chain ID: ${chainId}. Supported chains: ${SUPPORTED_CHAIN_IDS.join(", ")}`,
     );
   }
+
+  const chainConfig = getChainConfig(chainId);
 
   // Get private key from centralized config (already has validation)
   const privateKey = process.env.ESCROW_RESOLVER_PRIVATE_KEY;
@@ -129,7 +96,7 @@ export async function getEscrowResolverWalletClient(
   const walletClient = createWalletClient({
     account,
     chain: chainConfig.chain,
-    transport: fallback(chainConfig.rpcUrls.map((url) => http(url))),
+    transport: fallback(chainConfig.getServerRpcUrls().map((url) => http(url))),
   });
 
   return walletClient;
@@ -143,23 +110,24 @@ export async function getEscrowResolverWalletClient(
  *
  * @example
  * ```typescript
- * const publicClient = await getPublicClient(base.id);
+ * const publicClient = await getPublicClient(DEFAULT_CHAIN_ID);
  * const balance = await publicClient.getBalance({ address });
  * ```
  */
 export async function getPublicClient(
-  chainId: number = base.id,
+  chainId: number = DEFAULT_CHAIN_ID,
 ): Promise<PublicClient> {
-  const chainConfig = CHAIN_CONFIG[chainId];
-  if (!chainConfig) {
+  if (!isSupportedChain(chainId)) {
     throw new Error(
-      `Unsupported chain ID: ${chainId}. Supported chains: ${Object.keys(CHAIN_CONFIG).join(", ")}`,
+      `Unsupported chain ID: ${chainId}. Supported chains: ${SUPPORTED_CHAIN_IDS.join(", ")}`,
     );
   }
 
+  const chainConfig = getChainConfig(chainId);
+
   const publicClient = createPublicClient({
     chain: chainConfig.chain,
-    transport: fallback(chainConfig.rpcUrls.map((url) => http(url))),
+    transport: fallback(chainConfig.getServerRpcUrls().map((url) => http(url))),
   });
 
   return publicClient;
@@ -177,26 +145,27 @@ export async function getPublicClient(
  *
  * @example
  * ```typescript
- * const walletClient = await getCustomWalletClient('0x...', base.id);
+ * const walletClient = await getCustomWalletClient('0x...', DEFAULT_CHAIN_ID);
  * ```
  */
 export async function getCustomWalletClient(
   privateKey: string,
-  chainId: number = base.id,
+  chainId: number = DEFAULT_CHAIN_ID,
 ): Promise<WalletClient> {
-  const chainConfig = CHAIN_CONFIG[chainId];
-  if (!chainConfig) {
+  if (!isSupportedChain(chainId)) {
     throw new Error(
-      `Unsupported chain ID: ${chainId}. Supported chains: ${Object.keys(CHAIN_CONFIG).join(", ")}`,
+      `Unsupported chain ID: ${chainId}. Supported chains: ${SUPPORTED_CHAIN_IDS.join(", ")}`,
     );
   }
+
+  const chainConfig = getChainConfig(chainId);
 
   const account = privateKeyToAccount(privateKey as `0x${string}`);
 
   const walletClient = createWalletClient({
     account,
     chain: chainConfig.chain,
-    transport: fallback(chainConfig.rpcUrls.map((url) => http(url))),
+    transport: fallback(chainConfig.getServerRpcUrls().map((url) => http(url))),
   });
 
   return walletClient;

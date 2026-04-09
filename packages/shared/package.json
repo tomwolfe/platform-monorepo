@@ -9,6 +9,7 @@
     "./client": "./src/client.ts",
     "./server": "./src/server.ts",
     "./config": "./src/config.ts",
+    "./config/web3-chains": "./src/config/web3-chains.ts",
     "./errors": "./src/errors.ts",
     "./logger": "./src/logger.ts",
     "./test-utils": "./src/test-utils.ts",

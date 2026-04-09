@@ -26,12 +26,9 @@ import {
   createPublicClient,
   http,
   type Hash,
-  type Address,
   type TransactionRequest,
   parseGwei,
-  numberToHex,
 } from "viem";
-import { base, polygon, mainnet } from "viem/chains";
 import {
   getDb,
   processed_crypto_transactions,
@@ -40,10 +37,10 @@ import {
   and,
   sql,
   lt,
-  or,
 } from "@repo/database";
 import { Logger } from "../logger";
 import { getEscrowResolverWalletClient } from "../utils/wallet-provider";
+import { getChainConfig, DEFAULT_CHAIN_ID } from "../config/web3-chains";
 
 const logger = new Logger({ serviceName: "transaction-speedup" });
 
@@ -62,23 +59,7 @@ const SPEED_UP_CONFIG = {
   minGasBumpGwei: 1,
   // Maximum number of speed-up attempts per transaction
   maxSpeedUpAttempts: 3,
-  // RPC URLs with fallbacks
-  rpcUrls: {
-    base: [
-      process.env.BASE_RPC_URL || "https://mainnet.base.org",
-      "https://base.llamarpc.com",
-    ],
-    polygon: [
-      process.env.POLYGON_RPC_URL || "https://polygon-rpc.com",
-      "https://polygon.llamarpc.com",
-    ],
-    ethereum: [
-      process.env.ETHEREUM_RPC_URL ||
-        "https://eth-mainnet.g.alchemy.com/v2/demo",
-      "https://eth.llamarpc.com",
-    ],
-  },
-};
+} as const;
 
 // ============================================================================
 // TYPES
@@ -106,7 +87,7 @@ export interface GasPriceOracle {
 class GasPriceOracleService implements GasPriceOracle {
   private chainId: number;
 
-  constructor(chainId: number = base.id) {
+  constructor(chainId: number = DEFAULT_CHAIN_ID) {
     this.chainId = chainId;
   }
 
@@ -140,34 +121,13 @@ class GasPriceOracleService implements GasPriceOracle {
    * Get public client for current chain
    */
   private getPublicClient() {
-    const chain = this.getChain();
-    const rpcUrls =
-      SPEED_UP_CONFIG.rpcUrls[
-        this.getChainKey() as keyof typeof SPEED_UP_CONFIG.rpcUrls
-      ];
+    const chainConfig = getChainConfig(this.chainId);
+    const rpcUrls = chainConfig.getServerRpcUrls();
 
     return createPublicClient({
-      chain,
+      chain: chainConfig.chain,
       transport: http(rpcUrls[0]),
     });
-  }
-
-  /**
-   * Get chain configuration
-   */
-  private getChain() {
-    if (this.chainId === polygon.id) return polygon;
-    if (this.chainId === mainnet.id) return mainnet;
-    return base;
-  }
-
-  /**
-   * Get chain key for RPC URL lookup
-   */
-  private getChainKey(): string {
-    if (this.chainId === polygon.id) return "polygon";
-    if (this.chainId === mainnet.id) return "ethereum";
-    return "base";
   }
 }
 
@@ -179,7 +139,7 @@ export class TransactionSpeedUpService {
   private gasOracle: GasPriceOracle;
   private db: ReturnType<typeof getDb>;
 
-  constructor(chainId: number = base.id) {
+  constructor(chainId: number = DEFAULT_CHAIN_ID) {
     this.gasOracle = new GasPriceOracleService(chainId);
     this.db = getDb();
   }
@@ -435,9 +395,10 @@ export class TransactionSpeedUpService {
    * Get public client for blockchain interaction
    */
   private getPublicClient() {
+    const chainConfig = getChainConfig(DEFAULT_CHAIN_ID);
     return createPublicClient({
-      chain: base,
-      transport: http(SPEED_UP_CONFIG.rpcUrls.base[0]),
+      chain: chainConfig.chain,
+      transport: http(chainConfig.getServerRpcUrls()[0]),
     });
   }
 
@@ -452,7 +413,7 @@ export class TransactionSpeedUpService {
   private async getEscrowResolverWalletClient() {
     try {
       // Use centralized wallet provider abstraction
-      return await getEscrowResolverWalletClient(base.id);
+      return await getEscrowResolverWalletClient(DEFAULT_CHAIN_ID);
     } catch (error: unknown) {
       logger.error({
         message: "Failed to get escrow resolver wallet client",

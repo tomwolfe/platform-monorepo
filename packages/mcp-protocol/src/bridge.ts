@@ -11,17 +11,6 @@ import {
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { z } from "zod";
 
-// Narrow type for Drizzle table definitions that works across drizzle-orm versions
-// This avoids the `any` escape hatch while maintaining compatibility
-type DrizzleTable = {
-  [key: string]: unknown;
-  _: {
-    name: string;
-    schema: string | undefined;
-    columns: Record<string, unknown>;
-  };
-};
-
 /**
  * Drizzle-to-MCP Bridge
  * Automatically reflects Drizzle table definitions into Zod/JSON schemas
@@ -44,7 +33,7 @@ type DrizzleTable = {
  * @returns Zod schema for selecting from the table
  */
 function safeCreateSelectSchema(
-  table: DrizzleTable | undefined,
+  table: unknown,
   name: string,
 ): z.ZodObject<z.ZodRawShape> {
   if (!table) {
@@ -52,7 +41,13 @@ function safeCreateSelectSchema(
     return z.object({});
   }
   try {
-    return createSelectSchema(table) as z.ZodObject<z.ZodRawShape>;
+    // drizzle-zod's createSelectSchema accepts any table-like object.
+    // We use an explicit cast here rather than a structural type definition
+    // because drizzle-orm's PgTable has protected members that are incompatible
+    // with structural typing. This is the safest escape hatch.
+    return createSelectSchema(
+      table as Parameters<typeof createSelectSchema>[0],
+    ) as z.ZodObject<z.ZodRawShape>;
   } catch (error) {
     console.warn(`[Bridge] Failed to create select schema for ${name}:`, error);
     return z.object({});
@@ -69,7 +64,7 @@ function safeCreateSelectSchema(
  * @returns Zod schema for inserting into the table
  */
 function safeCreateInsertSchema(
-  table: DrizzleTable | undefined,
+  table: unknown,
   name: string,
   omitFields?: string[],
 ): z.ZodObject<z.ZodRawShape> {
@@ -78,7 +73,9 @@ function safeCreateInsertSchema(
     return z.object({});
   }
   try {
-    const schema = createInsertSchema(table) as z.ZodObject<z.ZodRawShape>;
+    const schema = createInsertSchema(
+      table as Parameters<typeof createInsertSchema>[0],
+    ) as z.ZodObject<z.ZodRawShape>;
     if (omitFields?.length) {
       const omitShape: Record<string, true> = {};
       for (const field of omitFields) {

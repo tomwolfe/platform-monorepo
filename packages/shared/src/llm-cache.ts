@@ -61,7 +61,20 @@ export function generateCacheKey(
   // Hash components in deterministic order
   hash.update(`system:${systemPrompt || ""}|`);
   hash.update(`user:${userPrompt}|`);
-  hash.update(`tools:${tools ? JSON.stringify(tools) : ""}|`);
+
+  // OPTIMIZATION: Only hash tool names and parameter structure, NOT descriptions.
+  // This prevents cache busts when tool descriptions are updated (e.g., typo fixes)
+  // while keeping the cache valid for identical tool signatures.
+  const toolSignature = tools
+    ? JSON.stringify(
+        tools.map((t: any) => ({
+          name: t.name,
+          params: Object.keys(t.parameters?.properties || {}),
+        })),
+      )
+    : "";
+  hash.update(`tools:${toolSignature}|`);
+
   hash.update(`model:${modelType}`);
 
   return `${CACHE_KEY_PREFIX}${hash.digest("hex")}`;

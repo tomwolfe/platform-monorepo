@@ -22,6 +22,7 @@ import {
   exportPKCS8,
   exportSPKI,
   generateKeyPair,
+  decodeProtectedHeader,
 } from "jose";
 
 // ============================================================================
@@ -87,10 +88,33 @@ export function getSigningPrivateKey(): string {
  * - TABLESTACK_PUBLIC_KEY
  * - OPENDELIVERY_PUBLIC_KEY
  *
+ * For key rotation, you can also use versioned keys:
+ * - TABLESTACK_PUBLIC_KEY_2024Q1
+ * - OPENDELIVERY_PUBLIC_KEY_2024Q1
+ *
  * @param serviceName - Name of the service verifying the token
+ * @param kid - Optional Key ID from the JWT header for key rotation
  */
-export function getVerificationPublicKey(serviceName: string): string {
-  const envVarName = `${serviceName.toUpperCase().replace("-", "_")}_PUBLIC_KEY`;
+export function getVerificationPublicKey(
+  serviceName: string,
+  kid?: string,
+): string {
+  const normalizedName = serviceName.toUpperCase().replace("-", "_");
+
+  // If a key ID is provided, try the versioned key first, then fall back to default
+  if (kid) {
+    const versionedEnvVar = `${normalizedName}_PUBLIC_KEY_${kid}`;
+    const versionedKey = process.env[versionedEnvVar];
+    if (versionedKey) {
+      return versionedKey;
+    }
+    // Fall back to default key if versioned key not found
+    console.warn(
+      `[AsymmetricJWT] Versioned public key ${versionedEnvVar} not found, falling back to default ${normalizedName}_PUBLIC_KEY`,
+    );
+  }
+
+  const envVarName = `${normalizedName}_PUBLIC_KEY`;
   const publicKey = process.env[envVarName];
 
   if (!publicKey) {
@@ -163,6 +187,12 @@ export interface AsymmetricJWTOptions {
   expiresIn?: string;
   /** Additional claims to include */
   additionalClaims?: Record<string, unknown>;
+  /**
+   * Key ID (kid) for zero-downtime key rotation.
+   * When rotating keys, set this to identify which public key verifiers should use.
+   * Verifiers will look for `${SERVICE_NAME}_PUBLIC_KEY_${kid}` env var, falling back to `${SERVICE_NAME}_PUBLIC_KEY`.
+   */
+  keyId?: string;
 }
 
 /**
@@ -185,7 +215,13 @@ export async function signAsymmetricJWT(
   options: AsymmetricJWTOptions,
 ): Promise<string> {
   const privateKey = getSigningPrivateKey();
-  const { issuer, audience, expiresIn = "5m", additionalClaims = {} } = options;
+  const {
+    issuer,
+    audience,
+    expiresIn = "5m",
+    additionalClaims = {},
+    keyId,
+  } = options;
 
   const jwtPayload: AsymmetricJWTPayload = {
     ...payload,
@@ -197,8 +233,9 @@ export async function signAsymmetricJWT(
   // Import private key from PKCS#8
   const key = await importPKCS8(privateKey, "RS256");
 
+  // Include kid (Key ID) in protected header for zero-downtime key rotation
   return await new SignJWT(jwtPayload)
-    .setProtectedHeader({ alg: "RS256" })
+    .setProtectedHeader({ alg: "RS256", ...(keyId && { kid: keyId }) })
     .setIssuedAt()
     .setExpirationTime(expiresIn)
     .setJti(crypto.randomUUID()) // Unique token ID for replay prevention
@@ -233,10 +270,19 @@ export async function verifyAsymmetricJWT(
   expectedIssuer: string,
   expectedAudience: string,
 ): Promise<AsymmetricJWTPayload | null> {
-  // Try runtime-registered key first, then environment variable
+  // Extract kid (Key ID) from the JWT header for key rotation support
+  let kid: string | undefined;
+  try {
+    const header = decodeProtectedHeader(token);
+    kid = header.kid;
+  } catch {
+    // If we can't decode the header, proceed without kid (backward compatible)
+  }
+
+  // Try runtime-registered key first, then environment variable (with optional kid)
   let publicKey =
     getRegisteredPublicKey(expectedIssuer) ||
-    getVerificationPublicKey(expectedIssuer);
+    getVerificationPublicKey(expectedIssuer, kid);
 
   if (!publicKey) {
     console.warn(
@@ -258,7 +304,7 @@ export async function verifyAsymmetricJWT(
     return payload as AsymmetricJWTPayload;
   } catch (error) {
     console.warn(
-      `[AsymmetricJWT] Verification failed for issuer=${expectedIssuer}, audience=${expectedAudience}:`,
+      `[AsymmetricJWT] Verification failed for issuer=${expectedIssuer}, audience=${expectedAudience}, kid=${kid || "none"}:`,
       error instanceof Error ? error.message : error,
     );
     return null;

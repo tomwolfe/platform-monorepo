@@ -192,9 +192,8 @@ export class OutboxRelayService {
 
   /**
    * Fallback to direct fetch when QStash is not configured
-   * Uses Next.js after() API to ensure execution continues after response
-   * Without after(), Vercel serverless isolates freeze upon returning the HTTP
-   * response, killing this fetch mid-flight.
+   * Uses Next.js after() API to safely execute in background without Vercel killing the process.
+   * If running in a non-Next.js context, falls back to microtask execution.
    */
   private static async fallbackFetch(
     executionId: string,
@@ -234,10 +233,7 @@ export class OutboxRelayService {
       headers["x-correlation-id"] = config.correlationId;
     }
 
-    // Use Next.js after() API to safely execute in background without Vercel killing the process
-    const { after } = await import("next/server");
-
-    after(async () => {
+    const fetchLogic = async () => {
       try {
         const response = await fetch(url, {
           method: "POST",
@@ -258,7 +254,17 @@ export class OutboxRelayService {
       } catch (error) {
         console.error(`[OutboxRelay:Fallback] Error triggering relay:`, error);
       }
-    });
+    };
+
+    // Try Next.js after() API first for proper background execution in Vercel serverless
+    // If not available (non-Next.js runtime), fall back to microtask execution
+    try {
+      const { after } = await import("next/server");
+      after(fetchLogic);
+    } catch {
+      // Fallback for non-Next.js environments (raw Node scripts, other frameworks)
+      Promise.resolve().then(fetchLogic).catch(console.error);
+    }
   }
 
   /**

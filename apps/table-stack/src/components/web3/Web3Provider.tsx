@@ -7,6 +7,10 @@ import { coinbaseWallet, metaMask } from "wagmi/connectors";
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { createStorage, fallback } from "wagmi";
 import { getQueryClient } from "@repo/ui-theme";
+import {
+  SUPPORTED_CHAIN_IDS,
+  DEFAULT_CHAIN_ID,
+} from "@repo/shared/config/web3-chains";
 
 // ============================================================================
 // CONFIGURATION
@@ -18,9 +22,13 @@ const ESCROW_CONTRACT_ADDRESS =
   process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || "";
 const USDC_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS;
 
-// Supported chains for delivery payments
-const chains = [base, polygon, mainnet] as const;
-const defaultChain = base; // Base is default for low fees
+// Supported chains for delivery payments (from centralized config)
+const chains = SUPPORTED_CHAIN_IDS as unknown as [
+  typeof base,
+  typeof polygon,
+  typeof mainnet,
+];
+const defaultChain = chains[0]; // Base is default for low fees
 
 // Create persistent storage for wagmi (optional, for session persistence)
 const storage = createStorage({

@@ -8,6 +8,7 @@ import {
   type ScopedJWTPayload,
 } from "@repo/auth";
 import { generateSecureRandom } from "@repo/shared/utils/crypto";
+import { createHash } from "node:crypto";
 
 const logger = new Logger({ serviceName: "table-stack" });
 const redis = getRedisClient(ServiceNamespace.TS);
@@ -123,8 +124,11 @@ export async function validateRequest(req: NextRequest): Promise<{
     }
 
     // API Key Validation
+    // Hash the incoming API key before querying the database
+    const hashedIncomingKey = createHash("sha256").update(apiKey).digest("hex");
+
     const restaurant = await getDb().query.restaurants.findFirst({
-      where: eq(restaurants.apiKey, apiKey),
+      where: eq(restaurants.apiKey, hashedIncomingKey),
     });
 
     if (!restaurant) {

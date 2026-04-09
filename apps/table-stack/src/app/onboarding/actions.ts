@@ -19,81 +19,97 @@ const onboardingSchema = z.object({
   daysOpen: z.array(z.string()).min(1),
   defaultDurationMinutes: z.number().min(1),
   address: z.string().min(5, "Address must be at least 5 characters"),
-  tables: z.array(z.object({
-    id: z.string().optional(),
-    tableNumber: z.string(),
-    minCapacity: z.number().min(1),
-    maxCapacity: z.number().min(1),
-    xPos: z.number(),
-    yPos: z.number(),
-    tableType: z.enum(['square', 'round', 'booth']),
-  })),
+  tables: z.array(
+    z.object({
+      id: z.string().optional(),
+      tableNumber: z.string(),
+      minCapacity: z.number().min(1),
+      maxCapacity: z.number().min(1),
+      xPos: z.number(),
+      yPos: z.number(),
+      tableType: z.enum(["square", "round", "booth"]),
+    }),
+  ),
 });
 
 export const createRestaurant = withServerActionHandler(
   async (data: z.infer<typeof onboardingSchema>) => {
-  const user = await currentUser();
-  if (!user) throw new Error("Unauthorized");
+    const user = await currentUser();
+    if (!user) throw new Error("Unauthorized");
 
-  const validated = onboardingSchema.parse(data);
+    const validated = onboardingSchema.parse(data);
 
-  // Check if slug is already taken
-  const existing = await getDb().query.restaurants.findFirst({
-    where: (rest: any, { eq }: any) => eq(rest.slug, validated.slug),
-  });
+    // Check if slug is already taken
+    const existing = await getDb().query.restaurants.findFirst({
+      where: (rest: any, { eq }: any) => eq(rest.slug, validated.slug),
+    });
 
-  if (existing) {
-    return { error: "This public slug is already taken. Please choose another one." };
-  }
+    if (existing) {
+      return {
+        error: "This public slug is already taken. Please choose another one.",
+      };
+    }
 
-  // Geocode the address to get coordinates
-  const geoResult = await geocode(validated.address);
-  let lat: string | null = null;
-  let lng: string | null = null;
+    // Geocode the address to get coordinates
+    const geoResult = await geocode(validated.address);
+    let lat: string | null = null;
+    let lng: string | null = null;
 
-  if (geoResult.success && geoResult.result) {
-    lat = geoResult.result.lat.toString();
-    lng = geoResult.result.lng.toString();
-  } else {
-    // Fail the onboarding if geocoding fails - restaurants without coordinates won't show up as "Nearby"
-    return { error: `Could not geocode address "${validated.address}". Please check the address and try again.` };
-  }
+    if (geoResult.success && geoResult.result) {
+      lat = geoResult.result.lat.toString();
+      lng = geoResult.result.lng.toString();
+    } else {
+      // Fail the onboarding if geocoding fails - restaurants without coordinates won't show up as "Nearby"
+      return {
+        error: `Could not geocode address "${validated.address}". Please check the address and try again.`,
+      };
+    }
 
-  const apiKey = `ts_${crypto.randomBytes(16).toString("hex")}`;
+    // Generate the plaintext API key to return to the user
+    const apiKey = `ts_${crypto.randomBytes(16).toString("hex")}`;
+    // Hash the key before storing in the database
+    const hashedKey = crypto.createHash("sha256").update(apiKey).digest("hex");
 
-  const [restaurant] = await getDb().insert(restaurants).values({
-    name: validated.name,
-    slug: validated.slug,
-    ownerEmail: user.emailAddresses[0].emailAddress,
-    ownerId: user.id,
-    timezone: validated.timezone,
-    openingTime: validated.openingTime,
-    closingTime: validated.closingTime,
-    daysOpen: validated.daysOpen.join(','),
-    defaultDurationMinutes: validated.defaultDurationMinutes,
-    address: validated.address,
-    lat,
-    lng,
-    apiKey,
-    isClaimed: true,
-    isShadow: false,
-  }).returning();
+    const [restaurant] = await getDb()
+      .insert(restaurants)
+      .values({
+        name: validated.name,
+        slug: validated.slug,
+        ownerEmail: user.emailAddresses[0].emailAddress,
+        ownerId: user.id,
+        timezone: validated.timezone,
+        openingTime: validated.openingTime,
+        closingTime: validated.closingTime,
+        daysOpen: validated.daysOpen.join(","),
+        defaultDurationMinutes: validated.defaultDurationMinutes,
+        address: validated.address,
+        lat,
+        lng,
+        apiKey: hashedKey,
+        isClaimed: true,
+        isShadow: false,
+      })
+      .returning();
 
-  if (validated.tables.length > 0) {
-    await getDb().insert(restaurantTables).values(
-      validated.tables.map(table => ({
-        restaurantId: restaurant.id,
-        tableNumber: table.tableNumber,
-        minCapacity: table.minCapacity,
-        maxCapacity: table.maxCapacity,
-        xPos: Math.round(table.xPos),
-        yPos: Math.round(table.yPos),
-        tableType: table.tableType,
-        status: 'vacant' as const,
-      }))
-    );
-  }
+    if (validated.tables.length > 0) {
+      await getDb()
+        .insert(restaurantTables)
+        .values(
+          validated.tables.map((table) => ({
+            restaurantId: restaurant.id,
+            tableNumber: table.tableNumber,
+            minCapacity: table.minCapacity,
+            maxCapacity: table.maxCapacity,
+            xPos: Math.round(table.xPos),
+            yPos: Math.round(table.yPos),
+            tableType: table.tableType,
+            status: "vacant" as const,
+          })),
+        );
+    }
 
-  revalidatePath("/dashboard");
-  redirect(`/dashboard/${restaurant.id}`);
-}, { errorCode: 'CREATE_RESTAURANT_FAILED' });
+    revalidatePath("/dashboard");
+    redirect(`/dashboard/${restaurant.id}`);
+  },
+  { errorCode: "CREATE_RESTAURANT_FAILED" },
+);

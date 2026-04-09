@@ -19,6 +19,7 @@ import {
   getErrorStatusCode,
   Logger,
 } from "@repo/shared";
+import { CoordinateSchema } from "@repo/mcp-protocol";
 import { getMcpClients } from "@/lib/mcp-client";
 import { TOOLS } from "@repo/mcp-protocol";
 import { rateLimitMiddleware } from "@/lib/middleware/rate-limiter";
@@ -62,13 +63,7 @@ const ChatRequestSchema = z.object({
       ]),
     }),
   ),
-  userLocation: z
-    .object({
-      lat: z.number().min(-90).max(90),
-      lng: z.number().min(-180).max(180),
-    })
-    .nullable()
-    .optional(),
+  userLocation: CoordinateSchema.nullable().optional(),
 });
 
 /**

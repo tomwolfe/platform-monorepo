@@ -414,9 +414,18 @@ export function withCacheMiddleware<
 
       const response = await handler(...args);
 
-      // Clone response to read body
+      // Clone response to read body safely
       const clonedResponse = response.clone();
-      const body = await clonedResponse.json().catch(() => null);
+      const contentType = clonedResponse.headers.get("content-type") || "";
+
+      // Parse body based on Content-Type to avoid crashes on non-JSON responses
+      let body: unknown = null;
+      if (contentType.includes("application/json")) {
+        body = await clonedResponse.json().catch(() => null);
+      } else {
+        // For non-JSON responses (text, HTML, etc.), fall back to text
+        body = await clonedResponse.text().catch(() => null);
+      }
 
       // Cache successful responses only
       if (response.status === 200 && body !== null) {

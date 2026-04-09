@@ -32,6 +32,7 @@ import {
   formatApiSuccess,
   formatApiError,
 } from "@repo/shared";
+import { CoordinateSchema } from "@repo/mcp-protocol";
 import { getDb } from "@repo/database";
 import { rateLimitMiddleware } from "@/lib/middleware/rate-limiter";
 
@@ -39,12 +40,7 @@ const redis = getRedisClient(ServiceNamespace.IE);
 
 const WarmCacheRequestSchema = z.object({
   messagePreview: z.string().min(1).max(500),
-  userLocation: z
-    .object({
-      lat: z.number().min(-90).max(90),
-      lng: z.number().min(-180).max(180),
-    })
-    .optional(),
+  userLocation: CoordinateSchema.optional(),
   clerkId: z.string().optional(),
 });
 

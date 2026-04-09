@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb, orders, eq, and, isNotNull, inArray } from "@repo/database";
-import { createPublicClient, http, fallback, type Address } from "viem";
+import { getDb, orders, eq, and, isNotNull, drivers } from "@repo/database";
+import {
+  createPublicClient,
+  http,
+  fallback,
+  type Address,
+  decodeEventLog,
+} from "viem";
 import { base } from "viem/chains";
 import { ESCROW_ABI } from "@repo/shared/utils/escrow-abi";
 import { withCronAuth } from "@repo/shared";
@@ -60,8 +66,10 @@ async function getCronHandler(req: NextRequest) {
           payoutTxHash: orders.payoutTxHash,
           escrowStatus: orders.escrowStatus,
           tip: orders.tip,
+          driverWalletAddress: drivers.walletAddress,
         })
         .from(orders)
+        .innerJoin(drivers, eq(orders.driverId, drivers.id))
         .where(
           and(
             eq(orders.escrowStatus, "released"),
@@ -144,15 +152,74 @@ async function getCronHandler(req: NextRequest) {
                       ESCROW_CONTRACT_ADDRESS.toLowerCase(),
                   );
 
-                  // Check if any log matches TipReleased event
-                  const hasTipReleaseEvent = tipReleasedLogs.length > 0;
-                  // In production, you'd decode the event args to verify driver address and amount
+                  // Decode and verify each TipReleased event
+                  let verifiedEventFound = false;
+                  for (const log of tipReleasedLogs) {
+                    try {
+                      const decoded = decodeEventLog({
+                        abi: ESCROW_ABI,
+                        data: log.data,
+                        topics: log.topics,
+                      });
 
-                  if (!hasTipReleaseEvent) {
-                    console.warn(
-                      `[Verify Payouts Cron] TipReleased event not found for order ${order.id}, but tx succeeded`,
+                      if (decoded.eventName === "TipReleased") {
+                        const { driver, tipAmount } = decoded.args as {
+                          driver: Address;
+                          tipAmount: bigint;
+                        };
+
+                        // Verify recipient matches the expected driver
+                        if (
+                          driver.toLowerCase() !==
+                          order.driverWalletAddress.toLowerCase()
+                        ) {
+                          console.error(
+                            `[Verify Payouts Cron] Driver mismatch for order ${order.id}: expected ${order.driverWalletAddress}, got ${driver}`,
+                          );
+                          continue;
+                        }
+
+                        // Verify tip amount matches the order
+                        const expectedTip = BigInt(
+                          order.tip ? Math.round(parseFloat(order.tip)) : 0,
+                        );
+                        if (tipAmount !== expectedTip) {
+                          console.error(
+                            `[Verify Payouts Cron] Tip amount mismatch for order ${order.id}: expected ${expectedTip}, got ${tipAmount}`,
+                          );
+                          continue;
+                        }
+
+                        verifiedEventFound = true;
+                        break;
+                      }
+                    } catch (decodeError) {
+                      // Log decode errors but continue checking other logs
+                      console.warn(
+                        `[Verify Payouts Cron] Failed to decode log for order ${order.id}:`,
+                        decodeError instanceof Error
+                          ? decodeError.message
+                          : String(decodeError),
+                      );
+                    }
+                  }
+
+                  if (!verifiedEventFound) {
+                    console.error(
+                      `[Verify Payouts Cron] No valid TipReleased event found for order ${order.id}, marking as failed`,
                     );
-                    // Still mark as completed since tx succeeded
+
+                    // Mark as failed due to event verification failure
+                    await getDb()
+                      .update(orders)
+                      .set({ escrowStatus: "failed" })
+                      .where(eq(orders.id, order.id));
+
+                    return {
+                      orderId: order.id,
+                      status: "failed" as const,
+                      reason: "event_verification_failed",
+                    };
                   }
                 }
 

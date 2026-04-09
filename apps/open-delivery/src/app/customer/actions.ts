@@ -22,6 +22,7 @@ import {
 } from "@repo/shared";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
+import { z } from "zod";
 import {
   createPublicClient,
   http,
@@ -449,7 +450,14 @@ export async function placeRealOrder(
       throw new Error("Failed to create order.");
     }
 
-    const newOrder = result[0];
+    // Validate the raw SQL CTE result shape to catch database cast failures early
+    const OrderCTEResultSchema = z.object({
+      id: z.string(),
+      status: z.string(),
+      total: z.union([z.string(), z.number()]).optional(),
+    });
+
+    const newOrder = OrderCTEResultSchema.parse(result[0]);
 
     // Trigger the outbox relay AFTER the transaction commits.
     // Wrapped in after() to guarantee execution outside the request lifecycle.

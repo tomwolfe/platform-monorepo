@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCryptoPrices } from "@repo/shared/utils/crypto-price";
 import { Logger } from "@repo/shared";
+import { formatApiSuccess, formatApiError } from "@repo/shared";
 
 const logger = new Logger({ serviceName: "table-stack" });
 
@@ -17,12 +18,12 @@ const logger = new Logger({ serviceName: "table-stack" });
  * - Adblocker-proof (not blocked by CoinGecko filters)
  *
  * GET /api/prices
- * Returns: { ETH: number, MATIC: number, timestamp: number }
+ * Returns: { success: true, data: { ETH: number, MATIC: number, timestamp: number } }
  */
 export async function GET() {
   try {
     const prices = await getCryptoPrices();
-    return NextResponse.json(prices);
+    return NextResponse.json(formatApiSuccess(prices));
   } catch (error) {
     logger.error("Failed to fetch crypto prices", {
       error: error instanceof Error ? error.message : String(error),
@@ -35,22 +36,16 @@ export async function GET() {
         : undefined;
     if (errorCode === "PRICE_ORACLE_UNAVAILABLE") {
       return NextResponse.json(
-        {
-          error: "Price oracle unavailable",
-          message:
-            "Unable to fetch current crypto prices. Please try again later.",
-        },
+        formatApiError(
+          new Error("Price oracle unavailable"),
+          "EXTERNAL_SERVICE_ERROR",
+        ),
         { status: 503 },
       );
     }
 
-    return NextResponse.json(
-      {
-        error: "Internal server error",
-        message:
-          error instanceof Error ? error.message : "Failed to fetch prices",
-      },
-      { status: 500 },
-    );
+    return NextResponse.json(formatApiError(error, "INTERNAL_ERROR"), {
+      status: 500,
+    });
   }
 }

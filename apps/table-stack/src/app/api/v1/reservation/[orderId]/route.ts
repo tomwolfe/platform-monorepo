@@ -7,11 +7,12 @@
  * @see Phase 2.1: Pending Verification State UI
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import {
   withUnifiedApiHandler,
   getLogger,
   createApiError,
+  formatApiSuccess,
   NotFoundError,
 } from "@repo/shared";
 import { db } from "@repo/database";
@@ -65,7 +66,7 @@ async function getHandler(
     ? reservation.depositAmount / 100
     : undefined;
 
-  return NextResponse.json({
+  return formatApiSuccess({
     id: reservation.id,
     status: reservation.status || "pending",
     isVerified: reservation.isVerified || false,

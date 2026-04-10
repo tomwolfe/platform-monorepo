@@ -319,6 +319,17 @@ export {
   getErrorStatusCode,
 } from "./utils/api-error";
 
+// Validated Response Wrapper
+export {
+  withValidatedResponse,
+  type ValidatedHandler,
+  type ValidatedResponseOptions,
+  SimpleSuccessSchema,
+  SimpleErrorSchema,
+  ListResponseSchema,
+  ResourceResponseSchema,
+} from "./utils/with-validated-response";
+
 // Unified API Error Handler Wrapper
 export {
   withUnifiedApiHandler,
@@ -464,3 +475,30 @@ export {
   type LLMValidationOptions,
   type ValidationResult,
 } from "./llm/validation";
+
+// ============================================================================
+// TESTING UTILITIES
+// ============================================================================
+export {
+  web3RpcHandlers,
+  ablyHandlers,
+  resendHandlers,
+  priceOracleHandlers,
+  setupIntegrationMocks,
+  type MockServerInstance,
+  setupTestDatabase,
+  teardownTestDatabase,
+  checkDatabaseConnection,
+  createTestRestaurant,
+  createTestTables,
+  createTestReservation,
+  createTestGuestProfile,
+  seedTestFixtures,
+  cleanupTestDatabase,
+  cleanupRestaurantData,
+  cleanupReservationData,
+  getRestaurantWithDetails,
+  getGuestProfileWithHistory,
+  type TestRestaurantData,
+  type TestReservationData,
+} from "./testing";

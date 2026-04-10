@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCryptoPrices } from "@repo/shared/utils/crypto-price";
-import { withUnifiedApiHandler } from "@repo/shared";
+import { withUnifiedApiHandler, formatApiSuccess } from "@repo/shared";
 
 /**
  * Crypto Price Oracle API Endpoint
@@ -15,11 +15,11 @@ import { withUnifiedApiHandler } from "@repo/shared";
  * - Adblocker-proof (not blocked by CoinGecko filters)
  *
  * GET /api/prices
- * Returns: { ETH: number, MATIC: number, timestamp: number }
+ * Returns: { success: true, data: { ETH: number, MATIC: number, timestamp: number } }
  */
 async function getHandler() {
   const prices = await getCryptoPrices();
-  return NextResponse.json(prices);
+  return NextResponse.json(formatApiSuccess(prices));
 }
 
 export const GET = withUnifiedApiHandler(getHandler, { serviceName: "prices" });

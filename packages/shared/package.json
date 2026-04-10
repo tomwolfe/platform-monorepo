@@ -73,7 +73,8 @@
     "./security-middleware": "./src/security-middleware.ts",
     "./security-audit": "./src/security-audit.ts",
     "./state-machine": "./src/state-machine.ts",
-    "./policies/failover-policy": "./src/policies/failover-policy.ts"
+    "./policies/failover-policy": "./src/policies/failover-policy.ts",
+    "./testing": "./src/testing/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
@@ -110,7 +111,10 @@
     "@clerk/nextjs": "^6.10.6",
     "@repo/database": "workspace:*",
     "@sentry/node": "^8.0.0",
-    "@aws-sdk/client-kms": "^3.0.0"
+    "@aws-sdk/client-kms": "^3.0.0",
+    "msw": "^2.0.0",
+    "@neondatabase/serverless": "^0.10.0",
+    "drizzle-kit": "^0.30.0"
   },
   "peerDependenciesMeta": {
     "@clerk/nextjs": {
@@ -120,6 +124,15 @@
       "optional": true
     },
     "@aws-sdk/client-kms": {
+      "optional": true
+    },
+    "msw": {
+      "optional": true
+    },
+    "@neondatabase/serverless": {
+      "optional": true
+    },
+    "drizzle-kit": {
       "optional": true
     }
   }

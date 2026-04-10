@@ -291,6 +291,7 @@ export * from "./services/parameter-aliaser";
 export * from "./services/autonomous-schema-evolution";
 export * from "./services/qstash";
 export * from "./services/qstash-webhook";
+export * from "./services/dispatch-queue";
 export * from "./services/vector-store";
 export * from "./services/pgvector-store";
 export * from "./services/semantic-vector-store-pg";

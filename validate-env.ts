@@ -127,6 +127,62 @@ function validate() {
   // Security warnings
   console.log("🔒 Security Checks:\n");
 
+  // Check for required RPC URLs in production
+  if (process.env.NODE_ENV === "production") {
+    const requiredRpcUrls = [
+      "BASE_RPC_URL",
+      "POLYGON_RPC_URL",
+      "ETHEREUM_RPC_URL",
+    ];
+    const missingRpcUrls = requiredRpcUrls.filter((name) => !process.env[name]);
+
+    if (missingRpcUrls.length > 0) {
+      console.error("  ❌ CRITICAL: Missing required RPC URLs for production:");
+      missingRpcUrls.forEach((name) => {
+        console.error(`    - ${name}`);
+      });
+      console.error(
+        "    Public fallback URLs are disabled in production to prevent rate-limiting issues.",
+      );
+      console.error(
+        "    Set these environment variables with reliable RPC providers (e.g., Alchemy, Infura).\n",
+      );
+
+      if (isStrict) {
+        process.exit(1);
+      }
+    } else {
+      console.log("  ✅ All required RPC URLs are configured");
+    }
+
+    // Warn if using public RPC URLs
+    const publicRpcPatterns = [
+      "mainnet.base.org",
+      "polygon-rpc.com",
+      "eth.llamarpc.com",
+      "base.llamarpc.com",
+      "polygon.llamarpc.com",
+      "cloudflare-eth.com",
+      "rpc.ankr.com",
+    ];
+
+    const publicRpcVars = requiredRpcUrls
+      .map((name) => ({ name, value: process.env[name] }))
+      .filter(
+        (v) => v.value && publicRpcPatterns.some((p) => v.value?.includes(p)),
+      );
+
+    if (publicRpcVars.length > 0) {
+      console.warn("  ⚠️  WARNING: Using public RPC URLs in production:");
+      publicRpcVars.forEach((v) => {
+        console.warn(`    - ${v.name}: ${v.value}`);
+      });
+      console.warn(
+        "    These are rate-limited and unreliable. Use Alchemy, Infura, or QuickNode instead.\n",
+      );
+    }
+  }
+
   // Check for localhost in production
   if (process.env.NODE_ENV === "production") {
     const urlFields = [

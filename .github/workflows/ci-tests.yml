@@ -55,6 +55,11 @@ jobs:
         continue-on-error: true
         id: schema-check
 
+      - name: Validate OpenAPI spec
+        run: pnpm validate:openapi
+        continue-on-error: true
+        id: openapi-check
+
       - name: Upload schema sync report
         uses: actions/upload-artifact@v4
         if: always() && steps.schema-check.outcome != 'success'
@@ -70,6 +75,13 @@ jobs:
         run: |
           echo "❌ Schema validation failed. MCP tool definitions may be out of sync with database schemas."
           echo "Please run 'pnpm validate:schema-sync:strict' locally to see the issues."
+          exit 1
+
+      - name: Fail on OpenAPI spec drift
+        if: steps.openapi-check.outcome != 'success'
+        run: |
+          echo "❌ OpenAPI spec has drifted from Zod schemas."
+          echo "Please run 'pnpm generate:openapi' locally and commit the updated spec."
           exit 1
 
   # ============================================================================

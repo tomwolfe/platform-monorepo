@@ -1,7 +1,6 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getDb, restaurantReservations, eq, restaurants } from "@repo/database";
-import { NotifyService } from "@tablestack/lib/notifications";
 import {
   createPublicClient,
   http,
@@ -25,6 +24,7 @@ import {
   Logger,
   AppConfig,
   withRetry,
+  dispatchTask,
 } from "@repo/shared";
 import {
   isReplayAllowed,
@@ -36,77 +36,6 @@ import {
 export const runtime = "nodejs";
 
 const logger = new Logger({ serviceName: "table-stack" });
-
-// ============================================================================
-// WEBHOOK CONFIGURATION
-// Phase 2.2: Webhook Fallback for Missed Frontend Callbacks
-// ============================================================================
-
-/**
- * Send a webhook notification to the frontend callback URL.
- * This allows external frontends (or mobile apps) to update their state
- * even if the initial HTTP connection dropped.
- *
- * @param webhookUrl - The frontend callback URL
- * @param payload - The webhook payload
- * @param logger - Logger instance for tracking
- */
-async function sendWebhookCallback(
-  webhookUrl: string,
-  payload: {
-    success: boolean;
-    reservationId: string;
-    txHash?: string;
-    status?: string;
-    message?: string;
-    timestamp: string;
-  },
-  logger: Logger,
-): Promise<void> {
-  try {
-    await withRetry(
-      async () => {
-        const response = await fetch(webhookUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Webhook-Source": "table-stack-checkout",
-            "X-Reservation-Id": payload.reservationId,
-          },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(10000), // 10 second timeout
-        });
-
-        if (!response.ok) {
-          throw new Error(
-            `Webhook returned ${response.status}: ${response.statusText}`,
-          );
-        }
-      },
-      {
-        maxRetries: 2,
-        initialDelay: 1000,
-        maxDelay: 5000,
-        shouldRetry: (error) => {
-          // Don't retry client errors (4xx)
-          return !error.message?.includes("returned 4");
-        },
-      },
-    );
-
-    logger.info("Webhook callback sent successfully", {
-      webhookUrl,
-      reservationId: payload.reservationId,
-    });
-  } catch (error) {
-    // Log but don't fail the request - webhook is best-effort
-    logger.warn("Webhook callback failed (non-fatal)", {
-      webhookUrl,
-      reservationId: payload.reservationId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
 
 // EIP-712 Domain for signature verification (must match client)
 const EIP712_DOMAIN = {
@@ -483,8 +412,20 @@ async function postHandler(req: NextRequest) {
   // Additional check: Verify transaction data contains reservation ID (for ETH payments)
   // For USDC, the exact amount + recipient verification is sufficient
   if (paymentCurrency !== "USDC") {
-    const rpcUrl = AppConfig.getBaseRpcUrl() || "https://mainnet.base.org";
-    const client = createPublicClient({ transport: http(rpcUrl), chain: base });
+    const rpcUrl = AppConfig.getBaseRpcUrl();
+    if (!rpcUrl && process.env.NODE_ENV === "production") {
+      return NextResponse.json(
+        errorResponse(
+          "CONFIGURATION_ERROR",
+          "BASE_RPC_URL environment variable is required in production",
+        ),
+        { status: 500 },
+      );
+    }
+    const client = createPublicClient({
+      transport: http(rpcUrl || "https://mainnet.base.org"),
+      chain: base,
+    });
     const tx = await client.getTransaction({ hash: txHash as `0x${string}` });
 
     if (tx.input && tx.input !== "0x" && tx.input.length > 2) {
@@ -538,12 +479,27 @@ async function postHandler(req: NextRequest) {
   // This upgrades the processing lock to a confirmed state with 24h TTL
   await confirmReplayGuard(txHash as `0x${string}`);
 
-  // Notify restaurant owner
+  // Notify restaurant owner (fire-and-forget via dispatch queue)
   if (reservation.restaurant?.ownerEmail) {
-    await NotifyService.notifyOwner(reservation.restaurant.ownerEmail, {
-      guestName: reservation.guestName,
-      partySize: reservation.partySize,
-      startTime: reservation.startTime,
+    const origin = new URL(req.url).origin;
+    await dispatchTask(
+      "send_reservation_email",
+      {
+        reservationId: targetReservationId,
+        guestEmail: reservation.restaurant.ownerEmail,
+        guestName: reservation.guestName,
+        restaurantName: reservation.restaurant?.name || "Restaurant",
+        partySize: reservation.partySize,
+        startTime: reservation.startTime,
+        verificationToken: "",
+        isShadow: false,
+        origin,
+      },
+      `checkout-notify:${txHash}`,
+    ).catch((err) => {
+      logger.warn("Failed to dispatch owner notification (non-fatal)", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
   }
 
@@ -556,22 +512,19 @@ async function postHandler(req: NextRequest) {
   // This allows external frontends to update their state even if the
   // initial HTTP connection dropped (e.g., user closed browser tab)
   if (frontendCallbackUrl) {
-    // CRITICAL: Wrap in after() to ensure Vercel doesn't terminate
-    // the serverless function before the webhook completes
-    after(() => {
-      sendWebhookCallback(
-        frontendCallbackUrl,
-        {
-          success: true,
-          reservationId: targetReservationId,
-          txHash,
-          status: "confirmed",
-          message: "Crypto payment verified successfully",
-          timestamp: new Date().toISOString(),
-        },
-        logger,
-      ).catch(() => {
-        // Already logged in sendWebhookCallback
+    await dispatchTask(
+      "send_checkout_webhook",
+      {
+        webhookUrl: frontendCallbackUrl,
+        reservationId: targetReservationId,
+        txHash,
+        status: "confirmed",
+        message: "Crypto payment verified successfully",
+      },
+      `webhook:${txHash}`,
+    ).catch((err) => {
+      logger.warn("Failed to dispatch webhook callback (non-fatal)", {
+        error: err instanceof Error ? err.message : String(err),
       });
     });
   }

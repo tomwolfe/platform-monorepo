@@ -175,20 +175,20 @@ server.tool(
   TOOLS.openDelivery.calculateQuote.name,
   TOOLS.openDelivery.calculateQuote.description,
   TOOLS.openDelivery.calculateQuote.schema.shape,
-  async ({ pickup_address, delivery_address, items }, _extra: any) => {
+  async (
+    { pickup_address, delivery_address, items },
+    _extra: { traceId?: string } | undefined,
+  ) => {
     const traceId = _extra?.traceId || randomUUID();
 
-    // Check if pickup_address has an ID that might be a restaurantId
-    const restaurantId =
-      (pickup_address as any).id || (pickup_address as any).restaurantId;
-
+    // pickup_address is a string in this legacy tool - no restaurantId extraction needed
     const quote = await calculateDeliveryQuote(
       pickup_address,
       delivery_address,
       items.map((name: string) => ({ name })),
       "standard",
       traceId,
-      restaurantId,
+      undefined, // restaurantId not available from string address
     );
 
     return createResponse(

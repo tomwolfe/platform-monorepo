@@ -99,7 +99,18 @@ const CHAIN_REGISTRY: Record<number, ChainRpcConfig> = {
     chain: base,
     key: "base",
     getServerRpcUrls: () => {
-      const primary = process.env.BASE_RPC_URL || "https://mainnet.base.org";
+      const primary = process.env.BASE_RPC_URL;
+      if (!primary) {
+        if (process.env.NODE_ENV === "production") {
+          throw new Error(
+            "[web3-chains] BASE_RPC_URL is required in production. " +
+              "Set this environment variable to a reliable RPC provider (e.g., Alchemy, Infura). " +
+              "Public fallback URLs are disabled in production to prevent rate-limiting issues.",
+          );
+        }
+        // Development only fallback
+        return ["https://mainnet.base.org"];
+      }
       return [
         primary,
         "https://base.llamarpc.com",
@@ -114,7 +125,18 @@ const CHAIN_REGISTRY: Record<number, ChainRpcConfig> = {
     chain: polygon,
     key: "polygon",
     getServerRpcUrls: () => {
-      const primary = process.env.POLYGON_RPC_URL || "https://polygon-rpc.com";
+      const primary = process.env.POLYGON_RPC_URL;
+      if (!primary) {
+        if (process.env.NODE_ENV === "production") {
+          throw new Error(
+            "[web3-chains] POLYGON_RPC_URL is required in production. " +
+              "Set this environment variable to a reliable RPC provider (e.g., Alchemy, Infura). " +
+              "Public fallback URLs are disabled in production to prevent rate-limiting issues.",
+          );
+        }
+        // Development only fallback
+        return ["https://polygon-rpc.com"];
+      }
       return [primary, "https://polygon.llamarpc.com"];
     },
     getClientRpcUrl: () =>
@@ -126,15 +148,19 @@ const CHAIN_REGISTRY: Record<number, ChainRpcConfig> = {
     key: "ethereum",
     getServerRpcUrls: () => {
       const primary = process.env.ETHEREUM_RPC_URL;
-      if (!primary && process.env.NODE_ENV === "production") {
-        console.error(
-          "[web3-chains] ETHEREUM_RPC_URL is not configured in production. " +
-            "Transaction verification may fail due to rate-limited public fallbacks.",
-        );
+      if (!primary) {
+        if (process.env.NODE_ENV === "production") {
+          throw new Error(
+            "[web3-chains] ETHEREUM_RPC_URL is required in production. " +
+              "Set this environment variable to a reliable RPC provider (e.g., Alchemy, Infura). " +
+              "Public fallback URLs are disabled in production to prevent rate-limiting issues.",
+          );
+        }
+        // Development only fallback
+        return ["https://eth.llamarpc.com"];
       }
-      const fallbackUrl = primary || "https://eth.llamarpc.com";
       return [
-        fallbackUrl,
+        primary,
         "https://cloudflare-eth.com",
         "https://rpc.ankr.com/eth",
       ];

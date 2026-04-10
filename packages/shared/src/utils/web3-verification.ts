@@ -41,21 +41,45 @@ const logger = new Logger({ serviceName: "web3-verification" });
 // ============================================================================
 
 const RPC_URLS = {
-  base: [
-    process.env.BASE_RPC_URL || "https://mainnet.base.org",
-    "https://base.llamarpc.com",
-    "https://base.publicnode.com",
-  ],
-  polygon: [
-    process.env.POLYGON_RPC_URL || "https://polygon-rpc.com",
-    "https://polygon.llamarpc.com",
-    "https://polygon.publicnode.com",
-  ],
-  ethereum: [
-    process.env.ETHEREUM_RPC_URL || "https://eth-mainnet.g.alchemy.com/v2/demo",
-    "https://eth.llamarpc.com",
-    "https://ethereum.publicnode.com",
-  ],
+  base: (() => {
+    const primary = process.env.BASE_RPC_URL;
+    if (!primary && process.env.NODE_ENV === "production") {
+      console.error(
+        "[web3-verification] BASE_RPC_URL is required in production",
+      );
+    }
+    return [
+      primary || "https://mainnet.base.org",
+      "https://base.llamarpc.com",
+      "https://base.publicnode.com",
+    ];
+  })(),
+  polygon: (() => {
+    const primary = process.env.POLYGON_RPC_URL;
+    if (!primary && process.env.NODE_ENV === "production") {
+      console.error(
+        "[web3-verification] POLYGON_RPC_URL is required in production",
+      );
+    }
+    return [
+      primary || "https://polygon-rpc.com",
+      "https://polygon.llamarpc.com",
+      "https://polygon.publicnode.com",
+    ];
+  })(),
+  ethereum: (() => {
+    const primary = process.env.ETHEREUM_RPC_URL;
+    if (!primary && process.env.NODE_ENV === "production") {
+      console.error(
+        "[web3-verification] ETHEREUM_RPC_URL is required in production",
+      );
+    }
+    return [
+      primary || "https://eth-mainnet.g.alchemy.com/v2/demo",
+      "https://eth.llamarpc.com",
+      "https://ethereum.publicnode.com",
+    ];
+  })(),
 };
 
 // Non-custodial escrow contract address (for Open-Delivery P2P payments)

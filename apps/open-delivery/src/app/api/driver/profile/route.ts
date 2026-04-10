@@ -1,10 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@repo/database";
-import { sql } from "drizzle-orm";
+import { getDb, drivers } from "@repo/database";
+import { eq } from "drizzle-orm";
 import { currentUser } from "@clerk/nextjs/server";
 import { Logger } from "@repo/shared";
 
 const logger = new Logger({ serviceName: "open-delivery-driver-profile" });
+
+// Type-safe driver profile from raw SQL query
+interface DriverProfileRow {
+  id: string;
+  full_name: string;
+  email: string;
+  trust_score: number | null;
+  is_active: boolean | null;
+}
 
 /**
  * Driver Profile API Route
@@ -24,12 +33,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 2. Look up driver profile
-    const driverResult = await getDb().execute(
-      sql`SELECT id, full_name, email, trust_score, is_active FROM drivers WHERE clerk_id = ${user.id} LIMIT 1`,
-    );
-
-    const driver = driverResult.rows[0] as any | undefined;
+    // 2. Look up driver profile using type-safe Drizzle query
+    const driver = await getDb().query.drivers.findFirst({
+      where: eq(drivers.clerkId, user.id),
+      columns: {
+        id: true,
+        fullName: true,
+        email: true,
+        trustScore: true,
+        isActive: true,
+      },
+    });
 
     if (!driver) {
       return NextResponse.json(
@@ -41,10 +55,10 @@ export async function GET(request: NextRequest) {
     // 3. Return profile
     return NextResponse.json({
       id: driver.id,
-      fullName: driver.full_name,
+      fullName: driver.fullName,
       email: driver.email,
-      trustScore: driver.trust_score,
-      isActive: driver.is_active,
+      trustScore: driver.trustScore,
+      isActive: driver.isActive,
     });
   } catch (error) {
     logger.error("Driver profile error", {

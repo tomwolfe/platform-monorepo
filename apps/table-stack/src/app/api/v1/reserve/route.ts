@@ -1,5 +1,5 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse, after, revalidateTag } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { validateRequest } from "@tablestack/lib/auth";
 import {
   IdempotencyService,
@@ -12,11 +12,11 @@ import {
   formatApiSuccess,
   ReserveRequestSchema,
   validateRequest as validateZodRequest,
+  dispatchTask,
 } from "@repo/shared";
 import { withServerlessTimeout } from "@repo/shared/middleware/serverless-timeout";
 import { withRetry } from "@repo/shared/middleware/retry-with-backoff";
 import { reservationService } from "@tablestack/lib/reservation-service";
-import { NotifyService } from "@tablestack/lib/notifications";
 import { ConflictError } from "@repo/shared/errors";
 
 export const runtime = "nodejs";
@@ -246,61 +246,37 @@ async function postHandler(req: NextRequest) {
     const restaurant =
       await reservationService.getRestaurant(targetRestaurantId);
 
-    // Decouple external I/O from API critical path using after()
-    after(async () => {
-      if (result.isShadow) {
-        await NotifyService.sendClaimInvitation(
-          restaurant.ownerEmail,
-          restaurant.name,
-          restaurant.claimToken!,
-        );
-        await NotifyService.notifyOwner(
-          restaurant.ownerEmail,
-          {
-            guestName: result.reservation.guestName,
-            partySize: result.reservation.partySize,
-            startTime: result.reservation.startTime,
-          },
-          true,
-        );
-      } else {
-        const verifyUrl = `${new URL(req.url).origin}/verify/${result.reservation.verificationToken}`;
-        await NotifyService.sendNotification({
-          to: result.reservation.guestEmail,
-          subject: `Confirm your reservation at ${restaurant.name}`,
-          html: `<h1>Hello ${result.reservation.guestName},</h1><p>Please confirm your reservation for ${result.reservation.partySize} people.</p><p><a href="${verifyUrl}">Click here to confirm</a></p>`,
-        });
-      }
-    });
+    // Dispatch email notification via QStash queue (reliable serverless async)
+    const origin = new URL(req.url).origin;
+    await dispatchTask(
+      "send_reservation_email",
+      {
+        reservationId: result.reservation.id,
+        guestEmail: result.reservation.guestEmail,
+        guestName: result.reservation.guestName,
+        restaurantName: restaurant.name,
+        partySize: result.reservation.partySize,
+        startTime: result.reservation.startTime,
+        verificationToken: result.reservation.verificationToken,
+        isShadow: result.isShadow,
+        ownerEmail: restaurant.ownerEmail,
+        claimToken: restaurant.claimToken,
+        origin,
+      },
+      `email:${idempotencyKey}`,
+    );
 
     // Mark idempotency key as processed
     await idempotencyService.markProcessed(idempotencyKey, "reserve_api");
 
-    // T2.1: Invalidate availability cache for this restaurant
-    // Use after() to avoid blocking the response
-    after(async () => {
-      try {
-        // Redis cache invalidation
-        const pattern = `availability:${targetRestaurantId}:*`;
-        const keys = await redis.keys(pattern);
-        if (keys.length > 0) {
-          await redis.del(...keys);
-          logger.info({
-            message: `[T2.1] Invalidated ${keys.length} availability cache entries`,
-            restaurantId: targetRestaurantId,
-          });
-        }
-
-        // Next.js ISR cache invalidation
-        revalidateTag("availability");
-        revalidateTag(`restaurant:${targetRestaurantId}`);
-      } catch (error) {
-        logger.warn({
-          message: "[T2.1] Failed to invalidate availability cache (non-fatal)",
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    });
+    // Dispatch cache invalidation via QStash queue
+    await dispatchTask(
+      "invalidate_availability_cache",
+      {
+        restaurantId: targetRestaurantId,
+      },
+      `cache:${idempotencyKey}`,
+    );
 
     return NextResponse.json(
       formatApiSuccess({

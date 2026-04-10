@@ -1,6 +1,20 @@
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import type { NeonHttpDatabase } from "drizzle-orm/neon-http";
+export {
+  eq,
+  and,
+  or,
+  gt,
+  gte,
+  lt,
+  lte,
+  like,
+  ilike,
+  sql,
+  asc,
+  desc,
+} from "drizzle-orm";
 import * as tablestackSchema from "./schema/tablestack";
 import * as pgvectorSchema from "./schema/pgvector";
 

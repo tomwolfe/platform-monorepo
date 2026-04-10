@@ -90,8 +90,16 @@ export async function verifyTransactionData(
   txHash: string,
   targetReservationId: string,
 ): Promise<void> {
-  const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
-  const client = createPublicClient({ transport: http(rpcUrl), chain: base });
+  const rpcUrl = process.env.BASE_RPC_URL;
+  if (!rpcUrl && process.env.NODE_ENV === "production") {
+    throw new Error(
+      "BASE_RPC_URL environment variable is required in production",
+    );
+  }
+  const client = createPublicClient({
+    transport: http(rpcUrl || "https://mainnet.base.org"),
+    chain: base,
+  });
   const tx = await client.getTransaction({ hash: txHash as `0x${string}` });
 
   if (tx.input && tx.input !== "0x" && tx.input.length > 2) {

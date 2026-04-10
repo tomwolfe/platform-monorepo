@@ -161,6 +161,11 @@ async function getCronHandler(req: NextRequest) {
 
       // RPC URLs with fallbacks for resilience
       const baseRpcUrl = AppConfig.getBaseRpcUrl();
+      if (!baseRpcUrl && process.env.NODE_ENV === "production") {
+        throw new Error(
+          "BASE_RPC_URL environment variable is required in production",
+        );
+      }
       const BASE_RPC_URLS = [
         baseRpcUrl || "https://mainnet.base.org",
         "https://base.llamarpc.com",

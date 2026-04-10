@@ -59,6 +59,8 @@
     "./middleware/retry-with-backoff": "./src/middleware/retry-with-backoff.ts",
     "./middleware/cron-auth": "./src/middleware/cron-auth.ts",
     "./middleware/cache-middleware": "./src/middleware/cache-middleware.ts",
+    "./middleware/rate-limiter": "./src/middleware/rate-limiter.ts",
+    "./services/dispatch-queue": "./src/services/dispatch-queue.ts",
     "./llm-cache": "./src/llm-cache.ts",
     "./outbox-relay": "./src/outbox-relay.ts",
     "./outbox": "./src/outbox.ts",

@@ -1,5 +1,5 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse, after, revalidateTag } from "next/server";
 import { validateRequest } from "@tablestack/lib/auth";
 import {
   IdempotencyService,
@@ -280,6 +280,7 @@ async function postHandler(req: NextRequest) {
     // Use after() to avoid blocking the response
     after(async () => {
       try {
+        // Redis cache invalidation
         const pattern = `availability:${targetRestaurantId}:*`;
         const keys = await redis.keys(pattern);
         if (keys.length > 0) {
@@ -289,6 +290,10 @@ async function postHandler(req: NextRequest) {
             restaurantId: targetRestaurantId,
           });
         }
+
+        // Next.js ISR cache invalidation
+        revalidateTag("availability");
+        revalidateTag(`restaurant:${targetRestaurantId}`);
       } catch (error) {
         logger.warn({
           message: "[T2.1] Failed to invalidate availability cache (non-fatal)",

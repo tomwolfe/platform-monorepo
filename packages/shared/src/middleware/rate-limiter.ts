@@ -235,23 +235,41 @@ export class RateLimiterService {
   }
 
   /**
-   * Lua script for atomic rate limiting.
-   * Combines INCR and conditional EXPIRE into a single atomic operation.
-   * Prevents permanent lockout if the process dies between INCR and EXPIRE.
+   * Lua script for atomic rate limiting using sorted set sliding window.
    *
-   * The script:
-   * 1. Increments the counter
-   * 2. Only sets TTL when count is 1 (first request in a new window)
-   * 3. Returns the current count
+   * Uses ZREMRANGEBYSCORE + ZCARD + ZADD to implement a true sliding window
+   * algorithm that is more accurate than fixed TTL windows. Each request is
+   * timestamped, allowing precise counting within the window.
    *
-   * This guarantees atomicity: either both INCR and EXPIRE happen, or neither does.
+   * Returns: 0 if allowed, 1 if denied
+   *
+   * KEYS[1] = rate limit key
+   * ARGV[1] = current timestamp (seconds since epoch with microseconds for uniqueness)
+   * ARGV[2] = window size in seconds
+   * ARGV[3] = maximum requests allowed in window
    */
   private static readonly RATE_LIMIT_LUA_SCRIPT = `
-    local current = redis.call("INCR", KEYS[1])
-    if current == 1 then
-      redis.call("EXPIRE", KEYS[1], ARGV[1])
+    local key = KEYS[1]
+    local now = tonumber(ARGV[1])
+    local window = tonumber(ARGV[2])
+    local limit = tonumber(ARGV[3])
+
+    -- Remove entries outside the current window
+    redis.call("ZREMRANGEBYSCORE", key, "-inf", now - window)
+
+    -- Count current entries in window
+    local count = redis.call("ZCARD", key)
+
+    -- Check if under limit
+    if count < limit then
+      -- Add new entry with unique member (timestamp + random)
+      redis.call("ZADD", key, now, now .. ":" .. math.random())
+      -- Set expiry on the key to prevent orphaned data
+      redis.call("EXPIRE", key, math.ceil(window) + 60)
+      return 0
     end
-    return current
+
+    return 1
   `;
 
   private async checkRateLimitRedis(
@@ -260,29 +278,44 @@ export class RateLimiterService {
   ): Promise<RateLimitResult> {
     const endpointConfig = this.config[endpointType];
     const redisKey = `${endpointConfig.keyPrefix}${userId}`;
-    const now = Date.now();
+    const now = Date.now() / 1000; // seconds since epoch with sub-second precision
+    const windowSeconds = endpointConfig.windowMs / 1000;
+    const maxRequests =
+      endpointConfig.maxRequests + endpointConfig.burstAllowance;
 
-    // Use atomic Lua script to prevent TOCTOU race condition.
-    // If the serverless function times out or crashes between INCR and EXPIRE,
-    // the Lua script ensures both operations happen atomically,
-    // preventing permanent lockout of the user.
     if (!RateLimiterService.redis) {
       throw new Error("Redis client not initialized for RateLimiterService");
     }
-    const currentCount = (await RateLimiterService.redis.eval(
+
+    const result = (await RateLimiterService.redis.eval(
       RateLimiterService.RATE_LIMIT_LUA_SCRIPT,
       [redisKey],
-      [Math.ceil(endpointConfig.windowMs / 1000)],
+      [now.toString(), windowSeconds.toString(), maxRequests.toString()],
     )) as number;
 
-    const maxRequests =
-      endpointConfig.maxRequests + endpointConfig.burstAllowance;
+    const allowed = result === 0;
+
+    // Get current count for remaining calculation
+    const currentCount = (await RateLimiterService.redis.zcard(
+      redisKey,
+    )) as number;
     const remaining = Math.max(0, maxRequests - currentCount);
-    const resetInMs = endpointConfig.windowMs;
 
-    const allowed = currentCount <= maxRequests;
+    // Get oldest entry to calculate window reset time
+    const oldestEntries = (await RateLimiterService.redis.zrange(
+      redisKey,
+      0,
+      0,
+      { withScores: true },
+    )) as unknown as string[];
 
-    const result: RateLimitResult = {
+    let resetInMs = endpointConfig.windowMs;
+    if (oldestEntries && oldestEntries.length > 0) {
+      const oldestScore = parseFloat(oldestEntries[1] || String(now));
+      resetInMs = Math.max(0, (oldestScore + windowSeconds - now) * 1000);
+    }
+
+    return {
       allowed,
       remaining,
       resetInMs,
@@ -290,7 +323,7 @@ export class RateLimiterService {
       headers: {
         "X-RateLimit-Limit": maxRequests.toString(),
         "X-RateLimit-Remaining": remaining.toString(),
-        "X-RateLimit-Reset": (now + resetInMs).toString(),
+        "X-RateLimit-Reset": (Date.now() + resetInMs).toString(),
         ...(allowed
           ? {}
           : { "Retry-After": Math.ceil(resetInMs / 1000).toString() }),
@@ -298,8 +331,6 @@ export class RateLimiterService {
       userId,
       endpointType,
     };
-
-    return result;
   }
 
   /**
@@ -459,6 +490,48 @@ export async function rateLimitMiddleware(
 }
 
 // ============================================================================
+// USER IDENTITY EXTRACTION
+// ============================================================================
+
+/**
+ * Extract user identity for rate limiting from a NextRequest.
+ *
+ * Priority:
+ * 1. JWT subject (userId from Clerk or similar)
+ * 2. x-forwarded-for IP (only for unauthenticated requests)
+ * 3. Anonymous fallback
+ *
+ * This ensures authenticated users are rate-limited individually
+ * while unauthenticated users share IP-based limits.
+ *
+ * @param req - Next.js request object
+ * @returns User identifier (userId or IP)
+ */
+export function extractUserIdentity(req: Request): string {
+  // Try JWT-based user ID first (Clerk, Auth.js, etc.)
+  const clerkUserId = req.headers.get("x-clerk-user-id");
+  const authUserId = req.headers.get("x-user-id");
+
+  if (clerkUserId || authUserId) {
+    return clerkUserId || authUserId || "anonymous";
+  }
+
+  // Fallback to IP for unauthenticated requests
+  const forwardedFor = req.headers.get("x-forwarded-for");
+  if (forwardedFor) {
+    // Use the first IP in the chain (client IP)
+    return forwardedFor.split(",")[0]?.trim() || "anonymous";
+  }
+
+  const realIp = req.headers.get("x-real-ip");
+  if (realIp) {
+    return realIp;
+  }
+
+  return "anonymous";
+}
+
+// ============================================================================
 // EXPRESS/NEXT.JS MIDDLEWARE
 // ============================================================================
 
@@ -474,10 +547,10 @@ export function createRateLimitMiddleware(
     headers?: Record<string, string>;
     error?: string;
   }> {
-    // Extract user ID
-    const clerkId = request.headers.get("x-clerk-id");
-    const userIp = request.headers.get("x-forwarded-for") || "anonymous";
-    const userId = getUserId ? getUserId(request) : clerkId || userIp;
+    // Extract user ID using service-aware identity extraction
+    const userId = getUserId
+      ? getUserId(request)
+      : extractUserIdentity(request);
 
     // Check rate limit
     const result = await rateLimitMiddleware(userId, endpointType);

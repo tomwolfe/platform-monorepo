@@ -93,6 +93,18 @@ export {
   setGlobalTraceEmitter,
 } from "./tracing";
 
+// Trace Context Propagation
+export {
+  attachTraceToPayload,
+  extractTraceFromPayload,
+  extractTraceFromHeaders,
+  withTraceContext,
+  withTracePublish,
+  withTraceAblyPublish,
+  TRACE_META_KEY,
+  TRACE_ID_META_KEY,
+} from "./tracing/context-propagator";
+
 // ============================================================================
 // OPENTELEMETRY SPAN NAMING CONSTANTS
 // ============================================================================
@@ -190,8 +202,19 @@ export {
   type CacheConfig,
 } from "./middleware/cache-middleware";
 export {
+  withCacheHeaders,
+  applyCacheControl,
+  buildCacheControlHeader,
+  revalidateTag,
+  PUBLIC_CACHE_CONFIG,
+  PRIVATE_CACHE_CONFIG,
+  NO_CACHE_CONFIG,
+  type CacheConfig as CacheHeaderConfig,
+} from "./middleware/cache-headers";
+export {
   rateLimitMiddleware,
   createRateLimitMiddleware,
+  extractUserIdentity,
   RateLimiterService,
   type EndpointRateLimitConfig,
   type RateLimitConfig,
@@ -262,6 +285,14 @@ export {
   getErrorStatusCode,
 } from "./utils/api-error";
 
+// Unified API Error Handler Wrapper
+export {
+  withUnifiedApiHandler,
+  toUnifiedError,
+  type UnifiedApiHandler,
+  type UnifiedApiHandlerOptions,
+} from "./middleware/api-error-wrapper";
+
 // ============================================================================
 // ROUTE HANDLER FACTORY
 // ============================================================================
@@ -329,3 +360,15 @@ export { getResendClient, getAblyClient } from "./clients";
 // LLM CACHE
 // ============================================================================
 export { DEFAULT_TTL_SECONDS } from "./llm-cache";
+
+// ============================================================================
+// LLM VALIDATION
+// ============================================================================
+export {
+  validateLLMOutput,
+  validateLLMOutputSync,
+  parseJsonSafely,
+  ValidationError,
+  type LLMValidationOptions,
+  type ValidationResult,
+} from "./llm/validation";

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
+export const revalidate = 30;
 import {
   getDb,
   restaurants,
@@ -14,7 +15,7 @@ import { validateRequest } from "@tablestack/lib/auth";
 import {
   formatApiError,
   formatApiSuccess,
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   withCache,
   getRedisClient,
   ServiceNamespace,
@@ -52,7 +53,7 @@ const redis = getRedisClient(ServiceNamespace.TS);
  * - Cache Key: availability:{restaurantId}:{date}:{partySize}
  * - Tags: ['availability', 'restaurant:{id}']
  */
-export const GET = withApiErrorHandler(
+export const GET = withUnifiedApiHandler(
   withCache(
     async (req: NextRequest) => {
       const { searchParams } = new URL(req.url);
@@ -243,5 +244,4 @@ export const GET = withApiErrorHandler(
       },
     },
   ),
-  "EXECUTION_FAILED",
 );

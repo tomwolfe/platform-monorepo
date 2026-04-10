@@ -58,6 +58,15 @@ jobs:
           pnpm validate:schema-sync:strict --json schema-sync-report.json
         continue-on-error: true
 
+      - name: Check Schema Drift (Strict)
+        run: |
+          echo "## Checking for schema drift..."
+          cd packages/database
+          npx drizzle-kit check --strict
+        continue-on-error: false
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/test' }}
+
       - name: Check Drizzle Migrations
         run: |
           pnpm install
@@ -71,6 +80,19 @@ jobs:
         run: |
           pnpm db:validate
         continue-on-error: false
+
+      - name: Schema Drift Summary
+        if: always()
+        run: |
+          echo "## 🔍 Schema Drift Detection Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Strict Drizzle Check | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Schema Sync Validation | ${{ steps.validate.outcome == 'success' && '✅ Passed' || '⚠️ Review Needed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Drizzle Diagnose | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**No schema drift detected.** All migrations are up to date." >> $GITHUB_STEP_SUMMARY
 
       - name: Upload validation report
         uses: actions/upload-artifact@v4

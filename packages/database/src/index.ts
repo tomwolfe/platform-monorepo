@@ -341,11 +341,16 @@ class TimeoutDbWrapper<
 
   /**
    * Run a transaction with timeout enforcement on the transaction callback.
-   * The tx object passed to the callback is the raw Drizzle tx (no proxy),
-   * ensuring all internal Drizzle symbol-based state tracking works correctly.
+   * The tx object passed to the callback is wrapped with timeout enforcement,
+   * ensuring individual queries inside the transaction also respect timeouts.
    */
   transaction<T>(fn: (tx: NeonDatabase<TSchema>) => Promise<T>): Promise<T> {
-    return this.#withTimeout(this.#db.transaction(fn));
+    return this.#withTimeout(
+      this.#db.transaction((rawTx) => {
+        const wrappedTx = createTimeoutDbWrapper(rawTx, this.#timeoutMs);
+        return fn(wrappedTx);
+      }),
+    );
   }
 }
 

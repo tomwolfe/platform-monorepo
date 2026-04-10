@@ -41,20 +41,20 @@
  */
 
 import { getDb, outbox } from "@repo/database";
-import { sql, eq, and, lt, isNull, type PgTransaction } from "drizzle-orm";
+import { sql, and } from "drizzle-orm";
 import { Redis } from "@upstash/redis";
 import { getRedisClient, ServiceNamespace } from "../redis";
-import {
-  OutboxService,
-  type OutboxPayload,
-  type OutboxEventType,
-  type OutboxEvent,
-} from "../outbox";
+import { OutboxService, type OutboxEventType } from "../outbox";
 import { Logger } from "../logger";
 
 // ============================================================================
 // TYPE DEFINITIONS
 // ============================================================================
+
+interface PgClient {
+  query: (sql: string) => Promise<void>;
+  end: () => Promise<void>;
+}
 
 export interface OutboxNotification {
   executionId: string;
@@ -168,7 +168,7 @@ export class OutboxListener {
     eventsFailed: 0,
     fallbackPolls: 0,
   };
-  private client?: any; // PostgreSQL client for LISTEN
+  private client?: PgClient; // PostgreSQL client for LISTEN
 
   constructor(config: OutboxListenerConfig = {}) {
     this.config = {
@@ -319,8 +319,32 @@ export class OutboxListener {
 
     this.logger.info(`Found ${pendingEvents.length} pending outbox events`);
 
-    // Process events in batch
+    // Process events in batch with atomic acquisition
     for (const event of pendingEvents) {
+      // Atomically claim the event by updating its status
+      // Only proceed if this worker successfully claimed it
+      const updateResult = await db
+        .update(outbox)
+        .set({
+          status: "processing",
+          attempts: event.attempts + 1,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            sql`${outbox.id} = ${event.id}`,
+            sql`${outbox.status} IN ('pending', 'processing')`,
+          ),
+        )
+        .returning({ id: outbox.id });
+
+      if (updateResult.length === 0) {
+        this.logger.info(
+          `Event ${event.id} already claimed by another worker, skipping`,
+        );
+        continue;
+      }
+
       await this.processNotification({
         executionId: event.payload.executionId,
         eventType: event.eventType as OutboxEventType,

@@ -46,14 +46,14 @@ export {
  */
 function getInternalSystemKey(): string {
   const key = process.env.INTERNAL_SYSTEM_KEY;
-  if (!key && process.env.NODE_ENV === "production") {
+  if (!key) {
     throw new Error(
       "CRITICAL: INTERNAL_SYSTEM_KEY is not configured. " +
         "This is a required security credential for service-to-service authentication. " +
-        "Set a strong, random value in your production environment variables.",
+        "Set a strong, random value in your environment variables.",
     );
   }
-  return key || "internal-system-key-change-in-production";
+  return key;
 }
 
 function getSecret(): Uint8Array {

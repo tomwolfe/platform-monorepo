@@ -1,4 +1,4 @@
-import * as chrono from "chrono-node";
+import { parseDate, parse } from "chrono-node";
 
 /**
  * Parse natural language date strings using chrono-node
@@ -24,7 +24,7 @@ import * as chrono from "chrono-node";
  */
 export function parseNaturalLanguageDate(
   dateStr: string,
-  referenceDate?: Date
+  referenceDate?: Date,
 ): Date | null {
   // Try native Date parsing first for ISO strings and standard formats
   const nativeDate = new Date(dateStr);
@@ -34,7 +34,7 @@ export function parseNaturalLanguageDate(
 
   // Use chrono-node for natural language parsing
   const refDate = referenceDate || new Date();
-  const parsed = chrono.parseDate(dateStr, refDate, {
+  const parsed = parseDate(dateStr, refDate, {
     forwardDate: true, // Prefer future dates for ambiguous cases
   });
 
@@ -43,7 +43,7 @@ export function parseNaturalLanguageDate(
   }
 
   // Fallback: try chrono with more lenient parsing
-  const results = chrono.parse(dateStr, refDate, {
+  const results = parse(dateStr, refDate, {
     forwardDate: true,
   });
 
@@ -76,21 +76,21 @@ export function parseNaturalLanguageDateStrict(
     errorMessage?: string;
     /** Whether to allow past dates (default: false) */
     allowPastDates?: boolean;
-  }
+  },
 ): Date {
   const refDate = referenceDate || new Date();
   const parsed = parseNaturalLanguageDate(dateStr, refDate);
 
   if (!parsed) {
     throw new Error(
-      options?.errorMessage || `Unable to parse date string: "${dateStr}"`
+      options?.errorMessage || `Unable to parse date string: "${dateStr}"`,
     );
   }
 
   // Validate past dates if not allowed
   if (!options?.allowPastDates && parsed.getTime() < refDate.getTime()) {
     throw new Error(
-      `Parsed date "${dateStr}" resolves to ${parsed.toISOString()}, which is in the past`
+      `Parsed date "${dateStr}" resolves to ${parsed.toISOString()}, which is in the past`,
     );
   }
 
@@ -106,10 +106,10 @@ export function parseNaturalLanguageDateStrict(
  */
 export function parseMultipleDateCandidates(
   dateStr: string,
-  referenceDate?: Date
+  referenceDate?: Date,
 ): Date[] {
   const refDate = referenceDate || new Date();
-  const results = chrono.parse(dateStr, refDate, {
+  const results = parse(dateStr, refDate, {
     forwardDate: true,
   });
 
@@ -123,7 +123,7 @@ export function parseMultipleDateCandidates(
  * @returns True if date/time information is detected
  */
 export function containsDateInformation(dateStr: string): boolean {
-  const results = chrono.parse(dateStr, new Date(), {
+  const results = parse(dateStr, new Date(), {
     forwardDate: true,
   });
   return results.length > 0;
@@ -138,7 +138,7 @@ export function containsDateInformation(dateStr: string): boolean {
  */
 export function extractDateTimeComponents(
   dateStr: string,
-  referenceDate?: Date
+  referenceDate?: Date,
 ): {
   date: Date | null;
   hasTime: boolean;
@@ -147,7 +147,7 @@ export function extractDateTimeComponents(
   originalText: string;
 } | null {
   const refDate = referenceDate || new Date();
-  const results = chrono.parse(dateStr, refDate, {
+  const results = parse(dateStr, refDate, {
     forwardDate: true,
   });
 
@@ -159,7 +159,8 @@ export function extractDateTimeComponents(
   const date = result.start.date();
 
   // Determine if time was specified
-  const hasTime = result.start.isCertain("hour") || result.start.isCertain("minute");
+  const hasTime =
+    result.start.isCertain("hour") || result.start.isCertain("minute");
   const hasDate =
     result.start.isCertain("day") ||
     result.start.isCertain("month") ||
@@ -168,7 +169,7 @@ export function extractDateTimeComponents(
   // Calculate confidence based on certainty of components
   let confidence: "high" | "medium" | "low" = "high";
   const certaintyCount = Object.values(result.start.knownValues).filter(
-    (v) => v !== null && v !== undefined
+    (v) => v !== null && v !== undefined,
   ).length;
 
   if (certaintyCount < 3) {

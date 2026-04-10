@@ -1,19 +1,20 @@
 /**
  * Trace Context Propagation
- * 
+ *
  * Ensures x-trace-id (Correlation ID) is propagated through:
  * 1. Every tool call
  * 2. Ably events
  * 3. MCP client requests
  * 4. Inter-service communication
- * 
+ *
  * This maintains a single audit trail across all services.
  */
 
 import { randomUUID } from "crypto";
 import { RealtimeService, Logger } from "@repo/shared";
 import { Tracer } from "./tracing";
-import { Span } from "@opentelemetry/api";
+import { LRUCache } from "lru-cache";
+import type { Span } from "@opentelemetry/api";
 
 const logger = new Logger({ serviceName: "intention-engine" });
 
@@ -39,7 +40,11 @@ export interface TraceContext {
 // ============================================================================
 
 export class TraceContextManager {
-  public static storage = new Map<string, TraceContext>();
+  // LRU cache with max 5000 entries and 1-hour TTL to prevent memory leaks
+  public static storage = new LRUCache<string, TraceContext>({
+    max: 5000,
+    ttl: 1000 * 60 * 60, // 1 hour
+  });
 
   /**
    * Create a new trace context
@@ -47,7 +52,7 @@ export class TraceContextManager {
   static create(options?: Partial<TraceContext>): TraceContext {
     const traceId = options?.traceId || randomUUID();
     const correlationId = options?.correlationId || traceId;
-    
+
     const context: TraceContext = {
       traceId,
       spanId: randomUUID(),
@@ -122,7 +127,7 @@ export class TraceContextManager {
    */
   static toHeaders(
     context: TraceContext,
-    existingHeaders?: Headers | Record<string, string>
+    existingHeaders?: Headers | Record<string, string>,
   ): Record<string, string> {
     const headers: Record<string, string> = {};
 
@@ -140,11 +145,11 @@ export class TraceContextManager {
     // Inject trace headers
     headers["x-trace-id"] = context.traceId;
     headers["x-correlation-id"] = context.correlationId || context.traceId;
-    
+
     if (context.spanId) {
       headers["x-span-id"] = context.spanId;
     }
-    
+
     if (context.parentSpanId) {
       headers["x-parent-span-id"] = context.parentSpanId;
     }
@@ -168,7 +173,7 @@ export function generateTraceId(): string {
  * Extract trace ID from request headers
  */
 export function extractTraceId(
-  headers: Headers | Record<string, string>
+  headers: Headers | Record<string, string>,
 ): string {
   const context = TraceContextManager.fromHeaders(headers);
   return context.traceId;
@@ -179,7 +184,7 @@ export function extractTraceId(
  */
 export function createTraceHeaders(
   traceId: string,
-  correlationId?: string
+  correlationId?: string,
 ): Record<string, string> {
   return {
     "x-trace-id": traceId,
@@ -199,7 +204,7 @@ export interface TracedToolExecutor {
     parameters: Record<string, unknown>,
     timeoutMs: number,
     signal?: AbortSignal,
-    traceContext?: TraceContext
+    traceContext?: TraceContext,
   ): Promise<{
     success: boolean;
     output?: unknown;
@@ -214,12 +219,13 @@ export interface TracedToolExecutor {
  */
 export function createTracedToolExecutor(
   baseExecutor: ToolExecutor,
-  defaultTraceContext?: TraceContext
+  defaultTraceContext?: TraceContext,
 ): TracedToolExecutor {
   return {
     async execute(toolName, parameters, timeoutMs, signal, traceContext) {
-      const context = traceContext || defaultTraceContext || TraceContextManager.create();
-      
+      const context =
+        traceContext || defaultTraceContext || TraceContextManager.create();
+
       return Tracer.startActiveSpan(`tool:${toolName}`, async (span) => {
         // Set trace attributes
         span.setAttributes({
@@ -234,7 +240,7 @@ export function createTracedToolExecutor(
             toolName,
             parameters,
             timeoutMs,
-            signal
+            signal,
           );
 
           // Record result attributes
@@ -244,7 +250,9 @@ export function createTracedToolExecutor(
           });
 
           if (!result.success) {
-            span.recordException(new Error(result.error || "Tool execution failed"));
+            span.recordException(
+              new Error(result.error || "Tool execution failed"),
+            );
           }
 
           return {
@@ -277,7 +285,7 @@ export async function publishTracedEvent(
   channelName: string,
   eventName: string,
   data: TraceableEventPayload,
-  traceContext: TraceContext
+  traceContext: TraceContext,
 ): Promise<void> {
   // Inject trace context into data
   const tracedData = {
@@ -287,15 +295,10 @@ export async function publishTracedEvent(
   };
 
   // Publish with trace context
-  await RealtimeService.publish(
-    channelName,
-    eventName,
-    tracedData,
-    {
-      traceId: traceContext.traceId,
-      correlationId: traceContext.correlationId,
-    }
-  );
+  await RealtimeService.publish(channelName, eventName, tracedData, {
+    traceId: traceContext.traceId,
+    correlationId: traceContext.correlationId,
+  });
 
   logger.info({
     message: `[TracePropagation] Published ${eventName} to ${channelName} [trace: ${traceContext.traceId}]`,
@@ -308,13 +311,13 @@ export async function publishTracedEvent(
 export async function publishTracedNervousSystemEvent(
   eventName: string,
   data: TraceableEventPayload,
-  traceContext: TraceContext
+  traceContext: TraceContext,
 ): Promise<void> {
   await publishTracedEvent(
     "nervous-system:updates",
     eventName,
     data,
-    traceContext
+    traceContext,
   );
 }
 
@@ -326,30 +329,32 @@ export async function publishTracedNervousSystemEvent(
  * Express/Next.js middleware to extract trace context from requests
  */
 export function extractTraceFromRequest(
-  headers: Headers | Record<string, string>
+  headers: Headers | Record<string, string>,
 ): TraceContext {
   const context = TraceContextManager.fromHeaders(headers);
-  
+
   // Store context for later retrieval
   const contextId = `req:${context.traceId}`;
   TraceContextManager.store(contextId, context);
-  
+
   return context;
 }
 
 /**
  * Get current trace context from storage
  */
-export function getCurrentTraceContext(contextId?: string): TraceContext | undefined {
+export function getCurrentTraceContext(
+  contextId?: string,
+): TraceContext | undefined {
   if (!contextId) {
-    // Return most recent context
-    const entries = Array.from(TraceContextManager.storage.entries());
-    if (entries.length > 0) {
-      return entries[entries.length - 1][1];
+    // Return most recent context (LRUCache iterates in insertion order)
+    let lastContext: TraceContext | undefined;
+    for (const ctx of TraceContextManager.storage.values()) {
+      lastContext = ctx;
     }
-    return undefined;
+    return lastContext;
   }
-  
+
   return TraceContextManager.retrieve(contextId);
 }
 
@@ -367,17 +372,14 @@ export function serializeTraceContext(context: TraceContext): string {
 /**
  * Create a logger wrapper that includes trace context
  */
-export function createTracedLogger(
-  baseLogger: Console,
-  context: TraceContext
-) {
+export function createTracedLogger(baseLogger: Console, context: TraceContext) {
   const prefix = serializeTraceContext(context);
-  
+
   return {
-    log: (...args: any[]) => baseLogger.log(prefix, ...args),
-    warn: (...args: any[]) => baseLogger.warn(prefix, ...args),
-    error: (...args: any[]) => baseLogger.error(prefix, ...args),
-    info: (...args: any[]) => baseLogger.info(prefix, ...args),
-    debug: (...args: any[]) => baseLogger.debug(prefix, ...args),
+    log: (...args: unknown[]) => baseLogger.log(prefix, ...args),
+    warn: (...args: unknown[]) => baseLogger.warn(prefix, ...args),
+    error: (...args: unknown[]) => baseLogger.error(prefix, ...args),
+    info: (...args: unknown[]) => baseLogger.info(prefix, ...args),
+    debug: (...args: unknown[]) => baseLogger.debug(prefix, ...args),
   };
 }

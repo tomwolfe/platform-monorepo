@@ -21,6 +21,51 @@ import { z } from "zod";
  */
 
 // ============================================================================
+// NUMERIC COERCION UTILITY
+// ============================================================================
+
+/**
+ * Standardized utility to coerce Postgres numeric fields from drizzle-zod.
+ *
+ * Problem: drizzle-zod converts Postgres `numeric` columns to `z.string()`,
+ * but the LLM provides JSON numbers. This utility overrides specified fields
+ * to accept both `z.coerce.number()` and `z.string()` for compatibility.
+ *
+ * Usage:
+ * ```typescript
+ * export const MySchema = coerceNumericFields(
+ *   createSelectSchema(myTable),
+ *   ['lat', 'lng', 'amount']
+ * );
+ * ```
+ */
+export function coerceNumericFields<
+  T extends z.ZodObject<z.ZodRawShape>,
+  K extends keyof z.infer<T>,
+>(schema: T, fields: K[]): T {
+  const shape = { ...schema.shape };
+  for (const field of fields) {
+    const existing = shape[field as string];
+    if (!existing) continue;
+
+    // Preserve nullability and optionality from the original field
+    if (existing instanceof z.ZodNullable) {
+      shape[field as string] = z.coerce
+        .number()
+        .optional()
+        .nullable() as unknown as z.ZodTypeAny;
+    } else if (existing instanceof z.ZodOptional) {
+      shape[field as string] = z.coerce
+        .number()
+        .optional() as unknown as z.ZodTypeAny;
+    } else {
+      shape[field as string] = z.coerce.number() as unknown as z.ZodTypeAny;
+    }
+  }
+  return schema.extend(shape) as T;
+}
+
+// ============================================================================
 // AUTO-GENERATED SCHEMAS FROM DRIZZLE
 // ============================================================================
 
@@ -91,15 +136,10 @@ function safeCreateInsertSchema(
 }
 
 // Select schemas (for reading from DB)
-export const RestaurantSchema = safeCreateSelectSchema(
-  restaurants,
-  "restaurants",
-).extend({
-  // CRITICAL FIX: drizzle-zod converts Postgres numeric columns to z.string(),
-  // but the LLM provides actual numbers. Override to accept both.
-  lat: z.coerce.number().optional().nullable(),
-  lng: z.coerce.number().optional().nullable(),
-});
+export const RestaurantSchema = coerceNumericFields(
+  safeCreateSelectSchema(restaurants, "restaurants"),
+  ["lat", "lng"],
+);
 export const ReservationSchema = safeCreateSelectSchema(
   restaurantReservations,
   "restaurantReservations",
@@ -126,16 +166,14 @@ export const GuestProfileSchema = safeCreateSelectSchema(
 );
 
 // Insert schemas (for creating new records)
-export const CreateRestaurantSchema = safeCreateInsertSchema(
-  restaurants,
-  "restaurants",
-  ["id", "createdAt", "claimToken"],
-).extend({
-  // CRITICAL FIX: drizzle-zod converts Postgres numeric columns to z.string(),
-  // but the LLM provides actual numbers. Override to accept both.
-  lat: z.coerce.number().optional().nullable(),
-  lng: z.coerce.number().optional().nullable(),
-});
+export const CreateRestaurantSchema = coerceNumericFields(
+  safeCreateInsertSchema(restaurants, "restaurants", [
+    "id",
+    "createdAt",
+    "claimToken",
+  ]),
+  ["lat", "lng"],
+);
 export const CreateReservationDBSchema = safeCreateInsertSchema(
   restaurantReservations,
   "restaurantReservations",

@@ -10,17 +10,18 @@
  * - Edge runtime and browsers also support Web Crypto API
  */
 
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual, getRandomValues } from "node:crypto";
 
 /**
  * Timing-safe secret comparison to prevent timing attacks.
  *
- * Uses Node.js crypto.timingSafeEqual with length-padding to prevent
- * both character-level timing attacks AND length-leak attacks.
+ * Uses a secure double-HMAC comparison pattern which naturally masks
+ * length without zero-padding vulnerabilities. The previous approach
+ * using length-padded buffers was vulnerable to null-byte injection
+ * (e.g., "secret\0" would match "secret").
  *
- * The naive approach of returning false on length mismatch leaks the
- * exact length of the server's secret to an attacker via timing analysis.
- * Instead, we pad both inputs to a fixed buffer length and compare them.
+ * Both strings are hashed with the same random HMAC key, producing fixed-length
+ * digests that are then compared in constant time.
  *
  * @param a - The first string to compare
  * @param b - The second string to compare
@@ -32,22 +33,11 @@ import { timingSafeEqual } from "node:crypto";
  * ```
  */
 export function isTimingSafeEqual(a: string, b: string): boolean {
-  // Convert strings to UTF-8 buffers
-  const aBuffer = Buffer.from(a, "utf-8");
-  const bBuffer = Buffer.from(b, "utf-8");
-
-  // Use the max length of the two inputs, with a minimum of 32 bytes
-  // This ensures we don't leak the server secret's length via timing
-  const maxLen = Math.max(aBuffer.length, bBuffer.length, 32);
-
-  // Pad both buffers to the same length with zeros
-  const aPadded = Buffer.alloc(maxLen, 0);
-  const bPadded = Buffer.alloc(maxLen, 0);
-  aBuffer.copy(aPadded);
-  bBuffer.copy(bPadded);
-
-  // Constant-time comparison of padded buffers
-  return timingSafeEqual(aPadded, bPadded);
+  // Hash both strings with the same random key to normalize lengths securely
+  const key = getRandomValues(new Uint8Array(32));
+  const hashA = createHmac("sha256", key).update(a).digest();
+  const hashB = createHmac("sha256", key).update(b).digest();
+  return timingSafeEqual(hashA, hashB);
 }
 
 /**

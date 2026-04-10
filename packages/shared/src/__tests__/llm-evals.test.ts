@@ -101,7 +101,7 @@ describe("AI-02: LLM Prompt Evaluation Pipeline", () => {
         // Import dynamically to avoid edge runtime issues
         const { safeParseJson } = await import("../utils/json-parser");
 
-        const result = await safeParseJson(input, { enableRepair: false });
+        const result = await safeParseJson(input);
         const latency = Date.now() - startTime;
 
         // (a) All outputs should parse to Zod schema (if successful)
@@ -130,9 +130,7 @@ describe("AI-02: LLM Prompt Evaluation Pipeline", () => {
       const totalPrompts = EVALUATION_PROMPTS.length;
 
       for (const prompt of EVALUATION_PROMPTS) {
-        const result = await safeParseJson(prompt.input, {
-          enableRepair: false,
-        });
+        const result = await safeParseJson(prompt.input);
         if (result.success) {
           const zodResult = prompt.schema.safeParse(result.data!);
           if (zodResult.success) {
@@ -151,22 +149,18 @@ describe("AI-02: LLM Prompt Evaluation Pipeline", () => {
     it("should attempt repair on malformed JSON", async () => {
       const { safeParseJson } = await import("../utils/json-parser");
 
-      // Test with repair enabled (will attempt LLM call if available)
+      // Test without repair (will fail for malformed input)
       const malformedInput = '{"key": "value",}';
-      const result = await safeParseJson(malformedInput, {
-        enableRepair: false,
-      });
+      const result = await safeParseJson(malformedInput);
 
       // Without LLM repair, this should fail
       expect(result.success).toBe(false);
     });
 
-    it("should fallback gracefully when LLM repair is disabled", async () => {
+    it("should fallback gracefully when repair is not provided", async () => {
       const { safeParseJson } = await import("../utils/json-parser");
 
-      const result = await safeParseJson("not json at all", {
-        enableRepair: false,
-      });
+      const result = await safeParseJson("not json at all");
 
       expect(result.success).toBe(false);
       expect(result.sanitizedContent).toBeDefined();
@@ -178,7 +172,7 @@ describe("AI-02: LLM Prompt Evaluation Pipeline", () => {
       const { safeParseJson } = await import("../utils/json-parser");
 
       const startTime = Date.now();
-      await safeParseJson('{"test": true}', { enableRepair: false });
+      await safeParseJson('{"test": true}');
       const latency = Date.now() - startTime;
 
       expect(latency).toBeLessThan(10);
@@ -200,7 +194,7 @@ describe("AI-02: LLM Prompt Evaluation Pipeline", () => {
       });
 
       const startTime = Date.now();
-      await safeParseJson(complexJson, { enableRepair: false });
+      await safeParseJson(complexJson);
       const latency = Date.now() - startTime;
 
       expect(latency).toBeLessThan(50);
@@ -211,9 +205,7 @@ describe("AI-02: LLM Prompt Evaluation Pipeline", () => {
     it("should assign high confidence to clean JSON", async () => {
       const { safeParseJson } = await import("../utils/json-parser");
 
-      const result = await safeParseJson('{"clean": true}', {
-        enableRepair: false,
-      });
+      const result = await safeParseJson('{"clean": true}');
 
       expect(result.success).toBe(true);
       expect(result.wasRepaired).toBe(false); // Not repaired, parsed directly
@@ -222,10 +214,8 @@ describe("AI-02: LLM Prompt Evaluation Pipeline", () => {
     it("should track repair attempts", async () => {
       const { safeParseJson } = await import("../utils/json-parser");
 
-      // With repair disabled, wasRepaired should be false
-      const result = await safeParseJson('{"test": 1}', {
-        enableRepair: false,
-      });
+      // Without repairFn, wasRepaired should be false
+      const result = await safeParseJson('{"test": 1}');
 
       expect(result.wasRepaired).toBe(false);
     });

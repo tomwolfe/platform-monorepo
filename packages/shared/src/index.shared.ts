@@ -207,6 +207,18 @@ export {
 } from "./llm-cache";
 
 // ============================================================================
+// LLM OUTPUT VALIDATION PIPELINE (Zod + JSON repair)
+// ============================================================================
+export {
+  validateLLMOutput,
+  validateLLMOutputSync,
+  createLlmRepairFn,
+  ValidationError,
+  type LLMValidationOptions,
+  type ValidationResult,
+} from "./llm/validation";
+
+// ============================================================================
 // PRIVACY & PII SCRUBBING (Isomorphic)
 // ============================================================================
 export * from "./services/privacy-gateway";

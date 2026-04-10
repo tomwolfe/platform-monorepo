@@ -22,7 +22,6 @@ import {
   regenerateApiKey,
   linkRestaurantWallet,
 } from "./actions";
-import { IconAfterMount } from "@/components/ui/IconWrapper";
 import { Trash2, Bell, UserCheck, Wallet, Store, Utensils } from "lucide-react";
 import { UserMenu } from "@/components/nav/UserMenu";
 import Link from "next/link";
@@ -117,7 +116,7 @@ export default async function DashboardPage(props: {
         <FloorPlan
           initialTables={restaurant.tables}
           restaurantReservations={restaurant.restaurantReservations.filter(
-            (r: any) => r.status === "confirmed",
+            (r: unknown) => (r as { status: string }).status === "confirmed",
           )}
           onSave={async (
             tables: { id: string; xPos: number | null; yPos: number | null }[],
@@ -242,7 +241,7 @@ export default async function DashboardPage(props: {
       {/* Client Component for tables with date formatting */}
       <DataTablesClient
         waitlist={restaurant.restaurantWaitlist.filter(
-          (w: any) => w.status !== "seated",
+          (w: unknown) => (w as { status: string }).status !== "seated",
         )}
         reservations={restaurant.restaurantReservations}
         restaurantInternalId={restaurantInternalId}
@@ -264,9 +263,7 @@ export default async function DashboardPage(props: {
         >
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-amber-900 font-semibold flex items-center gap-2">
-              <IconAfterMount>
-                <Utensils className="w-4 h-4" />
-              </IconAfterMount>
+              <Utensils className="w-4 h-4" />
               Menu Management
             </h3>
             <span className="text-amber-600 group-hover:translate-x-1 transition-transform">
@@ -281,9 +278,7 @@ export default async function DashboardPage(props: {
         <div className="bg-purple-50 p-6 rounded-xl border border-purple-100 md:col-span-1 flex flex-col justify-between">
           <div className="mb-4">
             <h3 className="text-purple-900 font-semibold mb-2 flex items-center">
-              <IconAfterMount>
-                <Wallet className="w-4 h-4 mr-2" />
-              </IconAfterMount>
+              <Wallet className="w-4 h-4 mr-2" />
               Crypto Payouts & Deposits
             </h3>
             {restaurant.walletAddress ? (

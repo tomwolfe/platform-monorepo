@@ -1,19 +1,20 @@
-'use client';
+"use client";
 
-import { redirectToStoreFront } from '@/app/dashboard/[restaurantId]/actions';
-import { Store } from 'lucide-react';
-import { IconAfterMount } from '@/components/ui/IconWrapper';
+import { redirectToStoreFront } from "@/app/dashboard/[restaurantId]/actions";
+import { Store } from "lucide-react";
 
 export function UserMenu({ restaurantId }: { restaurantId?: string }) {
+  const handleClick = () => {
+    void redirectToStoreFront(restaurantId);
+  };
+
   return (
     <div className="flex items-center gap-4">
       <button
-        onClick={() => redirectToStoreFront(restaurantId)}
+        onClick={handleClick}
         className="flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
       >
-        <IconAfterMount>
-          <Store className="w-4 h-4" />
-        </IconAfterMount>
+        <Store className="w-4 h-4" />
         Preview Store
       </button>
     </div>

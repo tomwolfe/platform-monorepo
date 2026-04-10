@@ -13,7 +13,6 @@ import {
   useDroppable,
 } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { IconAfterMount } from "@/components/ui/IconWrapper";
 import {
   Table,
   Trash2,
@@ -112,9 +111,8 @@ function DraggableTable({
         {...attributes}
         className="cursor-move flex flex-col items-center justify-center"
       >
-        <IconAfterMount>
-          <Table className="w-6 h-6 mb-1" />
-        </IconAfterMount>
+        <Table className="w-6 h-6 mb-1" />
+
         <span className="font-bold">#{table.tableNumber}</span>
         {reservation ? (
           <span className="text-[10px] text-purple-700 font-medium truncate w-full text-center px-1">
@@ -135,9 +133,7 @@ function DraggableTable({
           }}
           className="p-1 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700"
         >
-          <IconAfterMount>
-            <Settings2 className="w-3 h-3" />
-          </IconAfterMount>
+          <Settings2 className="w-3 h-3" />
         </button>
         <button
           onClick={(e) => {
@@ -146,9 +142,7 @@ function DraggableTable({
           }}
           className="p-1 bg-red-600 text-white rounded-full shadow-lg hover:bg-red-700"
         >
-          <IconAfterMount>
-            <Trash2 className="w-3 h-3" />
-          </IconAfterMount>
+          <Trash2 className="w-3 h-3" />
         </button>
       </div>
     </div>
@@ -185,9 +179,8 @@ function StatusZone({
             : "border-gray-200 bg-white text-gray-400 hover:border-gray-300 hover:bg-gray-50"
       } ${!disabled && !isOver && onClick ? "cursor-pointer" : ""}`}
     >
-      <IconAfterMount>
-        <Icon className="w-5 h-5" />
-      </IconAfterMount>
+      <Icon className="w-5 h-5" />
+
       <span className="font-medium">{label}</span>
     </button>
   );
@@ -330,25 +323,29 @@ export default function FloorPlan({
     setActiveTable(null);
   }
 
-  const handleUpdateDetails = async (e: React.FormEvent) => {
+  const handleUpdateDetails = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingTable) return;
 
-    try {
-      await onUpdateDetails(editingTable.id, {
-        tableNumber: editingTable.tableNumber,
-        minCapacity: editingTable.minCapacity,
-        maxCapacity: editingTable.maxCapacity,
+    // Fire and forget with error handling
+    void onUpdateDetails(editingTable.id, {
+      tableNumber: editingTable.tableNumber,
+      minCapacity: editingTable.minCapacity,
+      maxCapacity: editingTable.maxCapacity,
+    })
+      .then(() => {
+        setEditingTable(null);
+        // Invalidate and refetch
+        void queryClient.invalidateQueries({
+          queryKey: ["tables", restaurantId],
+        });
+      })
+      .catch(async (err) => {
+        await handleApiError(err, "Failed to update table details");
       });
-      setEditingTable(null);
-      // Invalidate and refetch
-      queryClient.invalidateQueries({ queryKey: ["tables", restaurantId] });
-    } catch (err) {
-      await handleApiError(err, "Failed to update table details");
-    }
   };
 
-  const handleStatusClick = async (status: "vacant" | "occupied" | "dirty") => {
+  const handleStatusClick = (status: "vacant" | "occupied" | "dirty") => {
     if (!selectedTableId) return;
 
     // Optimistic update
@@ -356,44 +353,41 @@ export default function FloorPlan({
       prev.map((t) => (t.id === selectedTableId ? { ...t, status } : t)),
     );
 
-    try {
-      await onStatusChange(selectedTableId, status);
-    } catch (err) {
+    // Fire and forget with error handling
+    void onStatusChange(selectedTableId, status).catch(async (err) => {
       await handleApiError(err, "Failed to update table status");
       // Revert on error - we need to fetch fresh data
       router.refresh();
-    }
+    });
   };
 
-  const handleSaveLayout = async () => {
-    try {
-      await onSave(tables);
-      // Invalidate queries to ensure cache is fresh
-      queryClient.invalidateQueries({ queryKey: ["tables", restaurantId] });
-    } catch (err) {
+  const handleSaveLayout = () => {
+    // Fire and forget with error handling
+    void onSave(tables).catch(async (err) => {
       await handleApiError(err, "Failed to save layout");
-    }
+    });
+    // Invalidate queries to ensure cache is fresh
+    void queryClient.invalidateQueries({ queryKey: ["tables", restaurantId] });
   };
 
-  const handleAddTable = async () => {
-    try {
-      await onAdd();
-      // Refresh data after adding
-      router.refresh();
-    } catch (err) {
+  const handleAddTable = () => {
+    // Fire and forget with error handling
+    void onAdd().catch(async (err) => {
       await handleApiError(err, "Failed to add table");
-    }
+    });
+    // Refresh data after adding
+    router.refresh();
   };
 
-  const handleDeleteTable = async (id: string) => {
-    try {
-      await onDelete(id);
-      // Update local state
-      setTables((prev) => prev.filter((t) => t.id !== id));
-      queryClient.invalidateQueries({ queryKey: ["tables", restaurantId] });
-    } catch (err) {
+  const handleDeleteTable = (id: string) => {
+    // Update local state immediately
+    setTables((prev) => prev.filter((t) => t.id !== id));
+
+    // Fire and forget with error handling
+    void onDelete(id).catch(async (err) => {
       await handleApiError(err, "Failed to delete table");
-    }
+    });
+    void queryClient.invalidateQueries({ queryKey: ["tables", restaurantId] });
   };
 
   return (
@@ -428,9 +422,7 @@ export default function FloorPlan({
             onClick={handleAddTable}
             className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition"
           >
-            <IconAfterMount>
-              <Plus className="w-5 h-5" />
-            </IconAfterMount>
+            <Plus className="w-5 h-5" />
             Add Table
           </button>
         </div>
@@ -439,9 +431,8 @@ export default function FloorPlan({
             onClick={() => setListMode(!listMode)}
             className="px-4 py-2 border-2 border-gray-200 rounded-xl font-semibold hover:bg-gray-50 transition flex items-center gap-2"
           >
-            <IconAfterMount>
-              <Table className="w-4 h-4" />
-            </IconAfterMount>
+            <Table className="w-4 h-4" />
+
             {listMode ? "Canvas Mode" : "List Mode"}
           </button>
         </div>
@@ -503,17 +494,13 @@ export default function FloorPlan({
                       onClick={() => setEditingTable(table)}
                       className="text-blue-600 hover:text-blue-900"
                     >
-                      <IconAfterMount>
-                        <Settings2 className="w-4 h-4" />
-                      </IconAfterMount>
+                      <Settings2 className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => handleDeleteTable(table.id)}
                       className="text-red-600 hover:text-red-900"
                     >
-                      <IconAfterMount>
-                        <Trash2 className="w-4 h-4" />
-                      </IconAfterMount>
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </td>
                 </tr>
@@ -564,9 +551,8 @@ export default function FloorPlan({
                     activeTable.tableType === "round" ? "rounded-full" : ""
                   }`}
                 >
-                  <IconAfterMount>
-                    <Table className="w-6 h-6 mb-1" />
-                  </IconAfterMount>
+                  <Table className="w-6 h-6 mb-1" />
+
                   <span className="font-bold">#{activeTable.tableNumber}</span>
                 </div>
               ) : null}
@@ -577,9 +563,7 @@ export default function FloorPlan({
             onClick={handleSaveLayout}
             className="absolute bottom-4 right-4 bg-blue-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-blue-700 transition shadow-lg flex items-center gap-2"
           >
-            <IconAfterMount>
-              <Save className="w-4 h-4" />
-            </IconAfterMount>
+            <Save className="w-4 h-4" />
             Save Layout
           </button>
         </div>
@@ -596,9 +580,7 @@ export default function FloorPlan({
                 onClick={() => setEditingTable(null)}
                 className="text-gray-400 hover:text-gray-600"
               >
-                <IconAfterMount>
-                  <X className="w-6 h-6" />
-                </IconAfterMount>
+                <X className="w-6 h-6" />
               </button>
             </div>
 

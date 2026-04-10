@@ -1,9 +1,9 @@
 /**
  * Dynamic Tool Discovery - MCP Integration
- * 
+ *
  * Fetches tools from registered MCP servers and dynamically populates
  * the LLM's system prompt with available capabilities.
- * 
+ *
  * This enables the IntentionEngine to automatically "learn" new capabilities
  * from table-stack and open-delivery services without manual updates.
  */
@@ -22,7 +22,7 @@ const logger = new Logger({ serviceName: "intention-engine" });
 // ============================================================================
 
 const DISCOVERY_CACHE_KEY = "mcp:discovery:cache";
-const DISCOVERY_CACHE_TTL_SECONDS = 86400; // 24 hours
+const DISCOVERY_CACHE_TTL_SECONDS = 300; // 5 minutes
 
 const redis = getRedisClient(ServiceNamespace.SHARED);
 
@@ -48,7 +48,7 @@ export async function discoverMcpTools(
   options: {
     useCache?: boolean;
     timeoutMs?: number;
-  } = {}
+  } = {},
 ): Promise<DiscoveryResult> {
   const startTime = Date.now();
   const { useCache = true, timeoutMs = 5000 } = options;
@@ -72,7 +72,8 @@ export async function discoverMcpTools(
       }
     } catch (error) {
       logger.warn({
-        message: "[MCP Discovery] Redis cache read failed, falling through to discovery",
+        message:
+          "[MCP Discovery] Redis cache read failed, falling through to discovery",
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -94,7 +95,7 @@ export async function discoverMcpTools(
     try {
       // TYPE SAFETY: Validate tool definition against Zod schema
       const parseResult = ToolDefinitionSchema.safeParse(toolDef);
-      
+
       if (!parseResult.success) {
         const errorMsg = `Tool ${toolName} failed schema validation: ${parseResult.error.message}`;
         logger.warn({
@@ -112,10 +113,11 @@ export async function discoverMcpTools(
         name: toolName,
         version: validatedToolDef.version || "1.0.0",
         description: validatedToolDef.description || `Remote tool ${toolName}`,
-        requires_confirmation: validatedToolDef.requires_confirmation || 
-                               toolName.toLowerCase().includes("book") ||
-                               toolName.toLowerCase().includes("reserve") ||
-                               toolName.toLowerCase().includes("pay"),
+        requires_confirmation:
+          validatedToolDef.requires_confirmation ||
+          toolName.toLowerCase().includes("book") ||
+          toolName.toLowerCase().includes("reserve") ||
+          toolName.toLowerCase().includes("pay"),
         category: validatedToolDef.category || "external",
         origin: validatedToolDef.origin || "mcp",
       };
@@ -136,7 +138,9 @@ export async function discoverMcpTools(
   // Update Redis cache
   try {
     const cachePayload = JSON.stringify(discoveredTools);
-    await redis.set(DISCOVERY_CACHE_KEY, cachePayload, { ex: DISCOVERY_CACHE_TTL_SECONDS });
+    await redis.set(DISCOVERY_CACHE_KEY, cachePayload, {
+      ex: DISCOVERY_CACHE_TTL_SECONDS,
+    });
   } catch (error) {
     logger.warn({
       message: "[MCP Discovery] Redis cache write failed",
@@ -172,7 +176,7 @@ export async function buildSystemPrompt(
     includeParameterSchemas?: boolean;
     userLocation?: { lat: number; lng: number };
     additionalContext?: string;
-  } = {}
+  } = {},
 ): Promise<string> {
   const {
     includeDiscoveredTools = true,
@@ -189,43 +193,48 @@ export async function buildSystemPrompt(
   const tools = discoveryResult.allTools;
 
   // Build tool capabilities section
-  const toolCapabilities = tools.map(tool => {
-    let description = `- ${tool.name}: ${tool.description}`;
-    
-    if (includeConfirmationFlags && tool.requires_confirmation) {
-      description += " [REQUIRES CONFIRMATION]";
-    }
-    
-    if (tool.origin) {
-      description += ` (from ${tool.origin})`;
-    }
-    
-    return description;
-  }).join("\n");
+  const toolCapabilities = tools
+    .map((tool) => {
+      let description = `- ${tool.name}: ${tool.description}`;
+
+      if (includeConfirmationFlags && tool.requires_confirmation) {
+        description += " [REQUIRES CONFIRMATION]";
+      }
+
+      if (tool.origin) {
+        description += ` (from ${tool.origin})`;
+      }
+
+      return description;
+    })
+    .join("\n");
 
   // Build parameter schemas if requested
   const parameterSchemas = includeParameterSchemas
-    ? tools.map(tool => {
-        const inputSchema = tool.inputSchema as {
-          properties?: Record<string, { type?: string; description?: string }>;
-          required?: string[];
-        };
+    ? tools
+        .map((tool) => {
+          const inputSchema = tool.inputSchema as {
+            properties?: Record<
+              string,
+              { type?: string; description?: string }
+            >;
+            required?: string[];
+          };
 
-        const params = Object.entries(
-          inputSchema.properties || {}
-        )
-          .map(([name, schema]) => {
-            const type = schema.type || "any";
-            const required = inputSchema.required?.includes(name)
-              ? " (required)"
-              : "";
-            const desc = schema.description ? ` - ${schema.description}` : "";
-            return `    - ${name}: ${type}${required}${desc}`;
-          })
-          .join("\n");
+          const params = Object.entries(inputSchema.properties || {})
+            .map(([name, schema]) => {
+              const type = schema.type || "any";
+              const required = inputSchema.required?.includes(name)
+                ? " (required)"
+                : "";
+              const desc = schema.description ? ` - ${schema.description}` : "";
+              return `    - ${name}: ${type}${required}${desc}`;
+            })
+            .join("\n");
 
-        return `${tool.name}:\n${params}`;
-      }).join("\n\n")
+          return `${tool.name}:\n${params}`;
+        })
+        .join("\n\n")
     : "";
 
   // Location context
@@ -271,7 +280,9 @@ Remember: You ARE capable of performing these actions through the available tool
 // Looks up tools in local registry first, then discovered tools
 // ============================================================================
 
-export async function getToolByName(name: string): Promise<ToolDefinition | undefined> {
+export async function getToolByName(
+  name: string,
+): Promise<ToolDefinition | undefined> {
   // Check local registry first
   const localTool = TOOLS.get(name);
   if (localTool) {
@@ -283,7 +294,7 @@ export async function getToolByName(name: string): Promise<ToolDefinition | unde
     const cachedJson = await redis.get(DISCOVERY_CACHE_KEY);
     if (cachedJson) {
       const cachedTools = JSON.parse(cachedJson) as ToolDefinition[];
-      const discoveredTool = cachedTools.find(t => t.name === name);
+      const discoveredTool = cachedTools.find((t) => t.name === name);
       if (discoveredTool) {
         return discoveredTool;
       }
@@ -297,7 +308,7 @@ export async function getToolByName(name: string): Promise<ToolDefinition | unde
 
   // Force discovery if not in cache
   const result = await discoverMcpTools({ useCache: false });
-  return result.allTools.find(t => t.name === name);
+  return result.allTools.find((t) => t.name === name);
 }
 
 // ============================================================================
@@ -311,6 +322,21 @@ export async function clearDiscoveryCache(): Promise<void> {
   });
 }
 
+/**
+ * Force refresh the MCP tool cache by deleting the cached entry
+ * and triggering a fresh discovery.
+ *
+ * @returns Discovery result after refresh
+ */
+export async function forceRefreshMcpCache(): Promise<DiscoveryResult> {
+  await redis.del(DISCOVERY_CACHE_KEY);
+  logger.info({
+    message: "[MCP Discovery] Cache invalidated, triggering fresh discovery",
+  });
+  const result = await discoverMcpTools({ useCache: false });
+  return result;
+}
+
 export async function getDiscoveryCacheStatus(): Promise<{
   toolCount: number;
   ageSeconds: number | null;
@@ -322,7 +348,11 @@ export async function getDiscoveryCacheStatus(): Promise<{
       return { toolCount: 0, ageSeconds: null, exists: false };
     }
     const cachedTools = JSON.parse(cachedJson) as ToolDefinition[];
-    return { toolCount: cachedTools.length, ageSeconds: DISCOVERY_CACHE_TTL_SECONDS, exists: true };
+    return {
+      toolCount: cachedTools.length,
+      ageSeconds: DISCOVERY_CACHE_TTL_SECONDS,
+      exists: true,
+    };
   } catch {
     return { toolCount: 0, ageSeconds: null, exists: false };
   }

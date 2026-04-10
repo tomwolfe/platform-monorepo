@@ -20,6 +20,7 @@ import {
   isReplayAllowed,
   rollbackReplayGuard,
   tryAcquireReplayProcessingLock,
+  releaseReplayProcessingLock,
   confirmReplayGuard,
   AppConfig,
   getRedisClient,
@@ -307,6 +308,9 @@ async function placeRealOrderImpl(
   // ZERO-TRUST: Verify on-chain transaction BEFORE inserting order
   // ============================================================================
 
+  // Track whether the replay guard has been confirmed to properly release the lock
+  let isReplayConfirmed = false;
+
   if (paymentParams?.txHash) {
     // Validate transaction hash format
     if (!isValidTxHash(paymentParams.txHash)) {
@@ -333,51 +337,61 @@ async function placeRealOrderImpl(
       );
     }
 
-    // PHASE 1b: Atomically register the txHash in DB to prevent replay attacks
-    const replayCheck = await isReplayAllowed({
-      txHash: paymentParams.txHash as Hash,
-      appSource: "open-delivery",
-      entityId: orderId,
-    });
+    try {
+      // PHASE 1b: Atomically register the txHash in DB to prevent replay attacks
+      const replayCheck = await isReplayAllowed({
+        txHash: paymentParams.txHash as Hash,
+        appSource: "open-delivery",
+        entityId: orderId,
+      });
 
-    if (!replayCheck) {
-      throw new Error(
-        `Payment transaction ${paymentParams.txHash.substring(0, 10)}... was already used or blocked.`,
-      );
+      if (!replayCheck) {
+        throw new Error(
+          `Payment transaction ${paymentParams.txHash.substring(0, 10)}... was already used or blocked.`,
+        );
+      }
+
+      // Verify transaction on-chain using shared utility
+      const slippageBps =
+        paymentCurrency === "ETH" ? AppConfig.getSlippageBps() : undefined;
+      const verificationResult = await verifyTransaction({
+        txHash: paymentParams.txHash as Hash,
+        expectedValue: BigInt(totalCrypto),
+        walletAddress: paymentParams.walletAddress as Address,
+        chainId: paymentParams.chainId,
+        expectedRecipient: paymentParams.restaurantWalletAddress as
+          | Address
+          | undefined,
+        paymentCurrency,
+        orderId, // Required for signature verification
+        signature: paymentParams.signature as `0x${string}` | undefined,
+        appSource: "open-delivery",
+        slippageBps,
+      });
+
+      if (!verificationResult.success) {
+        // COMPENSATING ACTION: Rollback the replay guard registration
+        // so the user can retry with this valid txHash
+        await rollbackReplayGuard(paymentParams.txHash as Hash);
+        throw new Error(
+          `Payment verification failed: ${verificationResult.error}`,
+        );
+      }
+
+      logger.info(`[Order ${orderId}] Payment verified on-chain`, {
+        txHash: paymentParams.txHash,
+        confirmations: verificationResult.receipt?.confirmations,
+        blockNumber: verificationResult.receipt?.blockNumber.toString(),
+      });
+    } finally {
+      // If the replay guard was never confirmed, release the processing lock
+      // so the user can retry without waiting for the TTL to expire
+      if (!isReplayConfirmed && paymentParams?.txHash) {
+        await releaseReplayProcessingLock(paymentParams.txHash as Hash).catch(
+          console.error,
+        );
+      }
     }
-
-    // Verify transaction on-chain using shared utility
-    const slippageBps =
-      paymentCurrency === "ETH" ? AppConfig.getSlippageBps() : undefined;
-    const verificationResult = await verifyTransaction({
-      txHash: paymentParams.txHash as Hash,
-      expectedValue: BigInt(totalCrypto),
-      walletAddress: paymentParams.walletAddress as Address,
-      chainId: paymentParams.chainId,
-      expectedRecipient: paymentParams.restaurantWalletAddress as
-        | Address
-        | undefined,
-      paymentCurrency,
-      orderId, // Required for signature verification
-      signature: paymentParams.signature as `0x${string}` | undefined,
-      appSource: "open-delivery",
-      slippageBps,
-    });
-
-    if (!verificationResult.success) {
-      // COMPENSATING ACTION: Rollback the replay guard registration
-      // so the user can retry with this valid txHash
-      await rollbackReplayGuard(paymentParams.txHash as Hash);
-      throw new Error(
-        `Payment verification failed: ${verificationResult.error}`,
-      );
-    }
-
-    logger.info(`[Order ${orderId}] Payment verified on-chain`, {
-      txHash: paymentParams.txHash,
-      confirmations: verificationResult.receipt?.confirmations,
-      blockNumber: verificationResult.receipt?.blockNumber.toString(),
-    });
   }
 
   try {
@@ -500,6 +514,7 @@ async function placeRealOrderImpl(
     // This upgrades the processing lock to a confirmed state with 24h TTL
     if (paymentParams?.txHash) {
       await confirmReplayGuard(paymentParams.txHash as Hash);
+      isReplayConfirmed = true;
     }
 
     // Trigger the outbox relay AFTER the transaction commits.

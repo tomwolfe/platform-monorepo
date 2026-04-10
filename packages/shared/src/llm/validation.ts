@@ -27,7 +27,7 @@
  */
 
 import { z } from "zod";
-import { safeParseJson } from "../utils/json-parser";
+import { safeParseJson, sanitizeJsonOutput } from "../utils/json-parser";
 import { Logger } from "../logger";
 
 const logger = new Logger({ serviceName: "llm-validation" });
@@ -139,6 +139,63 @@ function describeSchema<T>(schema: z.ZodType<T>): string {
   } catch {
     return "Complex schema (unable to describe)";
   }
+}
+
+/**
+ * Create an LLM-based repair function for use with parseJsonWithFallback.
+ * This decouples the heavy AI SDK dependencies from the generic JSON parser.
+ */
+export function createLlmRepairFn(options: {
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+}) {
+  const {
+    apiKey = process.env.LLM_API_KEY,
+    baseUrl = process.env.LLM_BASE_URL,
+    model = process.env.LLM_MODEL || "gpt-4o-mini",
+  } = options;
+
+  return async function repairJson(
+    malformedJson: string,
+    schemaDescription?: string,
+  ): Promise<string | null> {
+    if (!apiKey) return null;
+
+    try {
+      const { generateText } = await import("ai");
+      const { createOpenAI } = await import("@ai-sdk/openai");
+
+      const openai = createOpenAI({
+        apiKey,
+        baseURL: baseUrl,
+      });
+
+      const schemaHint = schemaDescription
+        ? `\nExpected schema: ${schemaDescription}`
+        : "";
+
+      const prompt = `Fix this malformed JSON to match the expected schema. Output ONLY valid JSON, no explanations.
+${schemaHint}
+
+Malformed JSON:
+${malformedJson.substring(0, 2000)}
+`;
+
+      const { text } = await generateText({
+        model: openai(model),
+        prompt,
+        maxTokens: 1000,
+        temperature: 0.1,
+      });
+
+      const repaired = sanitizeJsonOutput(text);
+      JSON.parse(repaired);
+      return repaired;
+    } catch {
+      return null;
+    }
+  };
 }
 
 // ============================================================================

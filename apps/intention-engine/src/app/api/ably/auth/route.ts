@@ -3,6 +3,7 @@ import { createPublicAblyAuthHandler } from "@repo/shared/realtime/ably-auth";
 import {
   rateLimitMiddleware,
   type RateLimitResult,
+  type EndpointRateLimitConfig,
 } from "@repo/shared/middleware/rate-limiter";
 
 // Export standardized Ably auth route using factory
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
       burstAllowance: 2,
       keyPrefix: "ratelimit:ably-auth:",
     },
-  } as any);
+  } as Partial<EndpointRateLimitConfig>);
 
   if (!rlResult.allowed) {
     const result = rlResult.result as RateLimitResult;
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
       { error: "Rate limit exceeded", retryAfter: result.retryAfter },
       {
         status: 429,
-        headers: result.headers as any,
+        headers: result.headers as HeadersInit,
       },
     );
   }

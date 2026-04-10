@@ -38,6 +38,8 @@ export {
   tracedFetch,
   setTracingStorage,
   getTracingStorage,
+  secureConsole,
+  scrubPII,
   type LogContext,
   type LogLevel,
 } from "./logger";
@@ -315,6 +317,7 @@ export {
   type ApiErrorResponse,
   type ApiSuccessResponse,
   createApiError,
+  createErrorResponse,
   validateErrorResponse,
   getErrorStatusCode,
 } from "./utils/api-error";

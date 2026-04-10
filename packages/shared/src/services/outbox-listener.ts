@@ -41,7 +41,7 @@
  */
 
 import { getDb, outbox } from "@repo/database";
-import { sql, eq, and, lt, isNull } from "drizzle-orm";
+import { sql, eq, and, lt, isNull, type PgTransaction } from "drizzle-orm";
 import { Redis } from "@upstash/redis";
 import { getRedisClient, ServiceNamespace } from "../redis";
 import {
@@ -124,7 +124,8 @@ export interface OutboxListenerStats {
  * });
  */
 export async function notifyOutboxEvent(
-  tx: any,
+  // Drizzle transaction object ( PgTransaction<any> )
+  tx: { execute: (sql: unknown) => Promise<void> },
   notification: {
     executionId: string;
     eventType: OutboxEventType;

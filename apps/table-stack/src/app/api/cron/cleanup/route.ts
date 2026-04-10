@@ -11,6 +11,7 @@ import {
   getRedisClient,
   ServiceNamespace,
   withDistributedLock,
+  createErrorResponse,
 } from "@repo/shared";
 
 export const runtime = "nodejs";
@@ -93,9 +94,10 @@ async function getCronHandler(req: NextRequest) {
     logger.error("Cleanup failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    return NextResponse.json(
-      { message: "Internal server error" },
-      { status: 500 },
+    return createErrorResponse(
+      error instanceof Error ? error.message : "Internal server error",
+      500,
+      "INTERNAL_ERROR",
     );
   }
 }

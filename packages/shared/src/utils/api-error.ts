@@ -240,6 +240,43 @@ export function createApiError(
 }
 
 /**
+ * Create a NextResponse JSON error with standardized format.
+ * This is the lowest-friction way to return an error from an API route.
+ *
+ * @param message - Human-readable error message
+ * @param status - HTTP status code (default 500)
+ * @param code - Machine-readable error code (default INTERNAL_ERROR)
+ * @param details - Optional additional details
+ * @param options - Optional formatting options (traceId, includeStack)
+ * @returns NextResponse with standardized JSON error body
+ *
+ * @example
+ * ```typescript
+ * export async function GET(req: NextRequest) {
+ *   try {
+ *     // ...
+ *   } catch (err) {
+ *     return createErrorResponse(err instanceof Error ? err.message : "Failed", 500, "DATABASE_ERROR");
+ *   }
+ * }
+ * ```
+ */
+export function createErrorResponse(
+  message: string,
+  status: number = 500,
+  code: EngineErrorCode = "INTERNAL_ERROR",
+  details?: unknown,
+  options?: FormatApiErrorOptions,
+): Response {
+  const { Response: GlobalResponse } = globalThis;
+  const body = formatApiError(new Error(message), code, details, options);
+  return new GlobalResponse(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/**
  * Format a success response
  *
  * @param data - Response data

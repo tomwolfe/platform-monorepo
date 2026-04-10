@@ -23,6 +23,9 @@
 
 import { Redis } from "@upstash/redis";
 import { LRUCache } from "lru-cache";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "rate-limiter" });
 
 // ============================================================================
 // CONFIGURATION
@@ -157,10 +160,9 @@ export class RateLimiterService {
     try {
       return await this.checkRateLimitRedis(userId, endpointType);
     } catch (error) {
-      console.error(
-        "[RateLimiter] Redis error, falling back to LRU cache:",
-        error,
-      );
+      logger.error("Redis error, falling back to LRU cache", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       // Fail-degraded: Use in-memory LRU cache to preserve availability
       return this.checkRateLimitLRU(userId, endpointType);
     }
@@ -365,7 +367,9 @@ export async function rateLimitMiddleware(
       result,
     };
   } catch (error) {
-    console.error("[RateLimiter] Middleware error:", error);
+    logger.error("Middleware error", {
+      error: error instanceof Error ? error.message : String(error),
+    });
 
     // DEGRADED MODE: Fall back to in-memory LRU cache when Redis is unavailable.
     // This preserves security (rate limiting still works per-instance) while
@@ -388,12 +392,20 @@ export async function rateLimitMiddleware(
       };
     } catch (lruError) {
       // Absolute last resort - this should never happen
-      console.error("[RateLimiter] LRU cache fallback also failed:", lruError);
+      logger.error("LRU cache fallback also failed", {
+        error: lruError instanceof Error ? lruError.message : String(lruError),
+      });
 
       // Fail-open for non-critical endpoints, fail-closed for critical ones
       const isCriticalEndpoint = endpointType !== "cache";
 
       if (isCriticalEndpoint) {
+        // In production, fail-closed for critical endpoints when rate limiting is unavailable
+        logger.fatal("Rate limiter completely unavailable - blocking request", {
+          userId,
+          endpointType,
+          environment: process.env.NODE_ENV,
+        });
         return {
           allowed: false,
           result: {

@@ -37,10 +37,28 @@
  * @since 1.0.0
  */
 
-import type { Database } from '../types/database';
-import { semanticMemories, cosineSimilarity, type SemanticMemorySearchQuery, type SemanticMemorySearchResult } from '@repo/database';
-import { sql, eq, and, gte, lte, isNull, or, desc, type SQL } from 'drizzle-orm';
-import { z } from 'zod';
+import type { Database } from "../types/database";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "pgvector-store" });
+import {
+  semanticMemories,
+  cosineSimilarity,
+  type SemanticMemorySearchQuery,
+  type SemanticMemorySearchResult,
+} from "@repo/database";
+import {
+  sql,
+  eq,
+  and,
+  gte,
+  lte,
+  isNull,
+  or,
+  desc,
+  type SQL,
+} from "drizzle-orm";
+import { z } from "zod";
 
 // ============================================================================
 // SCHEMAS
@@ -59,12 +77,14 @@ export const PGVectorSearchQuerySchema = z.object({
   /** Filter by restaurant ID */
   restaurantId: z.string().uuid().optional(),
   /** Filter by outcome */
-  outcome: z.enum(['success', 'failed', 'partial', 'abandoned']).optional(),
+  outcome: z.enum(["success", "failed", "partial", "abandoned"]).optional(),
   /** Time range filter */
-  timeRange: z.object({
-    after: z.date().optional(),
-    before: z.date().optional(),
-  }).optional(),
+  timeRange: z
+    .object({
+      after: z.date().optional(),
+      before: z.date().optional(),
+    })
+    .optional(),
   /** Maximum results to return */
   limit: z.number().int().positive().default(5),
   /** Minimum similarity threshold (0-1) */
@@ -85,7 +105,7 @@ export const PGVectorSearchResultSchema = z.object({
   rawText: z.string(),
   parameters: z.record(z.unknown()).optional(),
   timestamp: z.string(),
-  outcome: z.enum(['success', 'failed', 'partial', 'abandoned']).optional(),
+  outcome: z.enum(["success", "failed", "partial", "abandoned"]).optional(),
   restaurantId: z.string().uuid().optional(),
   restaurantName: z.string().optional(),
   restaurantSlug: z.string().optional(),
@@ -93,13 +113,15 @@ export const PGVectorSearchResultSchema = z.object({
   similarity: z.number().min(0).max(1),
   rank: z.number().int().positive(),
   // Optional business data (when includeBusinessData is true)
-  businessData: z.object({
-    restaurantAvailable: z.boolean().optional(),
-    restaurantOpeningTime: z.string().optional(),
-    restaurantClosingTime: z.string().optional(),
-    userSubscriptionTier: z.string().optional(),
-    userHasActiveSubscription: z.boolean().optional(),
-  }).optional(),
+  businessData: z
+    .object({
+      restaurantAvailable: z.boolean().optional(),
+      restaurantOpeningTime: z.string().optional(),
+      restaurantClosingTime: z.string().optional(),
+      userSubscriptionTier: z.string().optional(),
+      userHasActiveSubscription: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export type PGVectorSearchResult = z.infer<typeof PGVectorSearchResultSchema>;
@@ -137,13 +159,17 @@ export class HybridSemanticStore {
 
     try {
       // Verify pgvector extension is available
-      await this.db.execute(sql`SELECT 1 FROM pg_extension WHERE extname = 'vector' LIMIT 1`);
+      await this.db.execute(
+        sql`SELECT 1 FROM pg_extension WHERE extname = 'vector' LIMIT 1`,
+      );
       this.initialized = true;
-      console.log('[PGVectorStore] pgvector extension verified');
+      logger.info("pgvector extension verified");
     } catch (error) {
-      console.error('[PGVectorStore] pgvector extension not enabled:', error);
+      logger.error("pgvector extension not enabled", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw new Error(
-        'pgvector extension not enabled. Run: CREATE EXTENSION IF NOT EXISTS vector;'
+        "pgvector extension not enabled. Run: CREATE EXTENSION IF NOT EXISTS vector;",
       );
     }
   }
@@ -158,30 +184,36 @@ export class HybridSemanticStore {
    * @returns Created memory entry with ID
    */
   async addEntry(
-    entry: z.infer<typeof import('./semantic-memory').SemanticMemoryEntrySchema>
+    entry: z.infer<
+      typeof import("./semantic-memory").SemanticMemoryEntrySchema
+    >,
   ): Promise<{ id: string }> {
     await this.initialize();
 
-    const result = await this.db.insert(semanticMemories).values({
-      id: entry.id,
+    const result = await this.db
+      .insert(semanticMemories)
+      .values({
+        id: entry.id,
+        userId: entry.userId,
+        intentType: entry.intentType,
+        rawText: entry.rawText,
+        embedding: entry.embedding,
+        parameters: entry.parameters,
+        timestamp: new Date(entry.timestamp),
+        executionId: entry.executionId,
+        restaurantId: entry.restaurantId,
+        restaurantSlug: entry.restaurantSlug,
+        restaurantName: entry.restaurantName,
+        outcome: entry.outcome,
+        metadata: entry.metadata,
+      })
+      .returning({ id: semanticMemories.id });
+
+    logger.debug("Added memory", {
+      memoryId: entry.id,
       userId: entry.userId,
       intentType: entry.intentType,
-      rawText: entry.rawText,
-      embedding: entry.embedding,
-      parameters: entry.parameters,
-      timestamp: new Date(entry.timestamp),
-      executionId: entry.executionId,
-      restaurantId: entry.restaurantId,
-      restaurantSlug: entry.restaurantSlug,
-      restaurantName: entry.restaurantName,
-      outcome: entry.outcome,
-      metadata: entry.metadata,
-    }).returning({ id: semanticMemories.id });
-
-    console.log(
-      `[HybridSemanticStore] Added memory ${entry.id} for user ${entry.userId} ` +
-      `(intent: ${entry.intentType})`
-    );
+    });
 
     return result[0]!;
   }
@@ -198,7 +230,10 @@ export class HybridSemanticStore {
     await this.initialize();
 
     // Build similarity expression
-    const similarityExpr = cosineSimilarity(semanticMemories.embedding, query.queryVector);
+    const similarityExpr = cosineSimilarity(
+      semanticMemories.embedding,
+      query.queryVector,
+    );
 
     // Build WHERE conditions
     const conditions: SQL[] = [];
@@ -208,11 +243,15 @@ export class HybridSemanticStore {
     }
 
     if (query.intentType) {
-      conditions.push(sql`${semanticMemories.intentType} = ${query.intentType}`);
+      conditions.push(
+        sql`${semanticMemories.intentType} = ${query.intentType}`,
+      );
     }
 
     if (query.restaurantId) {
-      conditions.push(sql`${semanticMemories.restaurantId} = ${query.restaurantId}`);
+      conditions.push(
+        sql`${semanticMemories.restaurantId} = ${query.restaurantId}`,
+      );
     }
 
     if (query.outcome) {
@@ -221,10 +260,14 @@ export class HybridSemanticStore {
 
     if (query.timeRange) {
       if (query.timeRange.after) {
-        conditions.push(sql`${semanticMemories.timestamp} >= ${query.timeRange.after}`);
+        conditions.push(
+          sql`${semanticMemories.timestamp} >= ${query.timeRange.after}`,
+        );
       }
       if (query.timeRange.before) {
-        conditions.push(sql`${semanticMemories.timestamp} <= ${query.timeRange.before}`);
+        conditions.push(
+          sql`${semanticMemories.timestamp} <= ${query.timeRange.before}`,
+        );
       }
     }
 
@@ -254,7 +297,7 @@ export class HybridSemanticStore {
       .limit(query.limit);
 
     // Map to result format with ranking
-    return results.map(function(result: any, index: number): PGVectorSearchResult {
+    return results.map(function (result, index): PGVectorSearchResult {
       return {
         id: result.id,
         userId: result.userId,
@@ -262,7 +305,7 @@ export class HybridSemanticStore {
         rawText: result.rawText,
         parameters: result.parameters as Record<string, unknown> | undefined,
         timestamp: result.timestamp.toISOString(),
-        outcome: result.outcome as PGVectorSearchResult['outcome'],
+        outcome: result.outcome as PGVectorSearchResult["outcome"],
         restaurantId: result.restaurantId ?? undefined,
         restaurantName: result.restaurantName ?? undefined,
         restaurantSlug: result.restaurantSlug ?? undefined,
@@ -290,7 +333,7 @@ export class HybridSemanticStore {
    */
   async searchWithBusinessData(
     query: PGVectorSearchQuery,
-    joinConfig: BusinessDataJoinConfig = {}
+    joinConfig: BusinessDataJoinConfig = {},
   ): Promise<PGVectorSearchResult[]> {
     await this.initialize();
 
@@ -301,14 +344,14 @@ export class HybridSemanticStore {
     } = joinConfig;
 
     // Import business tables dynamically
-    const {
-      restaurants,
-      users,
-      restaurantReservations,
-    } = await import('@repo/database');
+    const { restaurants, users, restaurantReservations } =
+      await import("@repo/database");
 
     // Build similarity expression
-    const similarityExpr = cosineSimilarity(semanticMemories.embedding, query.queryVector);
+    const similarityExpr = cosineSimilarity(
+      semanticMemories.embedding,
+      query.queryVector,
+    );
 
     // Build base WHERE conditions
     const conditions: SQL[] = [];
@@ -318,11 +361,15 @@ export class HybridSemanticStore {
     }
 
     if (query.intentType) {
-      conditions.push(sql`${semanticMemories.intentType} = ${query.intentType}`);
+      conditions.push(
+        sql`${semanticMemories.intentType} = ${query.intentType}`,
+      );
     }
 
     if (query.restaurantId) {
-      conditions.push(sql`${semanticMemories.restaurantId} = ${query.restaurantId}`);
+      conditions.push(
+        sql`${semanticMemories.restaurantId} = ${query.restaurantId}`,
+      );
     }
 
     if (query.outcome) {
@@ -331,17 +378,21 @@ export class HybridSemanticStore {
 
     if (query.timeRange) {
       if (query.timeRange.after) {
-        conditions.push(sql`${semanticMemories.timestamp} >= ${query.timeRange.after}`);
+        conditions.push(
+          sql`${semanticMemories.timestamp} >= ${query.timeRange.after}`,
+        );
       }
       if (query.timeRange.before) {
-        conditions.push(sql`${semanticMemories.timestamp} <= ${query.timeRange.before}`);
+        conditions.push(
+          sql`${semanticMemories.timestamp} <= ${query.timeRange.before}`,
+        );
       }
     }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
     // Build select columns
-    const selectColumns: any = {
+    const selectColumns: Record<string, unknown> = {
       id: semanticMemories.id,
       userId: semanticMemories.userId,
       intentType: semanticMemories.intentType,
@@ -368,24 +419,24 @@ export class HybridSemanticStore {
     }
 
     // Build query with joins
-    let queryBuilder: any = this.db
-      .select(selectColumns)
-      .from(semanticMemories);
+    // Note: Drizzle ORM dynamic query building requires type assertions for join chains.
+    // The result shape is validated at runtime by the mapping step below.
+    let queryBuilder = this.db.select(selectColumns).from(semanticMemories);
 
     // Left join restaurants if needed
     if (includeRestaurantAvailability || includeReservationConflicts) {
       queryBuilder = queryBuilder.leftJoin(
         restaurants,
-        sql`${semanticMemories.restaurantId} = ${restaurants.id}`
-      );
+        sql`${semanticMemories.restaurantId} = ${restaurants.id}`,
+      ) as typeof queryBuilder;
     }
 
     // Left join users if needed
     if (includeUserSubscription) {
       queryBuilder = queryBuilder.leftJoin(
         users,
-        sql`${semanticMemories.userId} = ${users.clerkId}`
-      );
+        sql`${semanticMemories.userId} = ${users.clerkId}`,
+      ) as typeof queryBuilder;
     }
 
     // Add reservation conflict check if needed
@@ -403,35 +454,74 @@ export class HybridSemanticStore {
     }
 
     // Execute query
-    const results = await queryBuilder
+    const results = await (
+      queryBuilder as {
+        where: (w: unknown) => {
+          having: (h: unknown) => {
+            orderBy: (o: unknown) => {
+              limit: (l: number) => Promise<unknown[]>;
+            };
+          };
+        };
+      }
+    )
       .where(whereClause)
       .having(sql`(${similarityExpr}) >= ${query.minSimilarity}`)
       .orderBy(desc(sql`(${similarityExpr})`))
       .limit(query.limit);
 
     // Map to result format with business data
-    return results.map((result: any, index: number): PGVectorSearchResult => ({
-      id: result.id,
-      userId: result.userId,
-      intentType: result.intentType,
-      rawText: result.rawText,
-      parameters: result.parameters as Record<string, unknown> | undefined,
-      timestamp: result.timestamp.toISOString(),
-      outcome: result.outcome as PGVectorSearchResult['outcome'],
-      restaurantId: result.restaurantId ?? undefined,
-      restaurantName: result.restaurantName ?? undefined,
-      restaurantSlug: result.restaurantSlug ?? undefined,
-      metadata: result.metadata as Record<string, unknown> | undefined,
-      similarity: result.similarity ?? 0,
-      rank: index + 1,
-      businessData: (includeRestaurantAvailability || includeUserSubscription) ? {
-        restaurantAvailable: !!result.restaurantAvailable,
-        restaurantOpeningTime: result.restaurantOpeningTime ?? undefined,
-        restaurantClosingTime: result.restaurantClosingTime ?? undefined,
-        userSubscriptionTier: result.userSubscriptionTier ?? undefined,
-        userHasActiveSubscription: !!result.userSubscriptionTier,
-      } : undefined,
-    }));
+    return results.map(
+      (
+        result: Record<string, unknown>,
+        index: number,
+      ): PGVectorSearchResult => {
+        const timestamp =
+          result.timestamp instanceof Date
+            ? result.timestamp.toISOString()
+            : String(result.timestamp);
+
+        return {
+          id: String(result.id ?? ""),
+          userId: String(result.userId ?? ""),
+          intentType: String(result.intentType ?? ""),
+          rawText: String(result.rawText ?? ""),
+          parameters:
+            (result.parameters as Record<string, unknown> | undefined) ??
+            undefined,
+          timestamp,
+          outcome: result.outcome as PGVectorSearchResult["outcome"],
+          restaurantId: result.restaurantId
+            ? String(result.restaurantId)
+            : undefined,
+          restaurantName: result.restaurantName
+            ? String(result.restaurantName)
+            : undefined,
+          restaurantSlug: result.restaurantSlug
+            ? String(result.restaurantSlug)
+            : undefined,
+          metadata:
+            (result.metadata as Record<string, unknown> | undefined) ??
+            undefined,
+          similarity:
+            typeof result.similarity === "number" ? result.similarity : 0,
+          rank: index + 1,
+          businessData:
+            includeRestaurantAvailability || includeUserSubscription
+              ? {
+                  restaurantAvailable: !!result.restaurantAvailable,
+                  restaurantOpeningTime:
+                    result.restaurantOpeningTime ?? undefined,
+                  restaurantClosingTime:
+                    result.restaurantClosingTime ?? undefined,
+                  userSubscriptionTier:
+                    result.userSubscriptionTier ?? undefined,
+                  userHasActiveSubscription: !!result.userSubscriptionTier,
+                }
+              : undefined,
+        };
+      },
+    );
   }
 
   /**
@@ -478,12 +568,16 @@ export class HybridSemanticStore {
 
     // Get unique users
     const usersResult = await this.db
-      .select({ count: sql<number>`count(distinct ${semanticMemories.userId})` })
+      .select({
+        count: sql<number>`count(distinct ${semanticMemories.userId})`,
+      })
       .from(semanticMemories);
 
     // Get unique restaurants
     const restaurantsResult = await this.db
-      .select({ count: sql<number>`count(distinct ${semanticMemories.restaurantId})` })
+      .select({
+        count: sql<number>`count(distinct ${semanticMemories.restaurantId})`,
+      })
       .from(semanticMemories);
 
     const totalEntries = totalResult[0]?.count ?? 0;
@@ -505,7 +599,7 @@ export class HybridSemanticStore {
   async analyze(): Promise<void> {
     await this.initialize();
     await this.db.execute(sql`ANALYZE semantic_memories`);
-    console.log('[PGVectorStore] Statistics updated for query planner');
+    logger.debug("Statistics updated for query planner");
   }
 }
 

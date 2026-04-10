@@ -376,6 +376,9 @@ export class PGVectorStore implements VectorStore {
     const batchSize = 100;
 
     await this.db.transaction(async (tx) => {
+      // Enforce timeout to prevent lock exhaustion in serverless
+      await tx.execute(sql`SET LOCAL statement_timeout = '5000'`);
+
       for (let i = 0; i < entries.length; i += batchSize) {
         const batch = entries.slice(i, i + batchSize);
 

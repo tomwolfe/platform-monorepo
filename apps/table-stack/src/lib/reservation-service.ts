@@ -359,6 +359,9 @@ export class ReservationService {
 
     // Execute atomic transaction
     const result = await db.transaction(async (tx) => {
+      // Enforce strict DB-level timeout to prevent dangling locks in serverless
+      await tx.execute(sql`SET LOCAL statement_timeout = '5000'`);
+
       // Auto-assign logic using atomic SQL CTE to prevent race conditions
       // Using a CTE (Common Table Expression) ensures the SELECT ... FOR UPDATE
       // and the INSERT happen in a single atomic SQL statement, avoiding the

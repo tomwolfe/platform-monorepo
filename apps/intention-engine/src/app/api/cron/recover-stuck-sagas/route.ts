@@ -4,6 +4,7 @@ import {
   Logger,
   getRedisClient,
   ServiceNamespace,
+  createErrorResponse,
 } from "@repo/shared";
 import { QStashService } from "@repo/shared/services/qstash";
 
@@ -20,6 +21,39 @@ const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_RECOVERY_ATTEMPTS = 3; // Alert if exceeded
 const SAGA_STATE_KEY_PREFIX = "saga:state";
 const SAGA_COMPLETION_KEY_PREFIX = "saga:completion";
+
+// ============================================================================
+// ALERTING
+// ============================================================================
+
+/**
+ * Send an alert webhook if stuck sagas exceed threshold.
+ */
+async function sendAlertWebhook(
+  alertType: string,
+  details: Record<string, unknown>,
+): Promise<void> {
+  const webhookUrl = process.env.ALERT_WEBHOOK_URL;
+  if (!webhookUrl) return; // No webhook configured
+
+  try {
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        alertType,
+        service: "recover-stuck-sagas",
+        environment: process.env.NODE_ENV,
+        timestamp: new Date().toISOString(),
+        ...details,
+      }),
+    });
+  } catch (error) {
+    logger.warn("Failed to send alert webhook", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 // ============================================================================
 // TYPES
@@ -290,6 +324,20 @@ async function postHandler(req: NextRequest) {
       totalStuckFound: results.length,
     });
 
+    // Alert if stuck sagas exceed threshold
+    const alertThreshold = parseInt(
+      process.env.STUCK_SAGA_ALERT_THRESHOLD || "5",
+    );
+    if (results.length >= alertThreshold || alertedCount > 0) {
+      await sendAlertWebhook("stuck_saga_threshold_exceeded", {
+        scannedCount: keys.length,
+        totalStuck: results.length,
+        recoveredCount,
+        alertedCount,
+        alertThreshold,
+      });
+    }
+
     return NextResponse.json({
       success: true,
       message: `Recovery complete: ${recoveredCount} recovered, ${alertedCount} alerted`,
@@ -306,13 +354,16 @@ async function postHandler(req: NextRequest) {
       error: error instanceof Error ? error.message : String(error),
     });
 
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Unknown error occurred",
-      },
-      { status: 500 },
+    // Alert on complete failure
+    await sendAlertWebhook("cron_job_failure", {
+      service: "recover-stuck-sagas",
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    return createErrorResponse(
+      error instanceof Error ? error.message : "Unknown error occurred",
+      500,
+      "INTERNAL_ERROR",
     );
   }
 }

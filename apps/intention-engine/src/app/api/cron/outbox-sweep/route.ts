@@ -20,13 +20,47 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { withCronAuth, Logger, withDistributedLock } from "@repo/shared";
+import {
+  withCronAuth,
+  Logger,
+  withDistributedLock,
+  createErrorResponse,
+} from "@repo/shared";
 import { getOutboxListener } from "@repo/shared";
 
 export const runtime = "nodejs";
 export const maxDuration = 10; // Vercel Hobby limit
 
 const logger = new Logger({ serviceName: "outbox-sweep-cron" });
+
+/**
+ * Send an alert webhook if outbox sweep fails or backlog exceeds threshold.
+ */
+async function sendAlertWebhook(
+  alertType: string,
+  details: Record<string, unknown>,
+): Promise<void> {
+  const webhookUrl = process.env.ALERT_WEBHOOK_URL;
+  if (!webhookUrl) return;
+
+  try {
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        alertType,
+        service: "outbox-sweep",
+        environment: process.env.NODE_ENV,
+        timestamp: new Date().toISOString(),
+        ...details,
+      }),
+    });
+  } catch (error) {
+    logger.warn("Failed to send alert webhook", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 async function cronHandler(req: NextRequest): Promise<NextResponse> {
   const startTime = performance.now();
@@ -74,6 +108,19 @@ async function cronHandler(req: NextRequest): Promise<NextResponse> {
       stats,
     });
 
+    // Alert if failed events exceed threshold
+    const failThreshold = parseInt(
+      process.env.OUTBOX_FAIL_ALERT_THRESHOLD || "10",
+    );
+    if (stats.eventsFailed >= failThreshold) {
+      await sendAlertWebhook("outbox_failure_threshold_exceeded", {
+        eventsFailed: stats.eventsFailed,
+        eventsProcessed: stats.eventsProcessed,
+        notificationsReceived: stats.notificationsReceived,
+        threshold: failThreshold,
+      });
+    }
+
     return NextResponse.json({
       success: true,
       message: "Outbox sweep completed",
@@ -92,12 +139,15 @@ async function cronHandler(req: NextRequest): Promise<NextResponse> {
       error: error instanceof Error ? error.message : String(error),
     });
 
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 },
+    await sendAlertWebhook("cron_job_failure", {
+      service: "outbox-sweep",
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    return createErrorResponse(
+      error instanceof Error ? error.message : "Unknown error",
+      500,
+      "INTERNAL_ERROR",
     );
   }
 }

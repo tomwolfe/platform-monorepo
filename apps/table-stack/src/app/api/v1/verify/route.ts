@@ -64,7 +64,7 @@ async function getHandler(req: NextRequest) {
       return NextResponse.json(
         formatApiError(
           new Error("Too many verification attempts. Please try again later."),
-          "RATE_LIMITED",
+          "RATE_LIMIT_EXCEEDED",
         ),
         { status: 429 },
       );

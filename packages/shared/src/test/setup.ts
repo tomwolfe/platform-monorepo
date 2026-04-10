@@ -9,8 +9,19 @@
 
 import { sql } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-serverless";
-import { pushSchema } from "drizzle-kit/api";
 import * as schema from "@repo/database";
+
+// Lazily import drizzle-kit to avoid hard dependency requirement
+async function getPushSchema() {
+  try {
+    const { pushSchema } = await import("drizzle-kit/api");
+    return pushSchema;
+  } catch {
+    throw new Error(
+      "drizzle-kit is required for test database setup. Install it with: pnpm add -D drizzle-kit",
+    );
+  }
+}
 
 /**
  * Push current schema to test database
@@ -18,6 +29,7 @@ import * as schema from "@repo/database";
  */
 export async function setupTestDatabase(databaseUrl: string): Promise<void> {
   const db = drizzle(sql(databaseUrl));
+  const pushSchema = await getPushSchema();
 
   // Push schema to test database (creates tables if they don't exist)
   await pushSchema(db, schema, {

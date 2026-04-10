@@ -200,6 +200,9 @@ export class OutboxService {
         if (event.attempts >= 3) {
           // Atomic: insert into DLQ + delete from outbox in single transaction
           await db.transaction(async (tx) => {
+            // Enforce timeout to prevent lock exhaustion in serverless
+            await tx.execute(sql`SET LOCAL statement_timeout = '5000'`);
+
             await tx.insert(outboxDlq).values({
               id: crypto.randomUUID(),
               originalEventId: event.id,
@@ -362,6 +365,9 @@ export class OutboxService {
 
     // Atomic: insert back into outbox + delete from DLQ in single transaction
     await db.transaction(async (tx) => {
+      // Enforce timeout to prevent lock exhaustion in serverless
+      await tx.execute(sql`SET LOCAL statement_timeout = '5000'`);
+
       await tx.insert(outbox).values({
         id: crypto.randomUUID(),
         eventType: event.eventType,

@@ -215,6 +215,92 @@ const DEFAULT_OPTIONS: Partial<LoggerOptions> = {
 };
 
 // ============================================================================
+// PII SCRUBBER
+// Regex-based patterns to detect and redact sensitive data before logging
+// ============================================================================
+
+/**
+ * PII and secret patterns to redact from log output.
+ * Each pattern has a replacement string for masking.
+ */
+const PII_PATTERNS: { pattern: RegExp; replacement: string }[] = [
+  // Email addresses
+  {
+    pattern: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+    replacement: "[EMAIL_REDACTED]",
+  },
+  // Phone numbers (various formats)
+  {
+    pattern: /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g,
+    replacement: "[PHONE_REDACTED]",
+  },
+  // US SSN
+  {
+    pattern: /\b\d{3}-\d{2}-\d{4}\b/g,
+    replacement: "[SSN_REDACTED]",
+  },
+  // Credit card numbers (13-19 digits, with optional spaces/dashes)
+  {
+    pattern: /\b(?:\d{4}[-\s]?){3}\d{4,7}\b/g,
+    replacement: "[CC_REDACTED]",
+  },
+  // JWT tokens (header.payload.signature)
+  {
+    pattern: /eyJ[A-Za-z0-9-_]+\.eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+/g,
+    replacement: "[JWT_REDACTED]",
+  },
+  // API keys (common prefixes)
+  {
+    pattern: /(?:sk|pk|rk|api)[-_](?:live|test|prod|dev)[-_][A-Za-z0-9]{16,}/gi,
+    replacement: "[API_KEY_REDACTED]",
+  },
+  // Bearer tokens in strings
+  {
+    pattern: /Bearer\s+[A-Za-z0-9\-._~+\/]+=*/g,
+    replacement: "Bearer [TOKEN_REDACTED]",
+  },
+  // Hex secrets (64+ hex chars, likely private keys or hashes)
+  {
+    pattern: /\b0x[a-fA-F0-9]{64,}\b/g,
+    replacement: "[HEX_SECRET_REDACTED]",
+  },
+  // Password values in key=value or key: value patterns
+  {
+    pattern: /((?:password|passwd|pwd|secret)\s*[=:]\s*)["']?[^"'\s,}]+/gi,
+    replacement: "$1[PASSWORD_REDACTED]",
+  },
+];
+
+/**
+ * Recursively scrub PII from a value. Handles strings, objects, and arrays.
+ * Exported for use in custom output functions and external scrubbing needs.
+ */
+export function scrubPII<T>(value: T): T {
+  if (typeof value === "string") {
+    let scrubbed = value;
+    for (const { pattern, replacement } of PII_PATTERNS) {
+      scrubbed = scrubbed.replace(pattern, replacement);
+    }
+    return scrubbed as T;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => scrubPII(item)) as T;
+  }
+
+  if (value !== null && typeof value === "object") {
+    const scrubbed: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value)) {
+      // Skip already-safe keys but still scrub their values
+      scrubbed[key] = scrubPII(val);
+    }
+    return scrubbed as T;
+  }
+
+  return value;
+}
+
+// ============================================================================
 // LOGGER CLASS
 // ============================================================================
 
@@ -258,20 +344,25 @@ export class Logger {
   }
 
   /**
-   * Default log output to console
+   * Default log output to console with PII scrubbing
    */
   private defaultOutput(entry: LogEntry, prettyPrint: boolean): void {
+    // Scrub PII and secrets from the entire log entry before writing
+    const scrubbedEntry = scrubPII(entry);
+
     if (prettyPrint) {
-      const color = this.getLogLevelColor(entry.level);
+      const color = this.getLogLevelColor(scrubbedEntry.level);
       console.log(
-        `${color}[${entry.timestamp}]${this.reset()} ` +
-          `${color}${entry.level}${this.reset()} ` +
-          `[${entry.service}] ` +
-          `${entry.message}` +
-          (entry.data ? ` ${JSON.stringify(entry.data, null, 2)}` : ""),
+        `${color}[${scrubbedEntry.timestamp}]${this.reset()} ` +
+          `${color}${scrubbedEntry.level}${this.reset()} ` +
+          `[${scrubbedEntry.service}] ` +
+          `${scrubbedEntry.message}` +
+          (scrubbedEntry.data
+            ? ` ${JSON.stringify(scrubbedEntry.data, null, 2)}`
+            : ""),
       );
     } else {
-      console.log(JSON.stringify(entry));
+      console.log(JSON.stringify(scrubbedEntry));
     }
   }
 
@@ -352,14 +443,17 @@ export class Logger {
   }
 
   /**
-   * Write log entry
+   * Write log entry with PII scrubbing applied
    */
   private write(entry: LogEntry): void {
     try {
-      this.output(entry);
+      // Scrub PII before any output
+      const scrubbedEntry = scrubPII(entry);
+      this.output(scrubbedEntry);
     } catch (error) {
-      // Fallback to basic console.log if output fails
-      console.error("Logger output failed:", error);
+      // Fallback to basic console.error if output fails (scrubbed)
+      const scrubbedError = scrubPII(error);
+      console.error("Logger output failed:", scrubbedError);
     }
   }
 
@@ -941,3 +1035,46 @@ export function getLogger(context: LogContext): Logger {
 
   return new Logger(options);
 }
+
+// ============================================================================
+// SECURE CONSOLE UTILITY
+// Drop-in replacement for console methods with PII scrubbing
+// Use this to replace raw console.log/info/warn/error calls
+// ============================================================================
+
+/**
+ * Secure console methods with automatic PII scrubbing.
+ * Use these instead of raw console.log/info/warn/error to prevent
+ * accidental leakage of emails, tokens, API keys, and other sensitive data.
+ *
+ * @example
+ * ```typescript
+ * import { secureConsole } from '@repo/shared/logger';
+ * secureConsole.info('User logged in', { email: 'user@example.com' });
+ * // Output: User logged in { email: '[EMAIL_REDACTED]' }
+ * ```
+ */
+export const secureConsole = {
+  log: (...args: unknown[]) => {
+    const scrubbed = args.map((a) => scrubPII(a));
+    console.log(...scrubbed);
+  },
+  info: (...args: unknown[]) => {
+    const scrubbed = args.map((a) => scrubPII(a));
+    console.info(...scrubbed);
+  },
+  warn: (...args: unknown[]) => {
+    const scrubbed = args.map((a) => scrubPII(a));
+    console.warn(...scrubbed);
+  },
+  error: (...args: unknown[]) => {
+    const scrubbed = args.map((a) => scrubPII(a));
+    console.error(...scrubbed);
+  },
+  debug: (...args: unknown[]) => {
+    if (process.env.NODE_ENV !== "production") {
+      const scrubbed = args.map((a) => scrubPII(a));
+      console.debug(...scrubbed);
+    }
+  },
+};

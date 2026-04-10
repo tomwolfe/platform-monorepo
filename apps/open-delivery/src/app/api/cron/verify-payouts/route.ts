@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, orders, eq, and, isNotNull, drivers } from "@repo/database";
-import {
-  createPublicClient,
-  http,
-  fallback,
-  type Address,
-  decodeEventLog,
-} from "viem";
-import { base } from "viem/chains";
+import { type Address, decodeEventLog } from "viem";
+import { getPublicClient } from "@repo/web3";
 import { ESCROW_ABI } from "@repo/shared/utils/escrow-abi";
 import { withCronAuth, QStashService, Logger, AppConfig } from "@repo/shared";
 import { trace, Span, SpanStatusCode } from "@opentelemetry/api";
@@ -159,28 +153,12 @@ async function getCronHandler(req: NextRequest) {
         { traceId },
       );
 
-      // RPC URLs with fallbacks for resilience
-      const baseRpcUrl = AppConfig.getBaseRpcUrl();
-      if (!baseRpcUrl && process.env.NODE_ENV === "production") {
-        throw new Error(
-          "BASE_RPC_URL environment variable is required in production",
-        );
-      }
-      const BASE_RPC_URLS = [
-        baseRpcUrl || "https://mainnet.base.org",
-        "https://base.llamarpc.com",
-        "https://base.publicnode.com",
-      ];
+      // Create public client for checking receipts
+      const publicClient = getPublicClient("base");
 
       // Escrow contract address for event parsing
       const ESCROW_CONTRACT_ADDRESS = process.env
         .NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS as Address;
-
-      // Create public client for checking receipts
-      const publicClient = createPublicClient({
-        chain: base,
-        transport: fallback(BASE_RPC_URLS.map((url) => http(url))),
-      });
 
       // Process verifications in batches to avoid RPC rate limits
       // REDUCED BATCH SIZE: From 5 to 2 to ensure we stay within Vercel's 10s maxDuration

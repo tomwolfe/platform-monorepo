@@ -9,8 +9,8 @@
  */
 
 import { getDb, restaurantReservations, eq } from "@repo/database";
-import { createPublicClient, http, type Hex } from "viem";
-import { base } from "viem/chains";
+import { type Hex } from "viem";
+import { getPublicClient } from "@repo/web3";
 import {
   AppConfig,
   Logger,
@@ -222,20 +222,7 @@ export class CheckoutService {
     txHash: string,
     reservationId: string,
   ): Promise<void> {
-    const rpcUrl = AppConfig.getBaseRpcUrl();
-    if (!rpcUrl && process.env.NODE_ENV === "production") {
-      throw new CheckoutError(
-        "BASE_RPC_URL not configured in production",
-        500,
-        "CONFIGURATION_ERROR",
-      );
-    }
-
-    const client = createPublicClient({
-      transport: http(rpcUrl || "https://mainnet.base.org"),
-      chain: base,
-    });
-
+    const client = getPublicClient("base");
     const tx = await client.getTransaction({ hash: txHash as Hex });
 
     if (tx.input && tx.input !== "0x" && tx.input.length > 2) {

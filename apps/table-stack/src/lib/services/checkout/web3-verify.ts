@@ -7,8 +7,8 @@
  * @see Task 5: Refactor Monolithic Service Files
  */
 
-import { createPublicClient, http, hexToString } from "viem";
-import { base } from "viem/chains";
+import { hexToString } from "viem";
+import { getPublicClient } from "@repo/web3";
 import {
   isValidTxHash,
   verifyTransaction,
@@ -90,16 +90,7 @@ export async function verifyTransactionData(
   txHash: string,
   targetReservationId: string,
 ): Promise<void> {
-  const rpcUrl = process.env.BASE_RPC_URL;
-  if (!rpcUrl && process.env.NODE_ENV === "production") {
-    throw new Error(
-      "BASE_RPC_URL environment variable is required in production",
-    );
-  }
-  const client = createPublicClient({
-    transport: http(rpcUrl || "https://mainnet.base.org"),
-    chain: base,
-  });
+  const client = getPublicClient("base");
   const tx = await client.getTransaction({ hash: txHash as `0x${string}` });
 
   if (tx.input && tx.input !== "0x" && tx.input.length > 2) {

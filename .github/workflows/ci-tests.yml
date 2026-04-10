@@ -596,6 +596,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Validate environment with bootstrap (strict)
+        run: pnpm tsx packages/shared/src/bootstrap/validate-env.ts --strict
+        env:
+          NODE_ENV: production
+
       - name: Validate environment files
         run: pnpm validate:env
 

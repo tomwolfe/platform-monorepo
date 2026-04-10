@@ -10,8 +10,8 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     // Fail fast if required environment variables are missing
-    const { validateEnv } = await import("@repo/shared");
-    validateEnv(); // Throws EnvValidationError if vars are missing/invalid
+    const { bootstrapEnv } = await import("@repo/shared/bootstrap");
+    await bootstrapEnv(); // Throws and exits(1) if vars are missing/invalid
 
     // Initialize OpenTelemetry tracing
     const { initObservability } =

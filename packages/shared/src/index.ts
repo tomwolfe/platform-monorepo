@@ -323,6 +323,60 @@ export {
 } from "./middleware/api-error-wrapper";
 
 // ============================================================================
+// BOOTSTRAP (Startup validation gateway)
+// ============================================================================
+export { bootstrapEnv, validateEnvSubset } from "./bootstrap";
+
+// ============================================================================
+// HTTP RESPONSE FACTORY (Unified API response standardization)
+// ============================================================================
+export {
+  // Response schemas
+  ApiErrorResponseSchema,
+  ApiSuccessResponseSchema,
+  ApiErrorFieldSchema,
+
+  // Response types
+  type ApiErrorResponse,
+  type ApiSuccessResponse,
+
+  // Response factories
+  successResponse,
+  errorResponse,
+  formatZodError,
+
+  // Next.js response helpers
+  jsonSuccess,
+  jsonError,
+} from "./http";
+
+export {
+  // Error classes
+  ValidationError,
+  // Auth errors
+  UnauthorizedError,
+  InvalidTokenError,
+  TokenExpiredError,
+  ForbiddenError,
+  // Resource errors
+  NotFoundError,
+  ConflictError,
+  AlreadyExistsError,
+  // Service errors
+  ServiceUnavailableError,
+  RateLimitError,
+  ExternalServiceError,
+} from "./http";
+
+export {
+  // Handler wrapper
+  withApiHandler,
+  type ApiHandlerContext,
+  type ApiHandler,
+  type ApiHandlerConfig,
+} from "./http";
+
+// ============================================================================
 // ROUTE HANDLER FACTORY
 // ============================================================================
 export {

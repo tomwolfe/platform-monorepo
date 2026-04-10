@@ -22,6 +22,15 @@
 
 import { z } from "zod";
 
+// Export cache tiers for centralized TTL management
+export {
+  CACHE_TIERS,
+  getTTL,
+  isValidTTL,
+  describeTTL,
+} from "./config/cache-tiers";
+export type { CacheTier, CacheTTLValue } from "./config/cache-tiers";
+
 // ============================================================================
 // CONFIGURATION ERROR
 // ============================================================================
@@ -273,7 +282,9 @@ export class AppConfig {
 
       // In production, we may want to throw, but for now be lenient
       // and use partial config
-      this.config = parsed.error.formErrors.fieldErrors as any;
+      throw new Error(
+        `Configuration validation failed: ${JSON.stringify(parsed.error.formErrors.fieldErrors)}`,
+      );
     }
 
     this.config = parsed.data || ({} as FullConfig);

@@ -17,7 +17,10 @@
     "drizzle-orm": "^0.38.4"
   },
   "devDependencies": {
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
     "drizzle-kit": "^0.30.2",
+    "eslint": "^9.19.0",
     "pg": "^8.13.3"
   }
 }

@@ -1,4 +1,8 @@
 /** @type {import('next').NextConfig} */
+
+// Import env validation FIRST - this will fail the build if required env vars are missing
+import "./src/env.js";
+
 const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',

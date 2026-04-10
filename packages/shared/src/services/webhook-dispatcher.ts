@@ -31,12 +31,15 @@ import { z } from "zod";
 import { Redis } from "@upstash/redis";
 import {
   IdempotencyService,
-  RealtimeService,
   Logger,
   withUnifiedApiHandler,
 } from "@repo/shared";
-import { IDEMPOTENCY_KEY_HEADER } from "@repo/shared/tracing";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  AsyncBoundaryErrorCode,
+  permanentError,
+  retryableError,
+} from "../errors/async-boundary";
 
 // ============================================================================
 // TYPES
@@ -253,23 +256,52 @@ export class WebhookDispatcherService {
           const idempotencyService = new IdempotencyService(this.redis);
           await idempotencyService.removeKey(idempotencyKey, "webhook");
         }
-        throw error;
+
+        // Throw structured async boundary error for DLQ routing
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        throw retryableError(
+          AsyncBoundaryErrorCode.WEBHOOK_DELIVERY_FAILED,
+          `Webhook handler failed for event ${event.event}: ${errorMessage}`,
+          {
+            source: "webhook-dispatcher",
+            operation: "handleWebhook",
+            context: {
+              eventType: event.event,
+              idempotencyKey,
+            },
+            originalError:
+              error instanceof Error ? error : new Error(errorMessage),
+          },
+        );
       }
 
       return NextResponse.json(result, { status: result.statusCode || 200 });
     } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       this.logger.error("Webhook processing failed", {
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
       });
 
       if (error instanceof SyntaxError) {
-        return NextResponse.json(
-          { error: "Invalid JSON", message: "Request body is not valid JSON" },
-          { status: 400 },
+        // Non-retryable error - invalid JSON
+        throw permanentError(
+          AsyncBoundaryErrorCode.INVALID_PAYLOAD,
+          `Invalid JSON in webhook body: ${errorMessage}`,
+          {
+            source: "webhook-dispatcher",
+            operation: "handleWebhook",
+            context: {
+              parseError: errorMessage,
+            },
+            originalError: error,
+          },
         );
       }
 
-      throw error; // Let withApiErrorHandler handle it
+      // Unknown error - throw for upper handler to handle
+      throw error;
     }
   }
 
@@ -424,7 +456,7 @@ export function withInternalWebhookAuth<T>(
   } = {},
 ) {
   const {
-    idempotencyKeyHeader = "x-idempotency-key",
+    idempotencyKeyHeader: _idempotencyKeyHeader = "x-idempotency-key",
     idempotencyService,
     signatureHeader = "x-signature",
     timestampHeader = "x-timestamp",
@@ -510,9 +542,23 @@ export function withInternalWebhookAuth<T>(
         ? result
         : NextResponse.json(result);
     } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       console.error("[withInternalWebhookAuth] Error:", error);
+
+      // Return structured error response
       return NextResponse.json(
-        { message: "Internal server error" },
+        {
+          success: false,
+          error: {
+            code: "WEBHOOK_HANDLER_ERROR",
+            message: "Internal server error processing webhook",
+            details:
+              process.env.NODE_ENV === "development"
+                ? { error: errorMessage }
+                : undefined,
+          },
+        },
         { status: 500 },
       );
     }

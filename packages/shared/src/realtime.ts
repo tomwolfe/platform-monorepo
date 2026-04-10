@@ -1,6 +1,13 @@
-import { getAblyClient } from './clients';
-import { signAsymmetricJWT } from '@repo/auth';
-import { SequenceIdService, type SequenceIdEvent } from './services/sequence-id';
+import { getAblyClient } from "./clients";
+import { signAsymmetricJWT } from "@repo/auth";
+import {
+  SequenceIdService,
+  type SequenceIdEvent,
+} from "./services/sequence-id";
+import {
+  AsyncBoundaryErrorCode,
+  retryableError,
+} from "./errors/async-boundary";
 
 export interface PublishOptions {
   /** Distributed trace ID for observability correlation */
@@ -25,7 +32,7 @@ export interface StreamingStatusUpdate {
   stepIndex: number;
   totalSteps: number;
   stepName: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  status: "pending" | "in_progress" | "completed" | "failed";
   message: string;
   timestamp: string;
   traceId?: string;
@@ -42,12 +49,14 @@ export class RealtimeService {
   static async publish(
     channelName: string,
     eventName: string,
-    data: any,
-    options?: PublishOptions
+    data: unknown,
+    options?: PublishOptions,
   ) {
     const ably = getAblyClient();
     if (!ably) {
-      console.warn(`[RealtimeService] Ably not configured. Skipping publish to ${channelName}:${eventName}`);
+      console.warn(
+        `[RealtimeService] Ably not configured. Skipping publish to ${channelName}:${eventName}`,
+      );
       return;
     }
 
@@ -62,9 +71,9 @@ export class RealtimeService {
         {
           correlationId: options.correlationId,
           traceId: options.traceId,
-        }
+        },
       );
-      
+
       // Attach sequence ID to data
       data.sequenceId = sequenceEvent.sequenceId;
       data.lamportTimestamp = sequenceEvent.lamportTimestamp;
@@ -80,7 +89,7 @@ export class RealtimeService {
         data,
         timestamp: Date.now(),
       },
-      { issuer: 'shared-realtime', audience: 'ably-mesh' }
+      { issuer: "shared-realtime", audience: "ably-mesh" },
     );
 
     const channel = ably.channels.get(channelName);
@@ -96,12 +105,32 @@ export class RealtimeService {
       });
       console.log(
         `[RealtimeService] Published signed ${eventName} to ${channelName}` +
-        `${options?.traceId ? ` [trace: ${options.traceId}]` : ''}` +
-        `${data.sequenceId !== undefined ? ` [seq: ${data.sequenceId}]` : ''}`
+          `${options?.traceId ? ` [trace: ${options.traceId}]` : ""}` +
+          `${data.sequenceId !== undefined ? ` [seq: ${data.sequenceId}]` : ""}`,
       );
     } catch (error) {
-      console.error(`[RealtimeService] Failed to publish ${eventName} to ${channelName}:`, error);
-      throw error;
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      console.error(
+        `[RealtimeService] Failed to publish ${eventName} to ${channelName}:`,
+        error,
+      );
+
+      // Throw structured async boundary error for DLQ routing
+      throw retryableError(
+        AsyncBoundaryErrorCode.ABLY_PUBLISH_FAILED,
+        `Failed to publish Ably event ${eventName} to ${channelName}: ${errorMessage}`,
+        {
+          source: "ably",
+          operation: "publish",
+          context: {
+            channelName,
+            eventName,
+          },
+          originalError:
+            error instanceof Error ? error : new Error(errorMessage),
+        },
+      );
     }
 
     // Return sequence event if generated
@@ -115,15 +144,15 @@ export class RealtimeService {
    */
   static async publishNervousSystemEvent(
     eventName: string,
-    data: any,
+    data: unknown,
     traceId?: string,
     options?: {
       correlationId?: string;
       enableOrdering?: boolean;
       sequenceScope?: string;
-    }
+    },
   ) {
-    return this.publish('nervous-system:updates', eventName, data, {
+    return this.publish("nervous-system:updates", eventName, data, {
       traceId,
       correlationId: options?.correlationId,
       enableOrdering: options?.enableOrdering,
@@ -135,33 +164,53 @@ export class RealtimeService {
    * Streaming Status Update - Pushes step-by-step progress to the frontend.
    * Vercel Hobby Tier Optimization: Keeps UI responsive during long-running executions.
    */
-  static async publishStreamingStatusUpdate(
-    update: StreamingStatusUpdate
-  ) {
+  static async publishStreamingStatusUpdate(update: StreamingStatusUpdate) {
     const ably = getAblyClient();
     if (!ably) {
-      console.warn(`[RealtimeService] Ably not configured. Skipping streaming update for ${update.executionId}`);
+      console.warn(
+        `[RealtimeService] Ably not configured. Skipping streaming update for ${update.executionId}`,
+      );
       return;
     }
 
     const token = await signAsymmetricJWT(
       {
-        event: 'ExecutionStepUpdate',
+        event: "ExecutionStepUpdate",
         data: update,
         timestamp: Date.now(),
       },
-      { issuer: 'shared-realtime', audience: 'ably-mesh' }
+      { issuer: "shared-realtime", audience: "ably-mesh" },
     );
 
-    const channel = ably.channels.get('nervous-system:updates');
+    const channel = ably.channels.get("nervous-system:updates");
     try {
-      await channel.publish('ExecutionStepUpdate', {
+      await channel.publish("ExecutionStepUpdate", {
         token,
         data: update,
       });
-      console.log(`[Streaming Status] Step ${update.stepIndex}/${update.totalSteps} - ${update.status} for ${update.executionId}`);
+      console.log(
+        `[Streaming Status] Step ${update.stepIndex}/${update.totalSteps} - ${update.status} for ${update.executionId}`,
+      );
     } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       console.error(`[Streaming Status] Failed to publish update:`, error);
+
+      // Throw structured async boundary error for DLQ routing
+      throw retryableError(
+        AsyncBoundaryErrorCode.ABLY_PUBLISH_FAILED,
+        `Failed to publish streaming status update for execution ${update.executionId}: ${errorMessage}`,
+        {
+          source: "ably",
+          operation: "publishStreamingStatusUpdate",
+          context: {
+            executionId: update.executionId,
+            stepIndex: update.stepIndex,
+          },
+          originalError:
+            error instanceof Error ? error : new Error(errorMessage),
+        },
+      );
     }
   }
 }

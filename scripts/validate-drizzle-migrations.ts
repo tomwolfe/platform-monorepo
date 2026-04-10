@@ -9,6 +9,12 @@
  * - Columns in schema missing from migrations
  * - Missing indexes on foreign key columns
  * - Type mismatches
+ * - Manual SQL files that duplicate Drizzle migrations
+ *
+ * CI Integration:
+ * - This script FAILS on any drift or warnings (exit code 1)
+ * - Run in CI via: pnpm db:validate
+ * - Pre-commit hook: lint-staged checks schema changes
  *
  * Usage: npx tsx scripts/validate-drizzle-migrations.ts
  */
@@ -280,8 +286,9 @@ function validate(): number {
     return 0;
   }
 
+  // STRICT MODE: Treat warnings as errors in CI
   if (warnings.length > 0) {
-    console.log(`⚠️  ${warnings.length} Warning(s):`);
+    console.log(`❌ ${warnings.length} Warning(s) (treated as errors in CI):`);
     warnings.forEach((w) => console.log(`   ${w}`));
     console.log("");
   }
@@ -289,6 +296,13 @@ function validate(): number {
   if (errors.length > 0) {
     console.log(`❌ ${errors.length} Error(s):`);
     errors.forEach((e) => console.log(`   ${e}`));
+  }
+
+  // Fail on ANY issues (warnings or errors)
+  if (warnings.length > 0 || errors.length > 0) {
+    console.log(
+      "\n❌ Schema validation FAILED. Run 'pnpm db:generate' to regenerate migrations after schema changes.",
+    );
     return 1;
   }
 

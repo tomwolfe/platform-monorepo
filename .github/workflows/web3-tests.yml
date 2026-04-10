@@ -1,0 +1,158 @@
+name: Web3 Tests (Deterministic Anvil)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/open-delivery/**"
+      - "packages/web3/**"
+      - "packages/shared/src/utils/**web3*"
+      - "packages/shared/src/utils/**crypto*"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/open-delivery/**"
+      - "packages/web3/**"
+      - "packages/shared/src/utils/**web3*"
+      - "packages/shared/src/utils/**crypto*"
+  workflow_dispatch:
+
+jobs:
+  web3-tests:
+    name: Web3 Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      # Deterministic Anvil instance for Web3 testing
+      # Uses fixed mnemonic for reproducible test accounts
+      anvil:
+        image: ghcr.io/foundry-rs/foundry:latest
+        entrypoint: anvil
+        options: >-
+          --host 0.0.0.0 --port 8545 --chain-id 31337 --accounts 10 --balance 10000
+          --mnemonic "test test test test test test test test test test test junk"
+        ports:
+          - 8545:8545
+
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: apps
+          POSTGRES_PASSWORD: apps
+          POSTGRES_DB: apps_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.15.9
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Wait for Anvil to be ready
+        run: |
+          echo "Waiting for Anvil..."
+          for i in {1..30}; do
+            if curl -s http://localhost:8545 -X POST \
+              -H "Content-Type: application/json" \
+              -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' | grep -q "31337\|0x7a69"; then
+              echo "✅ Anvil is ready (chain ID: 31337)"
+              exit 0
+            fi
+            echo "⏳ Waiting for Anvil... ($i/30)"
+            sleep 2
+          done
+          echo "❌ Anvil failed to start"
+          exit 1
+
+      - name: Verify Anvil accounts
+        run: |
+          # Verify the first account has balance
+          BALANCE=$(cast balance 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
+            --rpc-url http://localhost:8545 2>/dev/null)
+          echo "Deployer account balance: $BALANCE wei"
+          if [ -z "$BALANCE" ] || [ "$BALANCE" = "0" ]; then
+            echo "❌ Deployer account has no balance"
+            exit 1
+          fi
+
+      - name: Setup environment
+        run: |
+          cp .env.local.example .env.local
+          cat >> .env.local << EOF
+          DATABASE_URL=postgresql://apps:apps@localhost:5432/apps_test
+          UPSTASH_REDIS_REST_URL=redis://localhost:6379
+          UPSTASH_REDIS_REST_TOKEN=test
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_ci_test_key
+          CLERK_SECRET_KEY=sk_test_ci_test_secret
+          INTERNAL_SYSTEM_KEY=test-key
+          LLM_API_KEY=test_llm_key
+          LLM_BASE_URL=http://localhost:9999
+          LLM_MODEL=test-model
+          RESEND_API_KEY=re_test_ci_key
+          NEXT_PUBLIC_APP_URL=http://localhost:3001
+          ABLY_API_KEY=local:appkey
+          ABLY_REST_HOST=localhost
+          ABLY_REALTIME_HOST=localhost
+          ABLY_REST_PORT=5000
+          ABLY_REALTIME_PORT=5000
+          ABLY_TLS=false
+          # Web3 - Use deterministic Anvil instead of public RPCs
+          ETH_RPC_URL=http://localhost:8545
+          BASE_RPC_URL=http://localhost:8545
+          CHAIN_ID=31337
+          NEXT_PUBLIC_USDC_CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
+          NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+          NEXT_PUBLIC_PLATFORM_FEE_WALLET=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+          EOF
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Run Web3 unit tests
+        run: pnpm test -- --grep "web3|crypto|escrow|wallet"
+        env:
+          ETH_RPC_URL: http://localhost:8545
+          BASE_RPC_URL: http://localhost:8545
+          CHAIN_ID: "31337"
+
+      - name: Run Open Delivery integration tests
+        run: |
+          pnpm --filter @repo/open-delivery test -- --run
+        env:
+          DATABASE_URL: postgresql://apps:apps@localhost:5432/apps_test
+          ETH_RPC_URL: http://localhost:8545
+          BASE_RPC_URL: http://localhost:8545
+          CHAIN_ID: "31337"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web3-test-results
+          path: |
+            **/test-results/**
+            **/coverage/**
+          retention-days: 30

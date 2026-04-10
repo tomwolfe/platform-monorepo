@@ -597,7 +597,7 @@ export function getErrorStatusCode(error: unknown): number {
  */
 export function toAppError(
   error: unknown,
-  defaultCode: ErrorCode = ErrorCode.INTERNAL_ERROR as any,
+  defaultCode: ErrorCode = ErrorCode.EXECUTION_FAILED,
   defaultMessage: string = "An unexpected error occurred",
 ): AppError {
   if (error instanceof AppError) {
@@ -621,10 +621,9 @@ export function toAppError(
  * });
  * ```
  */
-export function withErrorHandler<T extends (...args: any[]) => Promise<any>>(
-  handler: T,
-  defaultCode?: ErrorCode,
-) {
+export function withErrorHandler<
+  T extends (...args: unknown[]) => Promise<unknown>,
+>(handler: T, defaultCode?: ErrorCode) {
   return async (...args: Parameters<T>): Promise<ReturnType<T>> => {
     try {
       return await handler(...args);
@@ -665,3 +664,16 @@ export {
   withErrorHandler,
   formatErrorResponse,
 } from "./errors/http-error";
+
+// ============================================================================
+// ASYNC BOUNDARY ERRORS (for QStash, Ably, Webhooks)
+// ============================================================================
+export {
+  AsyncBoundaryError,
+  AsyncBoundaryErrorCode,
+  retryableError,
+  permanentError,
+  isAsyncBoundaryError,
+  shouldRetry,
+  type AsyncBoundaryErrorContext,
+} from "./errors/async-boundary";

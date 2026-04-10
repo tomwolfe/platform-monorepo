@@ -28,6 +28,7 @@
 
 import { getRedisClient, ServiceNamespace } from "../redis";
 import { Logger } from "../logger";
+import { CACHE_TIERS } from "../config/cache-tiers";
 import { QStashService } from "./qstash";
 
 const redis = getRedisClient(ServiceNamespace.SHARED);
@@ -322,7 +323,7 @@ export class MonitoringServiceClass {
     const client = redis;
     const key = this.getMetricKey(name, labels);
     // DB-01: Add explicit TTL to prevent memory bloat
-    await client.set(key, value.toString(), { ex: 86400 }); // 24 hour TTL
+    await client.set(key, value.toString(), { ex: CACHE_TIERS.EXTENDED });
 
     this.logger.debug("Gauge set", { name, value, labels });
   }
@@ -435,7 +436,7 @@ export class MonitoringServiceClass {
     // Extract scores (latencies)
     const latencies = values
       .filter((_, i) => i % 2 === 1) // Get scores (odd indices)
-      .map((v) => parseFloat(v as any))
+      .map((v) => parseFloat(String(v)))
       .sort((a, b) => a - b);
 
     // Calculate percentile
@@ -570,7 +571,7 @@ export class MonitoringServiceClass {
   async sendAlert(
     message: string,
     level: AlertLevel = AlertLevel.INFO,
-    metadata?: Record<string, any>,
+    metadata?: Record<string, unknown>,
   ): Promise<void> {
     const alert: Alert = {
       id: `alert:manual:${Date.now()}`,

@@ -1,6 +1,7 @@
 import { RealtimeService } from "./realtime";
 import { Redis } from "@upstash/redis";
 import { Logger } from "./logger";
+import { CACHE_TIERS } from "./config/cache-tiers";
 
 const logger = new Logger({ serviceName: "order-state-machine" });
 
@@ -26,7 +27,7 @@ export class OrderStateMachine {
     const previousStatus = await this.redis.get(`order:status:${orderId}`);
     // DB-01: Add explicit TTL to prevent memory bloat (7 days for order status)
     await this.redis.set(`order:status:${orderId}`, newStatus, {
-      ex: 86400 * 7,
+      ex: CACHE_TIERS.EXTENDED * 7,
     });
 
     logger.info({

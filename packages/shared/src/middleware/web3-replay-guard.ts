@@ -47,6 +47,7 @@ import { getDb, processed_crypto_transactions, eq } from "@repo/database";
 import type { Hash } from "viem";
 import { getRedisClient, ServiceNamespace } from "../redis";
 import { Logger } from "../logger";
+import { CACHE_TIERS } from "../config/cache-tiers";
 
 const replayLogger = new Logger({ serviceName: "replay-guard" });
 
@@ -375,7 +376,7 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
             replayAttemptCount: attemptCount,
             isIpBanned: shouldBan,
           };
-        } catch (lookupError) {
+        } catch (_lookupError) {
           // Fallback if lookup fails - still block as replay
           return {
             allowed: false,
@@ -506,7 +507,7 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
       const confirmedKey = this.getRedisKey(txHash);
 
       // Upgrade to confirmed with 24h TTL
-      await this.redis.set(confirmedKey, "1", { ex: 86400 });
+      await this.redis.set(confirmedKey, "1", { ex: CACHE_TIERS.EXTENDED });
 
       // Remove the processing lock
       await this.redis.del(processingKey);

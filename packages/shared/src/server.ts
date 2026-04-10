@@ -19,12 +19,210 @@
  */
 
 // ============================================================================
-// RE-EXPORT ISOMORPHIC MODULES (from cleaned index.ts)
+// RE-EXPORT SHARED & CLIENT-SAFE MODULES
 // ============================================================================
-export * from "./index";
+export * from "./index.shared";
 
 // ============================================================================
-// SANDBOXES - Node.js Worker Threads & WASM
+// APP CONFIG (Reads process.env at module scope)
+// ============================================================================
+export { AppConfig } from "./config";
+
+// ============================================================================
+// REDIS CLIENTS & MEMORY CACHE
+// ============================================================================
+export * from "./redis";
+export * from "./redis/memory";
+
+// ============================================================================
+// EXTERNAL SERVICE CLIENTS (Ably, Resend)
+// ============================================================================
+export * from "./clients";
+
+// ============================================================================
+// REAL-TIME PUB/SUB (Ably)
+// ============================================================================
+export { RealtimeService } from "./realtime";
+
+// ============================================================================
+// IDEMPOTENCY SERVICE (Redis-backed)
+// ============================================================================
+export { IdempotencyService } from "./idempotency";
+
+// ============================================================================
+// OUTBOX PATTERN (Database + Redis)
+// ============================================================================
+export * from "./outbox";
+export {
+  getOutboxListener,
+  notifyOutboxEvent,
+  triggerOutboxRelay,
+  type OutboxEvent,
+  type OutboxListener,
+} from "./services/outbox-listener";
+export { OutboxRelayService, getOutboxRelayService } from "./outbox-relay";
+
+// ============================================================================
+// QSTASH SERVICE (Async workflow orchestration)
+// ============================================================================
+export {
+  QStashService,
+  type QStashConfig,
+  type QStashTriggerOptions,
+  type QStashMultiTriggerOptions,
+  type QStashScheduleOptions,
+} from "./services/qstash";
+export {
+  withQStashAuth,
+  withQStashAuthEnhanced,
+  verifyQStashWebhook,
+  verifyQStashWebhookMiddleware,
+} from "./services/qstash-webhook";
+
+// ============================================================================
+// DISPATCH QUEUE (QStash-based background tasks)
+// ============================================================================
+export { dispatchTask } from "./services/dispatch-queue";
+
+// ============================================================================
+// CIRCUIT BREAKER (Full Redis-backed implementation)
+// ============================================================================
+export {
+  CircuitBreaker,
+  CircuitBreakerRegistry,
+  createCircuitBreakerRegistry,
+  defaultCircuitBreakerRegistry,
+} from "./services/circuit-breaker";
+
+// ============================================================================
+// OCC REBASE (Optimistic Concurrency Control - Redis-backed)
+// ============================================================================
+export {
+  AtomicStateRebaser,
+  createAtomicStateRebaser,
+  atomicUpdateState,
+  createWorkflowStateRebaser,
+} from "./services/occ-rebase";
+
+// ============================================================================
+// CACHE MIDDLEWARE (Redis-backed request caching)
+// ============================================================================
+export {
+  withCache,
+  withCacheMiddleware,
+  generateCacheKey,
+  invalidateCache,
+  invalidateCacheByTag,
+  invalidateCacheByPattern,
+  getCacheMetrics,
+  type CacheConfig,
+  type CacheOptions,
+  type CacheMiddlewareResult,
+} from "./middleware/cache-middleware";
+
+// ============================================================================
+// RATE LIMITER (Redis-backed)
+// ============================================================================
+export {
+  rateLimitMiddleware,
+  RateLimiterService,
+  type RateLimiterConfig,
+  type RateLimitResult,
+} from "./middleware/rate-limiter";
+
+// ============================================================================
+// DISTRIBUTED LOCK (Redis-backed)
+// ============================================================================
+export {
+  withDistributedLock,
+  acquireDistributedLock,
+  releaseDistributedLock,
+  getLockInfo,
+  type DistributedLockConfig,
+  type LockInfo,
+} from "./services/distributed-lock";
+
+// ============================================================================
+// WEB3 REPLAY GUARD (Database + Redis)
+// ============================================================================
+export {
+  isReplayAllowed,
+  rollbackReplayGuard,
+  tryAcquireReplayProcessingLock,
+  confirmReplayGuard,
+  releaseReplayProcessingLock,
+  getReplayGuard,
+} from "./middleware/web3-replay-guard";
+
+// ============================================================================
+// SCHEMA EVOLUTION (Redis-backed)
+// ============================================================================
+export {
+  createSchemaEvolutionService,
+  type SchemaEvolutionConfig,
+  type SchemaVersion,
+} from "./services/schema-evolution";
+
+// ============================================================================
+// DLQ MONITORING & HEARTBEAT (Redis + QStash + Ably)
+// ============================================================================
+export {
+  createDLQMonitoringService,
+  type DLQMonitoringConfig,
+} from "./services/dlq-monitoring";
+export {
+  createHeartbeatService,
+  type HeartbeatConfig,
+} from "./services/heartbeat";
+
+// ============================================================================
+// LLM SERVICES (Redis-backed failure triage & repair)
+// ============================================================================
+export {
+  getLLMFailureTriageService,
+  createLLMFailureTriageService,
+} from "./services/llm-failure-triage";
+export {
+  createRepairAgent,
+  type RepairAgentConfig,
+} from "./services/repair-agent";
+
+// ============================================================================
+// LLM CACHE (Redis + Node crypto)
+// ============================================================================
+export { DEFAULT_TTL_SECONDS, getLLMCache, setLLMCache } from "./llm-cache";
+
+// ============================================================================
+// CRON AUTH (Server-only cron job validation)
+// ============================================================================
+export {
+  withCronAuth,
+  verifyCronAuth,
+  isCronAuthenticated,
+  type CronAuthOptions,
+  type CronAuthResult,
+} from "./middleware/cron-auth";
+
+// ============================================================================
+// BOOTSTRAP (Env validation at module scope)
+// ============================================================================
+export { bootstrapEnv, validateEnvSubset, SERVICES } from "./bootstrap";
+
+// ============================================================================
+// OBSERVABILITY FLUSH (Sentry/OpenTelemetry)
+// ============================================================================
+export {
+  registerObservabilityFlush,
+  flushObservability,
+} from "./error-handler";
+
+// ============================================================================
+// AUTH GATEWAY (Clerk server-side)
+// ============================================================================
+export { validateRequest, getCurrentUser } from "./auth/gateway";
+
+// ============================================================================
+// SANDBOXES (Node.js Worker Threads & WASM)
 // ============================================================================
 export {
   ToolSandbox,
@@ -47,7 +245,7 @@ export {
 } from "./services/sandbox/wasm-sandbox";
 
 // ============================================================================
-// CHAOS ENGINEERING - Node.js Only
+// CHAOS ENGINEERING (Node.js Only)
 // ============================================================================
 export {
   ChaosEngine,
@@ -61,7 +259,7 @@ export {
 } from "./services/chaos/chaos-engine";
 
 // ============================================================================
-// SENTRY INTEGRATION - Node.js Only
+// SENTRY INTEGRATION (Node.js Only)
 // ============================================================================
 
 /**
@@ -69,10 +267,11 @@ export {
  * Only available in Node.js environments
  */
 import { Logger } from "./logger";
+import type * as SentryTypes from "@sentry/node";
 
 const sentryLogger = new Logger({ serviceName: "sentry" });
 
-let Sentry: any = undefined;
+let Sentry: typeof SentryTypes | undefined = undefined;
 
 /**
  * Initialize Sentry error tracking
@@ -151,107 +350,98 @@ export function captureSentryException(
 }
 
 // ============================================================================
-// SERVER-ONLY MODULES (Node.js APIs, Redis, External Services)
+// ROUTE HANDLER FACTORY (Server-only)
 // ============================================================================
-
-// Phase 1: Golden Path (System Spine)
-export { openApiSpecification } from "./openapi-spec";
-
-// Phase 2: Architecture Simplification
-export * from "./infrastructure/cache"; // Standardized Redis cache layer
-
-// Phase 2.2: Request Caching
 export {
-  withCache,
-  generateCacheKey,
-  invalidateCache,
-  invalidateCacheByTag,
-  invalidateCacheByPattern,
-  getCacheMetrics,
-  type CacheConfig,
-  type CacheOptions,
-  type CacheMiddlewareResult,
-} from "./middleware/cache-middleware";
+  createRouteHandler,
+  type RouteHandlerConfig,
+  type RouteHandlerContext,
+} from "./utils/route-handler";
 
-// Phase 2.3: Health Checks
-export * from "./middleware/health-check";
+// ============================================================================
+// TESTING UTILITIES (Server-only - database, drizzle, ably, resend, viem)
+// ============================================================================
+export * from "./testing";
 
-// Phase 1.2: Cron Authentication
-export {
-  withCronAuth,
-  verifyCronAuth,
-  isCronAuthenticated,
-  type CronAuthOptions,
-  type CronAuthResult,
-} from "./middleware/cron-auth";
-
-// Legacy server-side exports
-export * from "./redis";
-export * from "./redis/memory";
-export * from "./clients";
-export * from "./idempotency";
-export * from "./outbox";
-export * from "./services";
-export * from "./realtime";
-export { AppConfig } from "./config";
-
-// Phase 2: Security & Hardening
+// ============================================================================
+// MIGRATION & SECURITY SCANNERS
+// ============================================================================
 export * from "./services/migration-generator";
 export * from "./services/mcp-security-scanner";
 
-// Phase 3: Advanced Autonomy
+// ============================================================================
+// ADDITIONAL SERVER-ONLY SERVICES
+// ============================================================================
+export * from "./services/monitoring";
+export * from "./services/semantic-vector-store-pg";
+export * from "./services/pgvector-store";
+export * from "./services/vector-store";
+export * from "./services/semantic-memory";
+export * from "./services/communication-provider";
+export * from "./services/mobility-provider";
+export * from "./services/transaction-speedup";
+export * from "./services/shadow-dry-run";
+export * from "./services/contract-testing";
+export * from "./services/dry-run-simulator";
+export * from "./services/parameter-aliaser";
+export * from "./services/state-diff-viewer";
 export * from "./services/anomaly-detector";
 export * from "./services/security-correlator";
-export * from "./services/dlq-monitoring";
-export * from "./services/monitoring";
-export {
-  getLLMFailureTriageService,
-  createLLMFailureTriageService,
-  LLMFailureTriageService,
-  FailureReasonSchema,
-  TriageResultSchema,
-  type FailureReason,
-  type TriageResult,
-  type TriageContext,
-  type FailureTriageService,
-} from "./services/llm-failure-triage";
-export * from "./services/dry-run-simulator";
-export * from "./services/shadow-dry-run";
-
-// Phase 4: Perfect Grade Enhancements
+export * from "./services/serverless-pubsub-bridge";
 export * from "./services/sequence-id";
+export * from "./services/lamport-timestamps";
+
+// ============================================================================
+// AUTONOMOUS SCHEMA EVOLUTION
+// ============================================================================
+export * from "./services/autonomous-schema-evolution";
+export * from "./services/semantic-versioning";
+export * from "./services/schema-versioning";
+
+// ============================================================================
+// SEQUENCE ID & ORDERING
+// ============================================================================
 export type {
   SequenceIdEvent,
   OrderedEventBufferConfig,
 } from "./services/sequence-id";
 
-export * from "./services/occ-rebase";
+// ============================================================================
+// OCC REBASE TYPES
+// ============================================================================
 export type {
   AtomicUpdateResult,
   AtomicUpdateOptions,
 } from "./services/occ-rebase";
 
+// ============================================================================
+// FAILOVER POLICY
+// ============================================================================
 export * from "./policies/failover-policy";
 
-export * from "./services/semantic-versioning";
-
-export * from "./services/repair-agent";
+// ============================================================================
+// REPAIR AGENT TYPES
+// ============================================================================
 export type {
   ZombieSaga,
   RepairAnalysis,
-  FailureType,
+  FailureType as RepairFailureType,
   SuggestedFix,
   RepairResult,
 } from "./services/repair-agent";
 
-export * from "./services/contract-testing";
+// ============================================================================
+// CONTRACT TESTING TYPES
+// ============================================================================
 export type {
   ToolExecutionTrace,
   ToolContract,
   ContractTestResult,
 } from "./services/contract-testing";
 
-// Web3 / Crypto (server-side only)
+// ============================================================================
+// WEB3 / CRYPTO (server-side only)
+// ============================================================================
 export * from "./utils/crypto";
 export {
   formatApiError,
@@ -268,49 +458,19 @@ export {
   ApiSuccessResponseSchema,
   validateErrorResponse,
 } from "./utils/api-error";
-export * from "./middleware/web3-replay-guard";
 
-// Phase 4.1: Provider Abstractions
-export * from "./services/mobility-provider";
-export * from "./services/communication-provider";
-
-// Schema evolution
-export {
-  SchemaEvolutionService,
-  getSchemaEvolutionService,
-  createSchemaEvolutionService,
-} from "./services/schema-evolution";
+// ============================================================================
+// SCHEMA EVOLUTION TYPES
+// ============================================================================
 export type {
   AliasUsageRecord,
   MismatchEvent,
-  SchemaEvolutionConfig,
+  SchemaEvolutionConfig as SchemaEvolutionConfigType,
 } from "./services/schema-evolution";
-export * from "./services/schema-versioning";
-export * from "./services/heartbeat";
-export * from "./services/parameter-aliaser";
-export * from "./services/autonomous-schema-evolution";
-export * from "./services/qstash";
-export * from "./services/qstash-webhook";
-export * from "./services/dispatch-queue";
-export * from "./services/vector-store";
-export * from "./services/pgvector-store";
-export * from "./services/semantic-vector-store-pg";
-export * from "./services/outbox-listener";
-export * from "./services/state-diff-viewer";
-export * from "./services/serverless-pubsub-bridge";
-export * from "./outbox-relay";
 
-// Circuit breaker (full server-side exports including classes)
-export {
-  CircuitBreaker,
-  CircuitBreakerRegistry,
-  CostCircuitBreaker,
-  createCircuitBreaker,
-  createCircuitBreakerRegistry,
-  createCostCircuitBreaker,
-} from "./services/circuit-breaker";
-
-// Webhook Dispatcher
+// ============================================================================
+// WEBHOOK DISPATCHER (Full exports)
+// ============================================================================
 export {
   WebhookDispatcherService,
   createWebhookDispatcherService,
@@ -325,5 +485,7 @@ export {
   type InternalWebhookHandler,
 } from "./services/webhook-dispatcher";
 
-// Ably Authentication (uses @clerk/nextjs/server)
+// ============================================================================
+// ABLY AUTHENTICATION (uses @clerk/nextjs/server)
+// ============================================================================
 export * from "./realtime/ably-auth";

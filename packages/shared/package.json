@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./client": "./src/client.ts",
+    "./shared": "./src/index.shared.ts",
     "./server": "./src/server.ts",
     "./config": "./src/config.ts",
     "./config/web3-chains": "./src/config/web3-chains.ts",
@@ -89,32 +90,35 @@
     "ably": "^2.17.1",
     "ai": "^6.0.69",
     "crypto-browserify": "^3.12.1",
+    "drizzle-orm": "^0.38.3",
     "lru-cache": "^11.0.2",
     "quickjs-emscripten": "^0.32.0",
     "resend": "^4.1.1",
+    "server-only": "^0.0.1",
     "twilio": "^5.0.0",
     "uuid": "^11.0.0",
     "viem": "^2.47.5",
-    "zod": "^3.24.1",
-    "drizzle-orm": "^0.38.3"
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@clerk/nextjs": "^6.10.6",
     "@repo/database": "workspace:*",
+    "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@sentry/node": "^8.0.0",
     "@types/node": "^20.17.16",
     "@types/uuid": "^10.0.0",
+    "eslint": "^9.19.0",
     "typescript": "^5.0.0"
   },
   "peerDependencies": {
+    "@aws-sdk/client-kms": "^3.0.0",
     "@clerk/nextjs": "^6.10.6",
+    "@neondatabase/serverless": "^0.10.0",
     "@repo/database": "workspace:*",
     "@sentry/node": "^8.0.0",
-    "@aws-sdk/client-kms": "^3.0.0",
-    "msw": "^2.0.0",
-    "@neondatabase/serverless": "^0.10.0",
-    "drizzle-kit": "^0.30.0"
+    "drizzle-kit": "^0.30.0",
+    "msw": "^2.0.0"
   },
   "peerDependenciesMeta": {
     "@clerk/nextjs": {

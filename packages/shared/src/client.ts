@@ -94,9 +94,13 @@ export * from "./runtime-registry";
 export * from "./types/tool";
 
 // ============================================================================
-// STATE MACHINE (Browser-safe)
+// STATE MACHINE TYPES ONLY (NOT the Redis-backed class)
 // ============================================================================
-export * from "./state-machine";
+export type {
+  StateMachineConfig,
+  StateMachineContext,
+  StateTransition,
+} from "./state-machine";
 
 // ============================================================================
 // NORMALIZATION (Browser-safe)
@@ -110,8 +114,12 @@ export {
   BaseConfigSchema,
   ServiceUrlsSchema,
   FullConfigSchema,
+  CACHE_TIERS,
+  getTTL,
+  isValidTTL,
+  describeTTL,
 } from "./config";
-export type { FullConfig } from "./config";
+export type { FullConfig, CacheTier, CacheTTLValue } from "./config";
 
 // ============================================================================
 // BROWSER-SAFE CONFIG ACCESSORS (For Client Components)

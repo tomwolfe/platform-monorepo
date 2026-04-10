@@ -163,7 +163,11 @@ const RATE_LIMIT_LUA_SCRIPT = `
   return current
 `;
 
-async function rateLimit(identifier: string, limit: number, window: number) {
+export async function rateLimit(
+  identifier: string,
+  limit: number,
+  window: number,
+) {
   const key = `ratelimit:${identifier}`;
 
   // Use atomic Lua script to prevent TOCTOU race condition

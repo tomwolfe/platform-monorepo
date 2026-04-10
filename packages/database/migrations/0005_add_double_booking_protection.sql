@@ -7,14 +7,14 @@
 -- If not available, run: CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 -- Add exclusion constraint to prevent overlapping time slots for the same table
--- This ensures that no two confirmed reservations can book the same table at overlapping times
+-- This ensures that no two confirmed OR pending reservations can book the same table at overlapping times
 ALTER TABLE restaurant_reservations
 ADD CONSTRAINT no_overlapping_table_reservations
 EXCLUDE USING gist (
   table_id WITH =,
   tstzrange(start_time, end_time) WITH &&
 )
-WHERE (status = 'confirmed' AND table_id IS NOT NULL);
+WHERE (status IN ('confirmed', 'pending') AND table_id IS NOT NULL);
 
 -- Note: This constraint works alongside the application-layer checks in reserve_api.ts
 -- The application layer uses FOR UPDATE SKIP LOCKED for performance

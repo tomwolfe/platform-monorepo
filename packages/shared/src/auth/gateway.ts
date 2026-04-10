@@ -5,7 +5,6 @@
  * Checks auth methods in order of precedence:
  * 1. `Authorization: Bearer <JWT>` (asymmetric/scoped JWT → Zero-Trust)
  * 2. `x-internal-key` (service-to-service shared secret)
- * 3. `x-api-key` (deprecated, logs warning)
  *
  * Usage:
  * ```typescript
@@ -45,7 +44,7 @@ export interface AuthGatewayContext {
   /** Whether this is an internal service-to-service call */
   isInternal: boolean;
   /** Auth method used */
-  authMethod: "bearer_jwt" | "internal_key" | "api_key" | "none";
+  authMethod: "bearer_jwt" | "internal_key" | "none";
   /** Scoped permissions (if JWT has tool-level permissions) */
   scopedPermissions?: Record<string, unknown>;
   /** Raw JWT payload (if available) */
@@ -73,7 +72,6 @@ export interface AuthGatewayResult {
  * Checks auth methods in order of precedence:
  * 1. `Authorization: Bearer <JWT>` - Asymmetric JWT (preferred, Zero-Trust)
  * 2. `x-internal-key` - Service-to-service shared secret
- * 3. `x-api-key` - Legacy API key (deprecated, logs warning)
  *
  * @param req - Next.js request object
  * @param options - Gateway configuration options
@@ -97,7 +95,7 @@ export async function validateRequest(
     /** Require authentication (default: true) */
     required?: boolean;
     /** Allowed auth methods (default: all) */
-    allowedMethods?: Array<"bearer_jwt" | "internal_key" | "api_key">;
+    allowedMethods?: Array<"bearer_jwt" | "internal_key">;
   } = {},
 ): Promise<AuthGatewayResult> {
   const { required = true, allowedMethods } = options;
@@ -121,7 +119,6 @@ export async function validateRequest(
   const methods = allowedMethods || [
     "bearer_jwt" as const,
     "internal_key" as const,
-    "api_key" as const,
   ];
 
   for (const method of methods) {
@@ -143,7 +140,7 @@ export async function validateRequest(
  */
 async function tryAuthMethod(
   req: NextRequest,
-  method: "bearer_jwt" | "internal_key" | "api_key",
+  method: "bearer_jwt" | "internal_key",
   traceId?: string,
 ): Promise<AuthGatewayResult | null> {
   switch (method) {
@@ -152,9 +149,6 @@ async function tryAuthMethod(
     }
     case "internal_key": {
       return await tryInternalKey(req, traceId);
-    }
-    case "api_key": {
-      return await tryApiKey(req, traceId);
     }
   }
 }
@@ -259,40 +253,4 @@ async function tryInternalKey(
     error: "Invalid internal key",
     status: 401,
   };
-}
-
-/**
- * Try legacy API key authentication (deprecated)
- */
-async function tryApiKey(
-  req: NextRequest,
-  traceId?: string,
-): Promise<AuthGatewayResult | null> {
-  const apiKey = req.headers.get("x-api-key");
-  if (!apiKey) {
-    return null;
-  }
-
-  // Log deprecation warning
-  logger.warn({
-    message: "Deprecated x-api-key authentication used",
-    traceId,
-    deprecation:
-      "x-api-key is deprecated. Migrate to Bearer JWT or x-internal-key.",
-  });
-
-  // For now, accept any non-empty API key
-  // TODO: Remove this method after deprecation period
-  if (apiKey.length > 0) {
-    return {
-      context: {
-        resourceId: undefined,
-        isInternal: false,
-        authMethod: "api_key",
-        traceId,
-      },
-    };
-  }
-
-  return null;
 }

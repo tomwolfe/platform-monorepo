@@ -146,13 +146,17 @@ export const POST = withUnifiedApiHandler(
       // Enforce strict DB-level timeout to prevent dangling locks if Lambda dies
       await tx.execute(sql`SET LOCAL statement_timeout = '7000'`);
 
-      // Check for overlapping reservations with confirmed status or recent unverified ones
-      const conflictingReservation =
-        await tx.query.restaurantReservations.findFirst({
-          where: and(
+      // Check for overlapping reservations with confirmed or pending status.
+      // Use FOR UPDATE to lock matching rows and prevent concurrent double-booking.
+      const conflictingReservation = await tx
+        .select()
+        .from(restaurantReservations)
+        .where(
+          and(
             eq(restaurantReservations.restaurantId, targetRestaurantId),
             or(
               eq(restaurantReservations.status, "confirmed"),
+              eq(restaurantReservations.status, "pending"),
               and(
                 eq(restaurantReservations.isVerified, false),
                 gte(
@@ -164,7 +168,10 @@ export const POST = withUnifiedApiHandler(
             // Time overlap check using PostgreSQL OVERLAPS operator
             sql`(${restaurantReservations.startTime}, ${restaurantReservations.endTime}) OVERLAPS (${reservationStart.toISOString()}, ${reservationEnd.toISOString()})`,
           ),
-        });
+        )
+        .limit(1)
+        .for("update")
+        .then((rows) => rows[0]);
 
       if (conflictingReservation) {
         throw new ConflictError(

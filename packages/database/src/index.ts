@@ -1,6 +1,7 @@
-import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
-import type { NeonHttpDatabase } from "drizzle-orm/neon-http";
+import { Pool } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-serverless";
+import type { NeonDatabase, ExecuteResult } from "drizzle-orm/neon-serverless";
+import type { NeonHttpDatabase } from "drizzle-orm/neon-serverless";
 export {
   eq,
   and,
@@ -140,7 +141,7 @@ let queryStats: QueryStats = {
 };
 
 // Running total for average calculation
-let totalQueryTimeMs = 0;
+let _totalQueryTimeMs = 0;
 
 /**
  * Configure database connection pooling and query monitoring
@@ -160,10 +161,9 @@ let totalQueryTimeMs = 0;
 export function configureDatabase(config: DatabaseConfig): void {
   dbConfig = { ...DEFAULT_DB_CONFIG, ...config };
 
-  // Note: The Neon HTTP driver (drizzle-orm/neon-http) is stateless and does not
-  // use connection pooling. poolSize and connectionTimeout settings are retained
-  // for configuration tracking but do not affect the HTTP client behavior.
-  // For long-running processes requiring true pooling, use the Pool client instead.
+  // Note: The Neon WebSocket Pool driver uses true connection pooling.
+  // poolSize and connectionTimeout settings are retained for configuration
+  // tracking and can be applied to the Pool constructor.
 
   console.log(
     `[Database] Configured with queryTimeout=${dbConfig.queryTimeout}ms, ` +
@@ -196,12 +196,12 @@ export function resetQueryStats(): void {
     errors: 0,
     lastQueryTime: undefined,
   };
-  totalQueryTimeMs = 0;
+  _totalQueryTimeMs = 0;
 }
 
 // Standard Next.js global caching to prevent connection bloat during HMR
 const globalForDb = globalThis as unknown as {
-  _dbInstance: any;
+  _dbInstance: unknown;
 };
 
 /**
@@ -237,16 +237,16 @@ export function getDb() {
     );
   }
 
-  const client = neon(databaseUrl);
-  const baseDb = drizzle(client, { schema });
+  const pool = new Pool({ connectionString: databaseUrl });
+  const baseDb = drizzle(pool, { schema });
 
-  // DB-03: Wrap with timeout-safe wrapper (composition-based, not method-wrapping Proxy)
+  // DB-03: Wrap with timeout-safe wrapper
   const timeoutMs = dbConfig.queryTimeout || 30000; // Default 30 seconds
   globalForDb._dbInstance = createTimeoutDbWrapper(baseDb, timeoutMs);
 
   // Log initialization
   console.log(
-    `[Database] Initialized with Neon HTTP driver, query timeout: ${timeoutMs}ms`,
+    `[Database] Initialized with Neon WebSocket driver (Pool), query timeout: ${timeoutMs}ms`,
   );
 
   return globalForDb._dbInstance;
@@ -297,21 +297,16 @@ export class TimeoutError extends Error {
 class TimeoutDbWrapper<
   TSchema extends Record<string, unknown> = Record<string, never>,
 > {
-  readonly #db: NeonHttpDatabase<TSchema>;
+  readonly #db: NeonDatabase<TSchema>;
   readonly #timeoutMs: number;
 
-  constructor(db: NeonHttpDatabase<TSchema>, timeoutMs: number) {
+  constructor(db: NeonDatabase<TSchema>, timeoutMs: number) {
     this.#db = db;
     this.#timeoutMs = timeoutMs;
   }
 
   /**
    * Wrap a promise with a timeout using Promise.race
-   *
-   * NOTE: For the Neon HTTP driver, this rejects the Node.js promise but does
-   * NOT cancel the query on the Postgres server. If timeouts are observed,
-   * consider configuring statement_timeout at the database role level or using
-   * SET LOCAL within transactions.
    */
   #withTimeout<T>(promise: Promise<T>): Promise<T> {
     let timer: NodeJS.Timeout;
@@ -334,9 +329,13 @@ class TimeoutDbWrapper<
   /**
    * Execute a query with timeout enforcement
    */
-  execute(...queries: any[]): Promise<any> {
+  execute(...queries: unknown[]): Promise<ExecuteResult | ExecuteResult[]> {
     return this.#withTimeout(
-      (this.#db.execute as (...args: any[]) => Promise<any>)(...queries),
+      (
+        this.#db.execute as (
+          ...args: unknown[]
+        ) => Promise<ExecuteResult | ExecuteResult[]>
+      )(...queries),
     );
   }
 
@@ -345,8 +344,8 @@ class TimeoutDbWrapper<
    * The tx object passed to the callback is the raw Drizzle tx (no proxy),
    * ensuring all internal Drizzle symbol-based state tracking works correctly.
    */
-  transaction<T>(fn: (...args: any[]) => Promise<T>): Promise<T> {
-    return this.#withTimeout((this.#db.transaction as any)(fn));
+  transaction<T>(fn: (tx: NeonDatabase<TSchema>) => Promise<T>): Promise<T> {
+    return this.#withTimeout(this.#db.transaction(fn));
   }
 }
 
@@ -356,7 +355,7 @@ class TimeoutDbWrapper<
 // timeout-wrapped methods are execute() and transaction() defined above.
 function createTimeoutDbWrapper<
   TSchema extends Record<string, unknown> = Record<string, never>,
->(db: NeonHttpDatabase<TSchema>, timeoutMs: number): NeonHttpDatabase<TSchema> {
+>(db: NeonDatabase<TSchema>, timeoutMs: number): NeonDatabase<TSchema> {
   const wrapper = new TimeoutDbWrapper(db, timeoutMs);
 
   return new Proxy(db, {
@@ -369,7 +368,7 @@ function createTimeoutDbWrapper<
         return wrapper.transaction.bind(wrapper);
       }
       // Otherwise, delegate to the underlying Drizzle instance
-      return (target as any)[prop];
+      return (target as unknown as Record<string | symbol, unknown>)[prop];
     },
   }) as NeonHttpDatabase<TSchema>;
 }

@@ -9,7 +9,7 @@
 
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { openApiSpecification } from "@repo/shared";
+import { openApiSpecification } from "@repo/shared/server";
 import { withUnifiedApiHandler } from "@repo/shared";
 
 async function openApiHandler(req: NextRequest) {

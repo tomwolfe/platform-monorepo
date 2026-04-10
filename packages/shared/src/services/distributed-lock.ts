@@ -42,6 +42,32 @@ import { Logger } from "../logger";
 const logger = new Logger({ serviceName: "distributed-lock" });
 
 // ============================================================================
+// RE-ENTRANCY SUPPORT TYPES
+// ============================================================================
+
+export interface ReentrantLockOptions {
+  /** Execution ID for re-entrancy tracking */
+  executionId?: string;
+  /** Owner ID for lock identification */
+  ownerId?: string;
+}
+
+export interface ReentrantLockResult {
+  acquired: boolean;
+  lockKey: string;
+  ownerId: string;
+  wasStale?: boolean;
+  isReentrant?: boolean;
+  reentrancyDepth?: number;
+}
+
+// ============================================================================
+// RE-ENTRANCY METADATA KEY
+// ============================================================================
+
+const META_SUFFIX = ":meta";
+
+// ============================================================================
 // LUA SCRIPTS FOR ATOMIC OPERATIONS
 // ============================================================================
 
@@ -279,4 +305,179 @@ export async function withDistributedLockLegacyCompat<T>(
 ): Promise<T> {
   const ttlSeconds = Math.ceil(validityMs / 1000);
   return withDistributedLock(lockKey, ttlSeconds, fn);
+}
+
+// ============================================================================
+// RE-ENTRANT DISTRIBUTED LOCK FUNCTIONS
+// Supports nested lock acquisition within the same execution context
+// ============================================================================
+
+/**
+ * Acquire a re-entrant distributed lock.
+ * If the same execution context already holds the lock, increments depth instead.
+ *
+ * @param lockKey - Unique key for the lock
+ * @param ttlSeconds - Lock TTL in seconds
+ * @param options - Re-entrancy options (executionId required for re-entrancy)
+ * @returns Re-entrant lock result
+ */
+export async function acquireReentrantLock(
+  lockKey: string,
+  ttlSeconds: number,
+  options?: ReentrantLockOptions,
+): Promise<ReentrantLockResult> {
+  const { namespace = ServiceNamespace.SHARED, recoverStale = true } =
+    options || {};
+  const redis = getRedisClient(namespace);
+
+  const executionId = options?.executionId;
+  const reentrancyToken = executionId
+    ? `reentrant:${executionId}:${options.ownerId || "default"}`
+    : null;
+
+  // Check for existing metadata (re-entrancy detection)
+  const metaKey = lockKey + META_SUFFIX;
+  if (reentrancyToken) {
+    try {
+      const metaRaw = await redis.get(metaKey);
+      if (metaRaw) {
+        const meta = JSON.parse(metaRaw) as Record<string, unknown>;
+        if (meta.reentrancyToken === reentrancyToken) {
+          // Re-entrant acquisition - increment depth
+          const newDepth = (meta.reentrancyDepth as number) + 1;
+          meta.reentrancyDepth = newDepth;
+          meta.acquiredAt = new Date().toISOString();
+          await redis.set(metaKey, JSON.stringify(meta), "EX", ttlSeconds);
+          // Also refresh the lock TTL
+          await redis.expire(lockKey, ttlSeconds);
+          return {
+            acquired: true,
+            lockKey,
+            ownerId: meta.ownerId as string,
+            isReentrant: true,
+            reentrancyDepth: newDepth,
+          };
+        }
+      }
+    } catch {
+      // Metadata parse error - proceed with normal acquisition
+    }
+  }
+
+  // Normal acquisition
+  const ownerId = randomUUID();
+  const acquired = await redis.eval(
+    LUA_ACQUIRE_SCRIPT,
+    [lockKey],
+    [ownerId, String(Math.floor(ttlSeconds))],
+  );
+
+  if (acquired === 1) {
+    // Store metadata
+    const metadata = {
+      ownerId,
+      acquiredAt: new Date().toISOString(),
+      ttlSeconds,
+      reentrancyToken,
+      reentrancyDepth: 1,
+    };
+    try {
+      await redis.set(metaKey, JSON.stringify(metadata), "EX", ttlSeconds);
+    } catch {
+      // Metadata storage failure - continue without re-entrancy support
+    }
+    return {
+      acquired: true,
+      lockKey,
+      ownerId,
+      reentrancyDepth: 1,
+    };
+  }
+
+  return { acquired: false, lockKey, ownerId: "" };
+}
+
+/**
+ * Release a re-entrant distributed lock.
+ * If depth > 1, decrements depth instead of actually releasing.
+ *
+ * @param lockKey - The lock key
+ * @param ownerId - The owner ID from acquireReentrantLock
+ * @param options - Re-entrancy options
+ * @returns Whether the lock was fully released
+ */
+export async function releaseReentrantLock(
+  lockKey: string,
+  ownerId: string,
+  options?: ReentrantLockOptions,
+): Promise<boolean> {
+  const { namespace = ServiceNamespace.SHARED } = options || {};
+  const redis = getRedisClient(namespace);
+  const metaKey = lockKey + META_SUFFIX;
+
+  try {
+    // Check metadata for re-entrancy
+    const metaRaw = await redis.get(metaKey);
+    if (metaRaw) {
+      const meta = JSON.parse(metaRaw) as Record<string, unknown>;
+      const depth = (meta.reentrancyDepth as number) || 1;
+
+      if (depth > 1) {
+        // Decrement depth
+        meta.reentrancyDepth = depth - 1;
+        await redis.set(metaKey, JSON.stringify(meta), "KEEPTTL");
+        return false; // Not fully released
+      }
+    }
+
+    // Release the actual lock
+    const released = await releaseDistributedLock(lockKey, ownerId, namespace);
+
+    // Clean up metadata
+    if (released) {
+      try {
+        await redis.del(metaKey);
+      } catch {
+        // Metadata cleanup failure - it will expire eventually
+      }
+    }
+
+    return released;
+  } catch (error) {
+    logger.warn({
+      message: "Failed to release re-entrant lock",
+      lockKey,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+/**
+ * Execute a function within a re-entrant distributed lock scope.
+ *
+ * @param lockKey - Unique key for the lock
+ * @param ttlSeconds - Lock TTL in seconds
+ * @param fn - Function to execute while holding the lock
+ * @param options - Re-entrancy options (executionId required for re-entrancy)
+ * @returns Result of the function execution
+ * @throws Error if lock acquisition fails
+ */
+export async function withReentrantDistributedLock<T>(
+  lockKey: string,
+  ttlSeconds: number,
+  fn: () => Promise<T>,
+  options?: ReentrantLockOptions & DistributedLockOptions,
+): Promise<T> {
+  const lock = await acquireReentrantLock(lockKey, ttlSeconds, options);
+
+  if (!lock.acquired) {
+    throw new Error(`Failed to acquire distributed lock: ${lockKey}`);
+  }
+
+  try {
+    return await fn();
+  } finally {
+    await releaseReentrantLock(lockKey, lock.ownerId, options);
+  }
 }

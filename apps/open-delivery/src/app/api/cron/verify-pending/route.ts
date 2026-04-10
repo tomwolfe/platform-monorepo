@@ -218,6 +218,11 @@ async function postHandler(req: NextRequest) {
                 orderId: order.id,
                 error: verificationResult.error,
               });
+              // POISON PILL FIX: Mark as verification_failed so the queue can proceed
+              await getDb()
+                .update(orders)
+                .set({ status: "verification_failed" })
+                .where(eq(orders.id, order.id));
               return { orderId: order.id, success: false };
             }
 
@@ -261,6 +266,24 @@ async function postHandler(req: NextRequest) {
               orderId: order.id,
               error: error instanceof Error ? error.message : String(error),
             });
+            // POISON PILL FIX: Mark as verification_failed so the queue can proceed
+            try {
+              await getDb()
+                .update(orders)
+                .set({ status: "verification_failed" })
+                .where(eq(orders.id, order.id));
+            } catch (dbError) {
+              logger.error(
+                "Failed to update order status to verification_failed",
+                {
+                  orderId: order.id,
+                  error:
+                    dbError instanceof Error
+                      ? dbError.message
+                      : String(dbError),
+                },
+              );
+            }
             return { orderId: order.id, success: false };
           }
         });

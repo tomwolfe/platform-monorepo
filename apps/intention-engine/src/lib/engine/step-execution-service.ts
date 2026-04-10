@@ -15,7 +15,13 @@
  */
 
 import { NextRequest } from "next/server";
-import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
+import {
+  acquireDistributedLock,
+  releaseDistributedLock,
+  getRedisClient,
+  ServiceNamespace,
+  Logger,
+} from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.IE);
 import {
   getToolRegistry,
@@ -28,20 +34,16 @@ import {
   QStashService,
   FailoverPolicyEngine,
   type PolicyEvaluationContext,
+  type IntentType,
 } from "@repo/shared";
-import {
-  createRepairAgent,
-  type ZombieSaga,
-  type RepairResult,
-} from "@repo/shared";
+import { createRepairAgent, type ZombieSaga } from "@repo/shared";
 import { getParameterAliaserService } from "@repo/shared/services/parameter-aliaser";
 import { getSchemaEvolutionService } from "@repo/shared/services/schema-evolution";
-import { ExecutionState } from "@/lib/engine/types";
+import { ExecutionState, type Plan, type PlanStep } from "@/lib/engine/types";
 import { getCompletedSteps } from "@/lib/engine/state-machine";
 import { NervousSystemObserver } from "@/lib/listeners/nervous-system-observer";
 import { WorkflowMachine } from "@/lib/engine/workflow-machine";
 import type { ToolExecutor as WorkflowToolExecutor } from "@/lib/engine/workflow-machine";
-import { LockingService } from "@/lib/engine/locking";
 import { verifyAsymmetricJWT } from "@repo/auth";
 
 const logger = new Logger({ serviceName: "intention-engine" });
@@ -86,7 +88,7 @@ export class StepExecutionService {
     startStepIndex: number,
     request: NextRequest,
   ): Promise<StepExecutionResult> {
-    const startTime = performance.now();
+    const _startTime = performance.now();
 
     try {
       // Extract trace context from request
@@ -112,7 +114,7 @@ export class StepExecutionService {
 
       // Acquire execution lock
       const lock = await this.acquireExecutionLock(executionId);
-      if (!lock) {
+      if (!lock || !lock.acquired) {
         return this.handleLockConflict(executionId);
       }
 
@@ -178,7 +180,7 @@ export class StepExecutionService {
         };
       } finally {
         // Always release lock
-        await lock.release();
+        await this.releaseExecutionLock(lock.lockKey, lock.ownerId);
       }
     } catch (error) {
       logger.error({
@@ -255,21 +257,31 @@ export class StepExecutionService {
     executionId: string,
     stepIndex: number,
   ): Promise<boolean> {
-    const result = await LockingService.acquireStepIdempotencyLock(
-      executionId,
-      stepIndex,
-      3600, // 1 hour TTL
-    );
-
-    return result.acquired;
+    const lockKey = `exec:${executionId}:step:${stepIndex}:lock`;
+    try {
+      const result = await acquireDistributedLock(lockKey, 3600, {
+        namespace: ServiceNamespace.IE,
+      });
+      return result.acquired;
+    } catch {
+      return false;
+    }
   }
 
   private async acquireExecutionLock(executionId: string) {
     const lockKey = `exec:${executionId}:lock`;
-    return await LockingService.acquire(lockKey, {
-      ttlSeconds: 30,
-      operation: "execute-step",
-    });
+    try {
+      const result = await acquireDistributedLock(lockKey, 30, {
+        namespace: ServiceNamespace.IE,
+      });
+      return result;
+    } catch {
+      return { acquired: false, lockKey, ownerId: "" };
+    }
+  }
+
+  private async releaseExecutionLock(lockKey: string, ownerId: string) {
+    await releaseDistributedLock(lockKey, ownerId, ServiceNamespace.IE);
   }
 
   private handleLockConflict(executionId: string): StepExecutionResult {
@@ -398,8 +410,8 @@ export class StepExecutionService {
     executionId: string,
     startStepIndex: number,
     state: ExecutionState,
-    plan: any,
-    traceContext: { traceId: string; correlationId: string },
+    plan: Plan,
+    _traceContext: { traceId: string; correlationId: string },
   ) {
     const toolExecutor = this.createToolExecutor(executionId);
     const machine = new WorkflowMachine(executionId, toolExecutor, {
@@ -439,8 +451,14 @@ export class StepExecutionService {
    */
   private async handleSchemaEvolutionLoop(
     executionId: string,
-    result: any,
-    plan: any,
+    result: {
+      stepId?: string;
+      stepState: {
+        status: string;
+        error?: { message?: string; code?: string };
+      };
+    },
+    plan: Plan,
     state: ExecutionState,
   ): Promise<void> {
     const errorMessage = result.stepState.error?.message || "";
@@ -457,7 +475,7 @@ export class StepExecutionService {
     try {
       // Extract tool name and parameters from the failed step
       const executedStep = plan.steps.find(
-        (step: any) => step.id === result.stepId,
+        (step: PlanStep) => step.id === result.stepId,
       );
       if (!executedStep) {
         logger.warn({
@@ -584,8 +602,8 @@ export class StepExecutionService {
     const registry = getToolRegistry();
 
     // Lazy-initialized shared service instances for dependency injection
-    let injectedRedis: any = null;
-    let injectedDb: any = null;
+    let injectedRedis: typeof redis | null = null;
+    let injectedDb: ReturnType<typeof getDb> | null = null;
     const getInjectedRedis = () => {
       if (!injectedRedis) injectedRedis = redis;
       return injectedRedis;
@@ -636,13 +654,19 @@ export class StepExecutionService {
 
   private async handleFailoverPolicy(
     executionId: string,
-    plan: any,
-    result: any,
+    plan: Plan,
+    result: {
+      stepId?: string;
+      stepState: {
+        status: string;
+        error?: { message?: string; code?: string };
+      };
+    },
     state: ExecutionState,
     traceContext: { traceId: string; correlationId: string },
   ) {
     const executedStep = plan.steps.find(
-      (step: any) => step.id === result.stepId,
+      (step: PlanStep) => step.id === result.stepId,
     );
 
     // Track failed bookings
@@ -673,7 +697,7 @@ export class StepExecutionService {
 
     // Evaluate failover policy
     const failoverContext: PolicyEvaluationContext = {
-      intent_type: (state.intent?.type as any) || "BOOKING",
+      intent_type: (state.intent?.type as IntentType) || "BOOKING",
       failure_reason: this.mapFailureReason(result.stepState.error?.message),
       confidence: state.intent?.confidence || 0.8,
       attempt_count: state.step_states.filter((s) => s.status === "failed")
@@ -749,8 +773,14 @@ export class StepExecutionService {
   private async invokeRepairAgent(
     executionId: string,
     state: ExecutionState,
-    result: any,
-    executedStep: any,
+    result: {
+      stepId?: string;
+      stepState: {
+        status: string;
+        error?: { message?: string; code?: string };
+      };
+    },
+    executedStep: PlanStep | undefined,
     traceContext: { traceId: string; correlationId: string },
   ): Promise<boolean> {
     try {
@@ -939,7 +969,10 @@ export class StepExecutionService {
 
   private async storeFailoverState(
     executionId: string,
-    failoverResult: any,
+    failoverResult: {
+      policy?: { id?: string; name?: string };
+      recommended_action?: { type: string; message_template?: string };
+    },
     failoverEngine: FailoverPolicyEngine,
     failoverContext: PolicyEvaluationContext,
   ) {
@@ -961,7 +994,13 @@ export class StepExecutionService {
     );
   }
 
-  private async publishFailoverEvent(executionId: string, failoverResult: any) {
+  private async publishFailoverEvent(
+    executionId: string,
+    failoverResult: {
+      policy?: { name?: string };
+      recommended_action: { type: string; message_template?: string };
+    },
+  ) {
     try {
       await RealtimeService.publish(
         "nervous-system:updates",
@@ -986,7 +1025,10 @@ export class StepExecutionService {
 
   private async triggerAutomaticReplanning(
     executionId: string,
-    failoverResult: any,
+    failoverResult: {
+      policy?: { name?: string };
+      recommended_action?: { type: string; message_template?: string };
+    },
     failoverEngine: FailoverPolicyEngine,
     failoverContext: PolicyEvaluationContext,
     state: ExecutionState,
@@ -1038,7 +1080,13 @@ export class StepExecutionService {
     }
   }
 
-  private async publishReplanEvent(executionId: string, failoverResult: any) {
+  private async publishReplanEvent(
+    executionId: string,
+    failoverResult: {
+      policy?: { name?: string };
+      recommended_action?: { type: string; message_template?: string };
+    },
+  ) {
     try {
       await RealtimeService.publish(
         "nervous-system:updates",
@@ -1144,7 +1192,7 @@ export class StepExecutionService {
       updatedState.intent = newIntent;
       updatedState.plan = newPlan;
       updatedState.status = "PLANNED";
-      updatedState.step_states = newPlan.steps.map((step: any) => ({
+      updatedState.step_states = newPlan.steps.map((step: PlanStep) => ({
         step_id: step.id,
         status: "pending",
         attempts: 0,

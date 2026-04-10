@@ -16,18 +16,14 @@
  *
  * @see Phase 3.1: Route De-bloating & Abstraction
  * @see StepExecutionService for business logic
- * @see LockingService.acquireStepIdempotencyLock for idempotency
+ * @see acquireDistributedLock from @repo/shared for idempotency
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { withQStashAuth } from "@repo/shared";
-import { withServerlessTimeout } from "@repo/shared/middleware/serverless-timeout";
 import { withRetry } from "@repo/shared/middleware/retry-with-backoff";
-import {
-  StepExecutionService,
-  createStepExecutionService,
-} from "@/lib/engine/step-execution-service";
+import { createStepExecutionService } from "@/lib/engine/step-execution-service";
 
 // Idempotency: acquireStepIdempotencyLock uses Redis SETNX with nx: true
 // Distributed Tracing: x-trace-id header extracted and propagated
@@ -39,7 +35,7 @@ export const maxDuration = 8; // Vercel Hobby limit - 8s buffer before 10s hard 
 // REQUEST/RESPONSE SCHEMAS
 // ============================================================================
 
-const ExecuteStepRequestSchema = z.object({
+const _ExecuteStepRequestSchema = z.object({
   executionId: z.string().uuid(),
   startStepIndex: z.number().int().nonnegative().optional(),
 });
@@ -75,9 +71,9 @@ const stepExecutionService = createStepExecutionService();
 
 async function executeStepHandler(
   request: NextRequest,
-  body: z.infer<typeof ExecuteStepRequestSchema>,
+  body: z.infer<typeof _ExecuteStepRequestSchema>,
 ): Promise<NextResponse> {
-  const startTime = performance.now();
+  const _startTime = performance.now();
   const { executionId, startStepIndex } = body;
 
   // Wrap step execution with retry for transient failures
@@ -89,8 +85,8 @@ async function executeStepHandler(
 
   try {
     // DISTRIBUTED TRACING: Extract trace context from headers
-    const traceId = request.headers.get("x-trace-id");
-    const correlationId = request.headers.get("x-correlation-id");
+    const _traceId = request.headers.get("x-trace-id");
+    const _correlationId = request.headers.get("x-correlation-id");
 
     const result = await executeStepWithRetry(
       executionId,

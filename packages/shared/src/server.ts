@@ -489,3 +489,11 @@ export {
 // ABLY AUTHENTICATION (uses @clerk/nextjs/server)
 // ============================================================================
 export * from "./realtime/ably-auth";
+
+// ============================================================================
+// OPENAPI SPECIFICATION
+// ============================================================================
+export {
+  openApiSpecification,
+  type OpenApiSpecification,
+} from "./openapi-spec";

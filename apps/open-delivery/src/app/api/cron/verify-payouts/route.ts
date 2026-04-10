@@ -333,6 +333,31 @@ async function getCronHandler(req: NextRequest) {
                     error instanceof Error ? error.message : "Unknown error",
                 },
               );
+              // POISON PILL FIX: If the error indicates an invalid/fatal issue
+              // (not just pending), mark as failed to prevent infinite retries.
+              const errorMsg =
+                error instanceof Error ? error.message : String(error);
+              const isFatalError =
+                errorMsg.includes("invalid") ||
+                errorMsg.includes("not found") ||
+                errorMsg.includes("unknown transaction");
+
+              if (isFatalError) {
+                logger.error(
+                  `[Verify Payouts Cron] Fatal error for ${order.id}, marking as failed`,
+                  { orderId: order.id, error: errorMsg },
+                );
+                await getDb()
+                  .update(orders)
+                  .set({ escrowStatus: "failed" })
+                  .where(eq(orders.id, order.id));
+                return {
+                  orderId: order.id,
+                  status: "failed" as const,
+                  reason: "fatal_verification_error",
+                };
+              }
+
               return { orderId: order.id, status: "pending" as const };
             }
           },

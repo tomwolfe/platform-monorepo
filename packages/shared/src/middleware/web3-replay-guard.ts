@@ -469,7 +469,7 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
       const processingKey = this.getProcessingKey(txHash);
       const set = await this.redis.set(processingKey, "processing", {
         nx: true, // Only set if key does NOT exist
-        ex: 120, // 2-minute TTL (prevents permanent deadlocks on lambda crash)
+        ex: 15, // SERVERLESS FIX: 15s TTL (prevents deadlocks on lambda crash, was 120s)
       });
 
       if (set === null) {

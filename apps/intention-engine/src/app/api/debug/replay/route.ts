@@ -48,8 +48,11 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createReplayEngine, type ReplayOptions } from "@/lib/engine/time-travel-debugger";
-import { withApiErrorHandler, Logger } from "@repo/shared";
+import {
+  createReplayEngine,
+  type ReplayOptions,
+} from "@/lib/engine/time-travel-debugger";
+import { withUnifiedApiHandler, Logger } from "@repo/shared";
 
 const logger = new Logger({ serviceName: "debug-replay" });
 
@@ -77,7 +80,7 @@ async function postHandler(request: NextRequest): Promise<NextResponse> {
         success: false,
         error: "Invalid request body",
       },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -90,17 +93,21 @@ async function postHandler(request: NextRequest): Promise<NextResponse> {
         success: false,
         error: "Missing or invalid traceId",
       },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
-  if (stepIndex === undefined || typeof stepIndex !== "number" || stepIndex < 0) {
+  if (
+    stepIndex === undefined ||
+    typeof stepIndex !== "number" ||
+    stepIndex < 0
+  ) {
     return NextResponse.json(
       {
         success: false,
         error: "Missing or invalid stepIndex",
       },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -131,7 +138,9 @@ async function postHandler(request: NextRequest): Promise<NextResponse> {
   });
 }
 
-export const POST = withApiErrorHandler(postHandler, { serviceName: 'debug-replay' });
+export const POST = withUnifiedApiHandler(postHandler, {
+  serviceName: "debug-replay",
+});
 
 // ============================================================================
 // OPTIONS HANDLER (CORS)

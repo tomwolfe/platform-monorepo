@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { ReserveRequestSchema, validateRequest } from "@repo/shared";
 import {
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   successResponse,
   validationErrorResponse,
   unauthorizedErrorResponse,
@@ -56,7 +56,7 @@ const logger = new Logger({ serviceName: "reserve-api-v2" });
  * - 404: Restaurant not found
  * - 500: Internal server error
  */
-export const POST = withApiErrorHandler(
+export const POST = withUnifiedApiHandler(
   async (req: NextRequest) => {
     // Extract trace ID for logging
     const traceId = req.headers.get("x-trace-id") || undefined;

@@ -21,7 +21,7 @@ import { loadExecutionState } from "@/lib/engine/memory";
 import { getMcpClients, ToolCallResult } from "@/lib/mcp-client";
 import {
   RealtimeService,
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   formatApiSuccess,
   formatApiError,
 } from "@repo/shared";
@@ -230,7 +230,7 @@ async function meshResumeHandler(req: NextRequest) {
   });
 }
 
-export const POST = withApiErrorHandler(meshResumeHandler, {
+export const POST = withUnifiedApiHandler(meshResumeHandler, {
   serviceName: "mesh-resume",
   includeStackTrace: process.env.NODE_ENV !== "production",
 });

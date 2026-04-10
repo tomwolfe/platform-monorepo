@@ -3,7 +3,7 @@ import { NextRequest, NextResponse, revalidateTag } from "next/server";
 import { getDb, restaurantReservations, restaurants, eq } from "@repo/database";
 import { NotifyService } from "@tablestack/lib/notifications";
 import {
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   Logger,
   formatApiError,
   formatApiSuccess,
@@ -280,7 +280,7 @@ async function postHandler(req: NextRequest) {
 }
 
 export const POST = withServerlessTimeout(
-  withApiErrorHandler(postHandler, {
+  withUnifiedApiHandler(postHandler, {
     serviceName: "dispatch-handler",
     includeStackTrace: process.env.NODE_ENV !== "production",
   }),

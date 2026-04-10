@@ -2,11 +2,11 @@
 
 import React from "react";
 import { ToolResultRenderer } from "./ToolResultRenderer";
-import { isToolUIPart, getToolName } from "ai";
+import { isToolUIPart, getToolName, type UIMessage, type ToolUIPart } from "ai";
 import { Loader2 } from "lucide-react";
 
 interface MessageBubbleProps {
-  message: any;
+  message: UIMessage;
   isLast?: boolean;
   isStreaming?: boolean;
 }
@@ -29,7 +29,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             : "bg-white border border-slate-200 text-slate-900 rounded-bl-md"
         }`}
       >
-        {message.parts.map((part: any, partIndex: number) => {
+        {message.parts.map((part, partIndex) => {
           if (part.type === "text") {
             return (
               <p
@@ -42,7 +42,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           }
 
           if (isToolUIPart(part)) {
-            const toolInvocation = part;
+            const toolInvocation = part as ToolUIPart;
             const toolName = getToolName(toolInvocation);
 
             return (

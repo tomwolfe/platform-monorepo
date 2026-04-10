@@ -10,10 +10,30 @@ import {
   Loader2,
 } from "lucide-react";
 import { Restaurant, RestaurantCard } from "./RestaurantCard";
+import type { ToolUIPart } from "ai";
+
+/**
+ * Represents the output of a tool execution.
+ * This is a simplified runtime shape that matches what our tools return.
+ */
+interface ToolOutput {
+  success: boolean;
+  result?: Record<string, unknown> | unknown[];
+  error?: string;
+  download_url?: string;
+  event_details?: {
+    title: string;
+    start_time: string;
+    end_time?: string;
+    location?: string;
+  };
+  lat?: number;
+  lon?: number;
+}
 
 interface ToolResultRendererProps {
   toolName: string;
-  toolInvocation: any;
+  toolInvocation: ToolUIPart;
   onRestaurantSelect?: (restaurant: Restaurant) => void;
 }
 
@@ -53,7 +73,7 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
 
   // Handle success state
   if (toolInvocation.state === "output-available") {
-    const output = toolInvocation.output as any;
+    const output = toolInvocation.output as ToolOutput;
 
     // Geocode Location
     if (toolName === "geocode_location") {
@@ -90,7 +110,9 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
           );
         }
 
-        const restaurants: Restaurant[] = output.result.map((r: any) => ({
+        const restaurants: Restaurant[] = (
+          output.result as Array<Record<string, unknown>>
+        ).map((r) => ({
           name: r.name,
           address: r.address,
           rating: r.rating,
@@ -150,9 +172,7 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 text-xs text-slate-600">
                     <Calendar size={12} />
-                    <span>
-                      {new Date(details.start_time).toLocaleString()}
-                    </span>
+                    <span>{new Date(details.start_time).toLocaleString()}</span>
                   </div>
                   {details.location && (
                     <div className="flex items-center gap-2 text-xs text-slate-600">
@@ -163,9 +183,7 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
                   {details.end_time && (
                     <div className="flex items-center gap-2 text-xs text-slate-600">
                       <Clock size={12} />
-                      <span>
-                        {new Date(details.end_time).toLocaleString()}
-                      </span>
+                      <span>{new Date(details.end_time).toLocaleString()}</span>
                     </div>
                   )}
                 </div>

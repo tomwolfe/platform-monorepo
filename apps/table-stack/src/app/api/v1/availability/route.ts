@@ -20,6 +20,8 @@ import {
   getRedisClient,
   ServiceNamespace,
   Logger,
+  isRestaurantOpenAtTime,
+  isRestaurantOpenOnDay,
 } from "@repo/shared";
 import { reservationService } from "@tablestack/lib/reservation-service";
 
@@ -130,7 +132,7 @@ export const GET = withUnifiedApiHandler(
           ?.split(",")
           .map((d: unknown) => String(d).trim().toLowerCase()) || [];
 
-      if (!openDays.includes(dayOfWeek)) {
+      if (!isRestaurantOpenOnDay(dayOfWeek, openDays)) {
         return NextResponse.json(
           formatApiSuccess({
             message: "Restaurant is closed on this day",
@@ -143,14 +145,7 @@ export const GET = withUnifiedApiHandler(
       const openingTime = restaurant.openingTime || "00:00";
       const closingTime = restaurant.closingTime || "23:59";
 
-      // CRITICAL FIX: Handle overnight hours (e.g., 18:00 to 02:00)
-      // If closingTime < openingTime, the restaurant spans midnight.
-      const isOvernight = closingTime < openingTime;
-      const isClosed = isOvernight
-        ? timeStr < openingTime && timeStr > closingTime
-        : timeStr < openingTime || timeStr > closingTime;
-
-      if (isClosed) {
+      if (!isRestaurantOpenAtTime(timeStr, openingTime, closingTime)) {
         return NextResponse.json(
           formatApiSuccess({
             message: "Restaurant is closed at this time",
@@ -184,10 +179,11 @@ export const GET = withUnifiedApiHandler(
               timeZone: timezone,
             });
 
-            const suggestedIsClosed = isOvernight
-              ? suggestedTimeStr < openingTime && suggestedTimeStr > closingTime
-              : suggestedTimeStr < openingTime ||
-                suggestedTimeStr > closingTime;
+            const suggestedIsClosed = !isRestaurantOpenAtTime(
+              suggestedTimeStr,
+              openingTime,
+              closingTime,
+            );
 
             if (suggestedIsClosed) {
               return null;

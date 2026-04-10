@@ -3,7 +3,12 @@
 import { useState, useEffect, useRef } from "react";
 import { useChat } from "@ai-sdk/react";
 import { Trash2, MapPin, Loader2, Mic, SendHorizontal } from "lucide-react";
-import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from "ai";
+import {
+  DefaultChatTransport,
+  lastAssistantMessageIsCompleteWithToolCalls,
+  type UIMessage,
+  type TextUIPart,
+} from "ai";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ActionChips, ActionChip } from "@/components/chat/ActionChips";
 import { Restaurant } from "@/components/chat/RestaurantCard";
@@ -18,11 +23,15 @@ const ROTATING_PLACEHOLDERS = [
 ];
 
 export default function Home() {
-  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [userLocation, setUserLocation] = useState<{
+    lat: number;
+    lng: number;
+  } | null>(null);
   const [input, setInput] = useState("");
-  const [selectedRestaurant, setSelectedRestaurant] = useState<Restaurant | null>(null);
+  const [selectedRestaurant, setSelectedRestaurant] =
+    useState<Restaurant | null>(null);
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
-  
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -72,7 +81,7 @@ export default function Home() {
         },
         (error) => {
           console.error("Error getting location", error);
-        }
+        },
       );
     }
   }, []);
@@ -84,11 +93,12 @@ export default function Home() {
 
   const handleSendMessage = async (text: string) => {
     if (!text.trim()) return;
-    
+
     try {
       await sendMessage({ text }, { body: { userLocation } });
-    } catch (err: any) {
-      console.error("Failed to send message:", err);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      console.error("Failed to send message:", error.message);
     }
   };
 
@@ -105,7 +115,7 @@ export default function Home() {
     setSelectedRestaurant(restaurant);
     const time = "7 PM";
     handleSendMessage(
-      `I've selected ${restaurant.name} at ${restaurant.address}. Please add this to my calendar for tonight at ${time}.`
+      `I've selected ${restaurant.name} at ${restaurant.address}. Please add this to my calendar for tonight at ${time}.`,
     );
   };
 
@@ -114,11 +124,13 @@ export default function Home() {
   };
 
   // Parse assistant messages for action chips (failover suggestions)
-  const parseActionChips = (message: any): ActionChip[] | null => {
+  const parseActionChips = (message: UIMessage): ActionChip[] | null => {
     // Look for structured failover suggestions in the message
     // This would be enhanced when FailoverPolicyEngine returns structured data
-    const textParts = message.parts.filter((p: any) => p.type === "text");
-    const fullText = textParts.map((p: any) => p.text).join("\n");
+    const textParts = message.parts.filter(
+      (p): p is TextUIPart => p.type === "text",
+    );
+    const fullText = textParts.map((p) => p.text).join("\n");
 
     // Simple pattern matching for alternatives (can be enhanced)
     const timePattern = /(\d+:\d+\s*(?:AM|PM))/gi;
@@ -170,8 +182,8 @@ export default function Home() {
               What can I help you with today?
             </h2>
             <p className="text-slate-500 max-w-md mx-auto">
-              I can book tables, schedule events, find rides, and more. Just tell
-              me what you need.
+              I can book tables, schedule events, find rides, and more. Just
+              tell me what you need.
             </p>
           </div>
         ) : (
@@ -179,7 +191,9 @@ export default function Home() {
             {messages.map((message, index) => {
               const isLast = index === messages.length - 1;
               const isAssistant = message.role === "assistant";
-              const actionChips = isAssistant ? parseActionChips(message) : null;
+              const actionChips = isAssistant
+                ? parseActionChips(message)
+                : null;
 
               return (
                 <div key={message.id}>

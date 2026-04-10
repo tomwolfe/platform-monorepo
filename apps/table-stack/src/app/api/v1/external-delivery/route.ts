@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { validateRequest } from "@tablestack/lib/auth";
 import { NotifyService } from "@tablestack/lib/notifications";
 import {
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   formatApiError,
   getRedisClient,
   ServiceNamespace,
@@ -93,10 +93,10 @@ async function postHandler(req: NextRequest, context: InternalWebhookContext) {
   );
 }
 
-export const POST = withApiErrorHandler(
+export const POST = withUnifiedApiHandler(
   (req: NextRequest) =>
     withInternalWebhookAuth((ctx) => postHandler(req, ctx), {
       idempotencyService,
     })(req),
-  "EXECUTION_FAILED",
+  { serviceName: "external-delivery" },
 );

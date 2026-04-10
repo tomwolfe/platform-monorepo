@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getRedisClient,
   ServiceNamespace,
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   safeParseJsonSync,
   errorResponse,
 } from "@repo/shared";
@@ -93,7 +93,7 @@ async function getHandler(req: NextRequest) {
   });
 }
 
-export const GET = withApiErrorHandler(getHandler, {
+export const GET = withUnifiedApiHandler(getHandler, {
   serviceName: "analytics",
   includeStackTrace: process.env.NODE_ENV !== "production",
 });

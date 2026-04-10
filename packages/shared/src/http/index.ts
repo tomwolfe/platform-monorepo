@@ -54,7 +54,3 @@ export {
   type ApiHandler,
   type ApiHandlerConfig,
 } from "./handler";
-
-// Re-export legacy withApiErrorHandler for backward compatibility
-// NOTE: New code should use withApiHandler from this module
-export { withApiErrorHandler } from "../error-handler";

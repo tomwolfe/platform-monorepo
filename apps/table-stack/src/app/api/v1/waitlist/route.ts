@@ -4,7 +4,7 @@ import { getDb, restaurantWaitlist } from "@repo/database";
 import { and, eq, sql } from "@repo/database";
 import { validateRequest } from "@tablestack/lib/auth";
 import {
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   formatApiSuccess,
   validationErrorResponse,
   forbiddenErrorResponse,
@@ -87,7 +87,7 @@ async function getHandler(req: NextRequest) {
   );
 }
 
-export const GET = withApiErrorHandler(getHandler, {
+export const GET = withUnifiedApiHandler(getHandler, {
   serviceName: "table-stack-waitlist",
   includeStackTrace: process.env.NODE_ENV !== "production",
 });

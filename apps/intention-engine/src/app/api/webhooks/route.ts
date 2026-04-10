@@ -13,10 +13,19 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getRedisClient, ServiceNamespace, withApiErrorHandler, formatApiSuccess, Logger } from "@repo/shared";
+import {
+  getRedisClient,
+  ServiceNamespace,
+  withUnifiedApiHandler,
+  formatApiSuccess,
+  Logger,
+} from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.IE);
 import { IDEMPOTENCY_KEY_HEADER } from "@repo/shared";
-import { WebhookDispatcherService, createWebhookDispatcherService } from "@/lib/engine/webhook-dispatcher-service";
+import {
+  WebhookDispatcherService,
+  createWebhookDispatcherService,
+} from "@/lib/engine/webhook-dispatcher-service";
 
 export const runtime = "nodejs";
 
@@ -39,21 +48,32 @@ async function webhooksHandler(req: NextRequest) {
   const idempotencyKey = req.headers.get(IDEMPOTENCY_KEY_HEADER);
 
   // Fail-Fast: Security Check
-  if (!signature || !timestamp || !(await webhookDispatcherService.verifySignature(rawBody, signature, timestamp))) {
+  if (
+    !signature ||
+    !timestamp ||
+    !(await webhookDispatcherService.verifySignature(
+      rawBody,
+      signature,
+      timestamp,
+    ))
+  ) {
     logger.warn("Unauthorized request blocked");
-    return NextResponse.json(
-      formatApiSuccess({ error: "Unauthorized" }),
-      { status: 401 }
-    );
+    return NextResponse.json(formatApiSuccess({ error: "Unauthorized" }), {
+      status: 401,
+    });
   }
 
   // Idempotency Check
   if (idempotencyKey) {
-    const isDuplicate = await webhookDispatcherService.checkIdempotency(idempotencyKey);
+    const isDuplicate =
+      await webhookDispatcherService.checkIdempotency(idempotencyKey);
     if (isDuplicate) {
       return NextResponse.json(
-        formatApiSuccess({ message: "Event already processed", duplicate: true }),
-        { status: 200, headers: { "x-idempotency-duplicate": "true" } }
+        formatApiSuccess({
+          message: "Event already processed",
+          duplicate: true,
+        }),
+        { status: 200, headers: { "x-idempotency-duplicate": "true" } },
       );
     }
   }
@@ -68,11 +88,11 @@ async function webhooksHandler(req: NextRequest) {
 
   return NextResponse.json(
     formatApiSuccess(result.data || { message: result.message }),
-    { status: result.statusCode || 200 }
+    { status: result.statusCode || 200 },
   );
 }
 
-export const POST = withApiErrorHandler(webhooksHandler, {
+export const POST = withUnifiedApiHandler(webhooksHandler, {
   serviceName: "webhooks",
   includeStackTrace: process.env.NODE_ENV !== "production",
 });

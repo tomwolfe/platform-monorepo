@@ -3,7 +3,13 @@ const redis = getRedisClient(ServiceNamespace.IE);
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { verifySignature } from "@repo/auth";
-import { IdempotencyService, IDEMPOTENCY_KEY_HEADER, safeParseJsonSync, withApiErrorHandler, AppError } from "@repo/shared";
+import {
+  IdempotencyService,
+  IDEMPOTENCY_KEY_HEADER,
+  safeParseJsonSync,
+  withUnifiedApiHandler,
+  AppError,
+} from "@repo/shared";
 
 // Schema for Ably message payloads from TableStack
 const AblyStateSchema = z.object({
@@ -24,16 +30,19 @@ async function postHandler(req: Request) {
 
   // 1. Validate Webhook Security (HMAC)
   if (signature && timestamp) {
-     const isValid = await verifySignature(rawBody, signature, timestamp);
-     if (!isValid) {
-       throw new AppError('UNAUTHORIZED', 'Unauthorized', 401);
-     }
+    const isValid = await verifySignature(rawBody, signature, timestamp);
+    if (!isValid) {
+      throw new AppError("UNAUTHORIZED", "Unauthorized", 401);
+    }
   }
 
   // 2. Idempotency Check
   if (idempotencyKey) {
     const idempotencyService = new IdempotencyService(redis);
-    const isDuplicate = await idempotencyService.isDuplicate(idempotencyKey, 'ably_state_sync');
+    const isDuplicate = await idempotencyService.isDuplicate(
+      idempotencyKey,
+      "ably_state_sync",
+    );
     if (isDuplicate) {
       return NextResponse.json({ synced: true, duplicate: true });
     }
@@ -42,7 +51,11 @@ async function postHandler(req: Request) {
   // 3. Safe JSON parsing
   const parseResult = safeParseJsonSync(rawBody);
   if (!parseResult.success) {
-    throw new AppError('VALIDATION_ERROR', `Invalid request body: ${parseResult.error}`, 400);
+    throw new AppError(
+      "VALIDATION_ERROR",
+      `Invalid request body: ${parseResult.error}`,
+      400,
+    );
   }
 
   const body = parseResult.data;
@@ -58,8 +71,8 @@ async function postHandler(req: Request) {
   await redis.hset(key, {
     [event.data.tableId]: JSON.stringify({
       status: event.data.status,
-      updatedAt: event.data.updatedAt
-    })
+      updatedAt: event.data.updatedAt,
+    }),
   });
 
   // 6. Set TTL to ensure memory stays "fresh" (e.g., 2 hours)
@@ -68,4 +81,6 @@ async function postHandler(req: Request) {
   return NextResponse.json({ synced: true });
 }
 
-export const POST = withApiErrorHandler(postHandler, { serviceName: 'ably-bridge' });
+export const POST = withUnifiedApiHandler(postHandler, {
+  serviceName: "ably-bridge",
+});

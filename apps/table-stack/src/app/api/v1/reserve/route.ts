@@ -6,7 +6,7 @@ import {
   IDEMPOTENCY_KEY_HEADER,
   getRedisClient,
   ServiceNamespace,
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   Logger,
   formatApiError,
   formatApiSuccess,
@@ -299,7 +299,7 @@ async function postHandler(req: NextRequest) {
 }
 
 export const POST = withServerlessTimeout(
-  withApiErrorHandler(postHandler, {
+  withUnifiedApiHandler(postHandler, {
     serviceName: "reserve-api",
     includeStackTrace: process.env.NODE_ENV !== "production",
   }),

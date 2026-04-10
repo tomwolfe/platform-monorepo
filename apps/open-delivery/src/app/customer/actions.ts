@@ -25,6 +25,7 @@ import {
   getRedisClient,
   ServiceNamespace,
   Logger,
+  withServerActionHandler,
 } from "@repo/shared";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
@@ -69,7 +70,7 @@ export interface MenuItem {
 
 const logger = new Logger({ serviceName: "open-delivery-customer-actions" });
 
-export async function getRealVendors(
+async function getRealVendorsImpl(
   userLat?: number,
   userLng?: number,
 ): Promise<Vendor[]> {
@@ -137,7 +138,15 @@ export async function getRealVendors(
   }
 }
 
-export async function getMenu(restaurantId: string): Promise<MenuItem[]> {
+/**
+ * Get real vendors near the user's location.
+ * Wrapped with withServerActionHandler for safe error handling.
+ */
+export const getRealVendors = withServerActionHandler(getRealVendorsImpl, {
+  errorCode: "GET_VENDORS_FAILED",
+});
+
+async function getMenuImpl(restaurantId: string): Promise<MenuItem[]> {
   try {
     const products = await getDb()
       .select()
@@ -158,6 +167,14 @@ export async function getMenu(restaurantId: string): Promise<MenuItem[]> {
     throw new Error("Could not load menu items");
   }
 }
+
+/**
+ * Get menu items for a restaurant.
+ * Wrapped with withServerActionHandler for safe error handling.
+ */
+export const getMenu = withServerActionHandler(getMenuImpl, {
+  errorCode: "GET_MENU_FAILED",
+});
 
 /**
  * Get Restaurant Wallet Address
@@ -211,7 +228,7 @@ export async function getRestaurantWallet(restaurantId: string): Promise<{
  *   This ensures the EIP-712 signature binds to the correct orderId.
  *   Falls back to a new UUID for non-crypto orders.
  */
-export async function placeRealOrder(
+async function placeRealOrderImpl(
   vendorId: string,
   items: Array<{ id: string; name: string; price: number; quantity: number }>,
   deliveryAddress?: string,
@@ -552,3 +569,14 @@ export async function placeRealOrder(
     throw new Error("Failed to place order. Please try again.");
   }
 }
+
+/**
+ * Place a real order with crypto payment verification.
+ *
+ * Wrapped with withServerActionHandler to return a safe
+ * { success: false, error: string } payload instead of crashing
+ * the Next.js server action pipeline.
+ */
+export const placeRealOrder = withServerActionHandler(placeRealOrderImpl, {
+  errorCode: "PLACE_ORDER_FAILED",
+});

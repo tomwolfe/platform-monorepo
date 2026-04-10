@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCryptoPrices } from "@repo/shared/utils/crypto-price";
-import { withApiErrorHandler } from "@repo/shared";
+import { withUnifiedApiHandler } from "@repo/shared";
 
 /**
  * Crypto Price Oracle API Endpoint
@@ -22,4 +22,4 @@ async function getHandler() {
   return NextResponse.json(prices);
 }
 
-export const GET = withApiErrorHandler(getHandler, 'EXECUTION_FAILED');
+export const GET = withUnifiedApiHandler(getHandler, { serviceName: "prices" });

@@ -4,7 +4,7 @@ import { SecurityProvider } from "@repo/auth";
 import {
   isTimingSafeEqual,
   AppConfig,
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   unauthorizedErrorResponse,
   validationErrorResponse,
   formatApiSuccess,
@@ -56,7 +56,6 @@ async function verifySessionHandler(req: NextRequest) {
   );
 }
 
-export const POST = withApiErrorHandler(
-  verifySessionHandler,
-  "EXECUTION_FAILED",
-);
+export const POST = withUnifiedApiHandler(verifySessionHandler, {
+  serviceName: "verify-session",
+});

@@ -5,7 +5,7 @@ import { restaurantReservations } from "@repo/database";
 import { eq } from "@repo/database";
 import { NotifyService } from "@tablestack/lib/notifications";
 import {
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   formatApiSuccess,
   validationErrorResponse,
   notFoundErrorResponse,
@@ -66,4 +66,4 @@ async function getHandler(req: NextRequest) {
   );
 }
 
-export const GET = withApiErrorHandler(getHandler, "EXECUTION_FAILED");
+export const GET = withUnifiedApiHandler(getHandler, { serviceName: "verify" });

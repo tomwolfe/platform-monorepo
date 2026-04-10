@@ -3,7 +3,7 @@ import { z } from "zod";
 import { randomUUID } from "crypto";
 import { withNervousSystemTracing } from "@repo/shared/tracing";
 import {
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   ServiceUnavailableError,
 } from "@repo/shared/errors";
 import { startTrace } from "@/lib/observability";
@@ -603,5 +603,9 @@ async function getHandler(request: NextRequest): Promise<NextResponse> {
 }
 
 // Wrap handlers with error handler for centralized error formatting and metrics
-export const POST = withApiErrorHandler(postHandler);
-export const GET = withApiErrorHandler(getHandler);
+export const POST = withUnifiedApiHandler(postHandler, {
+  serviceName: "execute",
+});
+export const GET = withUnifiedApiHandler(getHandler, {
+  serviceName: "execute",
+});

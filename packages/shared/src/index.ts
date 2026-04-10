@@ -286,9 +286,14 @@ export {
   sanitizeJsonOutput,
 } from "./utils/json-parser";
 
+// Restaurant hours utilities
+export {
+  isRestaurantOpenAtTime,
+  isRestaurantOpenOnDay,
+} from "./utils/restaurant-hours";
+
 // Error handling utilities (AI-01: Global error sanitization)
 export {
-  withApiErrorHandler,
   formatError,
   formatSuccess,
   withRetry,

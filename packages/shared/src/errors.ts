@@ -634,8 +634,8 @@ export function withErrorHandler<T extends (...args: any[]) => Promise<any>>(
   };
 }
 
-// Re-export withApiErrorHandler from error-handler for convenience
-export { withApiErrorHandler } from "./error-handler";
+// Re-export withUnifiedApiHandler from error-handler for convenience
+export { withUnifiedApiHandler } from "./error-handler";
 
 // ============================================================================
 // RESULT PATTERN (Standardized service return types)

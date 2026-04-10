@@ -13,7 +13,7 @@ import {
   getRedisClient,
   ServiceNamespace,
   AppConfig,
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   formatApiError,
   formatApiSuccess,
   getErrorStatusCode,
@@ -274,7 +274,7 @@ function getRelevantFailures(text: string, logs: any[]): string[] {
   return Array.from(new Set(failures)).slice(0, 3);
 }
 
-export const POST = withApiErrorHandler(async (req: Request) => {
+export const POST = withUnifiedApiHandler(async (req: Request) => {
   let rawBody: unknown;
   try {
     rawBody = await req.json();

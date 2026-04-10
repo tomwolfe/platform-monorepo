@@ -301,22 +301,3 @@ export function withApiHandler(handler: ApiHandler, config: ApiHandlerConfig) {
     }
   };
 }
-
-/**
- * Legacy compatibility: Alias for existing withApiErrorHandler usage
- * @deprecated Use withApiHandler instead
- */
-export function withApiErrorHandler(
-  handler: (req: NextRequest) => Promise<unknown>,
-  config: ApiHandlerConfig | string,
-) {
-  const normalizedConfig: ApiHandlerConfig =
-    typeof config === "string"
-      ? {
-          serviceName: config,
-          includeStackTrace: process.env.NODE_ENV !== "production",
-        }
-      : config;
-
-  return withApiHandler(async (req, ctx) => handler(req), normalizedConfig);
-}

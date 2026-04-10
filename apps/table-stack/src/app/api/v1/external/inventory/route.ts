@@ -1,18 +1,18 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from "next/server";
 import { getDb, restaurantProducts, inventoryLevels } from "@repo/database";
-import { eq } from '@repo/database';
-import { SecurityProvider } from '@repo/auth';
-import { withApiErrorHandler, formatApiSuccess } from '@repo/shared';
+import { eq } from "@repo/database";
+import { SecurityProvider } from "@repo/auth";
+import { withUnifiedApiHandler, formatApiSuccess } from "@repo/shared";
 
 async function getHandler(req: NextRequest) {
   // Security: Require a header x-internal-key that matches INTERNAL_SYSTEM_KEY.
-  const internalKey = req.headers.get('x-internal-key');
+  const internalKey = req.headers.get("x-internal-key");
   if (!SecurityProvider.validateInternalKey(internalKey)) {
-    return new NextResponse('Unauthorized', { status: 401 });
+    return new NextResponse("Unauthorized", { status: 401 });
   }
 
   const { searchParams } = new URL(req.url);
-  const restaurantId = searchParams.get('restaurantId');
+  const restaurantId = searchParams.get("restaurantId");
 
   const db = getDb();
   const query = db
@@ -26,7 +26,10 @@ async function getHandler(req: NextRequest) {
       restaurantId: restaurantProducts.restaurantId,
     })
     .from(restaurantProducts)
-    .innerJoin(inventoryLevels, eq(restaurantProducts.id, inventoryLevels.productId));
+    .innerJoin(
+      inventoryLevels,
+      eq(restaurantProducts.id, inventoryLevels.productId),
+    );
 
   if (restaurantId) {
     query.where(eq(restaurantProducts.restaurantId, restaurantId));
@@ -36,4 +39,6 @@ async function getHandler(req: NextRequest) {
   return NextResponse.json(formatApiSuccess(results));
 }
 
-export const GET = withApiErrorHandler(getHandler, 'EXECUTION_FAILED');
+export const GET = withUnifiedApiHandler(getHandler, {
+  serviceName: "inventory",
+});

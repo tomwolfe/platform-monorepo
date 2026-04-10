@@ -5,7 +5,7 @@ import { restaurants } from "@repo/database";
 import { eq } from "@repo/database";
 import { validateRequest } from "@tablestack/lib/auth";
 import {
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   formatApiSuccess,
   notFoundErrorResponse,
   forbiddenErrorResponse,
@@ -104,4 +104,6 @@ async function getHandler(req: NextRequest) {
   return NextResponse.json(formatApiSuccess(publicRestaurant, { traceId }));
 }
 
-export const GET = withApiErrorHandler(getHandler, "EXECUTION_FAILED");
+export const GET = withUnifiedApiHandler(getHandler, {
+  serviceName: "restaurant",
+});

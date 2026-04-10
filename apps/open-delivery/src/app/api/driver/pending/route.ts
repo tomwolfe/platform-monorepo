@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@repo/database";
 import { orders, orderItems } from "@repo/database";
 import { eq, isNull, desc, and } from "drizzle-orm";
-import { withApiErrorHandler, formatApiError, Logger } from "@repo/shared";
+import { withUnifiedApiHandler, formatApiError, Logger } from "@repo/shared";
 
 const logger = new Logger({ serviceName: "open-delivery" });
 
@@ -69,7 +69,6 @@ async function getHandler(request: NextRequest) {
   });
 }
 
-export const GET = withApiErrorHandler(
-  getHandler,
-  "FETCH_PENDING_ORDERS_FAILED",
-);
+export const GET = withUnifiedApiHandler(getHandler, {
+  serviceName: "driver-pending",
+});

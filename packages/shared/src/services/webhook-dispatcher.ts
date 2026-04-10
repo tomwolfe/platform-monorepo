@@ -33,7 +33,7 @@ import {
   IdempotencyService,
   RealtimeService,
   Logger,
-  withApiErrorHandler,
+  withUnifiedApiHandler,
 } from "@repo/shared";
 import { IDEMPOTENCY_KEY_HEADER } from "@repo/shared/tracing";
 import { NextRequest, NextResponse } from "next/server";
@@ -544,8 +544,8 @@ export function createWebhookHandler(
   config: WebhookDispatcherConfig,
 ) {
   const dispatcher = createWebhookDispatcherService(redis, config);
-  return withApiErrorHandler(
+  return withUnifiedApiHandler(
     (req: NextRequest) => dispatcher.handleWebhook(req),
-    "WEBHOOK_PROCESSING_FAILED",
+    { serviceName: "webhook-dispatcher" },
   );
 }

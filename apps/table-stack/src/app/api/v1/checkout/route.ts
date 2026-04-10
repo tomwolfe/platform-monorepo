@@ -8,7 +8,7 @@ import {
   createValidationMiddleware,
   errorResponse,
   successResponse,
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   Logger,
   AppConfig,
 } from "@repo/shared";
@@ -192,7 +192,7 @@ async function postHandler(req: NextRequest) {
   }
 }
 
-export const POST = withApiErrorHandler(postHandler, {
+export const POST = withUnifiedApiHandler(postHandler, {
   serviceName: "checkout-api",
   includeStackTrace: process.env.NODE_ENV !== "production",
 });

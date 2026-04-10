@@ -1,7 +1,7 @@
 import { getAuditLog } from "@/lib/audit";
 import { NextRequest, NextResponse } from "next/server";
 import {
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   formatApiSuccess,
   notFoundErrorResponse,
   validationErrorResponse,
@@ -33,7 +33,7 @@ async function getHandler(
   return NextResponse.json(formatApiSuccess(log, { traceId }));
 }
 
-export const GET = withApiErrorHandler(getHandler, {
+export const GET = withUnifiedApiHandler(getHandler, {
   serviceName: "audit-detail",
   includeStackTrace: process.env.NODE_ENV !== "production",
 });

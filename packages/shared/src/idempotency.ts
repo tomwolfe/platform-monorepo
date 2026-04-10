@@ -6,6 +6,14 @@ export interface IdempotencyServiceConfig {
   /** Default TTL in seconds (default: 24 hours) */
   defaultTtlSeconds?: number;
   /**
+   * SERVERLESS FIX: Processing lock TTL in seconds.
+   * If a serverless function crashes before calling markProcessed() or removeKey(),
+   * this lock auto-expires to prevent permanent deadlocks.
+   * Default: 15 seconds (matches Vercel serverless max-duration + buffer).
+   * Previously hardcoded to 120s which caused 2-minute lockouts on crash.
+   */
+  processingTtlSeconds?: number;
+  /**
    * PERFECT GRADE: Causal-Key Idempotency
    * Include parent_intent_id and lamport_timestamp in hash
    * Prevents "Double-Tap" bugs across different devices/sessions
@@ -28,6 +36,7 @@ export class IdempotencyService {
   private redis: Redis;
   private userId?: string;
   private defaultTtlSeconds: number;
+  private processingTtlSeconds: number;
   private enableCausalKey: boolean;
   private parentIntentId?: string;
   private lamportTimestamp?: number;
@@ -37,6 +46,7 @@ export class IdempotencyService {
     this.redis = redis;
     this.userId = config?.userId;
     this.defaultTtlSeconds = config?.defaultTtlSeconds ?? 24 * 60 * 60;
+    this.processingTtlSeconds = config?.processingTtlSeconds ?? 15; // SERVERLESS FIX: 15s default
     this.enableCausalKey = config?.enableCausalKey ?? true;
     this.parentIntentId = config?.parentIntentId;
     this.lamportTimestamp = config?.lamportTimestamp;
@@ -71,7 +81,7 @@ export class IdempotencyService {
     userId?: string,
   ): Promise<string> {
     // PERFECT GRADE: Include causal chain components
-    const causalComponents: any = {
+    const causalComponents: Record<string, unknown> = {
       user: userId || "anonymous",
       tool: toolName,
     };
@@ -199,7 +209,7 @@ export class IdempotencyService {
 
     const set = await this.redis.set(fullKey, "processing", {
       nx: true,
-      ex: 120, // 2-minute lock to prevent deadlocks on Lambda crash
+      ex: this.processingTtlSeconds, // SERVERLESS FIX: configurable TTL (default 15s)
     });
     return set === null;
   }

@@ -24,7 +24,6 @@
 export * from "./errors";
 export {
   ApiError,
-  withApiErrorHandler,
   type ApiErrorOptions,
   type ApiErrorResponse,
   type ErrorCategory,

@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import {
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   getLogger,
   createApiError,
   NotFoundError,
@@ -76,6 +76,6 @@ async function getHandler(
   });
 }
 
-export const GET = withApiErrorHandler(getHandler, {
+export const GET = withUnifiedApiHandler(getHandler, {
   serviceName: "table-stack-reservation-status",
 });

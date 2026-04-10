@@ -28,7 +28,7 @@ import { z } from "zod";
 import {
   getRedisClient,
   ServiceNamespace,
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   formatApiSuccess,
   formatApiError,
 } from "@repo/shared";
@@ -190,7 +190,7 @@ async function warmCacheHandler(req: NextRequest) {
   );
 }
 
-export const POST = withApiErrorHandler(warmCacheHandler, {
+export const POST = withUnifiedApiHandler(warmCacheHandler, {
   serviceName: "warm-cache",
   includeStackTrace: process.env.NODE_ENV !== "production",
 });

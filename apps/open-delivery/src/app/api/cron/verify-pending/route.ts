@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb, orders, restaurants, eq, and, sql } from "@repo/database";
 import {
   RealtimeService,
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   withCronAuth,
   Logger,
   withDistributedLock,
@@ -330,33 +330,36 @@ async function getHandler(req: NextRequest) {
 
 // Wrap handlers with cron authentication and distributed lock
 export const POST = withCronAuth(
-  withApiErrorHandler(async (req: NextRequest) => {
-    const lockKey = "cron:open-delivery:verify-pending";
-    const lockTtlSeconds = 120; // 2 minutes for batch processing
+  withUnifiedApiHandler(
+    async (req: NextRequest) => {
+      const lockKey = "cron:open-delivery:verify-pending";
+      const lockTtlSeconds = 120; // 2 minutes for batch processing
 
-    try {
-      return await withDistributedLock(lockKey, lockTtlSeconds, async () =>
-        postHandler(req),
-      );
-    } catch (error) {
-      // If lock acquisition fails, return 200 OK to indicate graceful skip
-      if (
-        error instanceof Error &&
-        error.message.includes("Failed to acquire distributed lock")
-      ) {
-        logger.info(
-          "Verify-pending cron skipped - another instance is running",
+      try {
+        return await withDistributedLock(lockKey, lockTtlSeconds, async () =>
+          postHandler(req),
         );
-        return NextResponse.json({
-          success: true,
-          skipped: true,
-          message: "Another instance is running",
-        });
+      } catch (error) {
+        // If lock acquisition fails, return 200 OK to indicate graceful skip
+        if (
+          error instanceof Error &&
+          error.message.includes("Failed to acquire distributed lock")
+        ) {
+          logger.info(
+            "Verify-pending cron skipped - another instance is running",
+          );
+          return NextResponse.json({
+            success: true,
+            skipped: true,
+            message: "Another instance is running",
+          });
+        }
+        throw error;
       }
-      throw error;
-    }
-  }, "EXECUTION_FAILED"),
+    },
+    { serviceName: "verify-pending-cron" },
+  ),
 );
 export const GET = withCronAuth(
-  withApiErrorHandler(getHandler, "EXECUTION_FAILED"),
+  withUnifiedApiHandler(getHandler, { serviceName: "verify-pending-cron" }),
 );

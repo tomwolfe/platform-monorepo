@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadExecutionTrace, getMemoryClient } from "@/lib/engine/memory";
-import { withApiErrorHandler, Logger } from "@repo/shared";
+import { withUnifiedApiHandler, Logger } from "@repo/shared";
 
 const logger = new Logger({ serviceName: "debug-traces" });
 
@@ -17,15 +17,16 @@ const logger = new Logger({ serviceName: "debug-traces" });
  */
 async function getHandler(
   request: NextRequest,
-  { params }: { params: Promise<{ traceId: string }> }
+  { params }: { params: Promise<{ traceId: string }> },
 ) {
   const { traceId } = await params;
-  const includeStateDiffs = request.nextUrl.searchParams.get("includeStateDiffs") === "true";
+  const includeStateDiffs =
+    request.nextUrl.searchParams.get("includeStateDiffs") === "true";
 
   if (!traceId) {
     return NextResponse.json(
       { error: "Trace ID is required" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -38,7 +39,7 @@ async function getHandler(
         traceId,
         hint: "Traces may be expired or not yet persisted. Check if the execution is still in progress.",
       },
-      { status: 404 }
+      { status: 404 },
     );
   }
 
@@ -53,50 +54,55 @@ async function getHandler(
   return NextResponse.json(enrichedTrace);
 }
 
-export const GET = withApiErrorHandler(getHandler, { serviceName: 'debug-traces' });
+export const GET = withUnifiedApiHandler(getHandler, {
+  serviceName: "debug-traces",
+});
 
 /**
  * Enrich trace with computed metrics for visualization
  */
 function enrichTrace(trace: any) {
   const entries = trace.entries || [];
-  
+
   // Calculate step-level metrics
-  const stepMetrics = new Map<string, {
-    startTime: number;
-    endTime: number;
-    latencyMs: number;
-    status: 'pending' | 'success' | 'failed' | 'error';
-    error?: string;
-  }>();
+  const stepMetrics = new Map<
+    string,
+    {
+      startTime: number;
+      endTime: number;
+      latencyMs: number;
+      status: "pending" | "success" | "failed" | "error";
+      error?: string;
+    }
+  >();
 
   entries.forEach((entry: any, index: number) => {
     if (!entry.step_id) return;
 
     const timestamp = new Date(entry.timestamp || trace.started_at).getTime();
-    
+
     if (!stepMetrics.has(entry.step_id)) {
       stepMetrics.set(entry.step_id, {
         startTime: timestamp,
         endTime: timestamp,
         latencyMs: 0,
-        status: 'pending',
+        status: "pending",
       });
     }
 
     const step = stepMetrics.get(entry.step_id)!;
-    
-    if (entry.event === 'step_started') {
+
+    if (entry.event === "step_started") {
       step.startTime = timestamp;
-      step.status = 'pending';
-    } else if (entry.event === 'step_completed') {
+      step.status = "pending";
+    } else if (entry.event === "step_completed") {
       step.endTime = timestamp;
       step.latencyMs = step.endTime - step.startTime;
-      step.status = 'success';
-    } else if (entry.event === 'step_failed' || entry.event === 'step_error') {
+      step.status = "success";
+    } else if (entry.event === "step_failed" || entry.event === "step_error") {
       step.endTime = timestamp;
       step.latencyMs = step.endTime - step.startTime;
-      step.status = entry.event === 'step_failed' ? 'failed' : 'error';
+      step.status = entry.event === "step_failed" ? "failed" : "error";
       step.error = entry.error;
     }
 
@@ -107,11 +113,16 @@ function enrichTrace(trace: any) {
 
   // Calculate aggregate metrics
   const totalSteps = stepMetrics.size;
-  const successfulSteps = Array.from(stepMetrics.values()).filter(s => s.status === 'success').length;
-  const failedSteps = Array.from(stepMetrics.values()).filter(s => s.status === 'failed' || s.status === 'error').length;
-  
-  const totalLatencyMs = entries.reduce((sum: number, entry: any) => 
-    sum + (entry.latency_ms || 0), 0
+  const successfulSteps = Array.from(stepMetrics.values()).filter(
+    (s) => s.status === "success",
+  ).length;
+  const failedSteps = Array.from(stepMetrics.values()).filter(
+    (s) => s.status === "failed" || s.status === "error",
+  ).length;
+
+  const totalLatencyMs = entries.reduce(
+    (sum: number, entry: any) => sum + (entry.latency_ms || 0),
+    0,
   );
 
   const tokenUsage = {
@@ -140,13 +151,19 @@ function enrichTrace(trace: any) {
       stepDetails: Object.fromEntries(stepMetrics),
     },
     waterfall: entries.map((entry: any, index: number) => ({
-      id: `${entry.step_id || 'root'}-${index}`,
+      id: `${entry.step_id || "root"}-${index}`,
       stepId: entry.step_id,
       phase: entry.phase,
       event: entry.event,
       startTime: new Date(entry.timestamp || trace.started_at).getTime(),
       duration: entry.latency_ms || 0,
-      status: entry.error ? 'error' : entry.event.includes('completed') ? 'success' : entry.event.includes('started') ? 'pending' : 'complete',
+      status: entry.error
+        ? "error"
+        : entry.event.includes("completed")
+          ? "success"
+          : entry.event.includes("started")
+            ? "pending"
+            : "complete",
       error: entry.error,
       hasInput: !!entry.input,
       hasOutput: !!entry.output,
@@ -164,20 +181,22 @@ function enrichTrace(trace: any) {
  * @param traceId - The trace ID (also execution ID)
  * @returns Array of state diffs for each step
  */
-async function computeStateDiffs(traceId: string): Promise<Array<{
-  stepId: string;
-  timestamp: string;
-  previousState?: Record<string, any>;
-  newState?: Record<string, any>;
-  addedKeys: string[];
-  removedKeys: string[];
-  changedKeys: Array<{
-    key: string;
-    oldValue: any;
-    newValue: any;
-  }>;
-  unchangedKeys: string[];
-}>> {
+async function computeStateDiffs(traceId: string): Promise<
+  Array<{
+    stepId: string;
+    timestamp: string;
+    previousState?: Record<string, any>;
+    newState?: Record<string, any>;
+    addedKeys: string[];
+    removedKeys: string[];
+    changedKeys: Array<{
+      key: string;
+      oldValue: any;
+      newValue: any;
+    }>;
+    unchangedKeys: string[];
+  }>
+> {
   try {
     const memoryClient = getMemoryClient();
     if (!memoryClient) {
@@ -222,9 +241,9 @@ async function computeStateDiffs(traceId: string): Promise<Array<{
     // If no snapshots from transitions, create from step results in context
     if (stateSnapshots.length === 0) {
       const stepResults = Object.entries(taskState.context)
-        .filter(([key]) => key.startsWith('step_result:'))
+        .filter(([key]) => key.startsWith("step_result:"))
         .map(([key, value]) => ({
-          stepId: key.replace('step_result:', ''),
+          stepId: key.replace("step_result:", ""),
           timestamp: taskState.updated_at,
           state: { step_result: value },
         }));
@@ -240,7 +259,7 @@ async function computeStateDiffs(traceId: string): Promise<Array<{
       if (previousState) {
         const diff = computeObjectDiff(previousState, snapshot.state);
         stateDiffs.push({
-          stepId: snapshot.stepId || 'unknown',
+          stepId: snapshot.stepId || "unknown",
           timestamp: snapshot.timestamp,
           previousState,
           newState: snapshot.state,
@@ -253,7 +272,10 @@ async function computeStateDiffs(traceId: string): Promise<Array<{
 
     return stateDiffs;
   } catch (error) {
-    logger.error("Error computing state diffs", { traceId, error: error instanceof Error ? error.message : String(error) });
+    logger.error("Error computing state diffs", {
+      traceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return [];
   }
 }
@@ -264,7 +286,7 @@ async function computeStateDiffs(traceId: string): Promise<Array<{
  */
 function computeObjectDiff(
   prev: Record<string, any>,
-  curr: Record<string, any>
+  curr: Record<string, any>,
 ): {
   addedKeys: string[];
   removedKeys: string[];

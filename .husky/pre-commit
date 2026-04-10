@@ -1,1 +1,5 @@
 npx lint-staged
+
+# Check for Drizzle migration drift
+pnpm db:check 2>/dev/null || echo "⚠️  Drizzle schema drift detected. Run: pnpm db:generate"
+

@@ -483,7 +483,7 @@ async function postHandler(req: NextRequest) {
   // Additional check: Verify transaction data contains reservation ID (for ETH payments)
   // For USDC, the exact amount + recipient verification is sufficient
   if (paymentCurrency !== "USDC") {
-    const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
+    const rpcUrl = AppConfig.getBaseRpcUrl() || "https://mainnet.base.org";
     const client = createPublicClient({ transport: http(rpcUrl), chain: base });
     const tx = await client.getTransaction({ hash: txHash as `0x${string}` });
 

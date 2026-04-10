@@ -9,6 +9,10 @@
 
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    // Fail fast if required environment variables are missing
+    const { AppConfig } = await import("@repo/shared");
+    AppConfig.validateEnv({ strict: true });
+
     // Initialize OpenTelemetry tracing
     const { initObservability } = await import("./src/lib/observability");
     initObservability("intention-engine");

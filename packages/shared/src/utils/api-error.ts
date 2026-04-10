@@ -29,6 +29,7 @@ import {
   rateLimitMiddleware,
   type EndpointRateLimitConfig,
 } from "../middleware/rate-limiter";
+import { getErrorMetadata, type ErrorCategory } from "../errors/http-codes";
 
 /**
  * Standard API error response structure
@@ -40,6 +41,10 @@ export interface ApiErrorResponse {
     code: string;
     /** Human-readable error message */
     message: string;
+    /** Whether the client should retry the request */
+    retryable: boolean;
+    /** Error category for client-side handling */
+    category: ErrorCategory;
     /** Optional detailed error information */
     details?: unknown;
     /** Optional field-specific errors (for validation errors) */
@@ -56,7 +61,7 @@ export interface ApiErrorResponse {
  */
 export interface ApiSuccessResponse<T = unknown> {
   success: true;
-  data: T;
+  data?: T;
   metadata?: {
     /** Request trace ID for debugging */
     traceId?: string;
@@ -188,12 +193,15 @@ export function formatApiError(
   const message = extractErrorMessage(error);
   const fields = extractFieldErrors(error);
   const { includeStack = false, traceId } = options;
+  const metadata = getErrorMetadata(code as any);
 
   return {
     success: false,
     error: {
       code,
       message,
+      retryable: metadata.retryable,
+      category: metadata.category,
       details: details ?? extractErrorDetails(error),
       ...(fields && { fields }),
       ...(includeStack && { stack: (error as Error)?.stack }),
@@ -215,11 +223,15 @@ export function createApiError(
   message: string,
   details?: unknown,
 ): ApiErrorResponse {
+  const metadata = getErrorMetadata(code as any);
+
   return {
     success: false,
     error: {
       code,
       message,
+      retryable: metadata.retryable,
+      category: metadata.category,
       ...(details !== undefined && {
         details: details as Record<string, unknown>,
       }),
@@ -509,6 +521,10 @@ export const ApiErrorResponseSchema = z.object({
   error: z.object({
     code: z.string().min(1),
     message: z.string().min(1),
+    retryable: z.boolean().default(false),
+    category: z
+      .enum(["client", "server", "network", "business"])
+      .default("server"),
     details: z.unknown().optional(),
     fields: z.record(z.string()).optional(),
     // SECURITY: Only include stack trace in development environment
@@ -582,7 +598,7 @@ export function validateErrorResponse(response: unknown): ApiErrorResponse {
 
     const result = productionSchema.safeParse(response);
     if (result.success) {
-      return result.data;
+      return result.data as ApiErrorResponse;
     }
   }
 
@@ -592,6 +608,8 @@ export function validateErrorResponse(response: unknown): ApiErrorResponse {
     error: {
       code: "INTERNAL_ERROR",
       message: "An unexpected error occurred",
+      retryable: false,
+      category: "server" as ErrorCategory,
     },
-  };
+  } as ApiErrorResponse;
 }

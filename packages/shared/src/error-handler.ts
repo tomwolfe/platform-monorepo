@@ -17,11 +17,16 @@
  * @see SEC-01: Global Error Sanitization
  */
 
-import { AppError, ErrorCode, toAppError, getErrorStatusCode } from "./errors";
-import { formatApiError } from "./utils/api-error";
-import { validateErrorResponse } from "./utils/api-error";
+import { AppError, ErrorCode, toAppError } from "./errors";
+import {
+  formatApiError,
+  validateErrorResponse,
+  type ApiErrorResponse,
+  type ApiSuccessResponse,
+} from "./utils/api-error";
 import { Logger } from "./logger";
 import { isNextRedirectError } from "./utils/next-errors";
+import { getErrorMetadata, type ErrorCategory } from "./errors/http-codes";
 
 // ============================================================================
 // ERROR RESPONSE FORMAT
@@ -33,12 +38,12 @@ import { isNextRedirectError } from "./utils/next-errors";
  */
 export class ApiError extends AppError {
   constructor(
-    code: string,
+    code: ErrorCode,
     message: string,
     statusCode?: number,
     metadata?: Record<string, unknown>,
   ) {
-    super(code, message, statusCode, metadata);
+    super(code as any, message, statusCode, metadata);
     this.name = "ApiError";
   }
 }
@@ -50,36 +55,8 @@ export interface ApiErrorOptions {
   details?: Record<string, unknown>;
 }
 
-/**
- * Standardized API error response
- */
-export interface ApiErrorResponse {
-  success: false;
-  error: {
-    code: string;
-    message: string;
-    details?: Record<string, unknown>;
-    stack?: string;
-  };
-  timestamp: string;
-  traceId?: string;
-}
-
-/**
- * Standardized API success response
- */
-export interface ApiSuccessResponse<T = unknown> {
-  success: true;
-  data?: T;
-  message?: string;
-  timestamp: string;
-  traceId?: string;
-}
-
-/**
- * Union type for API responses
- */
-export type ApiResponse<T = unknown> = ApiSuccessResponse<T> | ApiErrorResponse;
+// Re-export ApiErrorResponse from api-error.ts (already imported above)
+export { ApiErrorResponse };
 
 // ============================================================================
 // ERROR HANDLER CONFIGURATION
@@ -120,16 +97,27 @@ const DEFAULT_OPTIONS: ErrorHandlerOptions = {
 export function sanitizeErrorForExternal(
   error: unknown,
   includeStack = process.env.NODE_ENV === "development",
-): { code: string; message: string; details?: Record<string, unknown> } {
+): {
+  code: string;
+  message: string;
+  retryable: boolean;
+  category: ErrorCategory;
+  details?: Record<string, unknown>;
+} {
   const appError = toAppError(error);
+  const metadata = getErrorMetadata(appError.code as ErrorCode);
 
   const sanitized: {
     code: string;
     message: string;
+    retryable: boolean;
+    category: ErrorCategory;
     details?: Record<string, unknown>;
   } = {
     code: appError.code,
     message: includeStack ? appError.message : appError.message,
+    retryable: metadata.retryable,
+    category: metadata.category,
   };
 
   // Include details but strip sensitive fields in production
@@ -342,17 +330,19 @@ export function formatError(
 ): ApiErrorResponse {
   const appError = toAppError(error, code);
   const { includeStack = false, traceId } = options;
+  const metadata = getErrorMetadata(appError.code as ErrorCode);
 
   return {
     success: false,
     error: {
       code: appError.code,
       message: appError.message,
+      retryable: metadata.retryable,
+      category: metadata.category,
       ...(appError.details && { details: appError.details }),
       ...(includeStack &&
         appError.stackTrace && { stack: appError.stackTrace }),
     },
-    timestamp: new Date().toISOString(),
     ...(traceId && { traceId }),
   };
 }
@@ -374,7 +364,6 @@ export function formatSuccess<T = unknown>(
     success: true,
     ...(data !== undefined && { data }),
     ...(message && { message }),
-    timestamp: new Date().toISOString(),
     ...(traceId && { traceId }),
   };
 }

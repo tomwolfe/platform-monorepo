@@ -22,10 +22,39 @@
 
 import { z } from "zod";
 
+// ============================================================================
+// CONFIGURATION ERROR
+// ============================================================================
+
+/**
+ * ConfigurationError - thrown when required environment variables are missing
+ * in production or strict validation mode.
+ */
+export class ConfigurationError extends Error {
+  public readonly missingVars: string[];
+  public readonly details?: Record<string, string>;
+
+  constructor(
+    message: string,
+    missingVars: string[] = [],
+    details?: Record<string, string>,
+  ) {
+    super(message);
+    this.name = "ConfigurationError";
+    this.missingVars = missingVars;
+    this.details = details;
+  }
+}
+
+// ============================================================================
+// SCHEMA DEFINITIONS
+// ============================================================================
+
 /**
  * Base URL schema - validates HTTP/HTTPS URLs
+ * @deprecated Use z.string().url() directly in schema definitions
  */
-const UrlSchema = z.string().url();
+const _UrlSchema = z.string().url();
 
 /**
  * Environment schema for all apps
@@ -199,6 +228,18 @@ const FullConfigSchema = BaseConfigSchema.merge(ServiceUrlsSchema);
 type FullConfig = z.infer<typeof FullConfigSchema>;
 
 /**
+ * Required environment variables for production
+ * These variables MUST be present or the application will refuse to start
+ */
+const REQUIRED_PROD_VARS: (keyof FullConfig)[] = [
+  "DATABASE_URL",
+  "INTERNAL_SYSTEM_KEY",
+  "CLERK_SECRET_KEY",
+  "QSTASH_TOKEN",
+  "CRON_SECRET",
+];
+
+/**
  * AppConfig - Centralized configuration accessor
  */
 export class AppConfig {
@@ -237,6 +278,43 @@ export class AppConfig {
 
     this.config = parsed.data || ({} as FullConfig);
     return this.config;
+  }
+
+  /**
+   * Strictly validate environment variables at startup.
+   * Throws ConfigurationError if required vars are missing in production.
+   *
+   * Call this from instrumentation.ts before initObservability()
+   * to fail fast with clear error messages.
+   *
+   * @param options.strict - If true, fail on any missing required vars (not just production)
+   * @throws ConfigurationError if required vars are missing
+   */
+  static validateEnv(options: { strict?: boolean } = {}): void {
+    const { strict = false } = options;
+    const isProduction = process.env.NODE_ENV === "production";
+
+    // Only enforce strict validation in production or when explicitly requested
+    if (!isProduction && !strict) {
+      return;
+    }
+
+    const config = this.init();
+    const missingVars = REQUIRED_PROD_VARS.filter((key) => !config[key]);
+
+    if (missingVars.length > 0) {
+      const details: Record<string, string> = {};
+      missingVars.forEach((varName) => {
+        details[varName] =
+          `Required in ${isProduction ? "production" : "strict mode"} but not set`;
+      });
+
+      throw new ConfigurationError(
+        `Missing required environment variables: ${missingVars.join(", ")}`,
+        missingVars,
+        details,
+      );
+    }
   }
 
   /**

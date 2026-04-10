@@ -8,7 +8,10 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { Resource } from "@opentelemetry/resources";
-import { SEMRESATTRS_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
+import {
+  SEMRESATTRS_SERVICE_NAME,
+  SEMRESATTRS_SERVICE_VERSION,
+} from "@opentelemetry/semantic-conventions";
 import { registerObservabilityFlush, Logger } from "@repo/shared";
 
 const logger = new Logger({ serviceName: "observability" });
@@ -72,6 +75,10 @@ export function initObservability(serviceName = "intention-engine") {
   sdk = new NodeSDK({
     resource: new Resource({
       [SEMRESATTRS_SERVICE_NAME]: serviceName,
+      [SEMRESATTRS_SERVICE_VERSION]:
+        process.env.npm_package_version ||
+        process.env.VERCEL_GIT_COMMIT_SHA ||
+        "dev",
     }),
     spanProcessor: new BatchSpanProcessor(spanExporter, {
       maxQueueSize: 100,

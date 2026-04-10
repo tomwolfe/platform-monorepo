@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "build": "turbo build",
-    "dev": "turbo dev",
+    "dev:health": "tsx scripts/dev-health.ts",
+    "dev": "pnpm dev:health && turbo dev",
     "lint": "turbo lint",
     "prepare": "husky",
     "test": "vitest run",
@@ -21,6 +22,7 @@
     "test:ci:integration": "tsx scripts/run-ci-tests.ts --integration",
     "test:ci:chaos": "tsx scripts/run-ci-tests.ts --chaos",
     "test:golden-path": "tsx scripts/test-golden-path.ts",
+    "test:mcp-contract": "vitest run packages/mcp-protocol/__tests__/contract.test.ts",
     "test:performance": "k6 run k6/scripts/performance-budgets.js",
     "test:performance:load": "k6 run k6/scripts/load-test.js",
     "test:performance:stress": "k6 run k6/scripts/stress-test.js",

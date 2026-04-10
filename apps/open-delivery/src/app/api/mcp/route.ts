@@ -60,11 +60,11 @@ async function calculateDeliveryQuote(
       const timeoutId = setTimeout(() => controller.abort(), 8000);
 
       const waitlistRes = await fetch(
-        `${process.env.TABLESTACK_API_URL}/waitlist?restaurantId=${restaurantId}`,
+        `${AppConfig.getTableStackApiUrl()}/waitlist?restaurantId=${restaurantId}`,
         {
           headers: {
             "x-trace-id": traceId,
-            Authorization: `Bearer ${process.env.INTERNAL_SERVICE_TOKEN || ""}`,
+            Authorization: `Bearer ${AppConfig.getInternalSystemKey()}`,
           },
           signal: controller.signal,
         },

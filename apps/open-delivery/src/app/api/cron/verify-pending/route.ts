@@ -7,6 +7,7 @@ import {
   Logger,
   withDistributedLock,
   QStashService,
+  AppConfig,
 } from "@repo/shared";
 import { verifyTransaction } from "@repo/shared/utils/web3-verification";
 import { type Address } from "viem";
@@ -151,12 +152,19 @@ async function postHandler(req: NextRequest) {
       if (hasMoreOrders) {
         const traceId = req.headers.get("x-trace-id") || undefined;
         const nextHopCount = currentHopCount + 1;
+        const appUrl = AppConfig.getNextPublicAppUrl();
+        const cronSecret = AppConfig.getCronSecret();
+        if (!appUrl || !cronSecret) {
+          throw new Error(
+            "NEXT_PUBLIC_APP_URL and CRON_SECRET are required for QStash self-trigger",
+          );
+        }
         QStashService.publish({
-          url: `${process.env.NEXT_PUBLIC_APP_URL || "https://your-domain.com"}/api/cron/verify-pending`,
+          url: `${appUrl}/api/cron/verify-pending`,
           body: JSON.stringify({ triggeredBy: "qstash-self-trigger" }),
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${process.env.CRON_SECRET || ""}`,
+            Authorization: `Bearer ${cronSecret}`,
             ...(traceId ? { "x-trace-id": traceId } : {}),
             [QSTASH_HOP_HEADER]: String(nextHopCount),
           },

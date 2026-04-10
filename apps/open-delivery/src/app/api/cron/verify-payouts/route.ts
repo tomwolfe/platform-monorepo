@@ -9,7 +9,7 @@ import {
 } from "viem";
 import { base } from "viem/chains";
 import { ESCROW_ABI } from "@repo/shared/utils/escrow-abi";
-import { withCronAuth, QStashService, Logger } from "@repo/shared";
+import { withCronAuth, QStashService, Logger, AppConfig } from "@repo/shared";
 import { trace, Span, SpanStatusCode } from "@opentelemetry/api";
 
 export const maxDuration = 10; // Vercel Hobby limit
@@ -125,12 +125,19 @@ async function getCronHandler(req: NextRequest) {
       if (hasMoreOrders) {
         const traceId = req.headers.get("x-trace-id") || undefined;
         const nextHopCount = currentHopCount + 1;
+        const appUrl = AppConfig.getNextPublicAppUrl();
+        const cronSecret = AppConfig.getCronSecret();
+        if (!appUrl || !cronSecret) {
+          throw new Error(
+            "NEXT_PUBLIC_APP_URL and CRON_SECRET are required for QStash self-trigger",
+          );
+        }
         QStashService.publish({
-          url: `${process.env.NEXT_PUBLIC_APP_URL || "https://your-domain.com"}/api/cron/verify-payouts`,
+          url: `${appUrl}/api/cron/verify-payouts`,
           body: JSON.stringify({ triggeredBy: "qstash-self-trigger" }),
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${process.env.CRON_SECRET || ""}`,
+            Authorization: `Bearer ${cronSecret}`,
             ...(traceId ? { "x-trace-id": traceId } : {}),
             [QSTASH_HOP_HEADER]: String(nextHopCount),
           },
@@ -153,8 +160,9 @@ async function getCronHandler(req: NextRequest) {
       );
 
       // RPC URLs with fallbacks for resilience
+      const baseRpcUrl = AppConfig.getBaseRpcUrl();
       const BASE_RPC_URLS = [
-        process.env.BASE_RPC_URL || "https://mainnet.base.org",
+        baseRpcUrl || "https://mainnet.base.org",
         "https://base.llamarpc.com",
         "https://base.publicnode.com",
       ];

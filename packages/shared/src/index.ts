@@ -19,6 +19,7 @@
 // ERROR CLASSES & HANDLING (Isomorphic)
 // ============================================================================
 export * from "./errors";
+export * from "./errors/http-codes";
 export {
   ApiError,
   type ApiErrorOptions,
@@ -91,6 +92,11 @@ export {
   getGlobalTraceEmitter,
   setGlobalTraceEmitter,
 } from "./tracing";
+
+// ============================================================================
+// OPENTELEMETRY SPAN NAMING CONSTANTS
+// ============================================================================
+export { SpanPrefixes, SpanNames, SpanAttributes } from "./otel/constants";
 
 // ============================================================================
 // RUNTIME REGISTRY (Isomorphic types)
@@ -257,6 +263,17 @@ export {
 } from "./utils/api-error";
 
 // ============================================================================
+// ROUTE HANDLER FACTORY
+// ============================================================================
+export {
+  createRouteHandler,
+  type RequestContext,
+  type RouteHandlerFn,
+  type RouteHandlerOptions,
+  type RouteHandlerResponse,
+} from "./utils/route-handler";
+
+// ============================================================================
 // SERVICES (Server-side utilities)
 // ============================================================================
 export { SERVICES } from "./services";
@@ -283,6 +300,15 @@ export { createRepairAgent } from "./services/repair-agent";
 // ============================================================================
 export { withCronAuth } from "./middleware/cron-auth";
 export { withQStashAuth } from "./services/qstash-webhook";
+
+// ============================================================================
+// AUTHENTICATION GATEWAY
+// ============================================================================
+export {
+  validateRequest,
+  type AuthGatewayContext,
+  type AuthGatewayResult,
+} from "./auth/gateway";
 
 // ============================================================================
 // OBSERVABILITY

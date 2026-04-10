@@ -117,7 +117,10 @@ export default function BookingPage({
 
   if (!restaurant) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        data-testid="loading-state"
+      >
         <div className="text-center">
           <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
           <h1 className="text-xl font-bold text-gray-900">Loading...</h1>
@@ -128,11 +131,16 @@ export default function BookingPage({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12 px-4">
+    <div
+      className="min-h-screen bg-gray-50 py-12 px-4"
+      data-testid="booking-page"
+    >
       <div className="max-w-4xl mx-auto bg-white rounded-3xl shadow-xl overflow-hidden">
         <div className="bg-blue-600 p-10 text-white flex justify-between items-center">
           <div>
-            <h1 className="text-3xl font-bold">{restaurant.name}</h1>
+            <h1 className="text-3xl font-bold" data-testid="restaurant-name">
+              {restaurant.name}
+            </h1>
             <p className="text-blue-100">Intelligent Reservation Experience</p>
           </div>
           <div className="hidden md:block bg-blue-500/30 px-4 py-2 rounded-full border border-blue-400/30 text-sm font-medium">

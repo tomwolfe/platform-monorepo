@@ -141,6 +141,21 @@ export {
 } from "./config";
 export type { FullConfig } from "./config";
 
+// STRICT ENVIRONMENT VALIDATION
+// ============================================================================
+export {
+  validateEnv,
+  isEnvValid,
+  getEnvVar,
+  EnvValidationError,
+  RequiredEnvSchema,
+  ProductionOnlyEnvSchema,
+  OptionalEnvSchema,
+  BaseEnvSchema,
+  FullEnvSchema,
+} from "./config/env";
+export type { BaseEnv, FullEnv } from "./config/env";
+
 // ============================================================================
 // TYPE DEFINITIONS (Isomorphic)
 // ============================================================================
@@ -319,6 +334,9 @@ export { NormalizationService } from "./normalization";
 export {
   FailoverPolicyEngine,
   createFailoverPolicyEngine,
+  type PolicyEvaluationContext,
+  type FailoverPolicy,
+  type PolicyEvaluationResult,
 } from "./policies/failover-policy";
 export {
   getLLMFailureTriageService,

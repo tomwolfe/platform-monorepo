@@ -10,8 +10,8 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     // Fail fast if required environment variables are missing
-    const { AppConfig } = await import("@repo/shared");
-    AppConfig.validateEnv({ strict: true });
+    const { validateEnv } = await import("@repo/shared");
+    validateEnv(); // Throws EnvValidationError if vars are missing/invalid
 
     // Initialize OpenTelemetry tracing
     // table-stack uses the shared observability pattern from intention-engine

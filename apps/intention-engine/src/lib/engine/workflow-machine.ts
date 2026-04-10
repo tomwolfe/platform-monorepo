@@ -104,6 +104,7 @@ import {
   NormalizationService,
   createFailoverPolicyEngine,
   FailoverPolicyEngine,
+  PolicyEvaluationContext,
   getLLMFailureTriageService,
   createLLMFailureTriageService,
   getRedisClient,
@@ -2225,19 +2226,23 @@ export class WorkflowMachine {
       attempt_count: correctionResult.attemptCount,
     };
 
-    // Extract context from parameters
-    if (typeof parameters.party_size === "number") {
-      context.party_size = parameters.party_size;
-    }
-    if (typeof parameters.time === "string") {
-      context.requested_time = parameters.time;
-    }
-    if (typeof parameters.restaurant_tags === "string") {
-      context.restaurant_tags = [parameters.restaurant_tags];
-    }
-
     // Evaluate against failover policies
-    const result = this.failoverPolicyEngine.evaluate(context as any);
+    const evaluationContext: PolicyEvaluationContext = {
+      intent_type: intentType,
+      failure_reason: failureReason,
+      attempt_count: correctionResult.attemptCount,
+      party_size:
+        typeof parameters.party_size === "number"
+          ? parameters.party_size
+          : undefined,
+      requested_time:
+        typeof parameters.time === "string" ? parameters.time : undefined,
+      restaurant_tags:
+        typeof parameters.restaurant_tags === "string"
+          ? [parameters.restaurant_tags]
+          : undefined,
+    };
+    const result = this.failoverPolicyEngine.evaluate(evaluationContext);
 
     if (!result.matched || !result.recommended_action) {
       return { shouldRetry: false };
@@ -2257,7 +2262,7 @@ export class WorkflowMachine {
 
     // Get alternative suggestions
     const suggestions = this.failoverPolicyEngine.getAlternativeSuggestions(
-      context as any,
+      evaluationContext,
       result,
     );
 
@@ -3350,11 +3355,11 @@ export class WorkflowMachine {
         // Trigger shadow dry-run
         const shadowDryRun = createShadowDryRunService();
 
-        // Capture state snapshot first
-        // Note: We cast to any to avoid type conflicts between different ExecutionState definitions
+        // Capture state snapshot - serialize to handle schema differences between local and shared ExecutionState types
+        const stateSnapshot = JSON.parse(JSON.stringify(machine.state));
         await shadowDryRun.captureSnapshot(
           executionId,
-          machine.state as any,
+          stateSnapshot,
           driftResult.oldOrchestratorSha || "unknown",
           checkpointToolVersions,
         );
@@ -3363,7 +3368,7 @@ export class WorkflowMachine {
         const dryRunResult = await shadowDryRun.executeDryRun({
           executionId,
           plan: machine.plan!,
-          stateSnapshot: machine.state as any,
+          stateSnapshot: stateSnapshot,
           checkpointMetadata: {
             orchestratorGitSha: driftResult.oldOrchestratorSha || "unknown",
             toolVersions: checkpointToolVersions,

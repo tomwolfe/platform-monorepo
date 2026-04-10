@@ -216,7 +216,7 @@ const DEFAULT_CONFIG: Omit<Required<ShadowDryRunConfig>, "redis"> & {
 export interface DryRunRequest {
   executionId: string;
   plan: Plan;
-  stateSnapshot: ExecutionState;
+  stateSnapshot: ExecutionState | Record<string, unknown>;
   checkpointMetadata: {
     orchestratorGitSha: string;
     toolVersions?: Record<string, { version: string; schemaHash: string }>;
@@ -297,14 +297,14 @@ export class ShadowDryRunService {
    * Capture a state snapshot for dry-run comparison
    *
    * @param executionId - Execution ID
-   * @param state - Current execution state
+   * @param state - Current execution state (accepts any ExecutionState variant)
    * @param orchestratorGitSha - Git SHA at checkpoint time
    * @param toolVersions - Tool versions at checkpoint time
    * @returns The captured snapshot
    */
   async captureSnapshot(
     executionId: string,
-    state: ExecutionState,
+    state: ExecutionState | Record<string, unknown>,
     orchestratorGitSha: string,
     toolVersions: Record<string, { version: string; schemaHash: string }>,
   ): Promise<ShadowStateSnapshot> {

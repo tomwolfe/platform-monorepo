@@ -232,7 +232,7 @@ export const GET = withUnifiedApiHandler(
       );
     },
     {
-      ttl: 30, // 30 second cache for availability
+      ttl: 60, // 60 second cache for availability (reduces DB load under high traffic)
       tags: ["availability"],
       keyPrefix: "availability",
       generateKey: (req: NextRequest) => {

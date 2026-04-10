@@ -18,10 +18,42 @@ import { AppConfig } from "@repo/shared";
 // EIP-712 DOMAIN & TYPES
 // ============================================================================
 
+/**
+ * Get the EIP-712 domain with dynamic chainId based on environment.
+ *
+ * SECURITY: The chainId is dynamically set based on the current network
+ * to prevent cross-chain replay attacks. A signature created for Base
+ * mainnet (8453) cannot be replayed on Base Sepolia (84532) or vice versa.
+ */
+export function getEIP712Domain(chainId?: number) {
+  const resolvedChainId = chainId ?? getTargetChainId();
+  return {
+    name: "TableStack",
+    version: "1",
+    chainId: resolvedChainId,
+  } as const;
+}
+
+/**
+ * Resolve the target chainId from environment or default to Base mainnet.
+ */
+function getTargetChainId(): number {
+  const envChainId = process.env.NEXT_PUBLIC_CHAIN_ID;
+  if (envChainId) {
+    return parseInt(envChainId, 10);
+  }
+  // Default to Base mainnet in production, Sepolia in development
+  return process.env.NODE_ENV === "production" ? 8453 : 84532;
+}
+
+/**
+ * Static EIP-712 domain for backward compatibility.
+ * @deprecated Use getEIP712Domain() for dynamic chainId support.
+ */
 export const EIP712_DOMAIN = {
   name: "TableStack",
   version: "1",
-  chainId: 8453, // Base mainnet
+  chainId: 8453, // Base mainnet (use getEIP712Domain() for dynamic chainId)
 } as const;
 
 export const EIP712_TYPES = {

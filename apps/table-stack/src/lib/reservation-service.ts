@@ -16,6 +16,7 @@ import { and, eq, gte, or, sql } from "@repo/database";
 import { addMinutes, parseISO } from "date-fns";
 import { ConflictError, AppError } from "@repo/shared/errors";
 import { Logger } from "@repo/shared";
+import { getRedisClient, ServiceNamespace } from "@repo/shared/redis";
 import crypto from "crypto";
 
 const logger = new Logger({ serviceName: "reservation-service" });
@@ -539,6 +540,42 @@ export class ReservationService {
       profile: result.profile,
       isShadow,
     };
+  }
+
+  /**
+   * Invalidate availability cache for a restaurant.
+   * Called after a booking is created to ensure fresh data on next read.
+   */
+  async invalidateAvailabilityCache(
+    restaurantId: string,
+    date?: string,
+  ): Promise<void> {
+    try {
+      const redis = getRedisClient(ServiceNamespace.TS);
+      if (date) {
+        // Invalidate specific date cache keys
+        // Pattern: availability:{restaurantId}:{date}:*
+        const pattern = `availability:${restaurantId}:${date}:*`;
+        const keys = await redis.keys(pattern);
+        if (keys.length > 0) {
+          await redis.del(...keys);
+        }
+      } else {
+        // Invalidate all availability cache for this restaurant
+        const pattern = `availability:${restaurantId}:*`;
+        const keys = await redis.keys(pattern);
+        if (keys.length > 0) {
+          await redis.del(...keys);
+        }
+      }
+    } catch (error) {
+      // Cache invalidation failure is non-fatal — the cache will expire naturally
+      logger.warn("Failed to invalidate availability cache", {
+        restaurantId,
+        date,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**

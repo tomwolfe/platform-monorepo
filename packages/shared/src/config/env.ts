@@ -143,14 +143,238 @@ const OptionalEnvSchema = z.object({
 });
 
 // ============================================================================
+// EXTENDED SCHEMAS FOR COMPREHENSIVE VALIDATION
+// ============================================================================
+
+/**
+ * Web3 / Blockchain extended schema
+ * Validated only when Web3 features are actively used (not required at startup)
+ */
+const Web3EnvSchema = z.object({
+  // Server-side RPC URLs (required for Web3 transaction verification)
+  BASE_RPC_URL: z.string().url().optional(),
+  POLYGON_RPC_URL: z.string().url().optional(),
+  ETHEREUM_RPC_URL: z.string().url().optional(),
+
+  // Server-side private key for escrow resolution
+  ESCROW_RESOLVER_PRIVATE_KEY: z
+    .string()
+    .regex(
+      /^0x[0-9a-fA-F]{64}$/,
+      "Must be a valid hex private key (0x + 64 hex chars)",
+    )
+    .optional(),
+
+  // Client-side contract addresses and RPC URLs
+  NEXT_PUBLIC_USDC_CONTRACT_ADDRESS: z
+    .string()
+    .startsWith("0x", "Must be a valid Ethereum address (0x prefix)")
+    .optional(),
+  NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS: z
+    .string()
+    .startsWith("0x", "Must be a valid Ethereum address (0x prefix)")
+    .optional(),
+  NEXT_PUBLIC_PLATFORM_FEE_WALLET: z
+    .string()
+    .startsWith("0x", "Must be a valid Ethereum address (0x prefix)")
+    .optional(),
+  NEXT_PUBLIC_BASE_RPC_URL: z.string().url().optional(),
+  NEXT_PUBLIC_POLYGON_RPC_URL: z.string().url().optional(),
+  NEXT_PUBLIC_ETH_RPC_URL: z.string().url().optional(),
+  NEXT_PUBLIC_MIN_CONFIRMATIONS: z
+    .string()
+    .regex(/^\d+$/, "Must be a number")
+    .optional(),
+  NEXT_PUBLIC_SUPPORTED_TOKENS: z.string().optional(),
+});
+
+/**
+ * Security & Internal Auth extended schema
+ */
+const SecurityEnvSchema = z.object({
+  // CSRF protection
+  CSRF_SECRET: z
+    .string()
+    .min(16, "Must be a strong secret (min 16 chars)")
+    .optional(),
+
+  // Internal API auth (legacy, prefer INTERNAL_SYSTEM_KEY)
+  INTERNAL_API_KEY: z.string().optional(),
+  INTERNAL_API_SECRET: z.string().optional(),
+  INTERNAL_SERVICE_TOKEN: z.string().optional(),
+
+  // Treasury / AWS KMS (for key management)
+  TREASURY_KMS_KEY_ID: z.string().optional(),
+  TREASURY_KEYSTORE_JSON: z.string().optional(),
+  TREASURY_PASSPHRASE: z.string().optional(),
+  TREASURY_PRIVATE_KEY: z.string().optional(),
+  AWS_REGION: z.string().optional(),
+});
+
+/**
+ * Communication Services extended schema
+ */
+const CommunicationEnvSchema = z.object({
+  // Twilio (SMS/Voice)
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_PHONE_NUMBER: z.string().optional(),
+
+  // Email configuration
+  EMAIL_FROM: z.string().email().optional(),
+  ALERT_EMAIL: z.string().email().optional(),
+
+  // Mock mode for testing
+  USE_MOCK_COMM: z.string().optional(),
+  ENABLE_MOCK_MOBILITY: z.string().optional(),
+});
+
+/**
+ * QStash extended schema
+ */
+const QStashEnvSchema = z.object({
+  QSTASH_URL: z.string().url().optional(),
+  UPSTASH_QSTASH_TOKEN: z.string().optional(),
+  QSTASH_CURRENT_SIGNING_KEY: z.string().optional(),
+  QSTASH_NEXT_SIGNING_KEY: z.string().optional(),
+});
+
+/**
+ * AI / External Services extended schema
+ */
+const AIServicesEnvSchema = z.object({
+  // HuggingFace (semantic embeddings)
+  HUGGINGFACE_API_KEY: z.string().optional(),
+  HUGGINGFACE_MODEL_URL: z.string().url().optional(),
+
+  // Upstash Vector (production semantic search)
+  UPSTASH_VECTOR_URL: z.string().url().optional(),
+  UPSTASH_VECTOR_TOKEN: z.string().optional(),
+  UPSTASH_VECTOR_INDEX_PREFIX: z.string().optional(),
+
+  // External MCP servers and search APIs
+  GITHUB_MCP_URL: z.string().url().optional(),
+  BRAVE_SEARCH_MCP_URL: z.string().url().optional(),
+  VERCEL_MCP_URL: z.string().url().optional(),
+  INTENTION_ENGINE_MCP_URL: z.string().url().optional(),
+  TAVILY_API_KEY: z.string().optional(),
+  SERPER_API_KEY: z.string().optional(),
+
+  // LLM fallback model
+  LLM_FALLBACK_MODEL: z.string().optional(),
+});
+
+/**
+ * Observability & Monitoring extended schema
+ */
+const ObservabilityEnvSchema = z.object({
+  SENTRY_DSN: z.string().url().optional(),
+  SENTRY_RELEASE: z.string().optional(),
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),
+  OTEL_SERVICE_NAME: z.string().optional(),
+  OTEL_RESOURCE_ATTRIBUTES: z.string().optional(),
+});
+
+/**
+ * Feature Flags & Runtime Configuration
+ */
+const FeatureFlagsEnvSchema = z.object({
+  USE_LOCAL_REDIS: z.string().optional(),
+  USE_LOCAL_POSTGRES: z.string().optional(),
+  USE_LOCAL_QSTASH: z.string().optional(),
+  USE_LOCAL_ABLY: z.string().optional(),
+  USE_LOCAL_OTEL: z.string().optional(),
+  CLUSTER_ENV: z.string().optional(),
+  ALLOWED_ORIGINS: z.string().optional(),
+
+  // Outbox listener
+  OUTBOX_CHANNEL_NAME: z.string().optional(),
+
+  // Schema evolution
+  GITHUB_REPO: z.string().optional(),
+  AUTO_CREATE_SCHEMA_PRS: z.string().optional(),
+
+  // Cache TTL settings
+  CACHE_TTL_AVAILABILITY: z
+    .string()
+    .regex(/^\d+$/, "Must be a number")
+    .optional(),
+  CACHE_TTL_RESTAURANT: z
+    .string()
+    .regex(/^\d+$/, "Must be a number")
+    .optional(),
+
+  // Rate limiting
+  RATE_LIMIT_MAX_REQUESTS: z
+    .string()
+    .regex(/^\d+$/, "Must be a number")
+    .optional(),
+  RATE_LIMIT_WINDOW_MS: z
+    .string()
+    .regex(/^\d+$/, "Must be a number")
+    .optional(),
+
+  // Intention Engine private key for JWT signing
+  INTENTION_ENGINE_PRIVATE_KEY: z.string().optional(),
+});
+
+/**
+ * Payments (Stripe) extended schema
+ */
+const StripeEnvSchema = z.object({
+  STRIPE_SECRET_KEY: z
+    .string()
+    .startsWith("sk_", "Must start with 'sk_'")
+    .optional(),
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z
+    .string()
+    .startsWith("pk_", "Must start with 'pk_'")
+    .optional(),
+  STRIPE_WEBHOOK_SECRET: z
+    .string()
+    .startsWith("whsec_", "Must start with 'whsec_'")
+    .optional(),
+});
+
+/**
+ * Additional service URLs
+ */
+const ServiceUrlsExtendedEnvSchema = z.object({
+  INTENTION_ENGINE_WEBHOOK_URL: z.string().url().optional(),
+  OPEN_DELIVERY_MCP_URL: z.string().url().optional(),
+  OPEN_DELIVERY_WEBHOOK_URL: z.string().url().optional(),
+  TABLESTACK_MCP_URL: z.string().url().optional(),
+  TABLESTACK_INTERNAL_API_KEY: z.string().optional(),
+  STORES_URL: z.string().url().optional(),
+  OPENDELIVER_API_URL: z.string().url().optional(),
+  OPENDELIVER_WEBHOOK_URL: z.string().url().optional(),
+  OPENDELIVER_MCP_URL: z.string().url().optional(),
+  APP_URL: z.string().url().optional(),
+});
+
+// ============================================================================
 // COMBINED SCHEMA
 // ============================================================================
 
 const BaseEnvSchema = RequiredEnvSchema.merge(OptionalEnvSchema);
-const FullEnvSchema = BaseEnvSchema.merge(ProductionOnlyEnvSchema.partial());
+
+// Extended schema merges all domain-specific schemas (all optional, validated if present)
+const ExtendedEnvSchema = Web3EnvSchema.merge(SecurityEnvSchema)
+  .merge(CommunicationEnvSchema)
+  .merge(QStashEnvSchema)
+  .merge(AIServicesEnvSchema)
+  .merge(ObservabilityEnvSchema)
+  .merge(FeatureFlagsEnvSchema)
+  .merge(StripeEnvSchema)
+  .merge(ServiceUrlsExtendedEnvSchema);
+
+const FullEnvSchema = BaseEnvSchema.merge(ExtendedEnvSchema).merge(
+  ProductionOnlyEnvSchema.partial(),
+);
 
 type BaseEnv = z.infer<typeof BaseEnvSchema>;
 type FullEnv = z.infer<typeof FullEnvSchema>;
+type ExtendedEnv = z.infer<typeof ExtendedEnvSchema>;
 
 // ============================================================================
 // VALIDATION FUNCTION
@@ -173,43 +397,50 @@ export function validateEnv(options: { production?: boolean } = {}): FullEnv {
   // Validate required variables
   const requiredResult = RequiredEnvSchema.safeParse(process.env);
   if (!requiredResult.success) {
-    const errors = requiredResult.error.flatten();
-
-    // Collect missing variables
-    errors.formErrors.forEach((error) => {
-      if (error.includes("Required")) {
-        const match = error.match(/Required.+?(\w+)/);
-        if (match) missingVars.push(match[1]);
-      }
-    });
+    const flattenedErrors = requiredResult.error.flatten();
 
     // Collect invalid values
-    for (const [key, errors] of Object.entries(errors.fieldErrors)) {
-      if (errors && errors.length > 0) {
-        invalidVars[key] = errors[0];
+    const fieldErrors = flattenedErrors.fieldErrors;
+    for (const [key, errs] of Object.entries(fieldErrors)) {
+      if (errs && errs.length > 0) {
+        const firstError: string | undefined = errs[0];
+        if (firstError && firstError.includes("Required")) {
+          missingVars.push(key);
+        } else if (firstError) {
+          invalidVars[key] = firstError;
+        }
       }
     }
 
-    // Extract missing variable names from error
+    // Extract missing variable names from Zod error details
     const missingVarNames = requiredResult.error.errors
       .filter((e) => e.code === "invalid_type" && e.message === "Required")
       .map((e) => e.path.join("."));
 
-    missingVars.push(...missingVarNames);
+    // Deduplicate missing vars
+    for (const name of missingVarNames) {
+      if (!missingVars.includes(name)) {
+        missingVars.push(name);
+      }
+    }
   }
 
   // Validate production-only variables if in production mode
   if (isProduction) {
     const prodResult = ProductionOnlyEnvSchema.safeParse(process.env);
     if (!prodResult.success) {
-      const errors = prodResult.error.flatten();
+      const flattenedErrors = prodResult.error.flatten();
+      const fieldErrors = flattenedErrors.fieldErrors;
 
-      for (const [key, errs] of Object.entries(errors.fieldErrors)) {
+      for (const [key, errs] of Object.entries(fieldErrors)) {
         if (errs && errs.length > 0) {
-          if (errs[0].includes("Required")) {
-            missingVars.push(key);
-          } else {
-            invalidVars[key] = errs[0];
+          const firstError: string | undefined = errs[0];
+          if (firstError && firstError.includes("Required")) {
+            if (!missingVars.includes(key)) {
+              missingVars.push(key);
+            }
+          } else if (firstError) {
+            invalidVars[key] = firstError;
           }
         }
       }
@@ -279,8 +510,19 @@ export {
   RequiredEnvSchema,
   ProductionOnlyEnvSchema,
   OptionalEnvSchema,
+  // Extended domain schemas (all optional, validated if present)
+  Web3EnvSchema,
+  SecurityEnvSchema,
+  CommunicationEnvSchema,
+  QStashEnvSchema,
+  AIServicesEnvSchema,
+  ObservabilityEnvSchema,
+  FeatureFlagsEnvSchema,
+  StripeEnvSchema,
+  ServiceUrlsExtendedEnvSchema,
+  ExtendedEnvSchema,
   BaseEnvSchema,
   FullEnvSchema,
 };
 
-export type { BaseEnv, FullEnv };
+export type { BaseEnv, FullEnv, ExtendedEnv };

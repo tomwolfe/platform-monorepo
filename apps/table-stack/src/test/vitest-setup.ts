@@ -234,6 +234,14 @@ process.env.UPSTASH_REDIS_REST_TOKEN = "test-token";
 // ============================================================================
 
 /**
+ * Reset all mocks and module state before each test to ensure isolation.
+ * This prevents state leakage between tests (e.g., memoized values, singleton instances).
+ */
+beforeEach(() => {
+  vi.resetAllMocks();
+});
+
+/**
  * Cleanup after each test to prevent test pollution
  */
 afterEach(async () => {

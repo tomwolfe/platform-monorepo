@@ -96,9 +96,13 @@ async function postHandler(req: NextRequest) {
     );
   }
 
-  let body: any;
+  let body: {
+    task?: string;
+    payload?: Record<string, unknown>;
+    idempotencyKey?: string;
+  };
   try {
-    body = await req.json();
+    body = (await req.json()) as typeof body;
   } catch {
     return NextResponse.json(
       formatApiError(new Error("Invalid JSON body"), "VALIDATION_ERROR"),

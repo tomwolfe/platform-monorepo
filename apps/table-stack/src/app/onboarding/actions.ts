@@ -41,7 +41,7 @@ export const createRestaurant = withServerActionHandler(
 
     // Check if slug is already taken
     const existing = await getDb().query.restaurants.findFirst({
-      where: (rest: any, { eq }: any) => eq(rest.slug, validated.slug),
+      where: (rest, { eq }) => eq(rest.slug, validated.slug),
     });
 
     if (existing) {

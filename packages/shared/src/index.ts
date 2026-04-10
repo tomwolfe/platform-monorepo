@@ -151,10 +151,20 @@ export {
   RequiredEnvSchema,
   ProductionOnlyEnvSchema,
   OptionalEnvSchema,
+  Web3EnvSchema,
+  SecurityEnvSchema,
+  CommunicationEnvSchema,
+  QStashEnvSchema,
+  AIServicesEnvSchema,
+  ObservabilityEnvSchema,
+  FeatureFlagsEnvSchema,
+  StripeEnvSchema,
+  ServiceUrlsExtendedEnvSchema,
+  ExtendedEnvSchema,
   BaseEnvSchema,
   FullEnvSchema,
 } from "./config/env";
-export type { BaseEnv, FullEnv } from "./config/env";
+export type { BaseEnv, FullEnv, ExtendedEnv } from "./config/env";
 
 // ============================================================================
 // TYPE DEFINITIONS (Isomorphic)
@@ -250,6 +260,10 @@ export {
 export {
   isReplayAllowed,
   rollbackReplayGuard,
+  tryAcquireReplayProcessingLock,
+  confirmReplayGuard,
+  releaseReplayProcessingLock,
+  getReplayGuard,
 } from "./middleware/web3-replay-guard";
 
 // ============================================================================
@@ -330,6 +344,7 @@ export { createSchemaEvolutionService } from "./services/schema-evolution";
 export { createDLQMonitoringService } from "./services/dlq-monitoring";
 export { createHeartbeatService } from "./services/heartbeat";
 export { QStashService } from "./services/qstash";
+export { dispatchTask, type DispatchTask } from "./services/dispatch-queue";
 export { NormalizationService } from "./normalization";
 export {
   FailoverPolicyEngine,

@@ -269,13 +269,15 @@ async function getCronHandler(req: NextRequest) {
       for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
           return await fn();
-        } catch (error: any) {
-          lastError = error;
+        } catch (error: unknown) {
+          lastError = error as Error;
+          const errorMsg =
+            error instanceof Error ? error.message : String(error);
           const isRetryable =
-            error?.message?.includes("nonce too low") ||
-            error?.message?.includes("NONCE_TOO_LOW") ||
-            error?.message?.includes("replacement transaction underpriced") ||
-            error?.message?.includes("UNDERPRICED");
+            errorMsg.includes("nonce too low") ||
+            errorMsg.includes("NONCE_TOO_LOW") ||
+            errorMsg.includes("replacement transaction underpriced") ||
+            errorMsg.includes("UNDERPRICED");
 
           if (!isRetryable) throw error;
 

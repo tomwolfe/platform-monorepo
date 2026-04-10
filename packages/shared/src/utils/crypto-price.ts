@@ -61,6 +61,57 @@ const CACHE_TTL = 30;
 // Stale-while-revalidate threshold (5 minutes max age for stale data)
 const STALE_CACHE_TTL = 300;
 
+// ============================================================================
+// IN-MEMORY MEMOIZATION LAYER
+// ============================================================================
+
+/**
+ * Per-token memoized price cache with TTL.
+ * Reduces redundant calls when multiple concurrent requests ask for the same token price.
+ * Key format: "price:{token}" (e.g., "price:ETH:USD")
+ */
+interface MemoizedPrice {
+  price: number;
+  expiresAt: number;
+}
+
+const _priceMemoCache = new Map<string, MemoizedPrice>();
+const MEMO_TTL_MS = 30_000; // 30 seconds
+
+/**
+ * Get memoized price for a token, or undefined if expired/missing.
+ */
+function getMemoizedPrice(token: string): number | undefined {
+  const key = `price:${token}:USD`;
+  const entry = _priceMemoCache.get(key);
+  if (entry && Date.now() < entry.expiresAt) {
+    return entry.price;
+  }
+  // Expired entry — clean up
+  if (entry) {
+    _priceMemoCache.delete(key);
+  }
+  return undefined;
+}
+
+/**
+ * Store price in memo cache with TTL.
+ */
+function setMemoizedPrice(token: string, price: number): void {
+  const key = `price:${token}:USD`;
+  _priceMemoCache.set(key, {
+    price,
+    expiresAt: Date.now() + MEMO_TTL_MS,
+  });
+}
+
+/**
+ * Clear all memoized prices. Useful for testing.
+ */
+export function clearPriceMemo(): void {
+  _priceMemoCache.clear();
+}
+
 interface CoinbaseExchangeRates {
   data?: {
     rates?: {
@@ -490,11 +541,28 @@ export async function getCryptoPrices(options?: {
 }
 
 /**
- * Get price for a specific token
+ * Get price for a specific token.
+ *
+ * Uses a two-level cache:
+ * 1. In-memory memoization (30s TTL) — eliminates redundant calls within the same process
+ * 2. Redis cache (30s TTL) — shared across instances
+ * 3. External APIs (CoinGecko → Coinbase → Binance → historical)
  */
 export async function getTokenPrice(token: "ETH" | "MATIC"): Promise<number> {
+  // Level 1: In-memory memoization
+  const memoized = getMemoizedPrice(token);
+  if (memoized !== undefined) {
+    return memoized;
+  }
+
+  // Level 2+: Full price fetch (includes Redis + API fallbacks)
   const prices = await getCryptoPrices();
-  return prices[token];
+  const price = prices[token];
+
+  // Store in memo cache
+  setMemoizedPrice(token, price);
+
+  return price;
 }
 
 /**

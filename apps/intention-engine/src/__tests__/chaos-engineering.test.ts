@@ -13,30 +13,30 @@
  * Run: pnpm test -- chaos-engineering.test.ts
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { WorkflowMachine } from '../lib/engine/workflow-machine';
-import { createInitialState, setPlan } from '../lib/engine/state-machine';
-import { saveExecutionState } from '../lib/engine/memory';
-import { Plan, ExecutionState } from '../lib/engine/types';
-import { randomUUID } from 'crypto';
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { WorkflowMachine } from "../lib/engine/workflow-machine";
+import { createInitialState, setPlan } from "../lib/engine/state-machine";
+import { saveExecutionState } from "../lib/engine/memory";
+import { Plan, ExecutionState } from "../lib/engine/types";
+import { randomUUID } from "crypto";
 
 // Mock dependencies - ES Module compatible
-vi.mock('../lib/redis-client', async () => {
-  const actual = await vi.importActual('../lib/redis-client');
+vi.mock("../lib/redis-client", async () => {
+  const actual = await vi.importActual("../lib/redis-client");
   return {
     ...(actual as any),
     redis: {
       get: vi.fn().mockResolvedValue(null),
-      set: vi.fn().mockResolvedValue('OK'),
-      setex: vi.fn().mockResolvedValue('OK'),
+      set: vi.fn().mockResolvedValue("OK"),
+      setex: vi.fn().mockResolvedValue("OK"),
       del: vi.fn().mockResolvedValue(1),
       exists: vi.fn().mockResolvedValue(0),
     },
   };
 });
 
-vi.mock('@repo/shared', async () => {
-  const actual = await vi.importActual('@repo/shared');
+vi.mock("@repo/shared", async () => {
+  const actual = await vi.importActual("@repo/shared");
   return {
     ...(actual as any),
     RealtimeService: {
@@ -44,7 +44,7 @@ vi.mock('@repo/shared', async () => {
       publishStreamingStatusUpdate: vi.fn(),
     },
     QStashService: {
-      triggerNextStep: vi.fn().mockResolvedValue('qstash-msg-id'),
+      triggerNextStep: vi.fn().mockResolvedValue("qstash-msg-id"),
     },
     createFailoverPolicyEngine: vi.fn().mockReturnValue({
       shouldFailover: vi.fn().mockReturnValue(false),
@@ -56,22 +56,22 @@ vi.mock('@repo/shared', async () => {
   };
 });
 
-describe.skip('Chaos Engineering - Failure Modes', () => {
+describe.skip("Chaos Engineering - Failure Modes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  describe('Tool Execution Failures', () => {
-    it('should handle tool timeout gracefully', async () => {
+  describe("Tool Execution Failures", () => {
+    it("should handle tool timeout gracefully", async () => {
       const executionId = randomUUID();
-      
+
       const slowToolExecutor = {
         execute: vi.fn().mockImplementation(async () => {
           // Simulate timeout by taking longer than SEGMENT_TIMEOUT_MS (8500ms)
-          await new Promise(resolve => setTimeout(resolve, 10000));
+          await new Promise((resolve) => setTimeout(resolve, 10000));
           return {
             success: true,
-            output: { result: 'too late' },
+            output: { result: "too late" },
             latency_ms: 10000,
           };
         }),
@@ -81,16 +81,16 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       const plan: Plan = {
         id: randomUUID(),
         intent_id: randomUUID(),
-        summary: 'Chaos test plan',
+        summary: "Chaos test plan",
         constraints: {
           max_steps: 100,
           max_total_tokens: 10000,
           max_execution_time_ms: 60000,
         },
         metadata: {
-          version: '1.0',
+          version: "1.0",
           created_at: new Date().toISOString(),
-          planning_model_id: 'test-model',
+          planning_model_id: "test-model",
           estimated_total_tokens: 100,
           estimated_latency_ms: 5000,
         },
@@ -98,9 +98,9 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
           {
             id: randomUUID(),
             step_number: 0,
-            tool_name: 'slow_tool',
-            description: 'Tool that times out',
-            parameters: { test: 'timeout' },
+            tool_name: "slow_tool",
+            description: "Tool that times out",
+            parameters: { test: "timeout" },
             dependencies: [],
             requires_confirmation: false,
             timeout_ms: 8500,
@@ -120,33 +120,35 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       // Should fail gracefully with timeout error
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();
-      expect(result.error?.code).toBe('STEP_TIMEOUT');
-      
+      expect(result.error?.code).toBe("STEP_TIMEOUT");
+
       // Should NOT have completed steps
       expect(result.completedSteps).toBe(0);
     });
 
-    it('should handle tool throwing exception', async () => {
+    it("should handle tool throwing exception", async () => {
       const executionId = randomUUID();
-      
+
       const throwingToolExecutor = {
-        execute: vi.fn().mockRejectedValue(new Error('Network error: Connection refused')),
+        execute: vi
+          .fn()
+          .mockRejectedValue(new Error("Network error: Connection refused")),
       };
 
       const initialState = createInitialState(executionId);
       const plan: Plan = {
         id: randomUUID(),
         intent_id: randomUUID(),
-        summary: 'Chaos test plan',
+        summary: "Chaos test plan",
         constraints: {
           max_steps: 100,
           max_total_tokens: 10000,
           max_execution_time_ms: 60000,
         },
         metadata: {
-          version: '1.0',
+          version: "1.0",
           created_at: new Date().toISOString(),
-          planning_model_id: 'test-model',
+          planning_model_id: "test-model",
           estimated_total_tokens: 100,
           estimated_latency_ms: 5000,
         },
@@ -154,9 +156,9 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
           {
             id: randomUUID(),
             step_number: 0,
-            tool_name: 'flaky_tool',
-            description: 'Tool that throws',
-            parameters: { test: 'exception' },
+            tool_name: "flaky_tool",
+            description: "Tool that throws",
+            parameters: { test: "exception" },
             dependencies: [],
             requires_confirmation: false,
             timeout_ms: 8500,
@@ -176,12 +178,12 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       // Should fail gracefully
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();
-      expect(result.error?.message).toContain('Network error');
+      expect(result.error?.message).toContain("Network error");
     });
 
-    it('should handle tool returning invalid output', async () => {
+    it("should handle tool returning invalid output", async () => {
       const executionId = randomUUID();
-      
+
       const invalidOutputExecutor = {
         execute: vi.fn().mockResolvedValue({
           success: true,
@@ -194,16 +196,16 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       const plan: Plan = {
         id: randomUUID(),
         intent_id: randomUUID(),
-        summary: 'Chaos test plan',
+        summary: "Chaos test plan",
         constraints: {
           max_steps: 100,
           max_total_tokens: 10000,
           max_execution_time_ms: 60000,
         },
         metadata: {
-          version: '1.0',
+          version: "1.0",
           created_at: new Date().toISOString(),
-          planning_model_id: 'test-model',
+          planning_model_id: "test-model",
           estimated_total_tokens: 100,
           estimated_latency_ms: 5000,
         },
@@ -211,9 +213,13 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
           {
             id: randomUUID(),
             step_number: 0,
-            tool_name: 'book_restaurant_table',
-            description: 'Tool with invalid output',
-            parameters: { restaurantId: 'test-123', partySize: 2, time: '19:00' },
+            tool_name: "book_restaurant_table",
+            description: "Tool with invalid output",
+            parameters: {
+              restaurantId: "test-123",
+              partySize: 2,
+              time: "19:00",
+            },
             dependencies: [],
             requires_confirmation: false,
             timeout_ms: 8500,
@@ -231,29 +237,30 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
 
       // Should handle gracefully (may succeed or fail validation depending on schema strictness)
       const result = await machine.execute();
-      
+
       // Either success (if validation lenient) or failure (if strict)
       expect(result).toBeDefined();
       expect(result.state).toBeDefined();
     });
   });
 
-  describe('Compensation Failures', () => {
-    it('should handle compensation tool failure', async () => {
+  describe("Compensation Failures", () => {
+    it("should handle compensation tool failure", async () => {
       const executionId = randomUUID();
       let compensationAttempted = false;
 
       const executor = {
-        execute: vi.fn()
+        execute: vi
+          .fn()
           .mockImplementationOnce(async () => {
             // First step: Book ride (succeeds, registers compensation)
             return {
               success: true,
-              output: { rideId: 'ride-123' },
+              output: { rideId: "ride-123" },
               latency_ms: 200,
               compensation: {
-                toolName: 'cancel_ride',
-                parameters: { rideId: 'ride-123' },
+                toolName: "cancel_ride",
+                parameters: { rideId: "ride-123" },
               },
             };
           })
@@ -261,7 +268,7 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
             // Second step: Book restaurant (fails, triggers compensation)
             return {
               success: false,
-              error: 'Restaurant unavailable',
+              error: "Restaurant unavailable",
               latency_ms: 180,
             };
           })
@@ -270,7 +277,7 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
             compensationAttempted = true;
             return {
               success: false,
-              error: 'Ride already in progress - cannot cancel',
+              error: "Ride already in progress - cannot cancel",
               latency_ms: 150,
             };
           }),
@@ -280,16 +287,16 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       const plan: Plan = {
         id: randomUUID(),
         intent_id: randomUUID(),
-        summary: 'Chaos test plan',
+        summary: "Chaos test plan",
         constraints: {
           max_steps: 100,
           max_total_tokens: 10000,
           max_execution_time_ms: 60000,
         },
         metadata: {
-          version: '1.0',
+          version: "1.0",
           created_at: new Date().toISOString(),
-          planning_model_id: 'test-model',
+          planning_model_id: "test-model",
           estimated_total_tokens: 100,
           estimated_latency_ms: 5000,
         },
@@ -297,9 +304,9 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
           {
             id: randomUUID(),
             step_number: 0,
-            tool_name: 'book_ride',
-            description: 'Book ride',
-            parameters: { destination: 'Restaurant' },
+            tool_name: "book_ride",
+            description: "Book ride",
+            parameters: { destination: "Restaurant" },
             dependencies: [],
             requires_confirmation: false,
             timeout_ms: 8500,
@@ -307,9 +314,9 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
           {
             id: randomUUID(),
             step_number: 1,
-            tool_name: 'book_restaurant_table',
-            description: 'Book table',
-            parameters: { restaurantId: 'test' },
+            tool_name: "book_restaurant_table",
+            description: "Book table",
+            parameters: { restaurantId: "test" },
             dependencies: [],
             requires_confirmation: false,
             timeout_ms: 8500,
@@ -329,46 +336,61 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       // Saga should fail (compensation failed)
       expect(result.success).toBe(false);
       expect(compensationAttempted).toBe(true);
-      
+
       // Should log compensation failure for manual intervention
       // (In production, this would trigger alert)
     });
 
-    it('should handle partial compensation (some steps compensated, some not)', async () => {
+    it("should handle partial compensation (some steps compensated, some not)", async () => {
       const executionId = randomUUID();
       const compensationResults: boolean[] = [];
 
       const executor = {
-        execute: vi.fn()
+        execute: vi
+          .fn()
           // Step 1: Book ride (success)
           .mockImplementationOnce(async () => ({
             success: true,
-            output: { rideId: 'ride-1' },
+            output: { rideId: "ride-1" },
             latency_ms: 200,
-            compensation: { toolName: 'cancel_ride', parameters: { rideId: 'ride-1' } },
+            compensation: {
+              toolName: "cancel_ride",
+              parameters: { rideId: "ride-1" },
+            },
           }))
           // Step 2: Book hotel (success)
           .mockImplementationOnce(async () => ({
             success: true,
-            output: { bookingId: 'hotel-1' },
+            output: { bookingId: "hotel-1" },
             latency_ms: 250,
-            compensation: { toolName: 'cancel_hotel', parameters: { bookingId: 'hotel-1' } },
+            compensation: {
+              toolName: "cancel_hotel",
+              parameters: { bookingId: "hotel-1" },
+            },
           }))
           // Step 3: Book restaurant (FAIL - triggers compensation)
           .mockImplementationOnce(async () => ({
             success: false,
-            error: 'No tables available',
+            error: "No tables available",
             latency_ms: 180,
           }))
           // Compensation 1: Cancel ride (SUCCESS)
           .mockImplementationOnce(async () => {
             compensationResults.push(true);
-            return { success: true, output: { cancelled: true }, latency_ms: 100 };
+            return {
+              success: true,
+              output: { cancelled: true },
+              latency_ms: 100,
+            };
           })
           // Compensation 2: Cancel hotel (FAIL)
           .mockImplementationOnce(async () => {
             compensationResults.push(false);
-            return { success: false, error: 'Non-refundable booking', latency_ms: 120 };
+            return {
+              success: false,
+              error: "Non-refundable booking",
+              latency_ms: 120,
+            };
           }),
       };
 
@@ -376,23 +398,50 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       const plan: Plan = {
         id: randomUUID(),
         intent_id: randomUUID(),
-        summary: 'Chaos test plan',
+        summary: "Chaos test plan",
         constraints: {
           max_steps: 100,
           max_total_tokens: 10000,
           max_execution_time_ms: 60000,
         },
         metadata: {
-          version: '1.0',
+          version: "1.0",
           created_at: new Date().toISOString(),
-          planning_model_id: 'test-model',
+          planning_model_id: "test-model",
           estimated_total_tokens: 100,
           estimated_latency_ms: 5000,
         },
         steps: [
-          { id: randomUUID(), step_number: 0, tool_name: 'book_ride', description: 'Book ride', parameters: {}, dependencies: [], requires_confirmation: false, timeout_ms: 8500 },
-          { id: randomUUID(), step_number: 1, tool_name: 'book_hotel', description: 'Book hotel', parameters: {}, dependencies: [], requires_confirmation: false, timeout_ms: 8500 },
-          { id: randomUUID(), step_number: 2, tool_name: 'book_restaurant', description: 'Book restaurant', parameters: {}, dependencies: [], requires_confirmation: false, timeout_ms: 8500 },
+          {
+            id: randomUUID(),
+            step_number: 0,
+            tool_name: "book_ride",
+            description: "Book ride",
+            parameters: {},
+            dependencies: [],
+            requires_confirmation: false,
+            timeout_ms: 8500,
+          },
+          {
+            id: randomUUID(),
+            step_number: 1,
+            tool_name: "book_hotel",
+            description: "Book hotel",
+            parameters: {},
+            dependencies: [],
+            requires_confirmation: false,
+            timeout_ms: 8500,
+          },
+          {
+            id: randomUUID(),
+            step_number: 2,
+            tool_name: "book_restaurant",
+            description: "Book restaurant",
+            parameters: {},
+            dependencies: [],
+            requires_confirmation: false,
+            timeout_ms: 8500,
+          },
         ],
       };
 
@@ -407,18 +456,18 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
 
       // Saga failed
       expect(result.success).toBe(false);
-      
+
       // Compensation was attempted
       expect(compensationResults.length).toBeGreaterThan(0);
-      
+
       // Partial compensation (some succeeded, some failed)
       expect(compensationResults).toContain(true);
       expect(compensationResults).toContain(false);
     });
   });
 
-  describe('Concurrency & Race Conditions', () => {
-    it('should handle concurrent execution attempts (idempotency)', async () => {
+  describe("Concurrency & Race Conditions", () => {
+    it("should handle concurrent execution attempts (idempotency)", async () => {
       const executionId = randomUUID();
       const executionCounts: number[] = [];
 
@@ -426,10 +475,12 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
         execute: vi.fn().mockImplementation(async () => {
           executionCounts.push(Date.now());
           // Simulate variable latency
-          await new Promise(resolve => setTimeout(resolve, Math.random() * 100));
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.random() * 100),
+          );
           return {
             success: true,
-            output: { result: 'ok' },
+            output: { result: "ok" },
             latency_ms: 100,
           };
         }),
@@ -439,16 +490,16 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       const plan: Plan = {
         id: randomUUID(),
         intent_id: randomUUID(),
-        summary: 'Chaos test plan',
+        summary: "Chaos test plan",
         constraints: {
           max_steps: 100,
           max_total_tokens: 10000,
           max_execution_time_ms: 60000,
         },
         metadata: {
-          version: '1.0',
+          version: "1.0",
           created_at: new Date().toISOString(),
-          planning_model_id: 'test-model',
+          planning_model_id: "test-model",
           estimated_total_tokens: 100,
           estimated_latency_ms: 5000,
         },
@@ -456,8 +507,8 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
           {
             id: randomUUID(),
             step_number: 0,
-            tool_name: 'test_tool',
-            description: 'Test tool',
+            tool_name: "test_tool",
+            description: "Test tool",
             parameters: {},
             dependencies: [],
             requires_confirmation: false,
@@ -470,8 +521,12 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       await saveExecutionState(state);
 
       // Simulate concurrent execution attempts
-      const machine1 = new WorkflowMachine(executionId, executor, { initialState: state });
-      const machine2 = new WorkflowMachine(executionId, executor, { initialState: state });
+      const machine1 = new WorkflowMachine(executionId, executor, {
+        initialState: state,
+      });
+      const machine2 = new WorkflowMachine(executionId, executor, {
+        initialState: state,
+      });
 
       // Both machines try to execute the same step
       const [result1, result2] = await Promise.allSettled([
@@ -480,17 +535,19 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       ]);
 
       // At least one should succeed or be idempotent
-      expect(result1.status === 'fulfilled' || result2.status === 'fulfilled').toBe(true);
-      
+      expect(
+        result1.status === "fulfilled" || result2.status === "fulfilled",
+      ).toBe(true);
+
       // Tool should not be executed more than twice (ideally once due to idempotency)
       expect(executionCounts.length).toBeLessThanOrEqual(2);
     });
   });
 
-  describe('State Corruption', () => {
-    it('should handle missing plan in execution state', async () => {
+  describe("State Corruption", () => {
+    it("should handle missing plan in execution state", async () => {
       const executionId = randomUUID();
-      
+
       const executor = {
         execute: vi.fn(),
       };
@@ -504,14 +561,12 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       });
 
       // Should fail gracefully when trying to execute
-      await expect(machine.executeSingleStep(0))
-        .rejects
-        .toThrow('No plan set');
+      await expect(machine.executeSingleStep(0)).rejects.toThrow("No plan set");
     });
 
-    it('should handle circular dependencies in plan', async () => {
+    it("should handle circular dependencies in plan", async () => {
       const executionId = randomUUID();
-      
+
       const executor = {
         execute: vi.fn(),
       };
@@ -522,20 +577,20 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
       // Note: With UUID validation, this will fail at the schema level
       const stepAId = randomUUID();
       const stepBId = randomUUID();
-      
+
       const plan: Plan = {
         id: randomUUID(),
         intent_id: randomUUID(),
-        summary: 'Circular dependency test',
+        summary: "Circular dependency test",
         constraints: {
           max_steps: 100,
           max_total_tokens: 10000,
           max_execution_time_ms: 60000,
         },
         metadata: {
-          version: '1.0',
+          version: "1.0",
           created_at: new Date().toISOString(),
-          planning_model_id: 'test-model',
+          planning_model_id: "test-model",
           estimated_total_tokens: 100,
           estimated_latency_ms: 5000,
         },
@@ -543,8 +598,8 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
           {
             id: stepAId,
             step_number: 0,
-            tool_name: 'tool_a',
-            description: 'Tool A',
+            tool_name: "tool_a",
+            description: "Tool A",
             parameters: {},
             dependencies: [stepBId], // A depends on B (circular - B has higher step_number)
             requires_confirmation: false,
@@ -553,8 +608,8 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
           {
             id: stepBId,
             step_number: 1,
-            tool_name: 'tool_b',
-            description: 'Tool B',
+            tool_name: "tool_b",
+            description: "Tool B",
             parameters: {},
             dependencies: [stepAId], // B depends on A (circular!)
             requires_confirmation: false,
@@ -568,65 +623,68 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
         state = setPlan(initialState, plan);
         // If we get here, the plan passed validation (shouldn't happen with circular deps)
         await saveExecutionState(state);
-        
+
         const machine = new WorkflowMachine(executionId, executor, {
           initialState: state,
         });
 
         const result = await machine.execute();
-        
+
         // If plan somehow passed validation, it should fail during execution
         expect(result.success).toBe(false);
         expect(result.error).toBeDefined();
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Should fail at schema level due to circular dependency
         expect(error).toBeDefined();
-        expect(error.message).toContain('circular') || expect(error.message).toContain('DAG');
+        const msg = error instanceof Error ? error.message : String(error);
+        expect(msg).toMatch(/circular|DAG/i);
       }
     });
   });
 
-  describe('Resource Exhaustion', () => {
-    it('should handle very large plan (100+ steps)', async () => {
+  describe("Resource Exhaustion", () => {
+    it("should handle very large plan (100+ steps)", async () => {
       const executionId = randomUUID();
-      
+
       const executor = {
         execute: vi.fn().mockResolvedValue({
           success: true,
-          output: { result: 'ok' },
+          output: { result: "ok" },
           latency_ms: 50,
         }),
       };
 
       const initialState = createInitialState(executionId);
-      
+
       // Create plan with 100 steps
       const plan: Plan = {
         id: randomUUID(),
         intent_id: randomUUID(),
-        summary: '100 step plan',
+        summary: "100 step plan",
         constraints: {
           max_steps: 100,
           max_total_tokens: 10000,
           max_execution_time_ms: 60000,
         },
         metadata: {
-          version: '1.0',
+          version: "1.0",
           created_at: new Date().toISOString(),
-          planning_model_id: 'test-model',
+          planning_model_id: "test-model",
           estimated_total_tokens: 100,
           estimated_latency_ms: 5000,
         },
-        steps: Array(100).fill(null).map((_, i) => ({
-          id: randomUUID(),
-          step_number: i,
-          tool_name: 'test_tool',
-          description: `Step ${i + 1}`,
-          parameters: { index: i },
-          dependencies: [], // No dependencies to avoid UUID reference issues
-          requires_confirmation: false,
-          timeout_ms: 8500,
-        })),
+        steps: Array(100)
+          .fill(null)
+          .map((_, i) => ({
+            id: randomUUID(),
+            step_number: i,
+            tool_name: "test_tool",
+            description: `Step ${i + 1}`,
+            parameters: { index: i },
+            dependencies: [], // No dependencies to avoid UUID reference issues
+            requires_confirmation: false,
+            timeout_ms: 8500,
+          })),
       };
 
       let state = setPlan(initialState, plan);
@@ -647,27 +705,27 @@ describe.skip('Chaos Engineering - Failure Modes', () => {
   });
 });
 
-describe.skip('Chaos Engineering - Recovery Patterns', () => {
+describe.skip("Chaos Engineering - Recovery Patterns", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('should recover from transient network error with retry', async () => {
+  it("should recover from transient network error with retry", async () => {
     const executionId = randomUUID();
     let attemptCount = 0;
 
     const flakyExecutor = {
       execute: vi.fn().mockImplementation(async () => {
         attemptCount++;
-        
+
         // Fail first 2 attempts, succeed on 3rd
         if (attemptCount < 3) {
-          throw new Error('Network error: ECONNRESET');
+          throw new Error("Network error: ECONNRESET");
         }
-        
+
         return {
           success: true,
-          output: { result: 'success after retry' },
+          output: { result: "success after retry" },
           latency_ms: 150,
         };
       }),
@@ -677,16 +735,16 @@ describe.skip('Chaos Engineering - Recovery Patterns', () => {
     const plan: Plan = {
       id: randomUUID(),
       intent_id: randomUUID(),
-      summary: 'Flaky retry test',
+      summary: "Flaky retry test",
       constraints: {
         max_steps: 100,
         max_total_tokens: 10000,
         max_execution_time_ms: 60000,
       },
       metadata: {
-        version: '1.0',
+        version: "1.0",
         created_at: new Date().toISOString(),
-        planning_model_id: 'test-model',
+        planning_model_id: "test-model",
         estimated_total_tokens: 100,
         estimated_latency_ms: 5000,
       },
@@ -694,8 +752,8 @@ describe.skip('Chaos Engineering - Recovery Patterns', () => {
         {
           id: randomUUID(),
           step_number: 0,
-          tool_name: 'flaky_tool',
-          description: 'Tool that fails transiently',
+          tool_name: "flaky_tool",
+          description: "Tool that fails transiently",
           parameters: {},
           dependencies: [],
           requires_confirmation: false,
@@ -718,27 +776,31 @@ describe.skip('Chaos Engineering - Recovery Patterns', () => {
     expect(attemptCount).toBeGreaterThanOrEqual(1);
   });
 
-  it('should detect and report non-recoverable errors', async () => {
+  it("should detect and report non-recoverable errors", async () => {
     const executionId = randomUUID();
-    
+
     const executor = {
-      execute: vi.fn().mockRejectedValue(new Error('Invalid API key - authentication failed')),
+      execute: vi
+        .fn()
+        .mockRejectedValue(
+          new Error("Invalid API key - authentication failed"),
+        ),
     };
 
     const initialState = createInitialState(executionId);
     const plan: Plan = {
       id: randomUUID(),
       intent_id: randomUUID(),
-      summary: 'Non-recoverable error test',
+      summary: "Non-recoverable error test",
       constraints: {
         max_steps: 100,
         max_total_tokens: 10000,
         max_execution_time_ms: 60000,
       },
       metadata: {
-        version: '1.0',
+        version: "1.0",
         created_at: new Date().toISOString(),
-        planning_model_id: 'test-model',
+        planning_model_id: "test-model",
         estimated_total_tokens: 100,
         estimated_latency_ms: 5000,
       },
@@ -746,8 +808,8 @@ describe.skip('Chaos Engineering - Recovery Patterns', () => {
         {
           id: randomUUID(),
           step_number: 0,
-          tool_name: 'authenticated_tool',
-          description: 'Tool requiring auth',
+          tool_name: "authenticated_tool",
+          description: "Tool requiring auth",
           parameters: {},
           dependencies: [],
           requires_confirmation: false,
@@ -767,8 +829,8 @@ describe.skip('Chaos Engineering - Recovery Patterns', () => {
 
     // Should fail immediately (no retry for auth errors)
     expect(result.success).toBe(false);
-    expect(result.error?.message).toContain('authentication');
-    
+    expect(result.error?.message).toContain("authentication");
+
     // Should be marked as non-recoverable
     expect(result.error?.code).toBeDefined();
   });

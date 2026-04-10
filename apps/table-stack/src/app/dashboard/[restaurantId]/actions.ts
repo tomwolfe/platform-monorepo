@@ -52,8 +52,10 @@ async function verifyOwnership(restaurantId: string) {
 }
 
 // Wrapper for ownership-verified actions
-function withOwnership<T extends (...args: any[]) => Promise<any>>(fn: T): T {
-  return (async (restaurantId: string, ...rest: any[]) => {
+function withOwnership<T extends (...args: unknown[]) => Promise<unknown>>(
+  fn: T,
+): T {
+  return (async (restaurantId: string, ...rest: unknown[]) => {
     await verifyOwnership(restaurantId);
     return fn(restaurantId, ...rest);
   }) as T;
@@ -382,7 +384,9 @@ export const addTable = withServerActionHandler(
       existingTables.length > 0
         ? (
             Math.max(
-              ...existingTables.map((t: any) => parseInt(t.tableNumber) || 0),
+              ...existingTables.map(
+                (t: { tableNumber: string }) => parseInt(t.tableNumber) || 0,
+              ),
             ) + 1
           ).toString()
         : "1";

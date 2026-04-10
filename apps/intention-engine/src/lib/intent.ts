@@ -27,9 +27,15 @@ export async function getLastInteractionContext(userIp: string) {
   return null;
 }
 
+interface ParsedIntent {
+  type: string;
+  rawText: string;
+  parameters: Record<string, unknown>;
+}
+
 export async function saveInteractionContextByClerkId(
   clerkId: string,
-  intent: any,
+  intent: ParsedIntent,
   auditLogId: string,
 ) {
   const context: InteractionContext = {
@@ -45,7 +51,7 @@ export async function saveInteractionContextByClerkId(
 
 export async function saveInteractionContext(
   userIp: string,
-  intent: any,
+  intent: ParsedIntent,
   auditLogId: string,
 ) {
   // Note: IP-based persistence not implemented - use clerkId instead

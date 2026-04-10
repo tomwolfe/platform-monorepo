@@ -10,6 +10,7 @@ export {
   CheckoutError,
   EIP712_DOMAIN,
   EIP712_TYPES,
+  getEIP712Domain,
   DEADLINE_TOLERANCE_SECONDS,
   validateDeadline,
   validateChainId,
@@ -27,3 +28,6 @@ export {
 export { markReservationAsVerified } from "./reservation-update";
 
 export { notifyOwnerOfVerification } from "./notifications";
+
+export { CheckoutService, checkoutService } from "./checkout.service";
+export type { CheckoutInput, CheckoutResult } from "./checkout.service";

@@ -519,6 +519,31 @@ export class ReplayGuardService implements ReplayGuardMiddleware {
       );
     }
   }
+
+  /**
+   * TWO-PHASE COMMIT: Release a processing lock early
+   *
+   * SAFETY: If transaction verification fails BEFORE the DB commit,
+   * this releases the processing lock so the user can retry immediately
+   * without waiting for the 120s TTL to expire.
+   *
+   * This is idempotent — safe to call even if the key was already removed.
+   *
+   * @param txHash - Transaction hash to unlock
+   */
+  async releaseProcessingLock(txHash: Hash): Promise<void> {
+    try {
+      const processingKey = this.getProcessingKey(txHash);
+      await this.redis.del(processingKey);
+    } catch (error) {
+      // Log but don't fail — lock release failure is non-critical
+      // since the 120s TTL will auto-expire the key.
+      replayLogger.warn(
+        "[ReplayGuard] Failed to release processing lock:",
+        error,
+      );
+    }
+  }
 }
 
 // ============================================================================
@@ -675,6 +700,22 @@ export async function tryAcquireReplayProcessingLock(
 export async function confirmReplayGuard(txHash: Hash): Promise<void> {
   const guard = getReplayGuard();
   await guard.confirmTransaction(txHash);
+}
+
+/**
+ * TWO-PHASE COMMIT: Release a processing lock early
+ *
+ * SAFETY: If transaction verification fails BEFORE the DB commit,
+ * this releases the processing lock so the user can retry immediately
+ * without waiting for the 120s TTL to expire.
+ *
+ * Convenience wrapper around ReplayGuardService.releaseProcessingLock()
+ *
+ * @param txHash - Transaction hash to unlock
+ */
+export async function releaseReplayProcessingLock(txHash: Hash): Promise<void> {
+  const guard = getReplayGuard();
+  await guard.releaseProcessingLock(txHash);
 }
 
 // ============================================================================

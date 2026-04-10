@@ -206,4 +206,24 @@ export const handlers = [
       },
     });
   }),
+
+  // CATCH-ALL: Explicitly handle unmocked internal API requests
+  // This prevents silent failures where a request falls through without being mocked.
+  // In tests, any unmocked request to localhost:3000/api/* will return a clear error.
+  http.all("http://localhost:3000/api/*", ({ request }) => {
+    console.warn(
+      `[MSW] Unmocked request: ${request.url}. ` +
+        "Add a handler for this endpoint in mocks/handlers.ts",
+    );
+    return HttpResponse.json(
+      {
+        success: false,
+        error: {
+          code: "MOCK_NOT_CONFIGURED",
+          message: `No mock configured for ${new URL(request.url).pathname}`,
+        },
+      },
+      { status: 501 },
+    );
+  }),
 ];

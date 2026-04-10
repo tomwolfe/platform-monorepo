@@ -656,3 +656,12 @@ export {
   type ResultFailure,
   type ResultData,
 } from "./errors/result-pattern";
+
+// ============================================================================
+// HTTP ERROR CLASS & GLOBAL ERROR HANDLER
+// ============================================================================
+export {
+  HttpError,
+  withErrorHandler,
+  formatErrorResponse,
+} from "./errors/http-error";

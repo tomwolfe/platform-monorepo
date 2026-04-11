@@ -24,7 +24,7 @@
 
 import { z } from "zod";
 import { isNextRedirectError } from "./next-errors";
-import type { NextRequest } from "next/server";
+import type { NextRequest as _NextRequest } from "next/server";
 import {
   rateLimitMiddleware,
   type EndpointRateLimitConfig,
@@ -193,7 +193,7 @@ export function formatApiError(
   const message = extractErrorMessage(error);
   const fields = extractFieldErrors(error);
   const { includeStack = false, traceId } = options;
-  const metadata = getErrorMetadata(code as any);
+  const metadata = getErrorMetadata(code as unknown as EngineErrorCode);
 
   return {
     success: false,
@@ -223,7 +223,7 @@ export function createApiError(
   message: string,
   details?: unknown,
 ): ApiErrorResponse {
-  const metadata = getErrorMetadata(code as any);
+  const metadata = getErrorMetadata(code as unknown as EngineErrorCode);
 
   return {
     success: false,
@@ -356,45 +356,6 @@ function extractErrorDetails(error: unknown): unknown {
     return error;
   }
   return undefined;
-}
-
-/**
- * Wrap an async function with standardized error handling
- *
- * @param fn - Async function to wrap
- * @param errorCode - Default error code to use
- * @returns Wrapped function that returns standardized error responses
- *
- * @example
- * ```typescript
- * export const POST = withApiErrorHandler(
- *   async (req: NextRequest) => {
- *     const body = await req.json();
- *     const result = await someOperation(body);
- *     return NextResponse.json(formatApiSuccess(result));
- *   },
- *   "EXECUTION_FAILED"
- * );
- * ```
- */
-export function withApiErrorHandler<T>(
-  fn: (req: Request | NextRequest) => Promise<T>,
-  errorCode: EngineErrorCode = "INTERNAL_ERROR",
-) {
-  return async (req: Request | NextRequest) => {
-    try {
-      return await fn(req);
-    } catch (error) {
-      // Re-throw Next.js redirect and notFound errors to preserve navigation
-      if (isNextRedirectError(error)) {
-        throw error;
-      }
-
-      const errorResponse = formatApiError(error, errorCode);
-      const status = getErrorStatusCode(errorCode);
-      return Response.json(errorResponse, { status });
-    }
-  };
 }
 
 /**
@@ -628,7 +589,7 @@ export function validateErrorResponse(response: unknown): ApiErrorResponse {
         })
         .passthrough()
         .transform((val) => {
-          const { stack, ...rest } = val as any;
+          const { stack: _stack, ...rest } = val as Record<string, unknown>;
           return rest;
         }),
     });

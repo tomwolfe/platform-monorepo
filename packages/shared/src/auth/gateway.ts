@@ -10,7 +10,7 @@
  * ```typescript
  * import { validateRequest } from '@repo/shared/auth/gateway';
  *
- * export const POST = withApiErrorHandler(async (req) => {
+ * export const POST = withUnifiedApiHandler(async (req) => {
  *   const { error, status, context } = await validateRequest(req);
  *   if (error) {
  *     return NextResponse.json(formatApiError(new Error(error), 'UNAUTHORIZED'), { status });
@@ -185,7 +185,7 @@ async function tryBearerJwt(
         },
       };
     }
-  } catch (error) {
+  } catch (_error) {
     // Asymmetric verification failed - try scoped JWT
     try {
       const payload = await SecurityProvider.verifyScopedJWT(token);
@@ -241,7 +241,7 @@ async function tryInternalKey(
         },
       };
     }
-  } catch (error) {
+  } catch (_error) {
     // Internal system key not configured
     logger.warn({
       message: "Internal system key not configured",

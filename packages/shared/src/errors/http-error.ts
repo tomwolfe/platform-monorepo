@@ -13,16 +13,12 @@
  * throw new HttpError(400, "Invalid input: email is required");
  * throw new HttpError(404, "User not found", { code: "USER_NOT_FOUND", details: { userId } });
  *
- * // With the wrapper (automatic error handling):
- * export const GET = withErrorHandler(async (req) => { ... }, { serviceName: "my-api" });
+ * // With withUnifiedApiHandler (automatic error handling):
+ * export const GET = withUnifiedApiHandler(async (req) => { ... }, { serviceName: "my-api" });
  * ```
  *
  * @package @repo/shared
  */
-
-import { Logger } from "../logger";
-
-const errorLogger = new Logger({ serviceName: "error-handler" });
 
 // ============================================================================
 // HTTP ERROR CLASS
@@ -200,68 +196,7 @@ export function formatErrorResponse(
 }
 
 // ============================================================================
-// ERROR HANDLER WRAPPER
+// EXPORTS
 // ============================================================================
 
-/**
- * Wrap an async handler with automatic error handling.
- *
- * Catches HttpError, AppError, and generic Errors, returning
- * a standardized error response with the correct status code.
- *
- * Usage:
- * ```typescript
- * export const GET = withErrorHandler(async (req) => {
- *   const user = await getUser(id);
- *   if (!user) throw HttpError.notFound("User not found");
- *   return { status: 200, body: { success: true, data: user } };
- * });
- * ```
- *
- * The wrapped handler returns `{ status: number; body: unknown }` so
- * callers can easily create framework-specific responses:
- * ```typescript
- * const result = await handler(req);
- * return NextResponse.json(result.body, { status: result.status });
- * ```
- */
-export function withErrorHandler<
-  T extends (...args: unknown[]) => Promise<unknown>,
->(
-  handler: T,
-  options?: { serviceName?: string; includeStackTrace?: boolean },
-): (...args: Parameters<T>) => Promise<{ status: number; body: unknown }> {
-  const { serviceName = "api", includeStackTrace = false } = options || {};
-
-  return async (
-    ...args: Parameters<T>
-  ): Promise<{ status: number; body: unknown }> => {
-    try {
-      const result = await handler(...args);
-      // If the handler already returns { status, body }, pass through
-      if (
-        result &&
-        typeof result === "object" &&
-        "status" in result &&
-        "body" in result
-      ) {
-        return result as { status: number; body: unknown };
-      }
-      // Otherwise wrap successful result
-      return { status: 200, body: result };
-    } catch (error) {
-      // Log the error for debugging
-      errorLogger.error(`[${serviceName}] Unhandled error in handler`, {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        ...(error instanceof HttpError && {
-          statusCode: error.statusCode,
-          code: error.code,
-          details: error.details,
-        }),
-      });
-
-      return formatErrorResponse(error, { includeStackTrace });
-    }
-  };
-}
+export { HttpError, formatErrorResponse };

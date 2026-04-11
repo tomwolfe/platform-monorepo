@@ -28,8 +28,34 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { Logger } from "@repo/shared";
 import { SecurityProvider } from "@repo/auth";
 import { randomUUID } from "crypto";
+
+/**
+ * Extended SSEServerTransport with custom properties for trace propagation
+ * and POST request handling.
+ *
+ * This interface extends the base SDK transport to support our custom
+ * trace context injection and async POST processing.
+ */
+interface TracedSSETransport extends SSEServerTransport {
+  /** Trace ID for distributed tracing context */
+  traceId?: string;
+  /** Handle POST requests for MCP RPC calls */
+  handlePostRequest: (
+    request: Request,
+    responseInit: typeof Response,
+  ) => Promise<void>;
+}
+
+/**
+ * Minimal writable transport interface for SSE adapter
+ */
+interface MinimalWritableTransport {
+  write: (data: string) => void;
+  end: () => void;
+}
 
 /**
  * Extract trace ID from request headers or generate new one
@@ -128,7 +154,7 @@ export function createMcpServerRoutes(
   const enableLogging = options?.enableLogging ?? true;
 
   // Manage active transport (singleton per server instance)
-  let transport: SSEServerTransport | null = null;
+  let transport: TracedSSETransport | null = null;
 
   return {
     /**
@@ -142,20 +168,29 @@ export function createMcpServerRoutes(
       }
 
       if (enableLogging) {
-        console.log(`[Trace:${traceId}] MCP SSE connection established`);
+        const logger = new Logger({ serviceName: "mcp-protocol" });
+        logger.info({
+          message: "MCP SSE connection established",
+          traceId,
+        });
       }
 
       const { readable, writable } = new TransformStream();
       const writer = writable.getWriter();
       const encoder = new TextEncoder();
 
-      transport = new SSEServerTransport("/api/mcp", {
+      const writableTransport: MinimalWritableTransport = {
         write: (data: string) => writer.write(encoder.encode(data)),
         end: () => writer.close(),
-      } as any);
+      };
+
+      transport = new SSEServerTransport(
+        "/api/mcp",
+        writableTransport,
+      ) as TracedSSETransport;
 
       // Pass traceId to tool context
-      (transport as any).traceId = traceId;
+      transport.traceId = traceId;
 
       await server.connect(transport);
 
@@ -202,8 +237,8 @@ export function createMcpServerRoutes(
         }
 
         // Attach traceId to transport for tool execution context
-        (transport as any).traceId = traceId;
-        await (transport as any).handlePostRequest(request, Response as any);
+        transport.traceId = traceId;
+        await transport.handlePostRequest(request, Response);
 
         return new Response("OK", {
           headers: {

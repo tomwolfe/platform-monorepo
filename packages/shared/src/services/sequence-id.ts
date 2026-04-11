@@ -32,6 +32,7 @@
 
 import { Redis } from "@upstash/redis";
 import { getRedisClient, ServiceNamespace } from "../redis";
+import { Logger } from "../logger";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -143,7 +144,7 @@ export class SequenceIdService {
     options?: {
       correlationId?: string;
       traceId?: string;
-    }
+    },
   ): Promise<SequenceIdEvent> {
     const sequenceId = await this.next(scope);
     const lamportTimestamp = Date.now();
@@ -188,6 +189,7 @@ export class OrderedEventBuffer {
   private waitTimer: NodeJS.Timeout | null = null;
   private onEventReady?: (event: SequenceIdEvent) => void;
   private onBatchReady?: (events: SequenceIdEvent[]) => void;
+  private logger: Logger;
 
   constructor(
     scope: string,
@@ -195,12 +197,13 @@ export class OrderedEventBuffer {
     callbacks?: {
       onEventReady?: (event: SequenceIdEvent) => void;
       onBatchReady?: (events: SequenceIdEvent[]) => void;
-    }
+    },
   ) {
     this.scope = scope;
     this.config = { ...DEFAULT_BUFFER_CONFIG, ...config };
     this.onEventReady = callbacks?.onEventReady;
     this.onBatchReady = callbacks?.onBatchReady;
+    this.logger = new Logger({ serviceName: "sequence-id" });
   }
 
   /**
@@ -213,29 +216,31 @@ export class OrderedEventBuffer {
     const { sequenceId } = event;
 
     if (this.config.debug) {
-      console.log(
-        `[OrderedEventBuffer] Received event seq=${sequenceId} ` +
-        `(expected=${this.expectedSequenceId}, buffer=${this.buffer.size})`
-      );
+      this.logger.debug({
+        message: "[OrderedEventBuffer] Received event",
+        sequenceId,
+        expectedSequenceId: this.expectedSequenceId,
+        bufferSize: this.buffer.size,
+      });
     }
 
     // Event is next in sequence - release immediately
     if (sequenceId === this.expectedSequenceId) {
       await this.releaseEvent(event);
       this.expectedSequenceId++;
-      
+
       // Release any consecutive buffered events
       await this.releaseBufferedEvents();
-    } 
+    }
     // Event is in the future - buffer it
     else if (sequenceId > this.expectedSequenceId) {
       this.buffer.set(sequenceId, event);
-      
+
       // Start wait timer if not already running
       if (!this.waitTimer && this.buffer.size > 0) {
         this.startWaitTimer();
       }
-      
+
       // Force release if buffer is full
       if (this.buffer.size >= this.config.maxBufferSize) {
         await this.forceRelease();
@@ -246,7 +251,7 @@ export class OrderedEventBuffer {
       if (this.config.debug) {
         console.log(
           `[OrderedEventBuffer] Ignoring old event seq=${sequenceId} ` +
-          `(expected=${this.expectedSequenceId})`
+            `(expected=${this.expectedSequenceId})`,
         );
       }
     }
@@ -266,7 +271,7 @@ export class OrderedEventBuffer {
    */
   private async releaseBufferedEvents(): Promise<void> {
     let released = 0;
-    
+
     while (this.buffer.has(this.expectedSequenceId)) {
       const event = this.buffer.get(this.expectedSequenceId)!;
       this.buffer.delete(this.expectedSequenceId);
@@ -276,10 +281,12 @@ export class OrderedEventBuffer {
     }
 
     if (released > 0 && this.config.debug) {
-      console.log(
-        `[OrderedEventBuffer] Released ${released} buffered events ` +
-        `(new expected=${this.expectedSequenceId}, remaining=${this.buffer.size})`
-      );
+      this.logger.debug({
+        message: "[OrderedEventBuffer] Released buffered events",
+        releasedCount: released,
+        newExpectedSequenceId: this.expectedSequenceId,
+        remainingBufferSize: this.buffer.size,
+      });
     }
 
     // Clear timer if buffer is empty
@@ -314,14 +321,15 @@ export class OrderedEventBuffer {
    */
   private async forceRelease(): Promise<void> {
     const events = Array.from(this.buffer.values()).sort(
-      (a, b) => a.sequenceId - b.sequenceId
+      (a, b) => a.sequenceId - b.sequenceId,
     );
 
     if (events.length > 0 && this.config.debug) {
-      console.log(
-        `[OrderedEventBuffer] Force releasing ${events.length} events ` +
-        `(gaps may exist, new expected=${this.expectedSequenceId + events.length})`
-      );
+      this.logger.debug({
+        message: "[OrderedEventBuffer] Force releasing events",
+        forceReleaseCount: events.length,
+        newExpectedSequenceId: this.expectedSequenceId + events.length,
+      });
     }
 
     for (const event of events) {
@@ -380,7 +388,7 @@ export function createOrderedEventBuffer(
   callbacks?: {
     onEventReady?: (event: SequenceIdEvent) => void;
     onBatchReady?: (events: SequenceIdEvent[]) => void;
-  }
+  },
 ): OrderedEventBuffer {
   return new OrderedEventBuffer(scope, config, callbacks);
 }
@@ -396,7 +404,7 @@ export function createSequencedPublisher(scope: string) {
       options?: {
         correlationId?: string;
         traceId?: string;
-      }
+      },
     ): Promise<SequenceIdEvent> {
       return SequenceIdService.generateEvent(scope, eventType, data, options);
     },

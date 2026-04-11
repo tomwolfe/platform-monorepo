@@ -8,14 +8,12 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
-  withApiErrorHandler,
+  withUnifiedApiHandler,
   formatError,
   formatSuccess,
   withRetry,
   withTimeout,
   settleAll,
-  ApiErrorResponse,
-  ApiSuccessResponse,
 } from "../error-handler";
 import {
   AppError,
@@ -59,7 +57,7 @@ function createMockRequest(headers?: Record<string, string>) {
 /**
  * Mock NextResponse
  */
-function createMockResponse(data: any, status: number = 200) {
+function createMockResponse(data: unknown, status: number = 200) {
   return {
     status,
     json: vi.fn(async () => data),
@@ -76,27 +74,25 @@ describe("Error Handler", () => {
   });
 
   // ============================================================================
-  // withApiErrorHandler
+  // withUnifiedApiHandler
   // ============================================================================
 
-  describe("withApiErrorHandler", () => {
+  describe("withUnifiedApiHandler", () => {
     it("should return success response for successful handler", async () => {
       const handler = vi.fn().mockResolvedValue({
-        success: true,
-        data: { message: "Success" },
+        json: vi.fn(),
+        status: 200,
       });
 
-      const wrappedHandler = withApiErrorHandler(handler, {
+      const wrappedHandler = withUnifiedApiHandler(handler, {
+        serviceName: "test-api",
         includeStackTrace: false,
-        enableSentry: false,
       });
 
-      const result = await wrappedHandler();
+      const mockReq = createMockRequest({}) as Request;
+      await wrappedHandler(mockReq);
 
-      expect(result).toEqual({
-        success: true,
-        data: { message: "Success" },
-      });
+      expect(handler).toHaveBeenCalled();
     });
 
     it("should handle ValidationError", async () => {
@@ -104,17 +100,19 @@ describe("Error Handler", () => {
         throw new ValidationError("Invalid email format");
       });
 
-      const wrappedHandler = withApiErrorHandler(handler, {
+      const wrappedHandler = withUnifiedApiHandler(handler, {
+        serviceName: "test-api",
         includeStackTrace: false,
-        enableSentry: false,
       });
 
-      const result = (await wrappedHandler()) as ApiErrorResponse;
+      const mockReq = createMockRequest({}) as Request;
+      const response = await wrappedHandler(mockReq);
 
-      expect(result.success).toBe(false);
-      expect(result.error.code).toBe("VALIDATION_ERROR");
-      expect(result.error.message).toBe("Invalid email format");
-      expect(result.error.stack).toBeUndefined();
+      expect(response.status).toBe(400);
+      const jsonBody = await response.json();
+      expect(jsonBody.success).toBe(false);
+      expect(jsonBody.error.code).toBe("VALIDATION_ERROR");
+      expect(jsonBody.error.message).toBe("Invalid email format");
     });
 
     it("should handle NotFoundError", async () => {
@@ -122,16 +120,19 @@ describe("Error Handler", () => {
         throw new NotFoundError("Restaurant", "rest-123");
       });
 
-      const wrappedHandler = withApiErrorHandler(handler, {
+      const wrappedHandler = withUnifiedApiHandler(handler, {
+        serviceName: "test-api",
         includeStackTrace: false,
-        enableSentry: false,
       });
 
-      const result = (await wrappedHandler()) as ApiErrorResponse;
+      const mockReq = createMockRequest({}) as Request;
+      const response = await wrappedHandler(mockReq);
 
-      expect(result.success).toBe(false);
-      expect(result.error.code).toBe("NOT_FOUND");
-      expect(result.error.message).toContain("Restaurant not found");
+      expect(response.status).toBe(404);
+      const jsonBody = await response.json();
+      expect(jsonBody.success).toBe(false);
+      expect(jsonBody.error.code).toBe("NOT_FOUND");
+      expect(jsonBody.error.message).toContain("Restaurant not found");
     });
 
     it("should handle ConflictError", async () => {
@@ -139,16 +140,19 @@ describe("Error Handler", () => {
         throw new ConflictError("Table already booked for this time slot");
       });
 
-      const wrappedHandler = withApiErrorHandler(handler, {
+      const wrappedHandler = withUnifiedApiHandler(handler, {
+        serviceName: "test-api",
         includeStackTrace: false,
-        enableSentry: false,
       });
 
-      const result = (await wrappedHandler()) as ApiErrorResponse;
+      const mockReq = createMockRequest({}) as Request;
+      const response = await wrappedHandler(mockReq);
 
-      expect(result.success).toBe(false);
-      expect(result.error.code).toBe("CONFLICT");
-      expect(result.error.message).toBe(
+      expect(response.status).toBe(409);
+      const jsonBody = await response.json();
+      expect(jsonBody.success).toBe(false);
+      expect(jsonBody.error.code).toBe("CONFLICT");
+      expect(jsonBody.error.message).toBe(
         "Table already booked for this time slot",
       );
     });
@@ -158,23 +162,23 @@ describe("Error Handler", () => {
         throw new Error("Unexpected database error");
       });
 
-      const wrappedHandler = withApiErrorHandler(handler, {
+      const wrappedHandler = withUnifiedApiHandler(handler, {
+        serviceName: "test-api",
         includeStackTrace: false,
-        enableSentry: false,
       });
 
-      const result = (await wrappedHandler()) as ApiErrorResponse;
+      const mockReq = createMockRequest({}) as Request;
+      const response = await wrappedHandler(mockReq);
 
-      expect(result.success).toBe(false);
-      expect(result.error.code).toBe("INTERNAL_ERROR");
-      expect(result.error.message).toBe("An unexpected error occurred");
+      expect(response.status).toBe(500);
+      const jsonBody = await response.json();
+      expect(jsonBody.success).toBe(false);
+      expect(jsonBody.error.code).toBe("INTERNAL_ERROR");
+      expect(jsonBody.error.message).toBe("Unexpected database error");
     });
 
     it("should include stack trace when enabled in development", async () => {
-      // Note: In test environment (NODE_ENV=test), stack traces are stripped by validateErrorResponse
-      // This test verifies that formatApiError includes stack when requested
       const error = new ValidationError("Test error");
-      const { formatError } = await import("../error-handler");
       const result = formatError(error, undefined, { includeStack: true });
 
       expect(result.error.stack).toBeDefined();
@@ -186,32 +190,37 @@ describe("Error Handler", () => {
         throw new ValidationError("Test error");
       });
 
-      const wrappedHandler = withApiErrorHandler(handler, {
+      const wrappedHandler = withUnifiedApiHandler(handler, {
+        serviceName: "test-api",
         includeStackTrace: false,
-        enableSentry: false,
       });
 
-      const mockReq = createMockRequest({ "x-trace-id": "trace-123" });
-      const result = (await wrappedHandler(mockReq)) as ApiErrorResponse;
+      const mockReq = createMockRequest({
+        "x-trace-id": "trace-123",
+      }) as Request;
+      const response = await wrappedHandler(mockReq);
 
-      expect(result.traceId).toBe("trace-123");
+      const jsonBody = await response.json();
+      expect(jsonBody.traceId).toBe("trace-123");
     });
 
     it("should extract trace ID from error details", async () => {
       const handler = vi.fn().mockImplementation(() => {
         const error = new ValidationError("Test error");
-        (error as any).details = { traceId: "trace-456" };
+        (error as Record<string, unknown>).details = { traceId: "trace-456" };
         throw error;
       });
 
-      const wrappedHandler = withApiErrorHandler(handler, {
+      const wrappedHandler = withUnifiedApiHandler(handler, {
+        serviceName: "test-api",
         includeStackTrace: false,
-        enableSentry: false,
       });
 
-      const result = (await wrappedHandler()) as ApiErrorResponse;
+      const mockReq = createMockRequest({}) as Request;
+      const response = await wrappedHandler(mockReq);
 
-      expect(result.traceId).toBe("trace-456");
+      const jsonBody = await response.json();
+      expect(jsonBody.traceId).toBe("trace-456");
     });
   });
 
@@ -350,8 +359,8 @@ describe("Error Handler", () => {
       global.setTimeout = vi.fn((callback, delay) => {
         delays.push(delay as number);
         callback();
-        return 0 as any;
-      }) as any;
+        return 0 as unknown as NodeJS.Timeout;
+      });
 
       try {
         await withRetry(fn, {

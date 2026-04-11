@@ -242,8 +242,8 @@ export const updateTableStatus = withServerActionHandler(
             },
           });
 
-          const { signPayload } = await import("@tablestack/lib/auth");
-          const { signature, timestamp } = await signPayload(
+          const { SecurityProvider } = await import("@repo/auth");
+          const { signature, timestamp } = await SecurityProvider.signPayload(
             payload,
             webhookSecret,
           );

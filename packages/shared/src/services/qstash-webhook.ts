@@ -16,6 +16,8 @@
  * ```
  */
 
+import { Logger } from "../logger";
+
 export interface QStashWebhookHeaders {
   /** The ED25519 signature of the request body */
   signature: string | null;
@@ -72,7 +74,11 @@ async function verifyEd25519Signature(
 
     return isValid;
   } catch (error) {
-    console.error("[QStashWebhook] ED25519 verification error:", error);
+    const logger = new Logger({ serviceName: "qstash-webhook" });
+    logger.error({
+      message: "ED25519 verification error",
+      error: error instanceof Error ? error.message : String(error),
+    });
     return false;
   }
 }
@@ -92,8 +98,10 @@ export async function verifyQStashWebhook(
   keyId?: string | null,
   timestamp?: string | null,
 ): Promise<boolean> {
+  const logger = new Logger({ serviceName: "qstash-webhook" });
+
   if (!signature) {
-    console.warn("[QStashWebhook] Missing signature header");
+    logger.warn({ message: "Missing QStash webhook signature header" });
     return false;
   }
 
@@ -104,12 +112,10 @@ export async function verifyQStashWebhook(
       const MAX_AGE_MS = 300_000; // 5 minutes
       const age = Date.now() - timestampMs;
       if (age > MAX_AGE_MS) {
-        console.warn(
-          "[QStashWebhook] Webhook timestamp expired - possible replay attack",
-          {
-            age: `${Math.round(age / 1000)}s`,
-          },
-        );
+        logger.warn({
+          message: "Webhook timestamp expired - possible replay attack",
+          ageSeconds: Math.round(age / 1000),
+        });
         return false;
       }
     }
@@ -119,7 +125,7 @@ export async function verifyQStashWebhook(
   const nextSigningKey = process.env.QSTASH_NEXT_SIGNING_KEY;
 
   if (!currentSigningKey) {
-    console.warn("[QStashWebhook] QSTASH_CURRENT_SIGNING_KEY not configured");
+    logger.warn({ message: "QSTASH_CURRENT_SIGNING_KEY not configured" });
     return false;
   }
 
@@ -132,7 +138,9 @@ export async function verifyQStashWebhook(
     );
 
     if (isValid) {
-      console.log("[QStashWebhook] Signature verified with current key");
+      logger.info({
+        message: "QStash webhook signature verified with current key",
+      });
       return true;
     }
 
@@ -144,17 +152,23 @@ export async function verifyQStashWebhook(
         nextSigningKey,
       );
       if (isValid) {
-        console.log(
-          "[QStashWebhook] Signature verified with next key (rotation in progress)",
-        );
+        logger.info({
+          message:
+            "QStash webhook signature verified with next key (rotation in progress)",
+        });
         return true;
       }
     }
 
-    console.warn("[QStashWebhook] Signature verification failed with all keys");
+    logger.warn({
+      message: "QStash webhook signature verification failed with all keys",
+    });
     return false;
   } catch (error) {
-    console.error("[QStashWebhook] Signature verification error:", error);
+    logger.error({
+      message: "QStash webhook signature verification error",
+      error: error instanceof Error ? error.message : String(error),
+    });
     return false;
   }
 }
@@ -259,9 +273,10 @@ export function withQStashAuth<T extends Record<string, unknown>>(
         );
 
         if (!isValid) {
-          console.warn(
-            "[withQStashAuth] QStash webhook signature verification failed",
-          );
+          const logger = new Logger({ serviceName: "qstash-webhook" });
+          logger.warn({
+            message: "QStash webhook signature verification failed",
+          });
           return new Response(
             JSON.stringify({
               success: false,
@@ -274,15 +289,17 @@ export function withQStashAuth<T extends Record<string, unknown>>(
           );
         }
 
-        console.log("[withQStashAuth] QStash webhook verified");
+        const logger = new Logger({ serviceName: "qstash-webhook" });
+        logger.info({ message: "QStash webhook verified" });
         const parsedBody = JSON.parse(rawBody) as T;
         return await handler(request, parsedBody);
       }
 
       // Dev mode or no signing key - skip verification
-      console.warn(
-        "[withQStashAuth] QStash webhook verification skipped (dev mode or no key)",
-      );
+      const logger = new Logger({ serviceName: "qstash-webhook" });
+      logger.warn({
+        message: "QStash webhook verification skipped (dev mode or no key)",
+      });
       const rawBody = await request.text();
       const parsedBody = JSON.parse(rawBody) as T;
       return await handler(request, parsedBody);
@@ -290,10 +307,11 @@ export function withQStashAuth<T extends Record<string, unknown>>(
 
     // Direct API call (no webhook signature)
     if (isProduction && hasSigningKey) {
-      console.warn(
-        "[withQStashAuth] Direct API call received in production with webhook configured. " +
-          "Ensure this is intentional.",
-      );
+      const logger = new Logger({ serviceName: "qstash-webhook" });
+      logger.warn({
+        message:
+          "Direct API call received in production with webhook configured",
+      });
     }
 
     const rawBody = await request.text();
@@ -364,9 +382,10 @@ export function withQStashAuthEnhanced<T extends Record<string, unknown>>(
         );
 
         if (!isValid) {
-          console.warn(
-            "[withQStashAuthEnhanced] QStash webhook signature verification failed",
-          );
+          const logger = new Logger({ serviceName: "qstash-webhook" });
+          logger.warn({
+            message: "QStash webhook signature verification failed",
+          });
           return new Response(
             JSON.stringify({
               success: false,
@@ -379,16 +398,18 @@ export function withQStashAuthEnhanced<T extends Record<string, unknown>>(
           );
         }
 
-        console.log("[withQStashAuthEnhanced] QStash webhook verified");
+        const logger = new Logger({ serviceName: "qstash-webhook" });
+        logger.info({ message: "QStash webhook verified" });
         const parsedBody = JSON.parse(rawBody) as T;
         return await handler(request, parsedBody);
       }
 
       // Dev mode or no signing key - skip verification
       if (skipDevVerification) {
-        console.warn(
-          "[withQStashAuthEnhanced] QStash webhook verification skipped (dev mode)",
-        );
+        const logger = new Logger({ serviceName: "qstash-webhook" });
+        logger.warn({
+          message: "QStash webhook verification skipped (dev mode)",
+        });
       }
       const rawBody = await request.text();
       const parsedBody = JSON.parse(rawBody) as T;

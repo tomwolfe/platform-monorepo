@@ -7,7 +7,7 @@
  * Usage:
  * ```typescript
  * // In API route handlers
- * export const POST = withApiErrorHandler(async (req: NextRequest) => {
+ * export const POST = withUnifiedApiHandler(async (req: NextRequest) => {
  *   // Your handler logic
  *   throw new ValidationError('Invalid input');
  * });
@@ -19,13 +19,13 @@
 
 import { AppError, ErrorCode, toAppError } from "./errors";
 import {
-  formatApiError,
-  validateErrorResponse,
+  formatApiError as _formatApiError,
+  validateErrorResponse as _validateErrorResponse,
   type ApiErrorResponse,
   type ApiSuccessResponse,
 } from "./utils/api-error";
 import { Logger } from "./logger";
-import { isNextRedirectError } from "./utils/next-errors";
+import { isNextRedirectError as _isNextRedirectError } from "./utils/next-errors";
 import { getErrorMetadata, type ErrorCategory } from "./errors/http-codes";
 
 // ============================================================================
@@ -43,7 +43,7 @@ export class ApiError extends AppError {
     statusCode?: number,
     metadata?: Record<string, unknown>,
   ) {
-    super(code as any, message, statusCode, metadata);
+    super(code as unknown as string, message, statusCode, metadata);
     this.name = "ApiError";
   }
 }
@@ -76,7 +76,7 @@ export interface ErrorHandlerOptions {
 /**
  * Default error handler options
  */
-const DEFAULT_OPTIONS: ErrorHandlerOptions = {
+const _DEFAULT_OPTIONS: ErrorHandlerOptions = {
   serviceName: "api",
   includeStackTrace: process.env.NODE_ENV !== "production",
 };
@@ -122,8 +122,12 @@ export function sanitizeErrorForExternal(
 
   // Include details but strip sensitive fields in production
   if (appError.details) {
-    const { stack, stackTrace, internal, ...safeDetails } =
-      appError.details as Record<string, unknown>;
+    const {
+      stack: _stack,
+      stackTrace: _stackTrace,
+      internal: _internal,
+      ...safeDetails
+    } = appError.details as Record<string, unknown>;
     sanitized.details = includeStack ? appError.details : safeDetails;
   }
 
@@ -139,7 +143,7 @@ export function installGlobalErrorHandler(logger?: Logger) {
   const errorHandlerLogger =
     logger || new Logger({ serviceName: "global-error-handler" });
 
-  process.on("unhandledRejection", (reason, promise) => {
+  process.on("unhandledRejection", (reason, _promise) => {
     const error = reason instanceof Error ? reason : new Error(String(reason));
     const isProduction = process.env.NODE_ENV === "production";
 
@@ -193,7 +197,7 @@ export function installGlobalErrorHandler(logger?: Logger) {
  *
  * @example
  * ```typescript
- * export const POST = withApiErrorHandler(async (req: NextRequest) => {
+ * export const POST = withUnifiedApiHandler(async (req: NextRequest) => {
  *   const body = await req.json();
  *   if (!body.email) {
  *     throw new ValidationError('Email is required');
@@ -228,84 +232,6 @@ export function registerObservabilityFlush(
   flushFn: FlushObservabilityFn,
 ): void {
   _flushObservability = flushFn;
-}
-
-export function withApiErrorHandler<T extends (...args: any[]) => Promise<any>>(
-  handler: T,
-  options: ErrorHandlerOptions = DEFAULT_OPTIONS,
-) {
-  const {
-    serviceName = DEFAULT_OPTIONS.serviceName,
-    includeStackTrace = DEFAULT_OPTIONS.includeStackTrace,
-    context = {},
-  } = options;
-
-  const logger = options.logger || new Logger({ serviceName });
-
-  return async (...args: Parameters<T>): Promise<Awaited<ReturnType<T>>> => {
-    try {
-      return await handler(...args);
-    } catch (error) {
-      // Re-throw Next.js redirect and notFound errors to preserve navigation
-      if (isNextRedirectError(error)) {
-        throw error;
-      }
-
-      const appError = toAppError(error);
-
-      // Extract trace ID from error context or args
-      const traceId =
-        (appError.details?.traceId as string) ||
-        (
-          args[0] as { headers?: { get: (name: string) => string | null } }
-        )?.headers?.get?.("x-trace-id") ||
-        undefined;
-
-      // Log error with structured context
-      logger.error({
-        message: appError.message,
-        code: appError.code,
-        statusCode: appError.statusCode,
-        details: appError.details,
-        traceId,
-        stack: includeStackTrace ? appError.stackTrace : undefined,
-        ...context,
-      });
-
-      // Note: Sentry reporting is available via @repo/shared/server module
-      // Initialize Sentry there for Node.js server environments
-
-      // Format error response
-      const errorResponse = formatApiError(
-        appError,
-        appError.code as ErrorCode,
-        undefined,
-        {
-          includeStack: includeStackTrace,
-          traceId,
-        },
-      );
-
-      // SECURITY: Validate and sanitize response to prevent stack trace leaks
-      // This ensures the response conforms to the schema and strips stacks in production
-      const sanitizedResponse = validateErrorResponse(errorResponse);
-
-      return sanitizedResponse as Awaited<ReturnType<T>>;
-    } finally {
-      // SERVERLESS FIX: Flush OpenTelemetry spans before response is sent
-      // In serverless environments (Vercel, AWS Lambda), the container is frozen
-      // immediately after the response, causing batch spans to be lost.
-      // This ensures all telemetry data is exported before the function yields.
-      if (_flushObservability) {
-        try {
-          await _flushObservability();
-        } catch {
-          // Observability flush failed - that's okay
-          // Don't let telemetry failures break request handling
-        }
-      }
-    }
-  };
 }
 
 // ============================================================================

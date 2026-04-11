@@ -23,6 +23,7 @@
 
 import { QStashService } from "./services/qstash";
 import { signAsymmetricJWT } from "@repo/auth";
+import { Logger } from "./logger";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -147,13 +148,13 @@ export class OutboxRelayService {
         headers,
       });
 
-      console.log(
-        `[OutboxRelay] Triggered relay for execution ${executionId}` +
-          (messageId ? ` [message: ${messageId}]` : "") +
-          (effectiveConfig.traceId
-            ? ` [trace: ${effectiveConfig.traceId}]`
-            : ""),
-      );
+      const logger = new Logger({ serviceName: "outbox-relay" });
+      logger.info({
+        message: "Triggered outbox relay for execution",
+        executionId,
+        messageId: messageId || undefined,
+        traceId: effectiveConfig.traceId,
+      });
 
       return {
         success: true,
@@ -161,7 +162,13 @@ export class OutboxRelayService {
         fallbackUsed: false,
       };
     } catch (error) {
-      console.error("[OutboxRelay] Failed to trigger relay:", error);
+      const logger = new Logger({ serviceName: "outbox-relay" });
+      logger.error({
+        message: "Failed to trigger outbox relay",
+        executionId,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
 
       // In production, throw to let caller handle
       if (process.env.NODE_ENV === "production") {
@@ -244,6 +251,7 @@ export class OutboxRelayService {
     }
 
     const fetchLogic = async () => {
+      const logger = new Logger({ serviceName: "outbox-relay-fallback" });
       try {
         const response = await fetch(url, {
           method: "POST",
@@ -255,14 +263,23 @@ export class OutboxRelayService {
         });
 
         if (!response.ok) {
-          console.error(
-            `[OutboxRelay:Fallback] Failed to trigger relay: ${response.status}`,
-          );
+          logger.error({
+            message: "Failed to trigger outbox relay via fallback",
+            executionId,
+            httpStatus: response.status,
+          });
         } else {
-          console.log(`[OutboxRelay:Fallback] Relay triggered successfully`);
+          logger.info({
+            message: "Outbox relay fallback triggered successfully",
+            executionId,
+          });
         }
       } catch (error) {
-        console.error(`[OutboxRelay:Fallback] Error triggering relay:`, error);
+        logger.error({
+          message: "Error triggering outbox relay fallback",
+          executionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     };
 
@@ -273,7 +290,15 @@ export class OutboxRelayService {
       after(fetchLogic);
     } catch {
       // Fallback for non-Next.js environments (raw Node scripts, other frameworks)
-      Promise.resolve().then(fetchLogic).catch(console.error);
+      const logger = new Logger({ serviceName: "outbox-relay-fallback" });
+      Promise.resolve()
+        .then(fetchLogic)
+        .catch((err) =>
+          logger.error({
+            message: "Unhandled outbox relay fallback error",
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
     }
   }
 
@@ -313,7 +338,8 @@ export async function publishToQStash(options: {
   const token = process.env.QSTASH_TOKEN || process.env.UPSTASH_QSTASH_TOKEN;
 
   if (!token) {
-    console.warn("[publishToQStash] QStash token not configured");
+    const logger = new Logger({ serviceName: "outbox-relay" });
+    logger.warn({ message: "QStash token not configured" });
     return null;
   }
 
@@ -332,7 +358,12 @@ export async function publishToQStash(options: {
     const messageId = "messageId" in result ? result.messageId : undefined;
     return messageId || null;
   } catch (error) {
-    console.error("[publishToQStash] Failed to publish:", error);
+    const logger = new Logger({ serviceName: "outbox-relay" });
+    logger.error({
+      message: "Failed to publish to QStash",
+      url: options.url,
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw error;
   }
 }

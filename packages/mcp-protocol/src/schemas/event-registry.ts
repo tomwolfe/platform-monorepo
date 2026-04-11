@@ -29,6 +29,8 @@
  * @package @repo/mcp-protocol
  */
 
+import { Logger } from "@repo/shared";
+
 import { z } from "zod";
 
 // ============================================================================
@@ -38,7 +40,10 @@ import { z } from "zod";
 
 export const BaseEventSchema = z.object({
   // Event metadata
-  eventId: z.string().uuid().default(() => crypto.randomUUID()),
+  eventId: z
+    .string()
+    .uuid()
+    .default(() => crypto.randomUUID()),
   eventType: z.string(),
   version: z.string(),
   timestamp: z.string().datetime(),
@@ -118,7 +123,11 @@ export const SagaYieldedEventSchema = BaseEventSchema.extend({
   eventType: z.literal("SAGA_YIELDED"),
   payload: z.object({
     executionId: z.string().uuid(),
-    reason: z.enum(["TIMEOUT_APPROACHING", "AWAITING_CONFIRMATION", "ERROR_RECOVERY"]),
+    reason: z.enum([
+      "TIMEOUT_APPROACHING",
+      "AWAITING_CONFIRMATION",
+      "ERROR_RECOVERY",
+    ]),
     nextStepIndex: z.number().int().nonnegative(),
     segmentNumber: z.number().int().positive(),
     checkpointKey: z.string(),
@@ -152,12 +161,14 @@ export const SagaCompensatedEventSchema = BaseEventSchema.extend({
   eventType: z.literal("SAGA_COMPENSATED"),
   payload: z.object({
     executionId: z.string().uuid(),
-    compensatedSteps: z.array(z.object({
-      stepId: z.string().uuid(),
-      compensationTool: z.string(),
-      success: z.boolean(),
-      latencyMs: z.number().int().nonnegative(),
-    })),
+    compensatedSteps: z.array(
+      z.object({
+        stepId: z.string().uuid(),
+        compensationTool: z.string(),
+        success: z.boolean(),
+        latencyMs: z.number().int().nonnegative(),
+      }),
+    ),
     totalCompensationDurationMs: z.number().int().positive(),
   }),
 });
@@ -213,7 +224,12 @@ export const TableStatusChangedEventSchema = BaseEventSchema.extend({
     restaurantId: z.string().uuid(),
     tableId: z.string().uuid(),
     tableName: z.string(),
-    previousStatus: z.enum(["available", "occupied", "reserved", "maintenance"]),
+    previousStatus: z.enum([
+      "available",
+      "occupied",
+      "reserved",
+      "maintenance",
+    ]),
     newStatus: z.enum(["available", "occupied", "reserved", "maintenance"]),
     changedAt: z.string().datetime(),
     reason: z.string().optional(),
@@ -475,14 +491,20 @@ export const NervousSystemEventTypeSchema = z.enum([
   "RATE_LIMIT_EXCEEDED",
 ]);
 
-export type NervousSystemEventType = z.infer<typeof NervousSystemEventTypeSchema>;
+export type NervousSystemEventType = z.infer<
+  typeof NervousSystemEventTypeSchema
+>;
 
 // ============================================================================
 // EVENT SCHEMA REGISTRY
 // Runtime registry for event validation
 // ============================================================================
 
-export type SchemaValidator<T = unknown> = (data: unknown) => { success: boolean; data?: T; error?: string };
+export type SchemaValidator<T = unknown> = (data: unknown) => {
+  success: boolean;
+  data?: T;
+  error?: string;
+};
 
 export class EventSchemaRegistry {
   private schemas: Map<string, z.ZodSchema> = new Map();
@@ -523,7 +545,10 @@ export class EventSchemaRegistry {
       ["delivery_failed:v1", DeliveryFailedEventSchema],
       // Intent lifecycle
       ["intent_received:v1", IntentReceivedEventSchema],
-      ["intent_clarification_required:v1", IntentClarificationRequiredEventSchema],
+      [
+        "intent_clarification_required:v1",
+        IntentClarificationRequiredEventSchema,
+      ],
       ["intent_resolved:v1", IntentResolvedEventSchema],
       // System health
       ["circuit_breaker_tripped:v1", CircuitBreakerTrippedEventSchema],
@@ -540,7 +565,11 @@ export class EventSchemaRegistry {
   /**
    * Register a new event schema
    */
-  register<T extends z.ZodSchema>(eventType: string, schema: T, version: string = "v1"): void {
+  register<T extends z.ZodSchema>(
+    eventType: string,
+    schema: T,
+    version: string = "v1",
+  ): void {
     const key = `${eventType}:${version}`;
     this.schemas.set(key, schema);
 
@@ -552,19 +581,26 @@ export class EventSchemaRegistry {
       } else {
         return {
           success: false,
-          error: result.error.errors.map(e => `${e.path.join(".")}: ${e.message}`).join("; "),
+          error: result.error.errors
+            .map((e) => `${e.path.join(".")}: ${e.message}`)
+            .join("; "),
         };
       }
     };
 
     this.validators.set(key, validator);
-    console.log(`[EventSchemaRegistry] Registered schema: ${key}`);
+    const logger = new Logger({ serviceName: "event-schema-registry" });
+    logger.debug({ message: "Registered schema", schemaKey: key });
   }
 
   /**
    * Validate an event against its schema
    */
-  validate<T = unknown>(eventType: string, data: unknown, version: string = "v1"): { success: boolean; data?: T; error?: string } {
+  validate<T = unknown>(
+    eventType: string,
+    data: unknown,
+    version: string = "v1",
+  ): { success: boolean; data?: T; error?: string } {
     const key = `${eventType}:${version}`;
     const validator = this.validators.get(key);
 
@@ -581,7 +617,10 @@ export class EventSchemaRegistry {
   /**
    * Get a schema by event type and version
    */
-  getSchema(eventType: string, version: string = "v1"): z.ZodSchema | undefined {
+  getSchema(
+    eventType: string,
+    version: string = "v1",
+  ): z.ZodSchema | undefined {
     const key = `${eventType}:${version}`;
     return this.schemas.get(key);
   }

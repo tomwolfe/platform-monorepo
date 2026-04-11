@@ -610,29 +610,6 @@ export function toAppError(
   });
 }
 
-/**
- * Create error handler middleware wrapper
- *
- * @example
- * ```typescript
- * export const POST = withErrorHandler(async (req: NextRequest) => {
- *   // ... handler logic
- *   throw new ValidationError('Invalid input');
- * });
- * ```
- */
-export function withErrorHandler<
-  T extends (...args: unknown[]) => Promise<unknown>,
->(handler: T, defaultCode?: ErrorCode) {
-  return async (...args: Parameters<T>): Promise<ReturnType<T>> => {
-    try {
-      return await handler(...args);
-    } catch (error) {
-      throw toAppError(error, defaultCode);
-    }
-  };
-}
-
 // Re-export withUnifiedApiHandler from error-handler for convenience
 export { withUnifiedApiHandler } from "./error-handler";
 
@@ -659,11 +636,7 @@ export {
 // ============================================================================
 // HTTP ERROR CLASS & GLOBAL ERROR HANDLER
 // ============================================================================
-export {
-  HttpError,
-  withErrorHandler,
-  formatErrorResponse,
-} from "./errors/http-error";
+export { HttpError, formatErrorResponse } from "./errors/http-error";
 
 // ============================================================================
 // ASYNC BOUNDARY ERRORS (for QStash, Ably, Webhooks)

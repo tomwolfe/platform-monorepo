@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { validateRequest } from "@tablestack/lib/auth";
+import { validateRequest } from "@repo/shared/auth/gateway";
 import { NotifyService } from "@tablestack/lib/notifications";
 import {
   withUnifiedApiHandler,
@@ -60,7 +60,7 @@ async function postHandler(req: NextRequest, context: InternalWebhookContext) {
   // If it's a restaurant API key, we ensure it matches the context
   const targetRestaurantId = authContext!.isInternal
     ? restaurantId
-    : authContext!.restaurantId;
+    : authContext!.resourceId;
 
   if (!targetRestaurantId) {
     return NextResponse.json(
@@ -71,7 +71,7 @@ async function postHandler(req: NextRequest, context: InternalWebhookContext) {
 
   if (
     !authContext!.isInternal &&
-    targetRestaurantId !== authContext!.restaurantId
+    targetRestaurantId !== authContext!.resourceId
   ) {
     return NextResponse.json(
       formatApiError(

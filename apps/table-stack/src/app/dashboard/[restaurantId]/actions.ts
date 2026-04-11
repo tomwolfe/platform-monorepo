@@ -17,12 +17,8 @@ import { eq, and } from "@repo/database";
 import { z } from "zod";
 import Ably from "ably";
 import { NotifyService } from "@tablestack/lib/notifications";
-import { generateApiKey } from "@tablestack/lib/auth";
-import {
-  withServerActionHandler,
-  type ServerActionResponse,
-  Logger,
-} from "@repo/shared";
+import { generateApiKey } from "@repo/shared/utils/crypto";
+import { withServerActionHandler, Logger } from "@repo/shared";
 import { after } from "next/server";
 import { ABLY_TABLE_EVENTS, WEBHOOK_EVENTS } from "@repo/mcp-protocol";
 

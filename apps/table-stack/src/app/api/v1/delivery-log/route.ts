@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { validateRequest } from "@tablestack/lib/auth";
+import { validateRequest } from "@repo/shared/auth/gateway";
 import { NotifyService } from "@tablestack/lib/notifications";
 import {
   formatApiError,
@@ -9,7 +9,6 @@ import {
   getRedisClient,
   ServiceNamespace,
   withInternalWebhookAuth,
-  InternalWebhookContext,
 } from "@repo/shared";
 import { z } from "zod";
 
@@ -60,7 +59,7 @@ export async function POST(req: NextRequest) {
 
       const targetRestaurantId = authContext!.isInternal
         ? restaurantId
-        : authContext!.restaurantId;
+        : authContext!.resourceId;
 
       if (!targetRestaurantId) {
         return NextResponse.json(
@@ -71,7 +70,7 @@ export async function POST(req: NextRequest) {
 
       if (
         !authContext!.isInternal &&
-        targetRestaurantId !== authContext!.restaurantId
+        targetRestaurantId !== authContext!.resourceId
       ) {
         return NextResponse.json(
           { message: "Unauthorized access to this restaurant" },

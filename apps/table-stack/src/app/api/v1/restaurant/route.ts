@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@repo/database";
 import { restaurants } from "@repo/database";
 import { eq } from "@repo/database";
-import { validateRequest } from "@tablestack/lib/auth";
+import { validateRequest } from "@repo/shared/auth/gateway";
 import {
   withUnifiedApiHandler,
   formatApiSuccess,
@@ -55,7 +55,12 @@ async function getHandler(req: NextRequest) {
     }
 
     // Sanitize response
-    const { apiKey, ownerEmail, ownerId, ...publicRestaurant } = restaurant;
+    const {
+      apiKey: _apiKey,
+      ownerEmail: _ownerEmail,
+      ownerId: _ownerId,
+      ...publicRestaurant
+    } = restaurant;
     return NextResponse.json(formatApiSuccess(publicRestaurant, { traceId }));
   }
 
@@ -99,7 +104,12 @@ async function getHandler(req: NextRequest) {
   }
 
   // Sanitize response
-  const { apiKey, ownerEmail, ownerId, ...publicRestaurant } = restaurant;
+  const {
+    apiKey: _apiKey2,
+    ownerEmail: _ownerEmail2,
+    ownerId: _ownerId2,
+    ...publicRestaurant
+  } = restaurant;
 
   return NextResponse.json(formatApiSuccess(publicRestaurant, { traceId }));
 }

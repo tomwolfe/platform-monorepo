@@ -18,12 +18,12 @@ import { vi, beforeEach, afterEach, afterAll } from "vitest";
 vi.mock("next/server", async (importActual) => {
   const actual = await importActual();
   return {
-    ...(actual as any),
+    ...(actual as Record<string, unknown>),
     NextRequest: function (url: string | URL, init?: RequestInit) {
       return new Request(typeof url === "string" ? url : url.toString(), init);
     },
     NextResponse: {
-      json: vi.fn((data: any, init?: ResponseInit) => {
+      json: vi.fn((data: Record<string, unknown>, init?: ResponseInit) => {
         return new Response(JSON.stringify(data), {
           ...init,
           headers: {
@@ -59,7 +59,9 @@ vi.mock("@tablestack/lib/auth", () => ({
  * Mock @repo/shared/middleware/serverless-timeout to avoid next/server import issues
  */
 vi.mock("@repo/shared/middleware/serverless-timeout", () => ({
-  withServerlessTimeout: vi.fn((handler: any) => handler),
+  withServerlessTimeout: vi.fn(
+    (handler: (req: Request) => Promise<Response>) => handler,
+  ),
 }));
 
 /**
@@ -151,7 +153,7 @@ vi.mock("@repo/database", async () => {
   type MockTransaction = ReturnType<typeof createMockTransaction>;
 
   return {
-    ...(actual as any),
+    ...(actual as Record<string, unknown>),
     getDb: vi.fn(() => ({
       query: {
         restaurants: mockRestaurantsQuery,
@@ -159,16 +161,16 @@ vi.mock("@repo/database", async () => {
         restaurantTables: mockRestaurantTablesQuery,
         guestProfiles: mockGuestProfilesQuery,
       },
-      insert: vi.fn().mockImplementation((table: any) => ({
+      insert: vi.fn().mockImplementation((_table: unknown) => ({
         values: vi.fn().mockReturnThis(),
         returning: vi.fn().mockResolvedValue([]),
       })),
-      update: vi.fn().mockImplementation((table: any) => ({
+      update: vi.fn().mockImplementation((_table: unknown) => ({
         set: vi.fn().mockReturnThis(),
         where: vi.fn().mockReturnThis(),
         returning: vi.fn().mockResolvedValue([]),
       })),
-      delete: vi.fn().mockImplementation((table: any) => ({
+      delete: vi.fn().mockImplementation((_table: unknown) => ({
         where: vi.fn().mockReturnThis(),
         returning: vi.fn().mockResolvedValue([]),
       })),
@@ -200,7 +202,7 @@ vi.mock("@repo/database", async () => {
 // IMPORTS (after mocks)
 // ============================================================================
 
-import { cleanupTestDatabase } from "../test/setup";
+import { cleanupTestDatabase } from "@repo/shared/testing";
 
 // ============================================================================
 // GLOBAL TIMEOUT CONFIGURATION

@@ -8,32 +8,20 @@ import {
   restaurantReservations,
   eq,
 } from "@repo/database";
-import type { InferSelectModel } from "drizzle-orm";
 import { addMinutes, parseISO } from "date-fns";
 import { toZonedTime, format } from "date-fns-tz";
-import { validateRequest } from "@tablestack/lib/auth";
 import {
   formatApiError,
   formatApiSuccess,
   withUnifiedApiHandler,
   withCache,
-  getRedisClient,
-  ServiceNamespace,
-  Logger,
   isRestaurantOpenAtTime,
   isRestaurantOpenOnDay,
 } from "@repo/shared";
+import { validateRequest } from "@repo/shared/auth/gateway";
 import { reservationService } from "@tablestack/lib/reservation-service";
 
 export const runtime = "nodejs";
-
-const logger = new Logger({ serviceName: "table-stack-availability" });
-
-// Type aliases for Drizzle query results
-type RestaurantTable = typeof restaurantTables.$inferSelect;
-type RestaurantReservation = typeof restaurantReservations.$inferSelect;
-
-const redis = getRedisClient(ServiceNamespace.TS);
 
 /**
  * GET /api/v1/availability
@@ -94,7 +82,8 @@ export const GET = withUnifiedApiHandler(
             { status },
           );
 
-        if (restaurantId !== context!.restaurantId) {
+        const authRestaurantId = context!.resourceId;
+        if (restaurantId !== authRestaurantId) {
           return NextResponse.json(
             formatApiError(
               new Error("Unauthorized access to this restaurant data"),
@@ -103,7 +92,7 @@ export const GET = withUnifiedApiHandler(
             { status: 403 },
           );
         }
-        targetRestaurantId = context!.restaurantId;
+        targetRestaurantId = authRestaurantId!;
       } else {
         // If no API key, we allow public availability checks for a specific restaurant
         targetRestaurantId = restaurantId;

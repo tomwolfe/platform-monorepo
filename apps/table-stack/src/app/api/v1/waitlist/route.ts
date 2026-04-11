@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, restaurantWaitlist } from "@repo/database";
 import { and, eq, sql } from "@repo/database";
-import { validateRequest } from "@tablestack/lib/auth";
+import { validateRequest } from "@repo/shared/auth/gateway";
 import {
   withUnifiedApiHandler,
   formatApiSuccess,
@@ -46,7 +46,7 @@ async function getHandler(req: NextRequest) {
   if (error)
     return NextResponse.json(forbiddenErrorResponse(error), { status });
 
-  if (!context?.isInternal && restaurantId !== context?.restaurantId) {
+  if (!context?.isInternal && restaurantId !== context?.resourceId) {
     return NextResponse.json(forbiddenErrorResponse("Unauthorized access"), {
       status: 403,
     });

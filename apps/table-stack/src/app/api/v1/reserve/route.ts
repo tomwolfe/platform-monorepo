@@ -1,19 +1,18 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { validateRequest } from "@tablestack/lib/auth";
 import {
   IdempotencyService,
   IDEMPOTENCY_KEY_HEADER,
   getRedisClient,
   ServiceNamespace,
   withUnifiedApiHandler,
-  Logger,
   formatApiError,
   formatApiSuccess,
   ReserveRequestSchema,
   validateRequest as validateZodRequest,
   dispatchTask,
 } from "@repo/shared";
+import { validateRequest } from "@repo/shared/auth/gateway";
 import { withServerlessTimeout } from "@repo/shared/middleware/serverless-timeout";
 import { withRetry } from "@repo/shared/middleware/retry-with-backoff";
 import { reservationService } from "@tablestack/lib/reservation-service";
@@ -22,7 +21,6 @@ import { ConflictError } from "@repo/shared/errors";
 export const runtime = "nodejs";
 
 const redis = getRedisClient(ServiceNamespace.TS);
-const logger = new Logger({ serviceName: "table-stack" });
 
 /**
  * POST /api/v1/reserve - Create a Restaurant Reservation
@@ -192,7 +190,7 @@ async function postHandler(req: NextRequest) {
 
   try {
     // Handle shadow restaurant discovery
-    let targetRestaurantId = context!.restaurantId;
+    let targetRestaurantId = context!.resourceId;
     if (
       context!.isInternal &&
       !targetRestaurantId &&

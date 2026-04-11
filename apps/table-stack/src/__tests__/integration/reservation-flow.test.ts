@@ -24,14 +24,14 @@ import {
   vi,
 } from "vitest";
 import { randomUUID } from "crypto";
+import type { NextRequest } from "next/server";
 import {
   setupTestDatabase,
   cleanupTestDatabase,
   createTestRestaurant,
   createTestTables,
-  createTestReservation,
   type TestRestaurantData,
-} from "../../test/setup";
+} from "@repo/shared/testing";
 import { getDb, restaurantReservations, eq } from "@repo/database";
 
 // Mock @repo/shared redis client
@@ -77,7 +77,9 @@ vi.mock("@tablestack/lib/auth", () => ({
 
 // Mock serverless timeout
 vi.mock("@repo/shared/middleware/serverless-timeout", () => ({
-  withServerlessTimeout: vi.fn((handler: any) => handler),
+  withServerlessTimeout: vi.fn(
+    (handler: (req: Request) => Promise<Response>) => handler,
+  ),
 }));
 
 describe("Integration: Reservation Flow", () => {
@@ -137,7 +139,7 @@ describe("Integration: Reservation Flow", () => {
         },
       );
 
-      const response = await GET(req as any);
+      const response = await GET(req as unknown as NextRequest);
       expect(response.status).toBe(200);
       const data = (await response.json()) as Record<string, unknown>;
       expect(data.success).toBe(true);
@@ -153,7 +155,7 @@ describe("Integration: Reservation Flow", () => {
         method: "GET",
       });
 
-      const response = await GET(req as any);
+      const response = await GET(req as unknown as NextRequest);
       expect(response.status).toBe(400);
       const data = (await response.json()) as Record<string, unknown>;
       expect(data.success).toBe(false);
@@ -171,7 +173,7 @@ describe("Integration: Reservation Flow", () => {
         },
       );
 
-      const response = await GET(req as any);
+      const response = await GET(req as unknown as NextRequest);
       expect(response.status).toBe(404);
     });
 
@@ -192,7 +194,7 @@ describe("Integration: Reservation Flow", () => {
         },
       );
 
-      const response = await GET(req as any);
+      const response = await GET(req as unknown as NextRequest);
       expect(response.status).toBe(200);
       const data = (await response.json()) as Record<string, unknown>;
       expect(data.success).toBe(true);
@@ -225,7 +227,7 @@ describe("Integration: Reservation Flow", () => {
         body: JSON.stringify(reservationData),
       });
 
-      const response = await POST(req as any);
+      const response = await POST(req as unknown as NextRequest);
       expect(response.status).toBe(200);
       const data = (await response.json()) as Record<string, unknown>;
       expect(data.success).toBe(true);
@@ -251,7 +253,7 @@ describe("Integration: Reservation Flow", () => {
         }),
       });
 
-      const response = await POST(req as any);
+      const response = await POST(req as unknown as NextRequest);
       expect(response.status).toBe(400);
       const data = (await response.json()) as Record<string, unknown>;
       expect(data.success).toBe(false);
@@ -276,7 +278,7 @@ describe("Integration: Reservation Flow", () => {
         }),
       });
 
-      const response = await POST(req as any);
+      const response = await POST(req as unknown as NextRequest);
       expect(response.status).toBe(400);
     });
 
@@ -297,7 +299,7 @@ describe("Integration: Reservation Flow", () => {
         }),
       });
 
-      const response = await POST(req as any);
+      const response = await POST(req as unknown as NextRequest);
       expect(response.status).toBe(400);
       const data = (await response.json()) as Record<string, unknown>;
       expect(data.success).toBe(false);
@@ -323,7 +325,7 @@ describe("Integration: Reservation Flow", () => {
       );
 
       const availabilityResponse = await availabilityHandler(
-        availabilityReq as any,
+        availabilityReq as unknown as NextRequest,
       );
       expect(availabilityResponse.status).toBe(200);
       const availabilityData = (await availabilityResponse.json()) as Record<
@@ -351,7 +353,9 @@ describe("Integration: Reservation Flow", () => {
         }),
       });
 
-      const reserveResponse = await reserveHandler(reserveReq as any);
+      const reserveResponse = await reserveHandler(
+        reserveReq as unknown as NextRequest,
+      );
       expect(reserveResponse.status).toBe(200);
       const reserveData = (await reserveResponse.json()) as Record<
         string,
@@ -376,7 +380,7 @@ describe("Integration: Reservation Flow", () => {
   describe("Saga Compensation: Failure Injection", () => {
     it("should handle notification broadcast failure without failing the request", async () => {
       const { NotifyService } = await import("@tablestack/lib/notifications");
-      (NotifyService.broadcast as any).mockRejectedValueOnce(
+      vi.mocked(NotifyService.broadcast).mockRejectedValueOnce(
         new Error("Ably broadcast failed: Network error"),
       );
 
@@ -401,7 +405,7 @@ describe("Integration: Reservation Flow", () => {
         body: JSON.stringify(reservationData),
       });
 
-      const response = await POST(req as any);
+      const response = await POST(req as unknown as NextRequest);
       // Reservation should still succeed (graceful degradation)
       expect(response.status).toBe(200);
       const data = (await response.json()) as Record<string, unknown>;
@@ -432,7 +436,7 @@ describe("Integration: Reservation Flow", () => {
         body: JSON.stringify(reservationData),
       });
 
-      const response1 = await POST(req1 as any);
+      const response1 = await POST(req1 as unknown as NextRequest);
       expect(response1.status).toBe(200);
       const data1 = (await response1.json()) as Record<string, unknown>;
       expect(data1.success).toBe(true);
@@ -450,7 +454,7 @@ describe("Integration: Reservation Flow", () => {
         body: JSON.stringify(reservationData),
       });
 
-      const response2 = await POST(req2 as any);
+      const response2 = await POST(req2 as unknown as NextRequest);
       // Should return 200 with idempotency header or 409 if still processing
       expect([200, 409]).toContain(response2.status);
 

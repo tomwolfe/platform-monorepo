@@ -1,195 +1,19 @@
-import { NextRequest } from "next/server";
-import { getDb, restaurants, eq } from "@repo/database";
-import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
-import {
-  verifyScopedJWT,
-  verifyAsymmetricJWT,
-  SecurityProvider,
-  type ScopedJWTPayload,
-} from "@repo/auth";
-import { generateSecureRandom } from "@repo/shared/utils/crypto";
-import { createHash } from "node:crypto";
+/**
+ * Table-Stack Authentication Utilities
+ *
+ * This file contains utility functions for webhook signature verification.
+ *
+ * NOTE: validateRequest and rateLimit have been migrated to @repo/shared/auth/gateway
+ * and @repo/shared/middleware/rate-limiter respectively.
+ *
+ * @see @repo/shared/auth/gateway for API route authentication
+ * @see @repo/shared/middleware/rate-limiter for rate limiting
+ */
+
+import { SecurityProvider } from "@repo/auth";
+import { Logger } from "@repo/shared";
 
 const logger = new Logger({ serviceName: "table-stack" });
-const redis = getRedisClient(ServiceNamespace.TS);
-
-export interface AuthContext {
-  restaurantId?: string;
-  isInternal?: boolean;
-  scopedPermissions?: ScopedJWTPayload["permissions"];
-  traceId?: string;
-}
-
-/**
- * Validates authentication using Zero-Trust JWT tokens.
- *
- * Zero-Trust Security Model:
- * - Internal service-to-service: Requires Bearer JWT token (RS256 asymmetric preferred)
- * - External clients: API key with rate limiting (legacy, being phased out)
- * - Scoped permissions: Optional JWT with tool-level permissions
- *
- * Authentication Priority:
- * 1. RS256 Asymmetric JWT (Zero-Trust Standard - public key verification)
- * 2. Scoped JWT (tool-level permissions)
- * 3. API Key (legacy external clients only, rate-limited)
- *
- * @param req - Next.js request
- * @returns Auth context or error response
- */
-export async function validateRequest(req: NextRequest): Promise<{
-  error?: string;
-  status?: number;
-  context?: AuthContext;
-}> {
-  const authHeader = req.headers.get("authorization");
-  const apiKey = req.headers.get("x-api-key");
-
-  // Priority 1: Bearer Token (JWT - Zero-Trust Standard)
-  if (authHeader?.toLowerCase().startsWith("bearer ")) {
-    const token = authHeader.substring(7).trim();
-
-    // Try asymmetric verification first (RS256 - public key, no shared secrets)
-    const asymmetricPayload = await verifyAsymmetricJWT(
-      token,
-      "intention-engine",
-      "table-stack",
-    );
-    if (asymmetricPayload) {
-      logger.info(
-        `Asymmetric JWT (RS256) verified for service=${asymmetricPayload.iss}, ` +
-          `sub=${asymmetricPayload.sub || "unknown"}`,
-      );
-      return {
-        context: {
-          isInternal: true,
-          restaurantId: asymmetricPayload.restaurantId as string | undefined,
-          traceId: asymmetricPayload.traceId as string | undefined,
-        },
-      };
-    }
-
-    // Try scoped JWT (has tool-level permissions)
-    const scopedPayload = await verifyScopedJWT(
-      token,
-      "internal-service",
-      "table-stack",
-    );
-    if (scopedPayload) {
-      logger.info(
-        `Scoped JWT verified for service=${scopedPayload.iss}, ` +
-          `permissions=${scopedPayload.permissions?.length || 0} tools`,
-      );
-      return {
-        context: {
-          isInternal: true,
-          restaurantId: scopedPayload.restaurantId as string | undefined,
-          scopedPermissions: scopedPayload.permissions,
-          traceId: scopedPayload.traceId as string | undefined,
-        },
-      };
-    }
-
-    // Token present but invalid - Zero-Trust: reject immediately
-    logger.warn(
-      "Invalid or expired JWT token (all verification methods failed)",
-    );
-    return {
-      error: "Invalid or expired JWT token",
-      status: 401,
-    };
-  }
-
-  // Priority 2: API Key (Legacy - External Clients Only)
-  // Note: Being phased out in favor of JWT tokens
-  if (apiKey) {
-    // Rate limiting (IP-based) using Upstash Redis
-    const ip = req.headers.get("x-forwarded-for") || "anonymous";
-    const limit = 100; // 100 requests
-    const window = 60; // per 60 seconds
-
-    try {
-      const { success } = await rateLimit(ip, limit, window);
-
-      if (!success) {
-        return {
-          error: "Too many requests",
-          status: 429,
-        };
-      }
-    } catch (e) {
-      logger.error("Rate limit error", {
-        error: e instanceof Error ? e.message : String(e),
-      });
-      // Continue if redis is down to avoid blocking traffic
-    }
-
-    // API Key Validation
-    // Hash the incoming API key before querying the database
-    const hashedIncomingKey = createHash("sha256").update(apiKey).digest("hex");
-
-    const restaurant = await getDb().query.restaurants.findFirst({
-      where: eq(restaurants.apiKey, hashedIncomingKey),
-    });
-
-    if (!restaurant) {
-      return { error: "Invalid API key", status: 403 };
-    }
-
-    return {
-      context: {
-        restaurantId: restaurant.id,
-      },
-    };
-  }
-
-  // No authentication provided - Zero-Trust: reject
-  return {
-    error:
-      "Missing authentication. Provide Bearer token (preferred) or x-api-key header (legacy)",
-    status: 401,
-  };
-}
-
-/**
- * Lua script for atomic rate limiting.
- * Combines INCR and conditional EXPIRE into a single atomic operation.
- * Prevents permanent lockout if the process dies between INCR and EXPIRE.
- */
-const RATE_LIMIT_LUA_SCRIPT = `
-  local current = redis.call("INCR", KEYS[1])
-  if current == 1 then
-    redis.call("EXPIRE", KEYS[1], ARGV[1])
-  end
-  return current
-`;
-
-export async function rateLimit(
-  identifier: string,
-  limit: number,
-  window: number,
-) {
-  const key = `ratelimit:${identifier}`;
-
-  // Use atomic Lua script to prevent TOCTOU race condition
-  const current = (await redis.eval(
-    RATE_LIMIT_LUA_SCRIPT,
-    [key],
-    [window],
-  )) as number;
-
-  return {
-    success: current <= limit,
-    limit: limit - current,
-    reset: window,
-  };
-}
-
-/**
- * Generates a new cryptographically secure API key.
- */
-export function generateApiKey() {
-  return `ts_${generateSecureRandom(24)}`;
-}
 
 /**
  * Signs a webhook payload using HMAC-SHA256.
@@ -264,7 +88,7 @@ export async function verifySignature(
   payload: string,
   signature: string,
   timestamp: number,
-  secret: string,
+  _secret: string,
 ): Promise<boolean> {
   // Use SecurityProvider for standardized verification
   return await SecurityProvider.verifySignature(payload, signature, timestamp);
@@ -275,7 +99,7 @@ export async function verifySignature(
  */
 export async function signPayload(
   payload: string,
-  secret: string,
+  _secret: string,
 ): Promise<{ signature: string; timestamp: number }> {
   // Use SecurityProvider for standardized signing
   return await SecurityProvider.signPayload(payload);

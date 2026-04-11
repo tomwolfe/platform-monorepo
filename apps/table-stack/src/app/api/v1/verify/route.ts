@@ -11,8 +11,8 @@ import {
   formatApiError,
   validationErrorResponse,
   notFoundErrorResponse,
+  RateLimiterService,
 } from "@repo/shared";
-import { rateLimit } from "@tablestack/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -21,6 +21,16 @@ const logger = new Logger({ serviceName: "verify-endpoint" });
 // Rate limit: 5 attempts per IP per minute
 const VERIFY_RATE_LIMIT = 5;
 const VERIFY_RATE_WINDOW = 60; // seconds
+
+// Initialize rate limiter service
+const rateLimiter = new RateLimiterService({
+  api: {
+    maxRequests: VERIFY_RATE_LIMIT,
+    windowMs: VERIFY_RATE_WINDOW * 1000,
+    burstAllowance: 0,
+    keyPrefix: "ratelimit:verify:",
+  },
+});
 
 async function getHandler(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -44,18 +54,13 @@ async function getHandler(req: NextRequest) {
     );
   }
 
-  // Rate limiting check
+  // Rate limiting check using RateLimiterService
   const clientIp = req.ip || req.headers.get("x-forwarded-for") || "unknown";
-  const rateLimitKey = `verify:${clientIp}`;
 
   try {
-    const { success } = await rateLimit(
-      rateLimitKey,
-      VERIFY_RATE_LIMIT,
-      VERIFY_RATE_WINDOW,
-    );
+    const rateLimitResult = await rateLimiter.checkRateLimit(clientIp, "api");
 
-    if (!success) {
+    if (!rateLimitResult.allowed) {
       logger.warn("Rate limit exceeded for verification endpoint", {
         ip: clientIp,
         timestamp: new Date().toISOString(),
@@ -66,7 +71,10 @@ async function getHandler(req: NextRequest) {
           new Error("Too many verification attempts. Please try again later."),
           "RATE_LIMIT_EXCEEDED",
         ),
-        { status: 429 },
+        {
+          status: 429,
+          headers: rateLimitResult.headers,
+        },
       );
     }
   } catch (error) {

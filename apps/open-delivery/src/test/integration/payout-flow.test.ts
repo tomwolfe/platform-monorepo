@@ -7,7 +7,7 @@ import {
   beforeEach,
   vi,
 } from "vitest";
-import { setupIntegrationMocks } from "./msw/setup";
+import { setupIntegrationMocks } from "@repo/shared/testing";
 
 const msw = setupIntegrationMocks();
 

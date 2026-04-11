@@ -52,8 +52,6 @@ async function confirmHandler(
   token: string,
   userContext?: { clerkId?: string; userId?: string },
 ): Promise<NextResponse<ConfirmationResult>> {
-  const startTime = performance.now();
-
   return Tracer.startActiveSpan("confirmation_execution", async (span) => {
     const traceId = span.spanContext()?.traceId;
 
@@ -127,8 +125,6 @@ async function confirmHandler(
       } catch (err) {
         console.warn("[ConfirmEndpoint] Failed to publish to Ably:", err);
       }
-
-      const _duration = performance.now() - startTime;
 
       return NextResponse.json({
         success: true,

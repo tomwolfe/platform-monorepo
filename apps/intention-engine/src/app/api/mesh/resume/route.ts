@@ -15,7 +15,6 @@ import { verifyAsymmetricJWT } from "@repo/auth";
 import {
   resumeFromCheckpoint,
   ToolExecutor,
-  type WorkflowResult,
 } from "@/lib/engine/workflow-machine";
 import { loadExecutionState } from "@/lib/engine/memory";
 import { getMcpClients, ToolCallResult } from "@/lib/mcp-client";
@@ -33,7 +32,6 @@ import {
 } from "@/lib/engine/tools/registry";
 import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
 import { getDb } from "@repo/database";
-import type { Plan } from "@/lib/engine/types";
 import { Redis } from "@upstash/redis";
 import type { NeonDatabase } from "drizzle-orm/neon-serverless";
 
@@ -84,7 +82,7 @@ async function meshResumeHandler(req: NextRequest) {
   // ========================================================================
 
   const body = await req.json();
-  const { executionId, traceId, force: _force = false } = body;
+  const { executionId, traceId } = body;
 
   if (!executionId) {
     return NextResponse.json(

@@ -18,12 +18,11 @@ import {
   notFoundErrorResponse,
 } from "@repo/shared";
 import { Logger } from "@repo/shared";
-import { validateRequest as validateAuth } from "@tablestack/lib/auth";
+import { validateRequest as validateAuth } from "@repo/shared/auth/gateway";
 import {
   getDb,
   restaurants,
   restaurantReservations,
-  restaurantTables,
   eq,
   and,
   or,
@@ -81,7 +80,7 @@ export const POST = withUnifiedApiHandler(
     let body: unknown;
     try {
       body = await req.json();
-    } catch (parseError) {
+    } catch (_parseError) {
       logger.warn("Invalid JSON body", { traceId });
       return NextResponse.json(
         validationErrorResponse("Invalid JSON format", undefined, { traceId }),
@@ -111,7 +110,7 @@ export const POST = withUnifiedApiHandler(
     } = validation.data;
 
     // Step 3: Determine target restaurant
-    const targetRestaurantId = restaurantId || authResult.context?.restaurantId;
+    const targetRestaurantId = restaurantId || authResult.context?.resourceId;
 
     if (!targetRestaurantId) {
       return NextResponse.json(

@@ -28,13 +28,14 @@ import {
   vi,
 } from "vitest";
 import { randomUUID } from "crypto";
+import type { NextRequest } from "next/server";
 import {
   setupTestDatabase,
   cleanupTestDatabase,
   createTestRestaurant,
   createTestTables,
   type TestRestaurantData,
-} from "../../test/setup";
+} from "@repo/shared/testing";
 import { setupIntegrationMocks } from "./msw/setup";
 
 const msw = setupIntegrationMocks();
@@ -56,7 +57,9 @@ vi.mock("@repo/database", async (importOriginal) => {
 
 // Mock serverless timeout
 vi.mock("@repo/shared/middleware/serverless-timeout", () => ({
-  withServerlessTimeout: vi.fn((handler: any) => handler),
+  withServerlessTimeout: vi.fn(
+    (handler: (req: Request) => Promise<Response>) => handler,
+  ),
 }));
 
 // Mock @repo/shared redis client
@@ -100,9 +103,11 @@ vi.mock("@tablestack/lib/auth", () => ({
   ),
 }));
 
-// Mock serverless timeout
+// Mock serverless timeout (duplicate - will be merged)
 vi.mock("@repo/shared/middleware/serverless-timeout", () => ({
-  withServerlessTimeout: vi.fn((handler: any) => handler),
+  withServerlessTimeout: vi.fn(
+    (handler: (req: Request) => Promise<Response>) => handler,
+  ),
 }));
 
 // Mock redis
@@ -166,7 +171,7 @@ describe("API Endpoint Integration Tests", () => {
         body: JSON.stringify({}),
       });
 
-      const response = await POST(req as any);
+      const response = await POST(req as unknown as NextRequest);
       expect(response.status).toBe(400);
       const data = (await response.json()) as Record<string, unknown>;
       // formatValidationError returns { success: false, error: { code: "VALIDATION_ERROR", ... } }
@@ -191,7 +196,7 @@ describe("API Endpoint Integration Tests", () => {
         body: JSON.stringify(invalidBody),
       });
 
-      const response = await POST(req as any);
+      const response = await POST(req as unknown as NextRequest);
       expect(response.status).toBe(400);
       const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty("success", false);
@@ -219,7 +224,7 @@ describe("API Endpoint Integration Tests", () => {
         body: JSON.stringify(body),
       });
 
-      const response = await POST(req as any);
+      const response = await POST(req as unknown as NextRequest);
       expect(response.status).toBe(404);
       const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty("success", false);
@@ -247,7 +252,7 @@ describe("API Endpoint Integration Tests", () => {
         }),
       });
 
-      const response = await POST(req as any);
+      const response = await POST(req as unknown as NextRequest);
       expect(response.status).toBe(400);
       const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty("success", false);
@@ -274,7 +279,7 @@ describe("API Endpoint Integration Tests", () => {
         }),
       });
 
-      const response = await POST(req as any);
+      const response = await POST(req as unknown as NextRequest);
       expect(response.status).toBe(400);
       const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty("success", false);
@@ -299,7 +304,7 @@ describe("API Endpoint Integration Tests", () => {
         }),
       });
 
-      const response = await POST(req as any);
+      const response = await POST(req as unknown as NextRequest);
       expect(response.status).toBe(400);
       const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty("success", false);
@@ -314,7 +319,7 @@ describe("API Endpoint Integration Tests", () => {
         method: "GET",
       });
 
-      const response = await GET(req as any);
+      const response = await GET(req as unknown as NextRequest);
       expect(response.status).toBe(400);
       const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty("success", false);
@@ -331,7 +336,7 @@ describe("API Endpoint Integration Tests", () => {
         },
       );
 
-      const response = await GET(req as any);
+      const response = await GET(req as unknown as NextRequest);
       expect(response.status).toBe(404);
       const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty("success", false);
@@ -352,7 +357,7 @@ describe("API Endpoint Integration Tests", () => {
         },
       );
 
-      const response = await GET(req as any);
+      const response = await GET(req as unknown as NextRequest);
       expect(response.status).toBe(200);
       const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty("success", true);
@@ -394,7 +399,7 @@ describe("API Endpoint Integration Tests", () => {
         },
       );
 
-      const response = await GET(req as any);
+      const response = await GET(req as unknown as NextRequest);
       expect(response.status).toBe(200);
       const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty("success", true);

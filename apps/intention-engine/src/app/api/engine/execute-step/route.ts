@@ -73,7 +73,6 @@ async function executeStepHandler(
   request: NextRequest,
   body: z.infer<typeof _ExecuteStepRequestSchema>,
 ): Promise<NextResponse> {
-  const _startTime = performance.now();
   const { executionId, startStepIndex } = body;
 
   // Wrap step execution with retry for transient failures
@@ -84,10 +83,6 @@ async function executeStepHandler(
   );
 
   try {
-    // DISTRIBUTED TRACING: Extract trace context from headers
-    const _traceId = request.headers.get("x-trace-id");
-    const _correlationId = request.headers.get("x-correlation-id");
-
     const result = await executeStepWithRetry(
       executionId,
       startStepIndex,

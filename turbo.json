@@ -18,16 +18,14 @@
     "OPENDELIVER_API_URL",
     "CRON_SECRET",
     "LLM_BASE_URL",
-    "TABLESTACK_INTERNAL_API_KEY"
+    "TABLESTACK_INTERNAL_API_KEY",
+    "SKIP_ENV_VALIDATION",
+    "NODE_ENV"
   ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "inputs": [
-        "src/**",
-        "package.json",
-        "tsconfig.json"
-      ],
+      "inputs": ["src/**", "package.json", "tsconfig.json"],
       "outputs": [".next/**", "!.next/cache/**"]
     },
     "lint": {

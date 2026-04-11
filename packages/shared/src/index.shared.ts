@@ -177,6 +177,8 @@ export { serverActionResponse, handleServerAction } from "./outbox-relay";
 
 export {
   withUnifiedApiHandler,
+  formatError,
+  formatSuccess,
   type ApiHandler,
   type UnifiedApiContext,
 } from "./error-handler";

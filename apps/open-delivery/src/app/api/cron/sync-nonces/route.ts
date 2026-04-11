@@ -6,6 +6,8 @@ import {
   getEscrowResolverAddress,
   syncNonceFromChain,
   checkNonceSyncStatus,
+  formatError,
+  formatSuccess,
 } from "@repo/shared";
 import { base } from "viem/chains";
 
@@ -37,7 +39,7 @@ const logger = new Logger({ serviceName: "sync-nonces-cron" });
  * Headers:
  *   Authorization: Bearer <CRON_SECRET>
  */
-async function postHandler(req: NextRequest) {
+async function postHandler(_req: NextRequest) {
   try {
     logger.info({ message: "Starting nonce sync cron" });
 
@@ -58,16 +60,17 @@ async function postHandler(req: NextRequest) {
     });
 
     if (syncStatus.isSynced) {
-      return NextResponse.json({
-        success: true,
-        message: "Nonce tracker is already in sync",
-        chainId,
-        resolverAddress,
-        trackedNonce: syncStatus.trackedNonce,
-        onChainNonce: syncStatus.onChainNonce,
-        synced: true,
-        timestamp: new Date().toISOString(),
-      });
+      return NextResponse.json(
+        formatSuccess({
+          message: "Nonce tracker is already in sync",
+          chainId,
+          resolverAddress,
+          trackedNonce: syncStatus.trackedNonce,
+          onChainNonce: syncStatus.onChainNonce,
+          synced: true,
+          timestamp: new Date().toISOString(),
+        }),
+      );
     }
 
     // Sync needed - reset tracker to on-chain value
@@ -84,35 +87,31 @@ async function postHandler(req: NextRequest) {
       syncedNonce,
     });
 
-    return NextResponse.json({
-      success: true,
-      message: "Nonce tracker synced successfully",
-      chainId,
-      resolverAddress,
-      previousTrackedNonce: syncStatus.trackedNonce,
-      syncedNonce,
-      onChainNonce: syncStatus.onChainNonce,
-      syncReason: syncStatus.reason,
-      timestamp: new Date().toISOString(),
-    });
+    return NextResponse.json(
+      formatSuccess({
+        message: "Nonce tracker synced successfully",
+        chainId,
+        resolverAddress,
+        previousTrackedNonce: syncStatus.trackedNonce,
+        syncedNonce,
+        onChainNonce: syncStatus.onChainNonce,
+        syncReason: syncStatus.reason,
+        timestamp: new Date().toISOString(),
+      }),
+    );
   } catch (error) {
     logger.error({
       message: "Nonce sync cron failed",
       error: error instanceof Error ? error.message : String(error),
     });
 
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Unknown error occurred",
-      },
-      { status: 500 },
-    );
+    return NextResponse.json(formatError(error, "EXTERNAL_SERVICE_ERROR"), {
+      status: 500,
+    });
   }
 }
 
-async function getHandler(req: NextRequest) {
+async function getHandler(_req: NextRequest) {
   return NextResponse.json({
     status: "ok",
     message: "Nonce sync cron endpoint is healthy",

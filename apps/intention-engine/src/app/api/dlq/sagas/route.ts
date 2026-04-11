@@ -20,10 +20,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getRedisClient, ServiceNamespace } from "@repo/shared";
-const redis = getRedisClient(ServiceNamespace.IE);;
+import {
+  getRedisClient,
+  ServiceNamespace,
+  formatError,
+  formatSuccess,
+} from "@repo/shared";
+const redis = getRedisClient(ServiceNamespace.IE);
 import { createDLQMonitoringService } from "@repo/shared";
-import { getEventSchemaRegistry, NervousSystemEvent } from "@repo/mcp-protocol";
 import { Tracer } from "@/lib/engine/tracing";
 
 // ============================================================================
@@ -31,15 +35,21 @@ import { Tracer } from "@/lib/engine/tracing";
 // ============================================================================
 
 const ListDLQSagasQuerySchema = z.object({
-  status: z.enum(["all", "recoverable", "manual_intervention", "auto_recovered"]).optional().default("all"),
+  status: z
+    .enum(["all", "recoverable", "manual_intervention", "auto_recovered"])
+    .optional()
+    .default("all"),
   minInactiveMinutes: z.string().transform(Number).optional(),
   limit: z.string().transform(Number).optional().default("50"),
   offset: z.string().transform(Number).optional().default("0"),
-  sortBy: z.enum(["inactiveDuration", "recoveryAttempts", "lastActivity"]).optional().default("inactiveDuration"),
+  sortBy: z
+    .enum(["inactiveDuration", "recoveryAttempts", "lastActivity"])
+    .optional()
+    .default("inactiveDuration"),
   sortOrder: z.enum(["asc", "desc"]).optional().default("desc"),
 });
 
-const ResumeSagaBodySchema = z.object({
+const _ResumeSagaBodySchema = z.object({
   // Fixed parameters to override
   fixedParameters: z.record(z.string(), z.unknown()).optional(),
   // Skip specific steps
@@ -52,7 +62,7 @@ const ResumeSagaBodySchema = z.object({
   adminUserId: z.string(),
 });
 
-const CancelSagaBodySchema = z.object({
+const _CancelSagaBodySchema = z.object({
   // Cancellation reason
   reason: z.string().min(10),
   // Admin user ID
@@ -78,7 +88,7 @@ interface DLQSagaDTO {
     step_id: string;
     status: string;
     toolName?: string;
-    error?: any;
+    error?: unknown;
   }>;
   compensationsRegistered?: Array<{
     stepId: string;
@@ -98,51 +108,47 @@ interface DLQSagaDTO {
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  
+
   const queryResult = ListDLQSagasQuerySchema.safeParse(
-    Object.fromEntries(searchParams)
+    Object.fromEntries(searchParams),
   );
 
   if (!queryResult.success) {
-    return NextResponse.json(
-      { error: "Invalid query parameters", details: queryResult.error.format() },
-      { status: 400 }
+    const errorResponse = formatError(
+      new Error("Invalid query parameters"),
+      "VALIDATION_ERROR",
     );
+    return NextResponse.json(errorResponse, { status: 400 });
   }
 
-  const {
-    status,
-    minInactiveMinutes,
-    limit,
-    offset,
-    sortBy,
-    sortOrder,
-  } = queryResult.data;
+  const { status, minInactiveMinutes, limit, offset, sortBy, sortOrder } =
+    queryResult.data;
 
   return Tracer.startActiveSpan("dlq_list_sagas", async (span) => {
     try {
       const dlqService = createDLQMonitoringService(redis!);
-      
+
       // Scan for zombie sagas
       const zombieSagas = await dlqService.scanForZombieSagas();
-      
+
       // Filter by status
       let filtered = zombieSagas;
       if (status !== "all") {
-        filtered = zombieSagas.filter(saga => {
+        filtered = zombieSagas.filter((saga) => {
           if (status === "recoverable") return !saga.requiresHumanIntervention;
-          if (status === "manual_intervention") return saga.requiresHumanIntervention;
+          if (status === "manual_intervention")
+            return saga.requiresHumanIntervention;
           if (status === "auto_recovered") return saga.recoveryAttempts > 0;
           return true;
         });
       }
-      
+
       // Filter by minimum inactive duration
       if (minInactiveMinutes) {
         const minMs = minInactiveMinutes * 60 * 1000;
-        filtered = filtered.filter(saga => saga.inactiveDurationMs >= minMs);
+        filtered = filtered.filter((saga) => saga.inactiveDurationMs >= minMs);
       }
-      
+
       // Sort
       filtered.sort((a, b) => {
         let comparison = 0;
@@ -151,44 +157,46 @@ export async function GET(req: NextRequest) {
         } else if (sortBy === "recoveryAttempts") {
           comparison = a.recoveryAttempts - b.recoveryAttempts;
         } else if (sortBy === "lastActivity") {
-          comparison = new Date(a.lastActivityAt).getTime() - new Date(b.lastActivityAt).getTime();
+          comparison =
+            new Date(a.lastActivityAt).getTime() -
+            new Date(b.lastActivityAt).getTime();
         }
         return sortOrder === "desc" ? -comparison : comparison;
       });
-      
+
       // Paginate
       const total = filtered.length;
       const paginated = filtered.slice(offset, offset + limit);
 
       // Convert to DTO
-      const sagas: DLQSagaDTO[] = paginated.map(saga => ({
+      const sagas: DLQSagaDTO[] = paginated.map((saga) => ({
         ...saga,
         inactiveDurationHuman: formatDuration(saga.inactiveDurationMs),
         createdAt: saga.lastActivityAt,
         updatedAt: saga.lastActivityAt,
       }));
-      
+
       span.setAttributes({
         "dlq.total": total,
         "dlq.returned": sagas.length,
         "dlq.filters": JSON.stringify({ status, minInactiveMinutes }),
       });
-      
-      return NextResponse.json({
-        sagas,
-        pagination: {
-          total,
-          limit,
-          offset,
-          hasMore: offset + limit < total,
-        },
-      });
+
+      return NextResponse.json(
+        formatSuccess({
+          sagas,
+          pagination: {
+            total,
+            limit,
+            offset,
+            hasMore: offset + limit < total,
+          },
+        }),
+      );
     } catch (error) {
       console.error("[DLQ API] Failed to list sagas:", error);
-      return NextResponse.json(
-        { error: "Failed to list DLQ sagas" },
-        { status: 500 }
-      );
+      const errorResponse = formatError(error, "EXECUTION_FAILED");
+      return NextResponse.json(errorResponse, { status: 500 });
     }
   });
 }

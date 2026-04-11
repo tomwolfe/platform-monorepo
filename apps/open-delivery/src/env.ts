@@ -2,91 +2,56 @@
  * Server Environment Variables - Open Delivery
  *
  * Validates required environment variables at BUILD TIME.
- * This file is imported in next.config.mjs to fail fast during `next build`.
+ * Uses the shared monorepo env schema to prevent configuration drift.
  *
  * @package @repo/open-delivery
  */
 
 import { createEnv } from "@t3-oss/env-nextjs";
+import {
+  sharedServerFields,
+  sharedClientFields,
+  sharedRuntimeEnv,
+} from "@repo/shared/config/env-shared";
 import { z } from "zod";
 
 export const env = createEnv({
   server: {
-    // Database
-    DATABASE_URL: z.string().url("Must be a valid PostgreSQL URL"),
-
-    // Authentication
-    CLERK_SECRET_KEY: z.string().min(20, "Must be a valid Clerk secret key"),
-    INTERNAL_SYSTEM_KEY: z
+    ...sharedServerFields,
+    // Open-delivery specific: additional RPCs, routing, driver pay
+    POLYGON_RPC_URL: z.string().url().optional(),
+    ETHEREUM_RPC_URL: z.string().url().optional(),
+    OPENROUTESERVICE_API_KEY: z.string().optional(),
+    ORS_ROUTING_TIMEOUT_MS: z
       .string()
-      .length(64, "Must be exactly 64 characters (32 bytes in hex)")
-      .regex(/^[0-9a-fA-F]+$/, "Must be a valid hex string"),
-
-    // Async Workflows
-    QSTASH_TOKEN: z.string().min(10, "Must be a valid QStash token"),
-
-    // Cron Secret for scheduled jobs
-    CRON_SECRET: z.string().min(16, "Must be a strong secret (min 16 chars)"),
-
-    // Web3 / Blockchain
-    BASE_RPC_URL: z.string().url("Must be a valid RPC URL"),
-
-    // Ably Real-time
-    ABLY_API_KEY: z.string().optional(),
-
-    // Optional: Redis for caching
-    UPSTASH_REDIS_REST_URL: z.string().url().optional(),
-    UPSTASH_REDIS_REST_TOKEN: z.string().optional(),
-
-    // Optional: OpenAI for AI features
-    OPENAI_API_KEY: z.string().optional(),
-
-    // Optional: Escrow resolver private key
-    ESCROW_RESOLVER_PRIVATE_KEY: z.string().optional(),
-
-    // Node environment
-    NODE_ENV: z
-      .enum(["development", "test", "production"])
-      .default("development"),
+      .regex(/^\d+$/, "Must be a number")
+      .optional(),
+    DRIVER_BASE_PAY_CENTS: z
+      .string()
+      .regex(/^\d+$/, "Must be a number")
+      .optional(),
   },
 
   client: {
+    ...sharedClientFields,
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.string().min(20).optional(),
-    NEXT_PUBLIC_USDC_CONTRACT_ADDRESS: z
+    NEXT_PUBLIC_MIN_CONFIRMATIONS: z
       .string()
-      .startsWith("0x", "Must be a valid Ethereum address (0x prefix)")
-      .optional(),
-    NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS: z
-      .string()
-      .startsWith("0x", "Must be a valid Ethereum address (0x prefix)")
-      .optional(),
-    NEXT_PUBLIC_PLATFORM_FEE_WALLET: z
-      .string()
-      .startsWith("0x", "Must be a valid Ethereum address (0x prefix)")
+      .regex(/^\d+$/, "Must be a number")
       .optional(),
   },
 
   runtimeEnv: {
-    DATABASE_URL: process.env.DATABASE_URL,
-    CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY,
-    INTERNAL_SYSTEM_KEY: process.env.INTERNAL_SYSTEM_KEY,
-    QSTASH_TOKEN: process.env.QSTASH_TOKEN,
-    CRON_SECRET: process.env.CRON_SECRET,
-    BASE_RPC_URL: process.env.BASE_RPC_URL,
-    ABLY_API_KEY: process.env.ABLY_API_KEY,
-    UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
-    UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-    ESCROW_RESOLVER_PRIVATE_KEY: process.env.ESCROW_RESOLVER_PRIVATE_KEY,
-    NODE_ENV: process.env.NODE_ENV,
+    ...sharedRuntimeEnv,
+    // Open-delivery specific runtime mappings
+    POLYGON_RPC_URL: process.env.POLYGON_RPC_URL,
+    ETHEREUM_RPC_URL: process.env.ETHEREUM_RPC_URL,
+    OPENROUTESERVICE_API_KEY: process.env.OPENROUTESERVICE_API_KEY,
+    ORS_ROUTING_TIMEOUT_MS: process.env.ORS_ROUTING_TIMEOUT_MS,
+    DRIVER_BASE_PAY_CENTS: process.env.DRIVER_BASE_PAY_CENTS,
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:
       process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
-    NEXT_PUBLIC_USDC_CONTRACT_ADDRESS:
-      process.env.NEXT_PUBLIC_USDC_CONTRACT_ADDRESS,
-    NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS:
-      process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS,
-    NEXT_PUBLIC_PLATFORM_FEE_WALLET:
-      process.env.NEXT_PUBLIC_PLATFORM_FEE_WALLET,
+    NEXT_PUBLIC_MIN_CONFIRMATIONS: process.env.NEXT_PUBLIC_MIN_CONFIRMATIONS,
   },
 
   skipValidation: !!process.env.SKIP_ENV_VALIDATION,

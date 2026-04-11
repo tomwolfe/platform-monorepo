@@ -45,7 +45,6 @@
     "swagger-ui-react": "^5.32.2",
     "tailwind-merge": "^3.4.0",
     "viem": "^2.21.52",
-    "wagmi": "^2.14.11",
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.25.1"
   },

@@ -1,28 +1,32 @@
 /**
- * Checkout Service
+ * Checkout Service - Orchestrator
  *
- * Core business logic for crypto payment checkout.
- * Encapsulates: replay guard management, on-chain verification,
- * reservation updates, and notification dispatch.
+ * Coordinates the checkout workflow using smaller, pure functions:
+ * - validateInput (from validation.ts)
+ * - verifyOnChainTransaction (from web3-verify.ts)
+ * - markReservationAsVerified (from reservation-update.ts)
+ * - notifyOwnerOfVerification (from notifications.ts)
  *
- * Extracted from API route to improve testability and reusability.
+ * The orchestrator maintains the replay guard two-phase commit boundary
+ * while delegating implementation details to extracted modules.
+ *
+ * @see Task 3: Refactor Checkout Service into smaller pure functions
  */
 
 import { getDb, restaurantReservations, eq } from "@repo/database";
 import { type Hex } from "viem";
-import { getPublicClient } from "@repo/web3";
 import {
   AppConfig,
   Logger,
   dispatchTask,
   releaseReplayProcessingLock,
-  confirmReplayGuard,
-  rollbackReplayGuard,
   tryAcquireReplayProcessingLock,
   isReplayAllowed,
 } from "@repo/shared";
-import { verifyTransaction } from "@repo/shared/utils/web3-verification";
 import { CheckoutError } from "./validation";
+import { verifyOnChainTransaction } from "./web3-verify";
+import { markReservationAsVerified } from "./reservation-update";
+import { notifyOwnerOfVerification } from "./notifications";
 
 const logger = new Logger({ serviceName: "checkout-service" });
 
@@ -48,10 +52,10 @@ export class CheckoutService {
    * Implements two-phase commit with replay guard:
    * 1. Acquire processing lock
    * 2. Register replay guard
-   * 3. Verify on-chain transaction
-   * 4. Update reservation in DB
+   * 3. Verify on-chain transaction (delegated to web3-verify.ts)
+   * 4. Update reservation in DB (delegated to reservation-update.ts)
    * 5. Confirm replay guard
-   * 6. Dispatch notifications
+   * 6. Dispatch notifications (delegated to notifications.ts + dispatchTask)
    *
    * If any step fails before DB commit, the processing lock is released
    * to allow immediate retries.
@@ -63,55 +67,13 @@ export class CheckoutService {
       paymentCurrency,
       expectedValue,
       frontendCallbackUrl,
-      requestOrigin,
+      requestOrigin: _requestOrigin,
     } = input;
 
-    // Fetch reservation
-    const reservation = await getDb().query.restaurantReservations.findFirst({
-      where: eq(restaurantReservations.id, reservationId),
-      with: {
-        restaurant: true,
-      },
-    });
+    // Step 1: Fetch and validate reservation
+    const reservation = await this.fetchReservation(reservationId);
 
-    if (!reservation) {
-      throw new CheckoutError("Reservation not found", 404, "NOT_FOUND");
-    }
-
-    if (reservation.isVerified) {
-      throw new CheckoutError(
-        "Reservation already verified",
-        200,
-        "ALREADY_VERIFIED",
-      );
-    }
-
-    // Validate payment mode
-    if (AppConfig.isDirectP2PMode() && !reservation.restaurant?.walletAddress) {
-      throw new CheckoutError(
-        "Restaurant wallet address not configured",
-        400,
-        "VALIDATION_ERROR",
-      );
-    }
-
-    if (AppConfig.isEscrowMode() && !AppConfig.getEscrowContractAddress()) {
-      throw new CheckoutError(
-        "Escrow contract address not configured",
-        400,
-        "VALIDATION_ERROR",
-      );
-    }
-
-    if (AppConfig.isPaymentDisabled()) {
-      throw new CheckoutError(
-        "Web3 payments are disabled",
-        400,
-        "VALIDATION_ERROR",
-      );
-    }
-
-    // REPLAY GUARD: Two-phase commit
+    // Step 2: Acquire replay processing lock (two-phase commit)
     const lockAcquired = await tryAcquireReplayProcessingLock(txHash as Hex);
     if (!lockAcquired) {
       throw new CheckoutError(
@@ -136,44 +98,19 @@ export class CheckoutService {
       );
     }
 
-    // CRITICAL: Wrap verification and DB update in try...finally
-    // to ensure lock release on failure
+    // Step 3-5: Verify, update, confirm (atomic boundary)
     let confirmed = false;
     let confirmations = 0;
 
     try {
-      // On-chain verification
-      const isEscrowPayment = AppConfig.isEscrowMode();
-      const slippageBps =
-        paymentCurrency === "ETH" && !isEscrowPayment
-          ? AppConfig.getSlippageBps()
-          : undefined;
-
-      const verificationResult = await verifyTransaction({
-        txHash: txHash as Hex,
+      // Step 3: On-chain verification (delegated to web3-verify.ts)
+      const verificationResult = await verifyOnChainTransaction({
+        txHash,
         expectedValue,
-        expectedRecipient: isEscrowPayment
-          ? (AppConfig.getEscrowContractAddress() as Hex)
-          : (reservation.restaurant!.walletAddress as Hex),
+        reservation,
         paymentCurrency,
-        orderId: reservationId,
-        isEscrowPayment,
-        slippageBps,
+        targetReservationId: reservationId,
       });
-
-      if (!verificationResult.success) {
-        await rollbackReplayGuard(txHash as Hex);
-        throw new CheckoutError(
-          verificationResult.error || "Transaction verification failed",
-          400,
-          "VALIDATION_ERROR",
-        );
-      }
-
-      // Additional ETH transaction data check
-      if (paymentCurrency !== "USDC") {
-        await this.verifyEthTransactionData(txHash, reservationId);
-      }
 
       confirmations = verificationResult.receipt?.confirmations || 0;
       if (confirmations < 1) {
@@ -185,11 +122,8 @@ export class CheckoutService {
         );
       }
 
-      // Mark reservation as verified
-      await this.markVerified(reservationId, txHash);
-
-      // Confirm replay guard (upgrades processing lock to confirmed state)
-      await confirmReplayGuard(txHash as Hex);
+      // Step 4-5: Mark verified + confirm replay guard (delegated to reservation-update.ts)
+      await markReservationAsVerified(reservationId, txHash);
       confirmed = true;
     } finally {
       if (!confirmed) {
@@ -199,72 +133,75 @@ export class CheckoutService {
       }
     }
 
-    // Dispatch notifications (fire-and-forget)
+    // Step 6: Dispatch notifications (fire-and-forget, non-blocking)
     await this.dispatchNotifications({
       reservation,
       reservationId,
       txHash,
-      requestOrigin,
+      requestOrigin: _requestOrigin,
       frontendCallbackUrl,
     });
 
-    return {
-      txHash,
-      confirmations,
-      reservationId,
-    };
+    return { txHash, confirmations, reservationId };
   }
 
-  /**
-   * Verify ETH transaction data contains the reservation ID
-   */
-  private async verifyEthTransactionData(
-    txHash: string,
-    reservationId: string,
-  ): Promise<void> {
-    const client = getPublicClient("base");
-    const tx = await client.getTransaction({ hash: txHash as Hex });
+  // ========================================================================
+  // PRIVATE HELPERS (orchestration-level, not pure business logic)
+  // ========================================================================
 
-    if (tx.input && tx.input !== "0x" && tx.input.length > 2) {
-      try {
-        const { hexToString } = await import("viem");
-        const decodedData = hexToString(tx.input);
-        if (decodedData !== reservationId) {
-          throw new CheckoutError(
-            "Transaction data mismatch",
-            400,
-            "VALIDATION_ERROR",
-            {
-              details: { expected: reservationId, received: decodedData },
-            },
-          );
-        }
-      } catch (err) {
-        if (err instanceof CheckoutError) throw err;
-        logger.warn("Could not decode transaction data for ETH payment");
-      }
+  /**
+   * Fetch reservation with restaurant details.
+   * Validates payment mode configuration.
+   */
+  private async fetchReservation(reservationId: string) {
+    const reservation = await getDb().query.restaurantReservations.findFirst({
+      where: eq(restaurantReservations.id, reservationId),
+      with: { restaurant: true },
+    });
+
+    if (!reservation) {
+      throw new CheckoutError("Reservation not found", 404, "NOT_FOUND");
     }
+
+    if (reservation.isVerified) {
+      throw new CheckoutError(
+        "Reservation already verified",
+        200,
+        "ALREADY_VERIFIED",
+      );
+    }
+
+    // Validate payment mode configuration
+    if (AppConfig.isDirectP2PMode() && !reservation.restaurant?.walletAddress) {
+      throw new CheckoutError(
+        "Restaurant wallet address not configured",
+        400,
+        "VALIDATION_ERROR",
+      );
+    }
+
+    if (AppConfig.isEscrowMode() && !AppConfig.getEscrowContractAddress()) {
+      throw new CheckoutError(
+        "Escrow contract address not configured",
+        400,
+        "VALIDATION_ERROR",
+      );
+    }
+
+    if (AppConfig.isPaymentDisabled()) {
+      throw new CheckoutError(
+        "Web3 payments are disabled",
+        400,
+        "VALIDATION_ERROR",
+      );
+    }
+
+    return reservation;
   }
 
   /**
-   * Mark reservation as verified in the database
-   */
-  private async markVerified(
-    reservationId: string,
-    txHash: string,
-  ): Promise<void> {
-    await getDb()
-      .update(restaurantReservations)
-      .set({
-        isVerified: true,
-        status: "confirmed",
-        paymentTxHash: txHash,
-      })
-      .where(eq(restaurantReservations.id, reservationId));
-  }
-
-  /**
-   * Dispatch email and webhook notifications
+   * Dispatch email and webhook notifications (fire-and-forget).
+   * Uses the extracted notifications module where possible.
    */
   private async dispatchNotifications(params: {
     reservation: {
@@ -287,31 +224,17 @@ export class CheckoutService {
       frontendCallbackUrl,
     } = params;
 
-    // Email to restaurant owner
+    // Email to restaurant owner (using extracted notifications module)
     if (reservation.restaurant?.ownerEmail) {
-      await dispatchTask(
-        "send_reservation_email",
-        {
-          reservationId,
-          guestEmail: reservation.guestEmail || "",
-          guestName: reservation.guestName || "",
-          restaurantName: reservation.restaurant?.name || "Restaurant",
-          partySize: reservation.partySize || 0,
-          startTime:
-            reservation.startTime?.toISOString() || new Date().toISOString(),
-          verificationToken: "",
-          isShadow: false,
-          origin: requestOrigin,
-        },
-        `checkout-notify:${txHash}`,
-      ).catch((err: Error) => {
-        logger.warn("Failed to dispatch owner notification (non-fatal)", {
-          error: err.message,
-        });
+      await notifyOwnerOfVerification({
+        ownerEmail: reservation.restaurant.ownerEmail,
+        guestName: reservation.guestName || "",
+        partySize: reservation.partySize || 0,
+        startTime: reservation.startTime || new Date(),
       });
     }
 
-    // Webhook callback
+    // Webhook callback (fire-and-forget via dispatchTask)
     if (frontendCallbackUrl) {
       await dispatchTask(
         "send_checkout_webhook",

@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse, revalidateTag } from "next/server";
-import { getDb, restaurantReservations, restaurants, eq } from "@repo/database";
+import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { NotifyService } from "@tablestack/lib/notifications";
 import {
   withUnifiedApiHandler,
@@ -112,7 +112,7 @@ async function postHandler(req: NextRequest) {
 
   const { task, payload } = body as {
     task: string;
-    payload: Record<string, any>;
+    payload: Record<string, unknown>;
   };
 
   if (!task || !payload) {

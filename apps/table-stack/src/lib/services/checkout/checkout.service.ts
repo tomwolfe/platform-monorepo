@@ -289,7 +289,7 @@ export class CheckoutService {
 
     // Email to restaurant owner
     if (reservation.restaurant?.ownerEmail) {
-      dispatchTask(
+      await dispatchTask(
         "send_reservation_email",
         {
           reservationId,
@@ -313,7 +313,7 @@ export class CheckoutService {
 
     // Webhook callback
     if (frontendCallbackUrl) {
-      dispatchTask(
+      await dispatchTask(
         "send_checkout_webhook",
         {
           webhookUrl: frontendCallbackUrl,

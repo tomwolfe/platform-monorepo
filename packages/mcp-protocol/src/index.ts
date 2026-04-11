@@ -34,6 +34,7 @@ export {
   ConfirmationStatusSchema,
   ConfirmationRequestSchema,
   ConfirmationResponseSchema,
+  ConfirmationApiRequestSchema,
   UserContextMatchSchema,
   ProactiveNotificationSchema,
   ServiceRegistryEntrySchema,

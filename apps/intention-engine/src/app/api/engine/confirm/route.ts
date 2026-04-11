@@ -28,12 +28,11 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { ConfirmationApiRequestSchema } from "@repo/mcp-protocol/src/schemas/state-machine";
+import { ConfirmationApiRequestSchema } from "@repo/mcp-protocol";
 import { RealtimeService } from "@repo/shared";
 import { Tracer } from "@/lib/engine/tracing";
 import {
   ConfirmationService,
-  type ConfirmationData,
   type ConfirmationResult,
 } from "@/lib/engine/confirmation-service";
 
@@ -129,7 +128,7 @@ async function confirmHandler(
         console.warn("[ConfirmEndpoint] Failed to publish to Ably:", err);
       }
 
-      const duration = performance.now() - startTime;
+      const _duration = performance.now() - startTime;
 
       return NextResponse.json({
         success: true,

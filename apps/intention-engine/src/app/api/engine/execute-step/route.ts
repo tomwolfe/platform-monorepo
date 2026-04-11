@@ -21,7 +21,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { withQStashAuth } from "@repo/shared";
+import { withQStashAuth, withUnifiedApiHandler } from "@repo/shared";
 import { withRetry } from "@repo/shared/middleware/retry-with-backoff";
 import { createStepExecutionService } from "@/lib/engine/step-execution-service";
 
@@ -110,4 +110,9 @@ async function executeStepHandler(
   }
 }
 
-export const POST = withQStashAuth(executeStepHandler);
+export const POST = withQStashAuth(
+  withUnifiedApiHandler(executeStepHandler, {
+    serviceName: "execute-step",
+    includeStackTrace: process.env.NODE_ENV !== "production",
+  }),
+);

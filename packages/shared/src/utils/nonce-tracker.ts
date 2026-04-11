@@ -1,5 +1,6 @@
 import { getRedisClient, ServiceNamespace } from "../redis";
 import { Logger } from "../logger";
+import { withDistributedLock } from "../services/distributed-lock";
 import type { PublicClient } from "viem";
 
 const logger = new Logger({ serviceName: "nonce-tracker" });
@@ -52,16 +53,37 @@ export async function getNextNonce(
     let effectiveStartNonce = startNonce;
     const keyExists = await redis.exists(key);
     if (!keyExists) {
-      const onChainNonce = await publicClient.getTransactionCount({
-        address: address as `0x${string}`,
-        blockTag: "pending",
-      });
-      effectiveStartNonce = onChainNonce;
-      logger.info("NonceTracker cache miss - initialized from on-chain nonce", {
-        chainId,
-        address: address.toLowerCase(),
-        onChainNonce,
-      });
+      // Wrap in a distributed lock so concurrent misses don't fetch the same nonce
+      await withDistributedLock(
+        `lock:nonce_init:${chainId}:${address.toLowerCase()}`,
+        10,
+        async () => {
+          // Double-check inside the lock (another thread may have initialized while we waited)
+          if (!(await redis.exists(key))) {
+            const onChainNonce = await publicClient.getTransactionCount({
+              address: address as `0x${string}`,
+              blockTag: "pending",
+            });
+            effectiveStartNonce = onChainNonce;
+            // Pre-initialize the key here to prevent subsequent locks from re-fetching
+            await redis.set(key, String(effectiveStartNonce), {
+              ex: NONCE_TTL,
+            });
+            logger.info(
+              "NonceTracker cache miss - initialized from on-chain nonce",
+              {
+                chainId,
+                address: address.toLowerCase(),
+                onChainNonce,
+              },
+            );
+          } else {
+            // Key was initialized by another thread while we waited for the lock
+            const existingNonce = await redis.get(key);
+            effectiveStartNonce = parseInt(existingNonce as string, 10);
+          }
+        },
+      );
     }
 
     const result = (await redis.eval(

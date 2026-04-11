@@ -78,6 +78,13 @@
       "when": 1774124000000,
       "tag": "0010_fix_orders_store_fk",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1775866260402,
+      "tag": "0011_typical_frog_thor",
+      "breakpoints": true
     }
   ]
 }

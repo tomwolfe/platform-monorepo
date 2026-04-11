@@ -15,7 +15,7 @@ import { verifyAsymmetricJWT } from "@repo/auth";
 import {
   resumeFromCheckpoint,
   ToolExecutor,
-  WorkflowResult,
+  type WorkflowResult,
 } from "@/lib/engine/workflow-machine";
 import { loadExecutionState } from "@/lib/engine/memory";
 import { getMcpClients, ToolCallResult } from "@/lib/mcp-client";
@@ -24,21 +24,26 @@ import {
   withUnifiedApiHandler,
   formatApiSuccess,
   formatApiError,
+  Logger,
 } from "@repo/shared";
 import { Tracer } from "@/lib/engine/tracing";
 import {
   getToolRegistry,
   ToolExecutionContext,
 } from "@/lib/engine/tools/registry";
-import { getRedisClient, ServiceNamespace } from "@repo/shared";
+import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
 import { getDb } from "@repo/database";
-import { Plan } from "@/lib/engine/types";
+import type { Plan } from "@/lib/engine/types";
+import { Redis } from "@upstash/redis";
+import type { NeonDatabase } from "drizzle-orm/neon-serverless";
 
 const RESUME_REQUEST_SCHEMA = {
   executionId: "string (required) - The execution ID to resume",
   traceId: "string (optional) - Distributed trace ID for observability",
   force: "boolean (optional) - Force resume even if no checkpoint exists",
 };
+
+const logger = new Logger({ serviceName: "mesh-resume" });
 
 async function meshResumeHandler(req: NextRequest) {
   const startTime = Date.now();
@@ -79,7 +84,7 @@ async function meshResumeHandler(req: NextRequest) {
   // ========================================================================
 
   const body = await req.json();
-  const { executionId, traceId, force = false } = body;
+  const { executionId, traceId, force: _force = false } = body;
 
   if (!executionId) {
     return NextResponse.json(
@@ -94,10 +99,10 @@ async function meshResumeHandler(req: NextRequest) {
     );
   }
 
-  console.log(
-    `[MeshResume] Received resume request for ${executionId}` +
-      (traceId ? ` [trace: ${traceId}]` : ""),
-  );
+  logger.info("Received resume request", {
+    executionId,
+    traceId: traceId || undefined,
+  });
 
   // ========================================================================
   // START TRACE
@@ -198,7 +203,7 @@ async function meshResumeHandler(req: NextRequest) {
     // RESPONSE
     // ========================================================================
 
-    const response: any = {
+    const response: Record<string, unknown> = {
       executionId,
       success: result.success,
       completed_steps: result.completedSteps,
@@ -281,16 +286,16 @@ async function buildToolExecutor(
           };
         }
 
-        console.log(`[MeshResume] Executing local tool ${toolName}`);
+        logger.info("Executing local tool", { toolName });
 
         // Lazy-initialized services for this execution
-        let _injRedis: any = null;
-        let _injDb: any = null;
-        const getInjRedis = () => {
+        let _injRedis: Redis | null = null;
+        let _injDb: NeonDatabase | null = null;
+        const getInjRedis = (): Redis => {
           if (!_injRedis) _injRedis = getRedisClient(ServiceNamespace.SHARED);
           return _injRedis;
         };
-        const getInjDb = () => {
+        const getInjDb = (): NeonDatabase => {
           if (!_injDb) _injDb = getDb();
           return _injDb;
         };
@@ -343,7 +348,7 @@ async function buildToolExecutor(
 // For direct Ably webhook integration
 // ============================================================================
 
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   // Health check endpoint
   return NextResponse.json({ status: "ok", service: "mesh-resume" });
 }

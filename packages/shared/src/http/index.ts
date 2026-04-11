@@ -8,15 +8,6 @@
  */
 
 export {
-  // Response schemas
-  ApiErrorResponseSchema,
-  ApiSuccessResponseSchema,
-  ApiErrorFieldSchema,
-
-  // Response types
-  type ApiErrorResponse,
-  type ApiSuccessResponse,
-
   // Response factories
   successResponse,
   errorResponse,
@@ -44,13 +35,3 @@ export {
   RateLimitError,
   ExternalServiceError,
 } from "./errors";
-
-export {
-  // Handler wrapper
-  withApiHandler,
-
-  // Types
-  type ApiHandlerContext,
-  type ApiHandler,
-  type ApiHandlerConfig,
-} from "./handler";

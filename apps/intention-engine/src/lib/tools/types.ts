@@ -11,7 +11,7 @@ import type { ToolExecutionContext } from "../engine/tools/registry";
  */
 export interface ToolDefinitionMetadata extends EngineToolDefinition {
   /** Optional Zod schema for response validation */
-  responseSchema?: z.ZodType<any>;
+  responseSchema?: z.ZodType<unknown>;
 }
 
 /**
@@ -21,17 +21,17 @@ export interface ToolDefinitionMetadata extends EngineToolDefinition {
 export interface ToolDefinition extends ToolDefinitionMetadata {
   /** Execution function for the tool */
   execute: (
-    params: any,
+    params: Record<string, unknown>,
     context?: ToolExecutionContext,
-  ) => Promise<{ success: boolean; result?: any; error?: string }>;
+  ) => Promise<{ success: boolean; result?: unknown; error?: string }>;
 }
 
 export type ExecuteToolResult = {
   success: boolean;
-  result?: any;
+  result?: unknown;
   error?: string;
   replanned?: boolean;
-  new_plan?: any;
+  new_plan?: unknown;
   error_explanation?: string;
 };
 

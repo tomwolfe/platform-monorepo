@@ -10,6 +10,9 @@ import {
 } from "@repo/database";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { z } from "zod";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "mcp-bridge" });
 
 /**
  * Drizzle-to-MCP Bridge
@@ -82,19 +85,20 @@ function safeCreateSelectSchema(
   name: string,
 ): z.ZodObject<z.ZodRawShape> {
   if (!table) {
-    console.warn(`[Bridge] Table ${name} is not available, using empty schema`);
+    logger.warn("Table is not available, using empty schema", {
+      tableName: name,
+    });
     return z.object({});
   }
   try {
-    // drizzle-zod's createSelectSchema accepts any table-like object.
-    // We use an explicit cast here rather than a structural type definition
-    // because drizzle-orm's PgTable has protected members that are incompatible
-    // with structural typing. This is the safest escape hatch.
     return createSelectSchema(
       table as Parameters<typeof createSelectSchema>[0],
     ) as z.ZodObject<z.ZodRawShape>;
   } catch (error) {
-    console.warn(`[Bridge] Failed to create select schema for ${name}:`, error);
+    logger.warn("Failed to create select schema for table", {
+      tableName: name,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return z.object({});
   }
 }
@@ -114,7 +118,9 @@ function safeCreateInsertSchema(
   omitFields?: string[],
 ): z.ZodObject<z.ZodRawShape> {
   if (!table) {
-    console.warn(`[Bridge] Table ${name} is not available, using empty schema`);
+    logger.warn("Table is not available, using empty schema", {
+      tableName: name,
+    });
     return z.object({});
   }
   try {
@@ -130,7 +136,10 @@ function safeCreateInsertSchema(
     }
     return schema;
   } catch (error) {
-    console.warn(`[Bridge] Failed to create insert schema for ${name}:`, error);
+    logger.warn("Failed to create insert schema for table", {
+      tableName: name,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return z.object({});
   }
 }

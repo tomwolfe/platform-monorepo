@@ -38,7 +38,9 @@ const GEOCODE_LOCATION_TOOL = {
   name: "geocode_location",
   description:
     "Converts city names, addresses, or place names to precise lat/lon coordinates.",
-  inputSchema: zodToJsonSchema(GeocodeSchema, { target: "jsonSchema7" }) as any,
+  inputSchema: zodToJsonSchema(GeocodeSchema, {
+    target: "jsonSchema7",
+  }) as Record<string, unknown>,
 } as const;
 
 const SEARCH_RESTAURANT_TOOL = {
@@ -46,7 +48,7 @@ const SEARCH_RESTAURANT_TOOL = {
   description: "Search for restaurants based on cuisine and location.",
   inputSchema: zodToJsonSchema(SearchRestaurantSchema, {
     target: "jsonSchema7",
-  }) as any,
+  }) as Record<string, unknown>,
 } as const;
 
 const ADD_CALENDAR_EVENT_TOOL = {
@@ -54,7 +56,7 @@ const ADD_CALENDAR_EVENT_TOOL = {
   description: "Add one or more events to the calendar.",
   inputSchema: zodToJsonSchema(AddCalendarEventSchema, {
     target: "jsonSchema7",
-  }) as any,
+  }) as Record<string, unknown>,
 } as const;
 
 const GET_WEATHER_DATA_TOOL = {
@@ -63,7 +65,7 @@ const GET_WEATHER_DATA_TOOL = {
     "Authorized to access real-time weather data. Provides live forecasts and current conditions with full meteorological authority.",
   inputSchema: zodToJsonSchema(WeatherDataSchema, {
     target: "jsonSchema7",
-  }) as any,
+  }) as Record<string, unknown>,
 } as const;
 
 /**

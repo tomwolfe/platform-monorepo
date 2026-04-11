@@ -23,7 +23,6 @@ import {
   type Address,
   type PublicClient,
   parseEventLogs,
-  type Log,
   hexToString,
   verifyMessage,
   type Hex,
@@ -44,9 +43,7 @@ const RPC_URLS = {
   base: (() => {
     const primary = process.env.BASE_RPC_URL;
     if (!primary && process.env.NODE_ENV === "production") {
-      console.error(
-        "[web3-verification] BASE_RPC_URL is required in production",
-      );
+      logger.error("BASE_RPC_URL is required in production");
     }
     return [
       primary || "https://mainnet.base.org",
@@ -57,9 +54,7 @@ const RPC_URLS = {
   polygon: (() => {
     const primary = process.env.POLYGON_RPC_URL;
     if (!primary && process.env.NODE_ENV === "production") {
-      console.error(
-        "[web3-verification] POLYGON_RPC_URL is required in production",
-      );
+      logger.error("POLYGON_RPC_URL is required in production");
     }
     return [
       primary || "https://polygon-rpc.com",
@@ -70,9 +65,7 @@ const RPC_URLS = {
   ethereum: (() => {
     const primary = process.env.ETHEREUM_RPC_URL;
     if (!primary && process.env.NODE_ENV === "production") {
-      console.error(
-        "[web3-verification] ETHEREUM_RPC_URL is required in production",
-      );
+      logger.error("ETHEREUM_RPC_URL is required in production");
     }
     return [
       primary || "https://eth-mainnet.g.alchemy.com/v2/demo",
@@ -328,7 +321,7 @@ export async function verifyTransaction(params: {
         });
 
         // Find the OrderDeposited event matching our order ID
-        const matchingEvent = orderDepositedLogs.find((log: any) => {
+        const matchingEvent = orderDepositedLogs.find((log) => {
           const args = log.args as { orderId?: string; subtotal?: bigint };
           return args.orderId === orderId && args.subtotal !== undefined;
         });
@@ -376,7 +369,7 @@ export async function verifyTransaction(params: {
         });
 
         // Find the Transfer event matching our expected recipient
-        const matchingTransfer = transferLogs.find((log: any) => {
+        const matchingTransfer = transferLogs.find((log) => {
           const args = log.args as {
             from?: Address;
             to?: Address;
@@ -399,8 +392,8 @@ export async function verifyTransaction(params: {
 
         logger.info({
           message: "ERC-20 Transfer verified",
-          from: (matchingTransfer.args as any).from,
-          to: (matchingTransfer.args as any).to,
+          from: (matchingTransfer.args as { from?: Address }).from,
+          to: (matchingTransfer.args as { to?: Address }).to,
           value: actualValue.toString(),
         });
       } catch (parseError) {
@@ -462,7 +455,7 @@ export async function verifyTransaction(params: {
               error: `Transaction data mismatch. Expected order ID: ${orderId}, Got: ${decodedData}`,
             };
           }
-        } catch (decodeError) {
+        } catch {
           // If decoding fails, the data might be for a contract call (USDC transfer)
           // For USDC transfers, we rely on the exact amount + recipient + sender verification
           logger.warn({

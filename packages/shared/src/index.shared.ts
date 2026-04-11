@@ -186,12 +186,7 @@ export {
   type ValidatedResponse,
 } from "./utils/api-response";
 
-export {
-  withApiHandler,
-  jsonSuccess,
-  jsonError,
-  type ApiResponse,
-} from "./http";
+export { jsonSuccess, jsonError, type ApiResponse } from "./http";
 
 // ============================================================================
 // VALIDATED RESPONSE (Isomorphic)

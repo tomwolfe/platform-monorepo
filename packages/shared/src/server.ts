@@ -350,15 +350,6 @@ export function captureSentryException(
 }
 
 // ============================================================================
-// ROUTE HANDLER FACTORY (Server-only)
-// ============================================================================
-export {
-  createRouteHandler,
-  type RouteHandlerConfig,
-  type RouteHandlerContext,
-} from "./utils/route-handler";
-
-// ============================================================================
 // TESTING UTILITIES (Server-only - database, drizzle, ably, resend, viem)
 // ============================================================================
 export * from "./testing";

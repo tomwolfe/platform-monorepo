@@ -1,11 +1,4 @@
-import {
-  getDb,
-  restaurants,
-  restaurantReservations,
-  restaurantWaitlist,
-  eq,
-  desc,
-} from "@repo/database";
+import { getDb, restaurants, restaurantReservations, eq } from "@repo/database";
 import { notFound, redirect } from "next/navigation";
 import { currentUser } from "@clerk/nextjs/server";
 import FloorPlan from "@/components/dashboard/FloorPlan";
@@ -13,16 +6,16 @@ import LiveView from "@/components/dashboard/LiveView";
 import {
   updateTablePositions,
   updateTableStatus,
-  updateRestaurantSettings,
   addTable,
   deleteTable,
   updateTableDetails,
   deleteReservation,
   updateWaitlistStatus,
-  regenerateApiKey,
-  linkRestaurantWallet,
+  regenerateApiKeyFromForm,
+  linkRestaurantWalletFromForm,
+  updateRestaurantSettingsFromForm,
 } from "./actions";
-import { Trash2, Bell, UserCheck, Wallet, Store, Utensils } from "lucide-react";
+import { Wallet, Utensils } from "lucide-react";
 import { UserMenu } from "@/components/nav/UserMenu";
 import Link from "next/link";
 import { DataTablesClient } from "./DataTablesClient";
@@ -94,10 +87,7 @@ export default async function DashboardPage(props: {
               </code>
             </div>
             <form
-              action={async () => {
-                "use server";
-                await regenerateApiKey(restaurantInternalId);
-              }}
+              action={regenerateApiKeyFromForm.bind(null, restaurantInternalId)}
             >
               <button
                 type="submit"
@@ -160,10 +150,10 @@ export default async function DashboardPage(props: {
       <section className="mt-8 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
         <h2 className="text-xl font-semibold mb-6">Restaurant Settings</h2>
         <form
-          action={async (formData) => {
-            "use server";
-            await updateRestaurantSettings(restaurantInternalId, formData);
-          }}
+          action={updateRestaurantSettingsFromForm.bind(
+            null,
+            restaurantInternalId,
+          )}
           className="grid grid-cols-1 md:grid-cols-2 gap-6"
         >
           <div>
@@ -299,17 +289,10 @@ export default async function DashboardPage(props: {
 
           {!restaurant.walletAddress && (
             <form
-              action={async (formData) => {
-                "use server";
-                const address = formData.get("walletAddress") as string;
-                const result = await linkRestaurantWallet(
-                  restaurantInternalId,
-                  address,
-                );
-                if (!result.success) {
-                  alert(result.error || "Failed to link wallet");
-                }
-              }}
+              action={linkRestaurantWalletFromForm.bind(
+                null,
+                restaurantInternalId,
+              )}
               className="flex gap-2"
             >
               <input

@@ -1,7 +1,9 @@
 "use server";
 
-import { getAuditLog, updateAuditLog, getUserAuditLogs } from "@/lib/audit";
-import { AppConfig, withServerActionHandler } from "@repo/shared";
+import { getUserAuditLogs } from "@/lib/audit";
+import { AppConfig, withServerActionHandler, Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "intention-engine-actions" });
 
 /**
  * Get recent failed tools to avoid in planning
@@ -10,9 +12,10 @@ import { AppConfig, withServerActionHandler } from "@repo/shared";
 export const getPlanWithAvoidance = withServerActionHandler(
   async (intent: string, userId: string) => {
     if (!userId || userId === "anonymous") {
-      console.warn(
-        `[Guardrails] getPlanWithAvoidance called with ${userId ? "anonymous" : "missing"} user context for intent: "${intent.slice(0, 50)}..."`,
-      );
+      logger.warn("getPlanWithAvoidance called with weak user context", {
+        userId: userId || "missing",
+        intentPreview: intent.slice(0, 50),
+      });
     }
     // Phase 2: Memory & Guardrails - Fetch last 5 logs and extract failed tools
     const recentLogs = await getUserAuditLogs(userId || "anonymous", 5);

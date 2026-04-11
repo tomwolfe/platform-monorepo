@@ -4,12 +4,134 @@
  */
 
 import { Plan, PlanStep } from "./types";
-import {
-  DependencyResolverInput,
-  DependencyResolverOutput,
-  StepDependency,
-  DependencyType,
-} from "@repo/mcp-protocol";
+import { DependencyResolverOutput } from "@repo/mcp-protocol";
+
+// ============================================================================
+// PURE HELPER FUNCTIONS FOR KAHN'S ALGORITHM
+// Extracted for testability and reduced cyclomatic complexity
+// ============================================================================
+
+/**
+ * Builds adjacency list and reverse adjacency list from plan steps
+ */
+function buildAdjacencyLists(plan: Plan): {
+  adjacency: Map<string, Set<string>>;
+  reverseAdj: Map<string, Set<string>>;
+} {
+  const adjacency = new Map<string, Set<string>>(); // stepId -> steps that depend on it
+  const reverseAdj = new Map<string, Set<string>>(); // stepId -> steps it depends on
+
+  for (const step of plan.steps) {
+    adjacency.set(step.id, new Set());
+    reverseAdj.set(step.id, new Set(step.dependencies));
+  }
+
+  for (const step of plan.steps) {
+    for (const depId of step.dependencies) {
+      adjacency.get(depId)?.add(step.id);
+    }
+  }
+
+  return { adjacency, reverseAdj };
+}
+
+/**
+ * Initializes in-degree map for all steps
+ */
+function buildInDegreeMap(plan: Plan): Map<string, number> {
+  const inDegree = new Map<string, number>();
+
+  for (const step of plan.steps) {
+    inDegree.set(step.id, step.dependencies.length);
+  }
+
+  return inDegree;
+}
+
+/**
+ * Finds all steps that are ready to execute (in-degree = 0 and not visited)
+ */
+function findReadySteps(
+  plan: Plan,
+  visited: Set<string>,
+  inDegree: Map<string, number>,
+): PlanStep[] {
+  const readySteps: PlanStep[] = [];
+
+  for (const step of plan.steps) {
+    if (!visited.has(step.id) && (inDegree.get(step.id) || 0) === 0) {
+      readySteps.push(step);
+    }
+  }
+
+  return readySteps;
+}
+
+/**
+ * Updates in-degree for all dependents of a completed step
+ */
+function updateDependentDegrees(
+  stepId: string,
+  adjacency: Map<string, Set<string>>,
+  inDegree: Map<string, number>,
+): void {
+  for (const dependentId of Array.from(
+    adjacency.get(stepId) || new Set<string>(),
+  )) {
+    const currentDegree = inDegree.get(dependentId) || 0;
+    inDegree.set(dependentId, currentDegree - 1);
+  }
+}
+
+/**
+ * Estimates the latency for executing a batch of steps
+ */
+function estimateBatchLatency(steps: PlanStep[]): number {
+  // Batch latency is the max of all step latencies (parallel execution)
+  return Math.max(...steps.map((s) => s.timeout_ms || 30000), 0);
+}
+
+/**
+ * Generates optimization suggestions based on plan analysis
+ */
+function generateOptimizationSuggestions(
+  plan: Plan,
+  batches: Array<{ stepIds: string[]; canExecuteInParallel: boolean }>,
+): string[] {
+  const suggestions: string[] = [];
+
+  // Check for sequential bottlenecks
+  const sequentialBatches = batches.filter(
+    (b) => !b.canExecuteInParallel && b.stepIds.length === 1,
+  );
+  if (sequentialBatches.length > plan.steps.length / 2) {
+    suggestions.push(
+      "Plan has many sequential dependencies; consider restructuring independent operations",
+    );
+  }
+
+  // Check for potential fan-out opportunities
+  const fanOutCandidates = plan.steps.filter((s) =>
+    Object.values(s.parameters).some((val) => Array.isArray(val)),
+  );
+  if (fanOutCandidates.length > 0) {
+    suggestions.push(
+      `Found ${fanOutCandidates.length} steps that may benefit from fan-out execution`,
+    );
+  }
+
+  // Check for steps with high estimated tokens
+  const highTokenSteps = plan.steps.filter(
+    (s) => (s.estimated_tokens || 0) > 1000,
+  );
+  if (highTokenSteps.length > 0) {
+    suggestions.push(
+      `${highTokenSteps.length} steps have high token estimates (>1000); consider breaking them down`,
+    );
+  }
+
+  return suggestions;
+}
 
 /**
  * DependencyResolver
@@ -30,45 +152,22 @@ export class DependencyResolver {
   static resolveDependencies(plan: Plan): DependencyResolverOutput {
     const startTime = performance.now();
 
-    // Build adjacency list and reverse adjacency list
-    const adjacency = new Map<string, Set<string>>(); // stepId -> steps that depend on it
-    const reverseAdj = new Map<string, Set<string>>(); // stepId -> steps it depends on
-
-    for (const step of plan.steps) {
-      adjacency.set(step.id, new Set());
-      reverseAdj.set(step.id, new Set(step.dependencies));
-    }
-
-    for (const step of plan.steps) {
-      for (const depId of step.dependencies) {
-        adjacency.get(depId)?.add(step.id);
-      }
-    }
+    // Build graph structures
+    const { adjacency } = buildAdjacencyLists(plan);
 
     // Detect state conflicts (steps that write to same output)
     const stateConflicts = this.detectStateConflicts(plan);
 
-    // Topological sort with batching
+    // Initialize execution tracking
     const batches: Array<{ stepIds: string[]; canExecuteInParallel: boolean }> =
       [];
     const visited = new Set<string>();
-    const inDegree = new Map<string, number>();
-
-    // Initialize in-degrees
-    for (const step of plan.steps) {
-      inDegree.set(step.id, step.dependencies.length);
-    }
+    const inDegree = buildInDegreeMap(plan);
 
     // Kahn's algorithm with parallel batching
     while (visited.size < plan.steps.length) {
-      // Find all nodes with in-degree 0 that haven't been visited
-      const readySteps: PlanStep[] = [];
-
-      for (const step of plan.steps) {
-        if (!visited.has(step.id) && (inDegree.get(step.id) || 0) === 0) {
-          readySteps.push(step);
-        }
-      }
+      // Find all steps ready to execute
+      const readySteps = findReadySteps(plan, visited, inDegree);
 
       if (readySteps.length === 0) {
         // This shouldn't happen if the plan is a valid DAG
@@ -76,29 +175,22 @@ export class DependencyResolver {
       }
 
       // Group ready steps by conflict sets
-      // Steps that conflict with each other must be in different batches
       const parallelizableGroups = this.groupByConflicts(
         readySteps,
         stateConflicts,
       );
 
+      // Create batches from groups
       for (const group of parallelizableGroups) {
         batches.push({
           stepIds: group.map((s) => s.id),
           canExecuteInParallel: group.length > 1,
         });
 
-        // Mark all steps in this batch as visited
+        // Mark all steps in this batch as visited and update degrees
         for (const step of group) {
           visited.add(step.id);
-
-          // Reduce in-degree for all dependents
-          for (const dependentId of Array.from(
-            adjacency.get(step.id) || new Set<string>(),
-          )) {
-            const currentDegree = inDegree.get(dependentId) || 0;
-            inDegree.set(dependentId, currentDegree - 1);
-          }
+          updateDependentDegrees(step.id, adjacency, inDegree);
         }
       }
     }
@@ -117,7 +209,7 @@ export class DependencyResolver {
         batchNumber: index,
         steps: batch.stepIds,
         canExecuteInParallel: batch.canExecuteInParallel,
-        estimatedBatchLatencyMs: this.estimateBatchLatency(
+        estimatedBatchLatencyMs: estimateBatchLatency(
           batch.stepIds.map((id) => plan.steps.find((s) => s.id === id)!),
         ),
       })),
@@ -128,10 +220,7 @@ export class DependencyResolver {
           .length,
         sequentialGroups: batches.filter((b) => !b.canExecuteInParallel).length,
         estimatedTotalLatencyMs: Math.round(endTime - startTime),
-        optimizationSuggestions: this.generateOptimizationSuggestions(
-          plan,
-          batches,
-        ),
+        optimizationSuggestions: generateOptimizationSuggestions(plan, batches),
       },
     };
   }
@@ -162,7 +251,7 @@ export class DependencyResolver {
     }
 
     // Build conflict graph
-    for (const [outputKey, stepIds] of outputWrites) {
+    for (const [_outputKey, stepIds] of outputWrites) {
       if (stepIds.length > 1) {
         for (const stepId of stepIds) {
           if (!conflicts.has(stepId)) {
@@ -227,57 +316,6 @@ export class DependencyResolver {
   }
 
   /**
-   * Estimates the latency for executing a batch of steps
-   */
-  private static estimateBatchLatency(steps: PlanStep[]): number {
-    // Batch latency is the max of all step latencies (parallel execution)
-    return Math.max(...steps.map((s) => s.timeout_ms || 30000), 0);
-  }
-
-  /**
-   * Generates optimization suggestions based on plan analysis
-   */
-  private static generateOptimizationSuggestions(
-    plan: Plan,
-    batches: Array<{ stepIds: string[]; canExecuteInParallel: boolean }>,
-  ): string[] {
-    const suggestions: string[] = [];
-
-    // Check for sequential bottlenecks
-    const sequentialBatches = batches.filter(
-      (b) => !b.canExecuteInParallel && b.stepIds.length === 1,
-    );
-    if (sequentialBatches.length > plan.steps.length / 2) {
-      suggestions.push(
-        "Plan has many sequential dependencies; consider restructuring independent operations",
-      );
-    }
-
-    // Check for potential fan-out opportunities
-    // Fan-out is triggered by steps with array parameters (multi-item operations)
-    const fanOutCandidates = plan.steps.filter((s) =>
-      Object.values(s.parameters).some((val) => Array.isArray(val)),
-    );
-    if (fanOutCandidates.length > 0) {
-      suggestions.push(
-        `Found ${fanOutCandidates.length} steps that may benefit from fan-out execution`,
-      );
-    }
-
-    // Check for steps with high estimated tokens
-    const highTokenSteps = plan.steps.filter(
-      (s) => (s.estimated_tokens || 0) > 1000,
-    );
-    if (highTokenSteps.length > 0) {
-      suggestions.push(
-        `${highTokenSteps.length} steps have high token estimates (>1000); consider breaking them down`,
-      );
-    }
-
-    return suggestions;
-  }
-
-  /**
    * Determines if two steps can execute in parallel
    *
    * @param stepA - First step
@@ -312,18 +350,19 @@ export class DependencyResolver {
   private static extractOutputKeys(step: PlanStep): Set<string> {
     const outputs = new Set<string>();
 
-    const scanRecursively = (obj: any) => {
+    const scanRecursively = (obj: unknown, path: string[] = []): void => {
       if (!obj) return;
       if (typeof obj === "string" && obj.startsWith("$")) {
         // It's an input reference, skip
         return;
       }
       if (typeof obj === "object") {
-        for (const [key, value] of Object.entries(obj)) {
+        const record = obj as Record<string, unknown>;
+        for (const [key, value] of Object.entries(record)) {
           if (typeof value === "string" && !value.startsWith("$")) {
             outputs.add(`${step.tool_name}:${key}`);
-          } else if (typeof value === "object") {
-            scanRecursively(value);
+          } else if (typeof value === "object" && value !== null) {
+            scanRecursively(value, [...path, key]);
           }
         }
       }
@@ -355,6 +394,8 @@ export class BatchExecutionPlanner {
     }
 
     const batch = this.resolverOutput.batches[this.currentBatchIndex];
+    if (!batch) return null;
+
     return {
       batchNumber: batch.batchNumber,
       stepIds: batch.steps,

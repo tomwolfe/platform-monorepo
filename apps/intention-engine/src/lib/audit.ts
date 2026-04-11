@@ -1,8 +1,10 @@
-import { getRedisClient, ServiceNamespace } from '@repo/shared';
-import { getPrivacyGateway } from '@repo/shared/services/privacy-gateway';
+import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
+import { getPrivacyGateway } from "@repo/shared/services/privacy-gateway";
 const redis = getRedisClient(ServiceNamespace.IE);
 import type { Plan, Intent } from "./schema";
 import type { AuditLog } from "./types";
+
+const logger = new Logger({ serviceName: "audit" });
 
 const AUDIT_LOG_PREFIX = "audit_log:";
 const USER_LOGS_PREFIX = "user_logs:";
@@ -11,31 +13,36 @@ const AUDIT_LOGS_INDEX = "audit_logs:index"; // Sorted set for time-ordered look
 /**
  * Calculates a SHA-256 hash of the intent's core content for cryptographic linking.
  */
-export async function calculateIntentHash(intent: Omit<Intent, "hash">): Promise<string> {
+export async function calculateIntentHash(
+  intent: Omit<Intent, "hash">,
+): Promise<string> {
   const content = JSON.stringify({
     type: intent.type,
     parameters: intent.parameters,
     rawText: intent.rawText,
-    parent_intent_id: intent.parent_intent_id
+    parent_intent_id: intent.parent_intent_id,
   });
 
   const msgUint8 = new TextEncoder().encode(content);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", msgUint8);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export async function createAuditLog(
   intent: Intent,
   plan?: Plan,
   userLocation?: { lat: number; lng: number },
-  userId: string = "anonymous"
+  userId: string = "anonymous",
 ): Promise<AuditLog> {
   const id = crypto.randomUUID();
 
   // Enforce Privacy Gateway: scrub PII before persistence
   const gateway = getPrivacyGateway();
-  const privacyResult = await gateway.scrubMemoryEntry(intent.rawText, intent.parameters);
+  const privacyResult = await gateway.scrubMemoryEntry(
+    intent.rawText,
+    intent.parameters,
+  );
 
   // Store scrubbed versions in the intent
   const scrubbedIntent = {
@@ -59,25 +66,30 @@ export async function createAuditLog(
     steps: [],
     toolExecutionLatencies: {
       latencies: {},
-      totalToolExecutionTime: 0
+      totalToolExecutionTime: 0,
     },
     // Store token map in metadata for authorized reversal
     metadata: {
-      piiTokenMap: Object.keys(privacyResult.tokenMap).length > 0
-        ? privacyResult.tokenMap
-        : undefined,
+      piiTokenMap:
+        Object.keys(privacyResult.tokenMap).length > 0
+          ? privacyResult.tokenMap
+          : undefined,
       piiDetectedCount: privacyResult.detectedPii.length,
-    }
+    },
   };
 
   if (redis) {
-    await redis.set(`${AUDIT_LOG_PREFIX}${id}`, JSON.stringify(log), { ex: 86400 * 7 }); // Store for 7 days
+    await redis.set(`${AUDIT_LOG_PREFIX}${id}`, JSON.stringify(log), {
+      ex: 86400 * 7,
+    }); // Store for 7 days
 
     // Maintain sorted set index for efficient analytics queries
     try {
       await redis.zadd(AUDIT_LOGS_INDEX, { score: Date.now(), member: id });
     } catch (err) {
-      console.warn("Failed to update audit log index:", err);
+      logger.warn("Failed to update audit log index", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     // Track logs for this user
@@ -85,36 +97,52 @@ export async function createAuditLog(
       await redis.lpush(`${USER_LOGS_PREFIX}${userId}`, id);
       await redis.ltrim(`${USER_LOGS_PREFIX}${userId}`, 0, 19); // Keep last 20 logs
     } catch (err) {
-      console.warn("Failed to update user logs index:", err);
+      logger.warn("Failed to update user logs index", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   } else {
-    console.warn("Redis not configured, audit log will not be persisted");
+    logger.warn("Redis not configured, audit log will not be persisted");
   }
 
   return log;
 }
 
-export async function getUserAuditLogs(userId: string, limit: number = 5): Promise<AuditLog[]> {
+export async function getUserAuditLogs(
+  userId: string,
+  limit: number = 5,
+): Promise<AuditLog[]> {
   if (!redis) return [];
 
   try {
-    const ids = await redis.lrange(`${USER_LOGS_PREFIX}${userId}`, 0, limit - 1);
+    const ids = await redis.lrange(
+      `${USER_LOGS_PREFIX}${userId}`,
+      0,
+      limit - 1,
+    );
     if (!ids || ids.length === 0) return [];
 
-    const logs = await Promise.all(ids.map(id => getAuditLog(id)));
+    const logs = await Promise.all(ids.map((id) => getAuditLog(id)));
     return logs.filter((log): log is AuditLog => !!log);
   } catch (err) {
-    console.warn(`Failed to fetch audit logs for user ${userId}:`, err);
+    logger.warn(`Failed to fetch audit logs for user ${userId}`, {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return [];
   }
 }
 
-export async function updateAuditLog(id: string, update: Partial<AuditLog>): Promise<void> {
+export async function updateAuditLog(
+  id: string,
+  update: Partial<AuditLog>,
+): Promise<void> {
   if (redis) {
     const existing = await getAuditLog(id);
     if (existing) {
       const updated = { ...existing, ...update };
-      await redis.set(`${AUDIT_LOG_PREFIX}${id}`, JSON.stringify(updated), { ex: 86400 * 7 });
+      await redis.set(`${AUDIT_LOG_PREFIX}${id}`, JSON.stringify(updated), {
+        ex: 86400 * 7,
+      });
     }
   }
 }
@@ -134,7 +162,7 @@ export async function getAuditLog(id: string): Promise<AuditLog | undefined> {
  */
 export async function supersedeIntent(
   auditLogId: string,
-  newIntent: Intent
+  newIntent: Intent,
 ): Promise<void> {
   const log = await getAuditLog(auditLogId);
   if (!log) throw new Error(`Audit log ${auditLogId} not found`);
@@ -147,10 +175,14 @@ export async function supersedeIntent(
     ...log,
     intent_history: [...(log.intent_history || []), log.intent],
     intent: newIntent,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   };
 
   if (redis) {
-    await redis.set(`${AUDIT_LOG_PREFIX}${auditLogId}`, JSON.stringify(updatedLog), { ex: 86400 * 7 });
+    await redis.set(
+      `${AUDIT_LOG_PREFIX}${auditLogId}`,
+      JSON.stringify(updatedLog),
+      { ex: 86400 * 7 },
+    );
   }
 }

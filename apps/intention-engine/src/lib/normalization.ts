@@ -1,6 +1,9 @@
 import { IntentSchema } from "./schema";
 import type { Intent, IntentType } from "./schema";
 import { validateIntentParams, REQUIRED_FIELDS_MAP } from "./resolveAmbiguity";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "normalization" });
 
 /**
  * NormalizationService provides parameter validation and normalization
@@ -107,8 +110,11 @@ export function normalizeIntent(
   });
 
   if (!parsed.success) {
-    console.warn(
-      "[Normalization] Schema validation failed, returning CLARIFICATION_REQUIRED fallback.",
+    logger.warn(
+      "Schema validation failed, returning CLARIFICATION_REQUIRED fallback",
+      {
+        errors: parsed.error.errors,
+      },
     );
     return createFallbackIntent(
       rawText,

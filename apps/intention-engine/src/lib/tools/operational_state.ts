@@ -1,8 +1,10 @@
 import { z } from "zod";
-import { getRedisClient, ServiceNamespace } from "@repo/shared";
+import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
 import { ToolExecutionContext } from "../engine/tools/registry";
 import { ToolDefinitionMetadata } from "./types";
 import { GetLiveOperationalStateSchema as LiveStateSchema } from "@repo/mcp-protocol";
+
+const logger = new Logger({ serviceName: "tool-operational-state" });
 
 export type LiveStateParams = z.infer<typeof LiveStateSchema>;
 
@@ -26,7 +28,7 @@ function getFallbackRedis() {
 export async function get_live_operational_state(
   params: LiveStateParams,
   context?: ToolExecutionContext,
-): Promise<{ success: boolean; result?: any; error?: string }> {
+): Promise<{ success: boolean; result?: unknown; error?: string }> {
   const validated = LiveStateSchema.safeParse(params);
   if (!validated.success) {
     return {
@@ -54,7 +56,7 @@ export async function get_live_operational_state(
     }
 
     // Parse values back from JSON strings
-    const parsedData: Record<string, any> = {};
+    const parsedData: Record<string, unknown> = {};
     for (const [tableId, value] of Object.entries(liveData)) {
       parsedData[tableId] =
         typeof value === "string" ? JSON.parse(value) : value;
@@ -68,8 +70,14 @@ export async function get_live_operational_state(
       },
     };
   } catch (error: unknown) {
-    console.error("[Tool: get_live_operational_state] Error:", error);
-    return { success: false, error: error.message };
+    logger.error("Failed to get live operational state", {
+      restaurantId: validated.data?.restaurant_id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 

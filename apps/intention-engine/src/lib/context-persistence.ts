@@ -35,9 +35,10 @@ export async function saveUserInteractionContext(
       })
       .where(eq(users.clerkId, userId));
 
-    console.log(
-      `[Context Persistence] Saved context for user ${userId}: ${context.intentType}`,
-    );
+    logger.info("Saved context for user", {
+      userId,
+      intentType: context.intentType,
+    });
   } catch (error) {
     logger.error({
       message: `[Context Persistence] Failed to save context for user ${userId}`,

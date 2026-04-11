@@ -1,7 +1,12 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { signAsymmetricJWT, SecurityProvider } from "@repo/auth";
-import { getRedisClient, ServiceNamespace, AppConfig } from "@repo/shared";
+import { signAsymmetricJWT } from "@repo/auth";
+import {
+  getRedisClient,
+  ServiceNamespace,
+  AppConfig,
+  Logger,
+} from "@repo/shared";
 import { SERVICES } from "@repo/shared";
 import {
   TOOLS,
@@ -15,6 +20,8 @@ import {
 import { createSchemaEvolutionService } from "@repo/shared";
 import * as zod from "zod";
 import { mapJsonSchemaToZod } from "./engine/schema-utils";
+
+const logger = new Logger({ serviceName: "dynamic-mcp-client" });
 
 /**
  * MCP Client - Enhanced with Dynamic Tool Discovery and Schema Evolution
@@ -77,7 +84,7 @@ export class ParameterAliaser {
   constructor(aliases: Record<string, string> = PARAMETER_ALIASES) {
     this.aliases = aliases;
     // Lazy initialization of schema evolution service
-    this.initializeSchemaEvolution();
+    void this.initializeSchemaEvolution();
   }
 
   /**
@@ -89,11 +96,13 @@ export class ParameterAliaser {
       const redis = getRedisClient(ServiceNamespace.IE);
       if (redis) {
         this.schemaEvolutionService = createSchemaEvolutionService({ redis });
-        console.log("[ParameterAliaser] Schema evolution tracking enabled");
+        logger.info("ParameterAliaser schema evolution tracking enabled");
       }
     } catch (error) {
       // Silently fail - schema evolution is optional
-      console.warn("[ParameterAliaser] Schema evolution not available:", error);
+      logger.warn("ParameterAliaser schema evolution initialization failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -107,9 +116,11 @@ export class ParameterAliaser {
 
     // Log frequently used aliases for schema evolution review
     if (count > 10 && this.schemaEvolutionService) {
-      console.log(
-        `[ParameterAliaser] High-frequency alias detected: ${alias} -> ${canonical} (${count + 1} uses)`,
-      );
+      logger.info("High-frequency alias detected", {
+        alias,
+        canonical,
+        usageCount: count + 1,
+      });
       // Could trigger schema evolution review here
     }
   }
@@ -133,7 +144,7 @@ export class ParameterAliaser {
       ) {
         resolved[primary as string] = resolved[alias];
         delete resolved[alias];
-        console.log(`[ParameterAliaser] Applied alias: ${alias} -> ${primary}`);
+        logger.debug("Applied parameter alias", { alias, primary });
         this.trackAliasUsage(alias, primary as string);
         aliasApplied = true;
       }
@@ -154,9 +165,7 @@ export class ParameterAliaser {
           ) {
             resolved[primary as string] = resolved[alias];
             delete resolved[alias];
-            console.log(
-              `[ParameterAliaser] Applied tool-specific alias: ${alias} -> ${primary}`,
-            );
+            logger.debug("Applied tool-specific alias", { alias, primary });
             this.trackAliasUsage(alias, primary as string);
             aliasApplied = true;
           }
@@ -165,9 +174,9 @@ export class ParameterAliaser {
     }
 
     if (aliasApplied) {
-      console.log(
-        `[ParameterAliaser] Alias resolution complete. Applied ${Object.keys(resolved).length} parameters`,
-      );
+      logger.debug("Alias resolution complete", {
+        parameterCount: Object.keys(resolved).length,
+      });
     }
 
     return resolved;
@@ -251,18 +260,17 @@ export class DynamicMcpClientManager {
    * Initialize all MCP clients
    */
   async initialize(): Promise<void> {
-    console.log(
-      `[DynamicMcpClient] Initializing ${this.serviceRegistry.length} services`,
-    );
+    logger.info("Initializing MCP services", {
+      serviceCount: this.serviceRegistry.length,
+    });
 
     for (const service of this.serviceRegistry) {
       try {
         await this.connectToService(service);
       } catch (error) {
-        console.error(
-          `[DynamicMcpClient] Failed to connect to ${service.name}:`,
-          error,
-        );
+        logger.error(`Failed to connect to MCP service: ${service.name}`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }
@@ -276,13 +284,13 @@ export class DynamicMcpClientManager {
    */
   private async connectToService(service: ServiceRegistryEntry): Promise<void> {
     if (this.clients.has(service.name)) {
-      console.log(`[DynamicMcpClient] Already connected to ${service.name}`);
+      logger.debug(`Already connected to MCP service: ${service.name}`);
       return;
     }
 
-    console.log(
-      `[DynamicMcpClient] Connecting to ${service.name} at ${service.mcpUrl}`,
-    );
+    logger.info(`Connecting to MCP service: ${service.name}`, {
+      url: service.mcpUrl,
+    });
 
     const client = await createMcpClient(service.mcpUrl);
     this.clients.set(service.name, client);
@@ -290,9 +298,9 @@ export class DynamicMcpClientManager {
     // Discover tools from this service
     try {
       const tools = await client.listTools();
-      console.log(
-        `[DynamicMcpClient] Discovered ${tools.tools.length} tools from ${service.name}`,
-      );
+      logger.info(`Discovered tools from MCP service: ${service.name}`, {
+        toolCount: tools.tools.length,
+      });
 
       // Register tools with strict schema validation
       for (const tool of tools.tools) {
@@ -314,8 +322,11 @@ export class DynamicMcpClientManager {
               if ("type" in schemaRecord) {
                 const schemaType = schemaRecord.type;
                 if (typeof schemaType === "string" && schemaType !== "object") {
-                  console.warn(
-                    `[DynamicMcpClient] Tool ${tool.name} has non-object inputSchema type: ${schemaType}`,
+                  logger.warn(
+                    `Tool ${tool.name} has non-object inputSchema type`,
+                    {
+                      schemaType,
+                    },
                   );
                 }
               }
@@ -328,9 +339,7 @@ export class DynamicMcpClientManager {
                   // Convert to Zod schema for strict validation
                   zodSchema = mapJsonSchemaToZod(schemaRecord);
                 } else {
-                  console.warn(
-                    `[DynamicMcpClient] Tool ${tool.name} has invalid properties field, skipping schema`,
-                  );
+                  logger.warn(`Tool ${tool.name} has invalid properties field`);
                 }
               } else {
                 // Schema without properties is valid (empty params)
@@ -339,12 +348,12 @@ export class DynamicMcpClientManager {
               }
             }
           } catch (schemaError) {
-            console.warn(
-              `[DynamicMcpClient] Failed to validate schema for ${tool.name}:`,
-              schemaError instanceof Error
-                ? schemaError.message
-                : String(schemaError),
-            );
+            logger.warn(`Failed to validate schema for tool: ${tool.name}`, {
+              error:
+                schemaError instanceof Error
+                  ? schemaError.message
+                  : String(schemaError),
+            });
             // Continue without schema validation
           }
         }
@@ -359,10 +368,9 @@ export class DynamicMcpClientManager {
         });
       }
     } catch (error) {
-      console.warn(
-        `[DynamicMcpClient] Failed to list tools from ${service.name}:`,
-        error,
-      );
+      logger.warn(`Failed to list tools from MCP service: ${service.name}`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -453,12 +461,12 @@ export class DynamicMcpClientManager {
         try {
           validatedParams = toolDef.zodSchema.parse(parameters);
         } catch (validationError) {
-          console.warn(
-            `[DynamicMcpClient] Zod validation failed for ${toolName as string}:`,
-            validationError instanceof zod.ZodError
-              ? validationError.errors
-              : validationError,
-          );
+          logger.warn(`Zod validation failed for tool: ${toolName as string}`, {
+            error:
+              validationError instanceof zod.ZodError
+                ? validationError.errors
+                : validationError,
+          });
           // Fall back to original parameters
           validatedParams = parameters;
         }
@@ -482,10 +490,11 @@ export class DynamicMcpClientManager {
           (toolDef.inputSchema as unknown as zod.ZodType | undefined),
       ) as Record<string, unknown>;
 
-      console.log(
-        `[DynamicMcpClient] Executing ${toolName as string} on ${targetServer}`,
-        { original: parameters, resolved: resolvedParams },
-      );
+      logger.debug("Executing MCP tool", {
+        toolName: toolName as string,
+        targetServer,
+        parameterCount: Object.keys(resolvedParams).length,
+      });
 
       // Execute tool
       const result = await client.callTool({
@@ -537,7 +546,7 @@ export class DynamicMcpClientManager {
    * Refresh tool registry (e.g., after new service deployment)
    */
   async refreshToolRegistry(): Promise<void> {
-    console.log("[DynamicMcpClient] Refreshing tool registry");
+    logger.info("Refreshing MCP tool registry");
     this.toolRegistry.clear();
 
     for (const [name, client] of this.clients.entries()) {
@@ -552,10 +561,9 @@ export class DynamicMcpClientManager {
           });
         }
       } catch (error) {
-        console.error(
-          `[DynamicMcpClient] Failed to refresh tools from ${name}:`,
-          error,
-        );
+        logger.error(`Failed to refresh tools from MCP service: ${name}`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }

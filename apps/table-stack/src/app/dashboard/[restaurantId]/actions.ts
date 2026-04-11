@@ -531,6 +531,81 @@ export const linkRestaurantWallet = withServerActionHandler(
 );
 
 /**
+ * Link Restaurant Wallet from Form Data Server Action
+ * Extracted from inline server action in dashboard page
+ */
+export const linkRestaurantWalletFromForm = withServerActionHandler(
+  withOwnership(async (restaurantId: string, formData: FormData) => {
+    const address = formData.get("walletAddress") as string;
+
+    if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
+      throw new Error(
+        "Invalid wallet address format. Must be a valid Ethereum address (0x...)",
+      );
+    }
+
+    await getDb()
+      .update(restaurants)
+      .set({ walletAddress: address })
+      .where(eq(restaurants.id, restaurantId));
+
+    revalidatePath(`/dashboard/${restaurantId}`);
+    return { message: "Wallet linked successfully" };
+  }),
+  { errorCode: "LINK_WALLET_FROM_FORM_FAILED" },
+);
+
+/**
+ * Regenerate API Key Server Action
+ * Extracted from inline server action in dashboard page
+ */
+export const regenerateApiKeyFromForm = withServerActionHandler(
+  withOwnership(async (restaurantId: string) => {
+    const newKey = generateApiKey();
+
+    await getDb()
+      .update(restaurants)
+      .set({ apiKey: newKey })
+      .where(eq(restaurants.id, restaurantId));
+
+    revalidatePath(`/dashboard/${restaurantId}`);
+    return { apiKey: newKey };
+  }),
+  { errorCode: "REGENERATE_API_KEY_FROM_FORM_FAILED" },
+);
+
+/**
+ * Update Restaurant Settings from Form Data Server Action
+ * Extracted from inline server action in dashboard page
+ */
+export const updateRestaurantSettingsFromForm = withServerActionHandler(
+  withOwnership(async (restaurantId: string, formData: FormData) => {
+    const rawData = {
+      openingTime: formData.get("openingTime"),
+      closingTime: formData.get("closingTime"),
+      daysOpen: formData.get("daysOpen"),
+      timezone: formData.get("timezone"),
+      defaultDurationMinutes: parseInt(
+        (formData.get("defaultDurationMinutes") as string) || "90",
+      ),
+    };
+
+    const validated = SettingsSchema.parse(rawData);
+
+    await getDb()
+      .update(restaurants)
+      .set({
+        ...validated,
+      })
+      .where(eq(restaurants.id, restaurantId));
+
+    revalidatePath(`/dashboard/${restaurantId}`);
+    return { message: "Settings updated successfully" };
+  }),
+  { errorCode: "UPDATE_SETTINGS_FROM_FORM_FAILED" },
+);
+
+/**
  * Get Restaurant Wallet Server Action
  */
 export const getRestaurantWallet = withServerActionHandler(

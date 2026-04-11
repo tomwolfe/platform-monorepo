@@ -1,5 +1,8 @@
 import { Redis } from "@upstash/redis";
 import { AppConfig } from "./config";
+import { Logger } from "./logger";
+
+const logger = new Logger({ serviceName: "shared-redis" });
 
 /**
  * Service Namespace Enum
@@ -34,10 +37,10 @@ export function wrapWithPrefix<T extends object>(obj: T, prefix: string): T {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (typeof value === "function") {
-        return (...args: any[]) => {
+        return (...args: unknown[]) => {
           // Special handling for keys()
           if (prop === "keys") {
-            const pattern = args[0] || "*";
+            const pattern = (args[0] as string) || "*";
             return target
               .keys(prefix + pattern)
               .then((keys: string[]) =>
@@ -132,10 +135,9 @@ export const getRedisConfig = (appName: string) => {
     }
     // Development/CI/test: provide fallback without warnings in CI
     if (process.env.CI !== "true" && !AppConfig.isTest()) {
-      console.warn(
-        `[${appName}] Redis environment variables missing. ` +
-          "Using localhost fallback. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for production.",
-      );
+      logger.warn(`Redis environment variables missing for ${appName}`, {
+        note: "Using localhost fallback. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for production.",
+      });
     }
     // Use localhost with Upstash proxy port (8080) for SDK compatibility
     return {

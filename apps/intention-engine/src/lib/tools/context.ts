@@ -1,11 +1,14 @@
 import { z } from "zod";
-import { ToolDefinitionMetadata, ToolParameter } from "./types";
+import { ToolDefinitionMetadata } from "./types";
 import { normalizeLocation } from "./mobility";
-import { WeatherSchema, UnifiedLocationSchema } from "@repo/mcp-protocol";
+import { WeatherSchema } from "@repo/mcp-protocol";
 import {
   withNervousSystemTracing,
   injectTracingHeaders,
 } from "@repo/shared/tracing";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "tool-context" });
 
 export type WeatherParams = z.infer<typeof WeatherSchema>;
 
@@ -21,7 +24,7 @@ import { geocode_location } from "./location_search";
 
 export async function get_weather(
   params: WeatherParams,
-): Promise<{ success: boolean; result?: any; error?: string }> {
+): Promise<{ success: boolean; result?: unknown; error?: string }> {
   const validated = WeatherSchema.safeParse(params);
   if (!validated.success) {
     return {
@@ -30,7 +33,7 @@ export async function get_weather(
     };
   }
 
-  let { location, date } = validated.data;
+  let { location } = validated.data;
   let lat: number;
   let lon: number;
 
@@ -51,9 +54,11 @@ export async function get_weather(
   }
 
   const normalizedLocation = normalizeLocation(location);
-  console.log(
-    `Getting functional weather for ${normalizedLocation} (${lat}, ${lon})...`,
-  );
+  logger.debug("Getting weather for location", {
+    normalizedLocation,
+    lat,
+    lon,
+  });
 
   try {
     return await withNervousSystemTracing(async ({ correlationId }) => {

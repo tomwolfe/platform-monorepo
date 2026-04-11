@@ -34,9 +34,6 @@
  * @since 1.0.0
  */
 
-import { z } from 'zod';
-import { ExecutionState, type ExecutionStatus } from '@repo/shared';
-
 // ============================================================================
 // TYPE DEFINITIONS
 // ============================================================================
@@ -70,7 +67,7 @@ export interface FieldChange {
   /** Field path (e.g., 'steps.3.status') */
   path: string;
   /** Type of change */
-  changeType: 'added' | 'removed' | 'modified';
+  changeType: "added" | "removed" | "modified";
   /** Previous value (for modified/removed) */
   oldValue?: unknown;
   /** New value (for added/modified) */
@@ -153,7 +150,7 @@ export class StateDiffViewer {
       stepIndex?: number;
       stepId?: string;
       label?: string;
-    }
+    },
   ): StateSnapshot {
     // Enforce max snapshots
     if (this.snapshots.size >= this.config.maxSnapshots) {
@@ -165,14 +162,12 @@ export class StateDiffViewer {
     }
 
     // Deep clone if configured
-    const stateToStore = this.config.deepClone
-      ? this.deepClone(state)
-      : state;
+    const stateToStore = this.config.deepClone ? this.deepClone(state) : state;
 
     const snapshot: StateSnapshot = {
       id: snapshotId,
       timestamp: new Date().toISOString(),
-      executionId: metadata?.executionId || 'unknown',
+      executionId: metadata?.executionId || "unknown",
       stepIndex: metadata?.stepIndex,
       stepId: metadata?.stepId,
       state: stateToStore,
@@ -184,7 +179,8 @@ export class StateDiffViewer {
 
     // Add to timeline if enabled
     if (this.config.enableTimeline) {
-      const previousSnapshot = this.timeline[this.timeline.length - 1]?.snapshot;
+      const previousSnapshot =
+        this.timeline[this.timeline.length - 1]?.snapshot;
       let diffFromPrevious: StateDiff | undefined;
 
       if (previousSnapshot) {
@@ -199,7 +195,7 @@ export class StateDiffViewer {
 
     console.log(
       `[StateDiffViewer] Captured snapshot ${snapshotId}` +
-      (metadata?.label ? ` (${metadata.label})` : '')
+        (metadata?.label ? ` (${metadata.label})` : ""),
     );
 
     return snapshot;
@@ -233,14 +229,14 @@ export class StateDiffViewer {
     const changes: FieldChange[] = [];
 
     // Compute diff
-    this.diffObjects('', fromSnapshot.state, toSnapshot.state, changes);
+    this.diffObjects("", fromSnapshot.state, toSnapshot.state, changes);
 
     // Calculate summary
     const summary = {
       totalChanges: changes.length,
-      added: changes.filter(c => c.changeType === 'added').length,
-      removed: changes.filter(c => c.changeType === 'removed').length,
-      modified: changes.filter(c => c.changeType === 'modified').length,
+      added: changes.filter((c) => c.changeType === "added").length,
+      removed: changes.filter((c) => c.changeType === "removed").length,
+      modified: changes.filter((c) => c.changeType === "modified").length,
     };
 
     // Calculate time delta
@@ -287,9 +283,9 @@ export class StateDiffViewer {
       modified: number;
     };
   }> {
-    return this.timeline.map(entry => ({
+    return this.timeline.map((entry) => ({
       timestamp: entry.snapshot.timestamp,
-      label: entry.snapshot.label || `Step ${entry.snapshot.stepIndex ?? '?'}`,
+      label: entry.snapshot.label || `Step ${entry.snapshot.stepIndex ?? "?"}`,
       changeCount: entry.diffFromPrevious?.summary.totalChanges ?? 0,
       changes: {
         added: entry.diffFromPrevious?.summary.added ?? 0,
@@ -311,33 +307,41 @@ export class StateDiffViewer {
     lines.push(`  Added: ${diff.summary.added}`);
     lines.push(`  Removed: ${diff.summary.removed}`);
     lines.push(`  Modified: ${diff.summary.modified}`);
-    lines.push('');
+    lines.push("");
 
     if (diff.changes.length === 0) {
-      lines.push('No changes detected.');
+      lines.push("No changes detected.");
     } else {
-      lines.push('Changes:');
-      lines.push('───────────────────────────────────────────────────');
+      lines.push("Changes:");
+      lines.push("───────────────────────────────────────────────────");
 
       for (const change of diff.changes) {
-        const icon = change.changeType === 'added' ? '+' :
-                     change.changeType === 'removed' ? '-' : '~';
-        const color = change.changeType === 'added' ? 'green' :
-                      change.changeType === 'removed' ? 'red' : 'yellow';
+        const icon =
+          change.changeType === "added"
+            ? "+"
+            : change.changeType === "removed"
+              ? "-"
+              : "~";
+        const color =
+          change.changeType === "added"
+            ? "green"
+            : change.changeType === "removed"
+              ? "red"
+              : "yellow";
 
         lines.push(`${icon} [${color}] ${change.path}`);
 
-        if (change.oldValue !== undefined && change.changeType !== 'added') {
+        if (change.oldValue !== undefined && change.changeType !== "added") {
           lines.push(`  Before: ${this.formatValue(change.oldValue)}`);
         }
 
-        if (change.newValue !== undefined && change.changeType !== 'removed') {
+        if (change.newValue !== undefined && change.changeType !== "removed") {
           lines.push(`  After:  ${this.formatValue(change.newValue)}`);
         }
       }
     }
 
-    return lines.join('\n');
+    return lines.join("\n");
   }
 
   /**
@@ -347,7 +351,7 @@ export class StateDiffViewer {
     prefix: string,
     from: Record<string, unknown>,
     to: Record<string, unknown>,
-    changes: FieldChange[]
+    changes: FieldChange[],
   ): void {
     const allKeys = new Set([...Object.keys(from), ...Object.keys(to)]);
 
@@ -365,13 +369,18 @@ export class StateDiffViewer {
           !Array.isArray(oldValue) &&
           !Array.isArray(newValue)
         ) {
-          this.diffObjects(path, oldValue as Record<string, unknown>, newValue as Record<string, unknown>, changes);
+          this.diffObjects(
+            path,
+            oldValue as Record<string, unknown>,
+            newValue as Record<string, unknown>,
+            changes,
+          );
         }
         // Values differ
         else if (oldValue !== newValue) {
           changes.push({
             path,
-            changeType: 'modified',
+            changeType: "modified",
             oldValue,
             newValue,
             valueType: this.getTypeName(newValue),
@@ -382,7 +391,7 @@ export class StateDiffViewer {
       else if (!(key in from)) {
         changes.push({
           path,
-          changeType: 'added',
+          changeType: "added",
           newValue,
           valueType: this.getTypeName(newValue),
         });
@@ -391,7 +400,7 @@ export class StateDiffViewer {
       else {
         changes.push({
           path,
-          changeType: 'removed',
+          changeType: "removed",
           oldValue,
           valueType: this.getTypeName(oldValue),
         });
@@ -403,19 +412,19 @@ export class StateDiffViewer {
    * Deep clone an object
    */
   private deepClone<T>(obj: T): T {
-    if (obj === null || typeof obj !== 'object') {
+    if (obj === null || typeof obj !== "object") {
       return obj;
     }
 
     if (Array.isArray(obj)) {
-      return obj.map(item => this.deepClone(item)) as T;
+      return obj.map((item) => this.deepClone(item)) as T;
     }
 
     if (obj instanceof Date) {
       return new Date(obj.getTime()) as T;
     }
 
-    if (typeof obj === 'object') {
+    if (typeof obj === "object") {
       const cloned: Record<string, unknown> = {};
       for (const key in obj) {
         if (Object.prototype.hasOwnProperty.call(obj, key)) {
@@ -432,16 +441,16 @@ export class StateDiffViewer {
    * Check if value is a plain object
    */
   private isObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
+    return typeof value === "object" && value !== null && !Array.isArray(value);
   }
 
   /**
    * Get type name for a value
    */
   private getTypeName(value: unknown): string {
-    if (value === null) return 'null';
-    if (value === undefined) return 'undefined';
-    if (Array.isArray(value)) return 'array';
+    if (value === null) return "null";
+    if (value === undefined) return "undefined";
+    if (Array.isArray(value)) return "array";
     return typeof value;
   }
 
@@ -451,7 +460,7 @@ export class StateDiffViewer {
   private formatValue(value: unknown, maxLength: number = 80): string {
     let str: string;
 
-    if (typeof value === 'string') {
+    if (typeof value === "string") {
       str = `"${value}"`;
     } else if (value === null || value === undefined) {
       str = String(value);
@@ -460,7 +469,7 @@ export class StateDiffViewer {
     }
 
     if (str.length > maxLength) {
-      return str.substring(0, maxLength) + '...';
+      return str.substring(0, maxLength) + "...";
     }
 
     return str;
@@ -473,7 +482,9 @@ export class StateDiffViewer {
 
 let defaultStateDiffViewer: StateDiffViewer | null = null;
 
-export function createStateDiffViewer(config?: StateDiffViewerConfig): StateDiffViewer {
+export function createStateDiffViewer(
+  config?: StateDiffViewerConfig,
+): StateDiffViewer {
   if (!defaultStateDiffViewer) {
     defaultStateDiffViewer = new StateDiffViewer(config);
   }
@@ -509,7 +520,7 @@ export class TraceViewerWithStateDiff {
   async recordBeforeState(
     stepIndex: number,
     stepId: string,
-    state: Record<string, unknown>
+    state: Record<string, unknown>,
   ): Promise<void> {
     this.stateDiffViewer.captureState(
       `${this.executionId}:before:${stepIndex}`,
@@ -519,7 +530,7 @@ export class TraceViewerWithStateDiff {
         stepIndex,
         stepId,
         label: `Before Step ${stepIndex}`,
-      }
+      },
     );
   }
 
@@ -529,21 +540,17 @@ export class TraceViewerWithStateDiff {
   async recordAfterState(
     stepIndex: number,
     stepId: string,
-    state: Record<string, unknown>
+    state: Record<string, unknown>,
   ): Promise<StateDiff> {
     const beforeSnapshotId = `${this.executionId}:before:${stepIndex}`;
     const afterSnapshotId = `${this.executionId}:after:${stepIndex}`;
 
-    this.stateDiffViewer.captureState(
-      afterSnapshotId,
-      state,
-      {
-        executionId: this.executionId,
-        stepIndex,
-        stepId,
-        label: `After Step ${stepIndex}`,
-      }
-    );
+    this.stateDiffViewer.captureState(afterSnapshotId, state, {
+      executionId: this.executionId,
+      stepIndex,
+      stepId,
+      label: `After Step ${stepIndex}`,
+    });
 
     return this.stateDiffViewer.computeDiff(beforeSnapshotId, afterSnapshotId);
   }
@@ -556,7 +563,10 @@ export class TraceViewerWithStateDiff {
     const afterSnapshotId = `${this.executionId}:after:${stepIndex}`;
 
     try {
-      return this.stateDiffViewer.computeDiff(beforeSnapshotId, afterSnapshotId);
+      return this.stateDiffViewer.computeDiff(
+        beforeSnapshotId,
+        afterSnapshotId,
+      );
     } catch {
       return undefined;
     }
@@ -579,11 +589,11 @@ export class TraceViewerWithStateDiff {
     lines.push(`═══════════════════════════════════════════════════════`);
     lines.push(`Execution Timeline: ${this.executionId}`);
     lines.push(`═══════════════════════════════════════════════════════`);
-    lines.push('');
+    lines.push("");
 
     for (const entry of timeline) {
       const snapshot = entry.snapshot;
-      const label = snapshot.label || `Step ${snapshot.stepIndex ?? '?'}`;
+      const label = snapshot.label || `Step ${snapshot.stepIndex ?? "?"}`;
       const timestamp = new Date(snapshot.timestamp).toLocaleTimeString();
 
       lines.push(`[${timestamp}] ${label}`);
@@ -591,14 +601,14 @@ export class TraceViewerWithStateDiff {
       if (entry.diffFromPrevious) {
         const { summary } = entry.diffFromPrevious;
         lines.push(
-          `  Changes: +${summary.added} -${summary.removed} ~${summary.modified}`
+          `  Changes: +${summary.added} -${summary.removed} ~${summary.modified}`,
         );
 
         if (summary.modified > 0) {
           // Show first few modified fields
-          const modifiedChanges = entry.diffFromPrevious.changes.filter(
-            c => c.changeType === 'modified'
-          ).slice(0, 3);
+          const modifiedChanges = entry.diffFromPrevious.changes
+            .filter((c) => c.changeType === "modified")
+            .slice(0, 3);
 
           for (const change of modifiedChanges) {
             lines.push(`    ~ ${change.path}`);
@@ -610,10 +620,10 @@ export class TraceViewerWithStateDiff {
         }
       }
 
-      lines.push('');
+      lines.push("");
     }
 
-    return lines.join('\n');
+    return lines.join("\n");
   }
 
   /**
@@ -629,7 +639,7 @@ export class TraceViewerWithStateDiff {
  */
 export function createTraceViewerWithStateDiff(
   executionId: string,
-  config?: StateDiffViewerConfig
+  config?: StateDiffViewerConfig,
 ): TraceViewerWithStateDiff {
   return new TraceViewerWithStateDiff(executionId, config);
 }

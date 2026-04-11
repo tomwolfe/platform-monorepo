@@ -37,3 +37,14 @@ export {
   type TestRestaurantData,
   type TestReservationData,
 } from "./database/factories";
+
+// Integration Test Utilities (retry, timeout, eventual consistency)
+export {
+  withRetry,
+  withTimeout,
+  eventually,
+  waitForCondition,
+  safeCleanup,
+  testId,
+  type RetryOptions,
+} from "./integration-utils";

@@ -8,7 +8,7 @@
  */
 
 import { z } from "zod";
-import { TOOLS, McpToolRegistry } from "@repo/mcp-protocol";
+import { TOOLS } from "@repo/mcp-protocol";
 import type { SchemaEvolutionService } from "./services/schema-evolution";
 import { getPrivacyGateway } from "./services/privacy-gateway";
 import { Logger } from "./logger";
@@ -59,17 +59,20 @@ export class NormalizationService {
   /**
    * Get all available schemas from the McpToolRegistry
    */
-  private static getAllSchemas(): Map<string, z.ZodType<any>> {
-    const schemas = new Map<string, z.ZodType<any>>();
+  private static getAllSchemas(): Map<string, z.ZodType<unknown>> {
+    const schemas = new Map<string, z.ZodType<unknown>>();
 
     // Flatten the TOOLS registry
     const toolEntries = Object.entries(TOOLS);
 
     for (const [, serviceTools] of toolEntries) {
       const serviceToolEntries = Object.entries(serviceTools);
-      for (const [toolName, toolDef] of serviceToolEntries) {
+      for (const [_toolName, toolDef] of serviceToolEntries) {
         if (toolDef && typeof toolDef === "object" && "schema" in toolDef) {
-          schemas.set(toolDef.name as string, toolDef.schema as z.ZodType<any>);
+          schemas.set(
+            toolDef.name as string,
+            toolDef.schema as z.ZodType<unknown>,
+          );
         }
       }
     }
@@ -184,10 +187,10 @@ export class NormalizationService {
    * @param parameters - The raw parameters from LLM
    * @returns Normalized and validated parameters
    */
-  static normalizeIntentParameters(
+  static async normalizeIntentParameters(
     intentType: string,
     parameters: Record<string, unknown>,
-  ): NormalizationResult {
+  ): Promise<NormalizationResult> {
     // Map intent types to likely tools
     const intentToolMap: Record<string, string[]> = {
       SCHEDULE: ["add_calendar_event"],

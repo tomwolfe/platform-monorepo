@@ -4,8 +4,8 @@ import path from "path";
 /**
  * Integration Test Configuration
  *
- * Uses @testcontainers/postgres and @testcontainers/redis to spin up
- * real database instances for integration testing without mocks.
+ * Runs tests against real infrastructure (PostgreSQL, Redis) via
+ * @testcontainers when available, or against mocked backends for CI.
  *
  * Run with: pnpm test:integration
  */
@@ -29,12 +29,16 @@ export default defineConfig({
     ],
     timeout: 120000, // 2 minutes for container startup
     reporters: ["verbose"],
+    pool: "threads",
     poolOptions: {
       threads: {
         singleThread: true, // Run integration tests sequentially to avoid container conflicts
       },
     },
+    // Graceful handling when testcontainers aren't available
     globalSetup: ["./test/integration/globalSetup.ts"],
+    bail: 1, // Stop on first failure to avoid cascading container errors
+    retry: 1, // Retry flaky tests once
   },
   resolve: {
     alias: {

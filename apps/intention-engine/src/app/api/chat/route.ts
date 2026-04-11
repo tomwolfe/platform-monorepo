@@ -1,4 +1,3 @@
-import { createOpenAI } from "@ai-sdk/openai";
 import {
   streamText,
   tool,
@@ -34,18 +33,13 @@ const logger = new Logger({ serviceName: "intention-engine-chat" });
 
 // Use AppConfig directly - no local wrapper needed
 const INTERNAL_SYSTEM_KEY = AppConfig.getInternalSystemKey();
-const LLM_API_KEY = AppConfig.getLlmApiKey();
-const LLM_BASE_URL = AppConfig.getLlmBaseUrl();
+const _LLM_API_KEY = AppConfig.getLlmApiKey();
+const _LLM_BASE_URL = AppConfig.getLlmBaseUrl();
 
 export const runtime = "nodejs";
 export const maxDuration = 10; // Vercel Hobby limit
 
 const redis = getRedisClient(ServiceNamespace.IE);
-
-const openai = createOpenAI({
-  apiKey: LLM_API_KEY,
-  baseURL: LLM_BASE_URL,
-});
 
 const ChatRequestSchema = z.object({
   messages: z.array(
@@ -73,8 +67,8 @@ const ChatRequestSchema = z.object({
  * for consistent parameter aliasing and server routing.
  */
 async function getTools(
-  auditLogId: string,
-  userLocation?: { lat: number; lng: number },
+  _auditLogId: string,
+  _userLocation?: { lat: number; lng: number },
 ) {
   const { manager } = await getMcpClients();
   const tools: Record<string, ReturnType<typeof tool>> = {};
@@ -250,7 +244,10 @@ function extractUserText(coreMessages: ModelMessage[]): string {
 /**
  * Get relevant failure warnings from recent audit logs
  */
-function getRelevantFailures(text: string, logs: any[]): string[] {
+function getRelevantFailures(
+  text: string,
+  logs: Array<Record<string, unknown>>,
+): string[] {
   const keywords = text
     .toLowerCase()
     .split(/\W+/)
@@ -336,9 +333,12 @@ export const POST = withUnifiedApiHandler(async (req: Request) => {
     );
   }
 
-  let recentLogs: any[] = [];
-  const { createAuditLog, updateAuditLog, getUserAuditLogs } =
-    await import("@/lib/audit");
+  let recentLogs: Array<Record<string, unknown>> = [];
+  const {
+    createAuditLog: _createAuditLog,
+    updateAuditLog,
+    getUserAuditLogs,
+  } = await import("@/lib/audit");
   const { getPlanWithAvoidance, getProvider } = await import("@/app/actions");
 
   if (redis) {
@@ -534,6 +534,7 @@ export const POST = withUnifiedApiHandler(async (req: Request) => {
     `;
 
   const providerConfig = await getProvider(intent.type);
+  const { createOpenAI } = await import("@ai-sdk/openai");
   const customProvider = createOpenAI({
     apiKey: providerConfig.apiKey,
     baseURL: providerConfig.baseUrl,

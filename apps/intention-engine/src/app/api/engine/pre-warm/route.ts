@@ -32,19 +32,24 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { handlePreWarmRequest, type PreWarmHint } from "@/lib/engine/pre-warm";
 import { Tracer } from "@/lib/engine/tracing";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "pre-warm" });
 
 const PreWarmRequestSchema = z.object({
   executionId: z.string(),
   nextStepIndex: z.number().int().nonnegative(),
   triggeredAt: z.string().datetime().optional(),
-  hint: z.enum([
-    'DB_RESERVATION_LOAD',
-    'DB_USER_LOAD',
-    'DB_PAYMENT_LOAD',
-    'DB_SEARCH_LOAD',
-    'DB_CANCELLATION_LOAD',
-    'GENERIC',
-  ]).optional(),
+  hint: z
+    .enum([
+      "DB_RESERVATION_LOAD",
+      "DB_USER_LOAD",
+      "DB_PAYMENT_LOAD",
+      "DB_SEARCH_LOAD",
+      "DB_CANCELLATION_LOAD",
+      "GENERIC",
+    ])
+    .optional(),
   nextToolName: z.string().optional(),
 });
 
@@ -59,12 +64,16 @@ export async function POST(req: NextRequest) {
 
       if (!result.success) {
         return NextResponse.json(
-          { error: "Invalid request parameters", details: result.error.format() },
-          { status: 400 }
+          {
+            error: "Invalid request parameters",
+            details: result.error.format(),
+          },
+          { status: 400 },
         );
       }
 
-      const { executionId, nextStepIndex, triggeredAt, hint, nextToolName } = result.data;
+      const { executionId, nextStepIndex, triggeredAt, hint, nextToolName } =
+        result.data;
 
       span.setAttributes({
         "prewarm.execution_id": executionId,
@@ -75,14 +84,18 @@ export async function POST(req: NextRequest) {
       });
 
       // Perform lambda warming WITH HINT
-      const warmResult = await handlePreWarmRequest(executionId, nextStepIndex, {
-        hint: hint as PreWarmHint,
-        nextToolName,
-      });
+      const warmResult = await handlePreWarmRequest(
+        executionId,
+        nextStepIndex,
+        {
+          hint: hint as PreWarmHint,
+          nextToolName,
+        },
+      );
 
       if (!warmResult.success) {
         // Still return 200 - pre-warm is best-effort
-        console.warn("[PreWarm API] Warming failed but returning success (best-effort)");
+        logger.warn("Warming failed but returning success (best-effort)");
       }
 
       return NextResponse.json({
@@ -95,7 +108,7 @@ export async function POST(req: NextRequest) {
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
-      console.error("[PreWarm API] Error:", error);
+      logger.error("Pre-warm error", { error: String(error) });
       // Always return 200 - pre-warm is best-effort, never block
       return NextResponse.json({
         success: true,

@@ -31,12 +31,14 @@ import {
   withUnifiedApiHandler,
   formatApiSuccess,
   formatApiError,
+  Logger,
 } from "@repo/shared";
 import { CoordinateSchema } from "@repo/mcp-protocol";
 import { getDb } from "@repo/database";
 import { rateLimitMiddleware } from "@/lib/middleware/rate-limiter";
 
 const redis = getRedisClient(ServiceNamespace.IE);
+const logger = new Logger({ serviceName: "warm-cache" });
 
 const WarmCacheRequestSchema = z.object({
   messagePreview: z.string().min(1).max(500),
@@ -64,7 +66,11 @@ async function warmCacheHandler(req: NextRequest) {
     );
   }
 
-  const { messagePreview, userLocation, clerkId } = validatedBody.data;
+  const {
+    messagePreview,
+    userLocation: _userLocation,
+    clerkId,
+  } = validatedBody.data;
 
   // Rate limiting - more generous than chat endpoint
   const userId = clerkId || req.headers.get("x-forwarded-for") || "anonymous";
@@ -72,9 +78,7 @@ async function warmCacheHandler(req: NextRequest) {
 
   if (!rateLimitResult.allowed) {
     // Return 200 anyway - cache warming is best-effort, don't block
-    console.log(
-      `[WarmCache] Rate limited but continuing (best-effort): ${userId}`,
-    );
+    logger.debug(`Rate limited but continuing (best-effort): ${userId}`);
   }
 
   // Extract potential restaurant mentions from message preview
@@ -90,9 +94,7 @@ async function warmCacheHandler(req: NextRequest) {
     );
   }
 
-  console.log(
-    `[WarmCache] Pre-fetching state for: ${restaurantMentions.join(", ")}`,
-  );
+  logger.debug(`Pre-fetching state for: ${restaurantMentions.join(", ")}`);
 
   // Warm cache for each restaurant
   const warmResults = await Promise.allSettled(
@@ -101,7 +103,7 @@ async function warmCacheHandler(req: NextRequest) {
       const failedBookingsKey = `failed_bookings:${restaurantRef}`;
 
       // Check if already cached (avoid redundant fetches)
-      const cachedState = await redis?.get<any>(stateKey);
+      const cachedState = await redis?.get<unknown>(stateKey);
       if (cachedState) {
         return { restaurantRef, status: "already_cached", hit: true };
       }
@@ -116,7 +118,7 @@ async function warmCacheHandler(req: NextRequest) {
           db.query.restaurants.findFirst({
             where: eq(restaurants.slug, restaurantRef),
           }),
-          redis?.get<any[]>(failedBookingsKey) || Promise.resolve([]),
+          redis ? redis.get<unknown[]>(failedBookingsKey) : Promise.resolve([]),
         ]);
 
         if (!restaurant) {
@@ -129,7 +131,7 @@ async function warmCacheHandler(req: NextRequest) {
         });
 
         const availableTables = tables.filter(
-          (t: any) => t.status === "vacant",
+          (t: Record<string, unknown>) => t.status === "vacant",
         ).length;
         const totalTables = tables.length;
 
@@ -156,7 +158,9 @@ async function warmCacheHandler(req: NextRequest) {
 
         return { restaurantRef, status: "warmed", hit: true };
       } catch (error) {
-        console.warn(`[WarmCache] Failed to fetch ${restaurantRef}:`, error);
+        logger.warn(`Failed to fetch ${restaurantRef}`, {
+          error: String(error),
+        });
         return {
           restaurantRef,
           status: "error",
@@ -169,11 +173,23 @@ async function warmCacheHandler(req: NextRequest) {
 
   // Summarize results
   const warmed = warmResults.filter(
-    (r) => r.status === "fulfilled" && r.value.hit,
+    (
+      r,
+    ): r is PromiseFulfilledResult<{
+      restaurantRef: string;
+      status: string;
+      hit: boolean;
+    }> => r.status === "fulfilled" && r.value.hit,
   ).length;
 
   const hits = warmResults.filter(
-    (r) => r.status === "fulfilled" && r.value.status === "already_cached",
+    (
+      r,
+    ): r is PromiseFulfilledResult<{
+      restaurantRef: string;
+      status: string;
+      hit: boolean;
+    }> => r.status === "fulfilled" && r.value.status === "already_cached",
   ).length;
 
   return NextResponse.json(

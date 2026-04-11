@@ -24,9 +24,9 @@ import {
   isReplayAllowed,
 } from "@repo/shared";
 import { CheckoutError } from "./validation";
-import { verifyOnChainTransaction } from "./web3-verify";
-import { markReservationAsVerified } from "./reservation-update";
-import { notifyOwnerOfVerification } from "./notifications";
+import { verifyOnChainTransaction as defaultVerifyOnChainTransaction } from "./web3-verify";
+import { markReservationAsVerified as defaultMarkReservationAsVerified } from "./reservation-update";
+import { notifyOwnerOfVerification as defaultNotifyOwnerOfVerification } from "./notifications";
 
 const logger = new Logger({ serviceName: "checkout-service" });
 
@@ -45,7 +45,26 @@ export interface CheckoutResult {
   reservationId: string;
 }
 
+export interface CheckoutServiceOverrides {
+  verifyOnChainTransaction?: typeof defaultVerifyOnChainTransaction;
+  markReservationAsVerified?: typeof defaultMarkReservationAsVerified;
+  notifyOwnerOfVerification?: typeof defaultNotifyOwnerOfVerification;
+}
+
 export class CheckoutService {
+  private readonly verifyOnChainTransaction: typeof defaultVerifyOnChainTransaction;
+  private readonly markReservationAsVerified: typeof defaultMarkReservationAsVerified;
+  private readonly notifyOwnerOfVerification: typeof defaultNotifyOwnerOfVerification;
+
+  constructor(overrides?: CheckoutServiceOverrides) {
+    this.verifyOnChainTransaction =
+      overrides?.verifyOnChainTransaction ?? defaultVerifyOnChainTransaction;
+    this.markReservationAsVerified =
+      overrides?.markReservationAsVerified ?? defaultMarkReservationAsVerified;
+    this.notifyOwnerOfVerification =
+      overrides?.notifyOwnerOfVerification ?? defaultNotifyOwnerOfVerification;
+  }
+
   /**
    * Process a crypto payment checkout.
    *
@@ -104,7 +123,7 @@ export class CheckoutService {
 
     try {
       // Step 3: On-chain verification (delegated to web3-verify.ts)
-      const verificationResult = await verifyOnChainTransaction({
+      const verificationResult = await this.verifyOnChainTransaction({
         txHash,
         expectedValue,
         reservation,
@@ -123,7 +142,7 @@ export class CheckoutService {
       }
 
       // Step 4-5: Mark verified + confirm replay guard (delegated to reservation-update.ts)
-      await markReservationAsVerified(reservationId, txHash);
+      await this.markReservationAsVerified(reservationId, txHash);
       confirmed = true;
     } finally {
       if (!confirmed) {
@@ -220,13 +239,13 @@ export class CheckoutService {
       reservation,
       reservationId,
       txHash,
-      requestOrigin,
+      requestOrigin: _requestOrigin,
       frontendCallbackUrl,
     } = params;
 
     // Email to restaurant owner (using extracted notifications module)
     if (reservation.restaurant?.ownerEmail) {
-      await notifyOwnerOfVerification({
+      await this.notifyOwnerOfVerification({
         ownerEmail: reservation.restaurant.ownerEmail,
         guestName: reservation.guestName || "",
         partySize: reservation.partySize || 0,

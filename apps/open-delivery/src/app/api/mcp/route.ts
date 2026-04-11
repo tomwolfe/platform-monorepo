@@ -1,14 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOLS } from "@repo/mcp-protocol";
 import {
   createMcpServerRoutes,
   createResponse,
-  extractTraceId,
 } from "@repo/mcp-protocol/server";
 import { randomUUID } from "crypto";
 import { getDb, orders, orderItems } from "@repo/database";
-import { eq } from "drizzle-orm";
 import {
   RealtimeService,
   AppConfig,
@@ -21,7 +18,7 @@ import { dispatchOrder } from "@open-delivery/lib/dispatcher";
 const logger = new Logger({ serviceName: "open-delivery-mcp" });
 
 // Lazy load Redis to avoid build-time initialization
-let _redis: any = null;
+let _redis: unknown = null;
 const getRedis = async () => {
   if (!_redis) {
     _redis = getRedisClient(ServiceNamespace.OD);
@@ -152,9 +149,11 @@ async function calculateDeliveryQuote(
         pickupMins +
         (25 + (items.length > 2 ? 10 : 0) + (priority === "urgent" ? -5 : 0)),
     },
-    availableVehicles: items.some((i: any) => (i.weight || 0) > 10)
+    availableVehicles: items.some(
+      (i: Record<string, unknown>) => (i.weight || 0) > 10,
+    )
       ? ["van", "truck"]
-      : items.some((i: any) => (i.weight || 0) > 5)
+      : items.some((i: Record<string, unknown>) => (i.weight || 0) > 5)
         ? ["car", "van"]
         : ["bike", "car", "van"],
     route: {
@@ -230,10 +229,10 @@ server.tool(
       deliveryAddress,
       items,
       priority,
-      scheduledPickupTime,
+      scheduledPickupTime: _scheduledPickupTime,
       restaurantId,
     },
-    _extra: any,
+    _extra: { traceId?: string } | undefined,
   ) => {
     const traceId = _extra?.traceId || randomUUID();
 
@@ -264,13 +263,16 @@ server.tool(
     priority:
       TOOLS.deliveryFulfillment.validateFulfillment.schema.shape.priority,
   },
-  async ({ pickupAddress, deliveryAddress, items, priority }, _extra: any) => {
+  async (
+    { pickupAddress, deliveryAddress, items, priority: _priority },
+    _extra: { traceId?: string } | undefined,
+  ) => {
     const traceId = _extra?.traceId || randomUUID();
 
     logger.info("Validating fulfillment (dry run)", { traceId });
 
     // Basic validation
-    const errors: any[] = [];
+    const errors: Array<{ field: string; message: string; code: string }> = [];
 
     if (!pickupAddress.street || !pickupAddress.city) {
       errors.push({
@@ -308,7 +310,9 @@ server.tool(
             : undefined,
         estimatedAvailability: valid
           ? {
-              vehicleTypes: items.some((i: any) => (i.weight || 0) > 10)
+              vehicleTypes: items.some(
+                (i: Record<string, unknown>) => (i.weight || 0) > 10,
+              )
                 ? ["van", "truck"]
                 : ["bike", "car", "van"],
               earliestPickup: new Date(
@@ -347,7 +351,7 @@ server.tool(
     specialInstructions:
       TOOLS.deliveryFulfillment.fulfillIntent.schema.shape.specialInstructions,
   },
-  async (params, _extra: any) => {
+  async (params, _extra: { traceId?: string } | undefined) => {
     const traceId = _extra?.traceId || randomUUID();
 
     logger.info("Dispatching intent fulfillment", { traceId });
@@ -388,7 +392,7 @@ server.tool(
         await getDb()
           .insert(orderItems)
           .values(
-            params.items.map((item: any) => ({
+            params.items.map((item: Record<string, unknown>) => ({
               orderId,
               name: item.name,
               quantity: item.quantity || 1,
@@ -533,7 +537,7 @@ server.tool(
     fulfillmentId:
       TOOLS.deliveryFulfillment.getFulfillmentStatus.schema.shape.fulfillmentId,
   },
-  async ({ fulfillmentId }, _extra: any) => {
+  async ({ fulfillmentId }, _extra: { traceId?: string } | undefined) => {
     const traceId = _extra?.traceId || randomUUID();
 
     logger.info("Getting fulfillment status", { traceId, fulfillmentId });
@@ -593,7 +597,7 @@ server.tool(
   TOOLS.openDelivery.getDriverLocation.name,
   TOOLS.openDelivery.getDriverLocation.description,
   TOOLS.openDelivery.getDriverLocation.schema.shape,
-  async ({ order_id }, _extra: any) => {
+  async ({ order_id }, _extra: { traceId?: string } | undefined) => {
     const traceId = _extra?.traceId || randomUUID();
 
     logger.info("Getting driver location", { traceId, orderId: order_id });
@@ -670,7 +674,10 @@ server.tool(
     reason: TOOLS.deliveryFulfillment.cancelFulfillment.schema.shape.reason,
     details: TOOLS.deliveryFulfillment.cancelFulfillment.schema.shape.details,
   },
-  async ({ fulfillmentId, reason, details }, _extra: any) => {
+  async (
+    { fulfillmentId, reason, details },
+    _extra: { traceId?: string } | undefined,
+  ) => {
     const traceId = _extra?.traceId || randomUUID();
 
     logger.info("Cancelling fulfillment", { traceId, fulfillmentId });

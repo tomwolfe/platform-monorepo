@@ -1,31 +1,30 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { parseUnits } from "viem";
 import { usdToCryptoBigInt } from "@repo/shared/utils/crypto-price";
 import {
   CheckoutRequestSchema,
-  CheckoutResponseSchema,
+  _CheckoutResponseSchema,
   createValidationMiddleware,
   errorResponse,
   successResponse,
   withUnifiedApiHandler,
   Logger,
-  AppConfig,
+  _AppConfig,
 } from "@repo/shared";
 import { checkoutService } from "@/lib/services/checkout";
 import {
-  getEIP712Domain,
-  EIP712_TYPES,
+  _getEIP712Domain,
+  _EIP712_TYPES,
   validateDeadline,
   validateChainId,
-  validatePaymentMode,
+  _validatePaymentMode,
   verifySignature,
   CheckoutError,
 } from "@/lib/services/checkout";
 
 export const runtime = "nodejs";
 
-const logger = new Logger({ serviceName: "table-stack" });
+const _logger = new Logger({ serviceName: "table-stack" });
 
 /**
  * Crypto Payment Verification Endpoint
@@ -156,6 +155,7 @@ async function postHandler(req: NextRequest) {
   if (paymentCurrency === "ETH") {
     expectedValue = await usdToCryptoBigInt(BigInt(depositUsdCents), "ETH");
   } else {
+    const { parseUnits } = await import("viem");
     const dollars = Math.floor(depositUsdCents / 100);
     const centsRemainder = depositUsdCents % 100;
     expectedValue = parseUnits(

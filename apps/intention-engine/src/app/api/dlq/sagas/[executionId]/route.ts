@@ -11,12 +11,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getRedisClient, ServiceNamespace } from "@repo/shared";
+import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.IE);
 import { createDLQMonitoringService } from "@repo/shared";
 import { getEventSchemaRegistry, NervousSystemEvent } from "@repo/mcp-protocol";
 import { Tracer } from "@/lib/engine/tracing";
 import { RealtimeService } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "dlq-saga-detail" });
 
 // ============================================================================
 // SCHEMAS
@@ -141,7 +143,7 @@ export async function GET(
 
       return NextResponse.json({ saga });
     } catch (error) {
-      console.error("[DLQ API] Failed to get saga details:", error);
+      logger.error("Failed to get saga details", { error: String(error) });
       return NextResponse.json(
         { error: "Failed to get saga details" },
         { status: 500 },
@@ -243,10 +245,9 @@ async function handleResume(req: NextRequest, executionId: string) {
       // Validate event
       const validation = registry.validate("saga_resumed", resumeEvent);
       if (!validation.success) {
-        console.error(
-          "[DLQ API] Resume event validation failed:",
-          validation.error,
-        );
+        logger.error("Resume event validation failed", {
+          error: String(validation.error),
+        });
       }
 
       // Publish to Nervous System
@@ -291,7 +292,7 @@ async function handleResume(req: NextRequest, executionId: string) {
         executionId,
       });
     } catch (error) {
-      console.error("[DLQ API] Failed to resume saga:", error);
+      logger.error("Failed to resume saga", { error: String(error) });
       return NextResponse.json(
         { error: "Failed to resume saga" },
         { status: 500 },
@@ -370,7 +371,7 @@ async function handleCancel(req: NextRequest, executionId: string) {
         compensationAttempted: attemptCompensation,
       });
     } catch (error) {
-      console.error("[DLQ API] Failed to cancel saga:", error);
+      logger.error("Failed to cancel saga", { error: String(error) });
       return NextResponse.json(
         { error: "Failed to cancel saga" },
         { status: 500 },

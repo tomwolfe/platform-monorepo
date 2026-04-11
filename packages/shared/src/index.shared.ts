@@ -177,16 +177,15 @@ export { serverActionResponse, handleServerAction } from "./outbox-relay";
 
 export {
   withUnifiedApiHandler,
-  formatError,
-  formatSuccess,
   type ApiHandler,
   type UnifiedApiContext,
 } from "./error-handler";
 
 export {
-  createValidatedResponse,
-  type ValidatedResponse,
-} from "./utils/api-response";
+  withValidatedResponse,
+  type ValidatedResponseOptions,
+  type ValidatedHandler,
+} from "./utils/with-validated-response";
 
 export { jsonSuccess, jsonError, type ApiResponse } from "./http";
 
@@ -242,6 +241,19 @@ export {
 export * from "./utils/erc20-abi";
 export * from "./utils/escrow-abi";
 export * from "./utils/next-errors";
+
+// ============================================================================
+// ASYNC BOUNDARY ERRORS (for QStash, Ably, Webhooks)
+// ============================================================================
+export {
+  AsyncBoundaryError,
+  AsyncBoundaryErrorCode,
+  retryableError,
+  permanentError,
+  isAsyncBoundaryError,
+  shouldRetry,
+  type AsyncBoundaryErrorContext,
+} from "./errors/async-boundary";
 
 // ============================================================================
 // EVENT TYPES (Isomorphic)

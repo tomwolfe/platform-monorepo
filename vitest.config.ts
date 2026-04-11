@@ -37,6 +37,7 @@ export default defineConfig({
     server: {
       deps: {
         inline: [
+          "next",
           "@repo/shared",
           "@repo/mcp-protocol",
           "@repo/database",
@@ -83,6 +84,16 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      // Mock server-only to avoid Client Component errors
+      "server-only": new URL(
+        "./apps/table-stack/src/__mocks__/server-only.ts",
+        import.meta.url,
+      ).pathname,
+      // Mock next/server for non-Next.js test environments
+      "next/server": new URL(
+        "./apps/table-stack/src/__mocks__/next-server.ts",
+        import.meta.url,
+      ).pathname,
       // App-specific aliases - order matters! More specific patterns first
       // TableStack app aliases
       "@tablestack": path.resolve(__dirname, "./apps/table-stack/src"),

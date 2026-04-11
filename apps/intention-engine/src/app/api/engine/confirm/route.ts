@@ -29,12 +29,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { ConfirmationApiRequestSchema } from "@repo/mcp-protocol";
-import { RealtimeService } from "@repo/shared";
+import { RealtimeService, Logger, ValidationError } from "@repo/shared";
 import { Tracer } from "@/lib/engine/tracing";
 import {
   ConfirmationService,
   type ConfirmationResult,
 } from "@/lib/engine/confirmation-service";
+
+const logger = new Logger({ serviceName: "confirm-endpoint" });
 
 // ============================================================================
 // CONFIGURATION
@@ -84,8 +86,8 @@ async function confirmHandler(
         trace_id: traceId,
       });
 
-      console.log(
-        `[ConfirmEndpoint] Validated confirmation token for execution ${confirmationData.executionId}, ` +
+      logger.info(
+        `Validated confirmation token for execution ${confirmationData.executionId}, ` +
           `step ${confirmationData.stepIndex} (${confirmationData.toolName})`,
       );
 
@@ -123,7 +125,7 @@ async function confirmHandler(
           },
         );
       } catch (err) {
-        console.warn("[ConfirmEndpoint] Failed to publish to Ably:", err);
+        logger.warn("Failed to publish to Ably", { error: String(err) });
       }
 
       return NextResponse.json({
@@ -138,7 +140,7 @@ async function confirmHandler(
         error instanceof Error ? error : new Error(String(error)),
       );
 
-      console.error("[ConfirmEndpoint] Handler error:", error);
+      logger.error("Handler error", { error: String(error) });
 
       const errorMessage =
         error instanceof Error ? error.message : String(error);
@@ -192,7 +194,7 @@ export async function POST(
     // Call handler with user context
     return await confirmHandler(request, token, metadata);
   } catch (error) {
-    console.error("[ConfirmEndpoint] Unhandled error:", error);
+    logger.error("Unhandled error", { error: String(error) });
 
     return NextResponse.json(
       {

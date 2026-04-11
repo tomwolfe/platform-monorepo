@@ -610,9 +610,6 @@ export function toAppError(
   });
 }
 
-// Re-export withUnifiedApiHandler from error-handler for convenience
-export { withUnifiedApiHandler } from "./error-handler";
-
 // ============================================================================
 // RESULT PATTERN (Standardized service return types)
 // ============================================================================
@@ -637,16 +634,3 @@ export {
 // HTTP ERROR CLASS & GLOBAL ERROR HANDLER
 // ============================================================================
 export { HttpError, formatErrorResponse } from "./errors/http-error";
-
-// ============================================================================
-// ASYNC BOUNDARY ERRORS (for QStash, Ably, Webhooks)
-// ============================================================================
-export {
-  AsyncBoundaryError,
-  AsyncBoundaryErrorCode,
-  retryableError,
-  permanentError,
-  isAsyncBoundaryError,
-  shouldRetry,
-  type AsyncBoundaryErrorContext,
-} from "./errors/async-boundary";

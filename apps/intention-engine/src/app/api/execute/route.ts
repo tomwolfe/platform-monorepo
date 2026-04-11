@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { withUnifiedApiHandler } from "@repo/shared/errors";
+import { withUnifiedApiHandler } from "@repo/shared";
 import { Logger } from "@repo/shared";
 import {
   orchestrateExecution,

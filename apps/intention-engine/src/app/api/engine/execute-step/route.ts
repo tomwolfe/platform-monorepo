@@ -21,9 +21,11 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { withQStashAuth, withUnifiedApiHandler } from "@repo/shared";
+import { withQStashAuth, withUnifiedApiHandler, Logger } from "@repo/shared";
 import { withRetry } from "@repo/shared/middleware/retry-with-backoff";
 import { createStepExecutionService } from "@/lib/engine/step-execution-service";
+
+const logger = new Logger({ serviceName: "execute-step" });
 
 // Idempotency: acquireStepIdempotencyLock uses Redis SETNX with nx: true
 // Distributed Tracing: x-trace-id header extracted and propagated
@@ -90,7 +92,7 @@ async function executeStepHandler(
     );
     return NextResponse.json(ExecuteStepResponseSchema.parse(result));
   } catch (error) {
-    console.error("[ExecuteStep] Unhandled error:", error);
+    logger.error("Unhandled error", { error: String(error) });
 
     return NextResponse.json(
       {

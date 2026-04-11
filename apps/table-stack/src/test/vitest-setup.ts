@@ -13,6 +13,122 @@ import { vi, beforeEach, afterEach, afterAll } from "vitest";
 // ============================================================================
 
 /**
+ * Mock server-only to avoid Client Component errors in tests
+ */
+vi.mock("server-only", () => ({}));
+
+/**
+ * Mock @repo/mcp-protocol to prevent circular dependency issues.
+ * This module instantiates Logger at module load time, which breaks
+ * tests if the Logger mock isn't applied first.
+ * Complete mock - does NOT load the real module.
+ */
+vi.mock("@repo/mcp-protocol", () => ({
+  COMPENSATIONS: {},
+  needsCompensation: vi.fn(() => false),
+  getCompensation: vi.fn(),
+  mapCompensationParameters: vi.fn(),
+  IDEMPOTENT_TOOLS: [],
+  DB_REFLECTED_SCHEMAS: {},
+  getTypedToolEntry: vi.fn(),
+  validateToolParams: vi.fn(() => ({ valid: true })),
+  AllToolsMap: {},
+}));
+
+/**
+ * Mock @upstash/ratelimit - missing dependency
+ */
+vi.mock("@upstash/ratelimit", () => {
+  const mockRatelimit = {
+    limit: vi.fn().mockResolvedValue({
+      success: true,
+      limit: 100,
+      remaining: 99,
+      reset: Date.now() + 60000,
+    }),
+  };
+  return {
+    Ratelimit: {
+      token: vi.fn(() => mockRatelimit),
+    },
+  };
+});
+
+/**
+ * Mock @opentelemetry/api - missing dependency
+ */
+vi.mock("@opentelemetry/api", () => ({
+  trace: {
+    getTracer: vi.fn(() => ({
+      startSpan: vi.fn(() => ({
+        setAttributes: vi.fn(),
+        recordException: vi.fn(),
+        end: vi.fn(),
+        spanContext: () => ({ traceId: "test-trace", spanId: "test-span" }),
+      })),
+      startActiveSpan: vi.fn((_name, fn) =>
+        fn({
+          setAttributes: vi.fn(),
+          recordException: vi.fn(),
+          end: vi.fn(),
+          spanContext: () => ({ traceId: "test-trace", spanId: "test-span" }),
+        }),
+      ),
+    })),
+    setGlobalTracerProvider: vi.fn(),
+    getSpan: vi.fn(),
+    getActiveSpan: vi.fn(),
+  },
+  context: {
+    active: vi.fn(() => ({})),
+    with: vi.fn((_ctx, fn) => fn()),
+  },
+  SpanStatusCode: {
+    OK: 0,
+    ERROR: 1,
+  },
+}));
+
+/**
+ * Mock tablestack internal modules
+ */
+vi.mock("@tablestack/lib/auth", () => ({
+  validateRequest: vi.fn(() =>
+    Promise.resolve({
+      context: { restaurantId: "test-restaurant", isInternal: true },
+    }),
+  ),
+}));
+
+vi.mock("@tablestack/lib/notifications", () => ({
+  NotifyService: {
+    broadcast: vi.fn(() => Promise.resolve()),
+    notifyExternalDelivery: vi.fn(() => Promise.resolve()),
+    notifyRejection: vi.fn(() => Promise.resolve()),
+    sendEmail: vi.fn(() => Promise.resolve()),
+  },
+}));
+
+vi.mock("@tablestack/lib/redis", () => ({
+  redis: {
+    get: vi.fn(() => Promise.resolve(null)),
+    set: vi.fn(() => Promise.resolve("OK")),
+    setex: vi.fn(() => Promise.resolve("OK")),
+    del: vi.fn(() => Promise.resolve(0)),
+    lpush: vi.fn(() => Promise.resolve(1)),
+    rpush: vi.fn(() => Promise.resolve(1)),
+    lrange: vi.fn(() => Promise.resolve([])),
+    expire: vi.fn(() => Promise.resolve(1)),
+  },
+}));
+
+vi.mock("@repo/shared/middleware/serverless-timeout", () => ({
+  withServerlessTimeout: vi.fn(
+    (handler: (req: Request) => Promise<Response>) => handler,
+  ),
+}));
+
+/**
  * Mock Next.js server modules
  */
 vi.mock("next/server", async (importActual) => {
@@ -129,16 +245,16 @@ vi.mock("@repo/database", async () => {
       restaurantTables: mockRestaurantTablesQuery,
       guestProfiles: mockGuestProfilesQuery,
     },
-    insert: vi.fn().mockImplementation((table: unknown) => ({
+    insert: vi.fn().mockImplementation((_table: unknown) => ({
       values: vi.fn().mockReturnThis(),
       returning: vi.fn().mockResolvedValue([]),
     })),
-    update: vi.fn().mockImplementation((table: unknown) => ({
+    update: vi.fn().mockImplementation((_table: unknown) => ({
       set: vi.fn().mockReturnThis(),
       where: vi.fn().mockReturnThis(),
       returning: vi.fn().mockResolvedValue([]),
     })),
-    delete: vi.fn().mockImplementation((table: unknown) => ({
+    delete: vi.fn().mockImplementation((_table: unknown) => ({
       where: vi.fn().mockReturnThis(),
       returning: vi.fn().mockResolvedValue([]),
     })),

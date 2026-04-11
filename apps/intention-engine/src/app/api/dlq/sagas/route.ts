@@ -25,9 +25,13 @@ import {
   ServiceNamespace,
   formatError,
   formatSuccess,
+  Logger,
+  ValidationError,
 } from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.IE);
 import { createDLQMonitoringService } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "dlq-sagas" });
 import { Tracer } from "@/lib/engine/tracing";
 
 // ============================================================================
@@ -115,7 +119,9 @@ export async function GET(req: NextRequest) {
 
   if (!queryResult.success) {
     const errorResponse = formatError(
-      new Error("Invalid query parameters"),
+      new ValidationError("Invalid query parameters", {
+        errors: queryResult.error.errors,
+      }),
       "VALIDATION_ERROR",
     );
     return NextResponse.json(errorResponse, { status: 400 });
@@ -194,7 +200,7 @@ export async function GET(req: NextRequest) {
         }),
       );
     } catch (error) {
-      console.error("[DLQ API] Failed to list sagas:", error);
+      logger.error("Failed to list sagas", { error: String(error) });
       const errorResponse = formatError(error, "EXECUTION_FAILED");
       return NextResponse.json(errorResponse, { status: 500 });
     }

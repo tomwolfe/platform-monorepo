@@ -39,7 +39,7 @@
  */
 
 import type { Database } from "../types/database";
-import { eq, and, gte, lte, sql, desc, type SQL } from "drizzle-orm";
+import { eq, and, sql, desc, type SQL } from "drizzle-orm";
 import type {
   VectorStore,
   VectorEntry,
@@ -127,7 +127,7 @@ export class PGVectorStore implements VectorStore {
     }
 
     // Insert into database
-    const inserted = await this.db
+    await this.db
       .insert(semanticMemories)
       .values({
         id,

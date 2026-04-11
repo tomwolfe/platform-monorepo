@@ -15,8 +15,17 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { withQStashAuth, formatError, formatSuccess } from "@repo/shared";
+import {
+  withQStashAuth,
+  formatError,
+  formatSuccess,
+  Logger,
+  ServiceUnavailableError,
+  ExecutionError,
+} from "@repo/shared";
 import { createHeartbeatService } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "heartbeat-check" });
 
 const HeartbeatRequestSchema = z.object({
   executionId: z.string().uuid(),
@@ -32,8 +41,8 @@ async function heartbeatCheckHandler(
   const { executionId, expectedStepIndex } = body;
 
   try {
-    console.log(
-      `[HeartbeatCheck] Received heartbeat check for ${executionId} (expected step: ${expectedStepIndex})`,
+    logger.info(
+      `Received heartbeat check for ${executionId} (expected step: ${expectedStepIndex})`,
     );
 
     // Create heartbeat service
@@ -45,9 +54,8 @@ async function heartbeatCheckHandler(
       expectedStepIndex,
     );
 
-    console.log(
-      `[HeartbeatCheck] Check result for ${executionId}:`,
-      JSON.stringify(checkResult, null, 2),
+    logger.info(
+      `Check result for ${executionId}: ${JSON.stringify(checkResult)}`,
     );
 
     // Take action based on result
@@ -89,7 +97,10 @@ async function heartbeatCheckHandler(
         });
 
         const errorResponse = formatError(
-          new Error(`Recovery failed: ${recoveryResult.error}`),
+          new ExecutionError(`Recovery failed: ${recoveryResult.error}`, {
+            executionId,
+            expectedStepIndex,
+          }),
           "EXECUTION_FAILED",
         );
         return NextResponse.json(errorResponse, { status: 500 });
@@ -107,8 +118,9 @@ async function heartbeatCheckHandler(
       });
 
       const errorResponse = formatError(
-        new Error(
+        new ServiceUnavailableError(
           "Max recovery attempts exceeded - manual intervention required",
+          { executionId, expectedStepIndex },
         ),
         "SERVICE_UNAVAILABLE",
       );
@@ -124,7 +136,7 @@ async function heartbeatCheckHandler(
       }),
     );
   } catch (error) {
-    console.error("[HeartbeatCheck] Error processing heartbeat:", error);
+    logger.error("Error processing heartbeat", { error: String(error) });
     const errorResponse = formatError(error, "EXECUTION_FAILED");
     return NextResponse.json(errorResponse, { status: 500 });
   }

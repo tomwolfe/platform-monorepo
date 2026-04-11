@@ -3,9 +3,15 @@
 // Import env validation FIRST - this will fail the build if required env vars are missing
 import "./src/env.ts";
 
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const withBundleAnalyzer = require("@next/bundle-analyzer")({
+  enabled: process.env.ANALYZE === "true",
+});
+
 const nextConfig = {
   reactStrictMode: true,
-  output: 'standalone',
+  output: "standalone",
   transpilePackages: ["@repo/ui-theme", "@repo/mcp-protocol"],
   serverExternalPackages: [
     "@opentelemetry/sdk-node",
@@ -23,10 +29,14 @@ const nextConfig = {
       // Mark node: built-in modules as external
       config.externals = config.externals || [];
       config.externals.push({
-        'node:crypto': 'commonjs node:crypto'
+        "node:crypto": "commonjs node:crypto",
       });
     }
     return config;
+  },
+  // Optimize bundle: skip importing heavy packages at module load time
+  experimental: {
+    optimizePackageImports: ["ai", "@ai-sdk/openai", "ably", "zod-to-json-schema"],
   },
   eslint: {
     ignoreDuringBuilds: false,
@@ -36,4 +46,4 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+export default withBundleAnalyzer(nextConfig);

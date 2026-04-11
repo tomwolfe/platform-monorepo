@@ -62,10 +62,8 @@ function getSecret(): Uint8Array {
 
 // ============================================================================
 // INTERNAL JWT FUNCTIONS (symmetric, service-to-service)
-// Re-exported from security-provider for direct access
+// Already exported above from security-provider
 // ============================================================================
-
-export { signInternalJWT, verifyInternalJWT } from "./security-provider";
 
 /**
  * signInternalToken - Unified signing for internal tokens

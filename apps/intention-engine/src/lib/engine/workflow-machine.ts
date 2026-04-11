@@ -1059,217 +1059,285 @@ export class WorkflowMachine {
       });
 
       try {
-        // Verify plan before execution
-        if (this.plan) {
-          const verification = await this.verifyPlan();
-          if (!verification.valid) {
-            throw EngineErrorSchema.parse({
-              code: "PLAN_VALIDATION_FAILED",
-              message: verification.reason,
-              recoverable: false,
-              timestamp: new Date().toISOString(),
-            });
-          }
-        }
-
-        // FINANCIAL GUARDRAIL - Check budget before starting execution
-        await this.assertBudgetSafety(1000); // Conservative estimate for planning overhead
-
+        await this.prepareExecution();
         this.state = transitionState(this.state, "EXECUTING");
 
-        // Main execution loop with DAG-BASED BATCHED EXECUTION
         while (true) {
-          const elapsedInSegment = Date.now() - this.segmentStartTime;
+          const yieldResult = await this.checkAndYieldIfNecessary();
+          if (yieldResult) return yieldResult;
 
-          // ADAPTIVE BATCHING: Check if we should yield BEFORE executing next batch
-          const shouldYield = this.shouldYieldExecution(elapsedInSegment);
-
-          if (shouldYield) {
-            // PREDICTIVE PINGER: Pre-warm next lambda before yielding
-            const nextStepIndex = this.getNextStepIndex();
-            if (nextStepIndex < (this.plan?.steps.length || 0)) {
-              await this.preWarmNextLambda(nextStepIndex, elapsedInSegment);
-            }
-
-            logger.info({
-              message: `[WorkflowMachine] Adaptive batching: yielding after ${elapsedInSegment}ms (elapsed >= ${ADAPTIVE_BATCHING_CONFIG.minElapsedBeforeYieldCheck}ms)`,
-            });
-            return await this.yieldExecution("TIMEOUT_APPROACHING");
-          }
-
-          // DAG-BASED EXECUTION: Get next batch from dependency resolver
           const batch = this.batchPlanner?.getNextBatch();
-
           if (!batch || batch.stepIds.length === 0) {
-            // Check if all steps are complete
-            const completedCount = getCompletedSteps(this.state).length;
-            const failedCount = getFailedSteps(this.state).length;
-            const totalCount = this.plan?.steps.length || 0;
-
-            if (completedCount + failedCount === totalCount) {
-              // Check if any steps failed
-              if (failedCount > 0) {
-                // Trigger compensation if this is a saga
-                const hasCompensatableSteps = this.plan?.steps.some((step) =>
-                  needsCompensation(step.tool_name),
-                );
-
-                if (hasCompensatableSteps) {
-                  return await this.executeCompensation();
-                }
-
-                return this.createResult(false, startTime, "Steps failed");
-              }
-
-              // All steps completed successfully
-              return this.createResult(
-                true,
-                startTime,
-                "Workflow completed successfully",
-              );
-            } else {
-              // Deadlock detected
-              throw EngineErrorSchema.parse({
-                code: "PLAN_CIRCULAR_DEPENDENCY",
-                message:
-                  "Execution deadlock detected: pending steps exist but none are ready",
-                recoverable: false,
-                timestamp: new Date().toISOString(),
-              });
-            }
+            const completionResult =
+              await this.handleBatchCompletion(startTime);
+            if (completionResult) return completionResult;
+            continue;
           }
 
-          // Get step objects for the batch
           const stepsToExecute = batch.stepIds
             .map((stepId) => this.plan?.steps.find((s) => s.id === stepId))
             .filter((s): s is PlanStep => s !== undefined);
 
-          if (stepsToExecute.length === 0) {
-            continue;
-          }
+          if (stepsToExecute.length === 0) continue;
 
-          // Log parallelization info
           if (batch.stepIds.length > 1) {
             logger.info({
               message: `[WorkflowMachine] Executing batch of ${batch.stepIds.length} steps in parallel: ${batch.stepIds.join(", ")}`,
             });
           }
 
-          // Execute batch steps in parallel
-          const stepIds = stepsToExecute.map((s) => s.id);
-          const stepResultsSettled = await Promise.allSettled(
-            stepsToExecute.map((step) =>
-              this.executeStep({
-                state: this.state,
-                step,
-                toolExecutor: this.toolExecutor,
-                segmentStartTime: this.segmentStartTime,
-                traceId: this.traceId,
-                correlationId: this.correlationId,
-                idempotencyService: this.idempotencyService,
-              }),
-            ),
+          const stepResults = await this.executeBatch(stepsToExecute);
+          const failureResult = await this.handleStepCompletion(
+            stepResults,
+            stepsToExecute,
+            startTime,
           );
+          if (failureResult) return failureResult;
 
-          // Log execution results
-          for (let i = 0; i < stepResultsSettled.length; i++) {
-            const result = stepResultsSettled[i];
-            const stepId = stepIds[i];
-
-            if (result.status === "fulfilled") {
-              const stepResult = result.value;
-              this.state = updateStepState(
-                this.state,
-                stepId,
-                stepResult.stepState,
-              );
-
-              // Register compensation if provided
-              if (stepResult.compensation) {
-                this.compensationsRegistered.push({
-                  stepId,
-                  compensationTool: stepResult.compensation.toolName,
-                  parameters: stepResult.compensation.parameters || {},
-                });
-              }
-
-              logger.info({
-                message: `[WorkflowMachine] Step ${stepId} (${stepsToExecute[i].tool_name}) completed: ${stepResult.stepState.status}`,
-              });
-
-              // ENHANCEMENT: Capture state diff after step completion
-              // This enables visual saga gantt chart for post-mortem debugging
-              await captureStateDiffOnSave(this.state, false);
-            } else {
-              logger.error({
-                message: `[WorkflowMachine] Step ${stepId} failed with exception`,
-                error:
-                  result.reason instanceof Error
-                    ? result.reason.message
-                    : String(result.reason),
-              });
-            }
-          }
-
-          // Check if any step failed and needs compensation
-          const failedStep = stepsToExecute.find((step, i) => {
-            const result = stepResultsSettled[i];
-            return (
-              result.status === "fulfilled" &&
-              result.value.stepState.status === "failed"
-            );
-          });
-
-          if (failedStep) {
-            const failedStepState = getStepState(this.state, failedStep.id);
-            if (failedStepState?.status === "failed") {
-              // Check if this step needs compensation
-              if (needsCompensation(failedStep.tool_name)) {
-                return await this.executeCompensation();
-              }
-
-              // Non-compensatable failure
-              return this.createResult(
-                false,
-                startTime,
-                `Step ${failedStep.id} failed`,
-              );
-            }
-          }
-
-          // DAG-BASED EXECUTION: Advance batch planner after successful batch
           this.batchPlanner?.advanceBatch();
 
-          // ADAPTIVE BATCHING: Check if we need to yield after this batch
-          // Use the intelligent shouldYieldExecution method instead of simple threshold
-          const elapsedAfterBatch = Date.now() - this.segmentStartTime;
-          if (this.shouldYieldExecution(elapsedAfterBatch)) {
-            // PREDICTIVE PINGER: Pre-warm next lambda before yielding
-            const nextStepIndex = this.getNextStepIndex();
-            if (nextStepIndex < (this.plan?.steps.length || 0)) {
-              await this.preWarmNextLambda(nextStepIndex, elapsedAfterBatch);
-            }
-            return await this.yieldExecution("TIMEOUT_APPROACHING");
-          }
+          const postBatchYield = await this.checkAndYieldIfNecessary();
+          if (postBatchYield) return postBatchYield;
         }
       } catch (error) {
-        span.recordException(
-          error instanceof Error ? error : new Error(String(error)),
-        );
-
-        this.state = setExecutionError(
-          this.state,
-          error instanceof Error ? error.message : String(error),
-          this.traceId,
-        );
-
-        return this.createResult(
-          false,
-          startTime,
-          error instanceof Error ? error.message : String(error),
-        );
+        return this.handleExecutionError(span, error, startTime);
       }
     });
+  }
+
+  /**
+   * Validate plan, check budget, and prepare for execution.
+   */
+  private async prepareExecution(): Promise<void> {
+    if (this.plan) {
+      const verification = await this.verifyPlan();
+      if (!verification.valid) {
+        throw EngineErrorSchema.parse({
+          code: "PLAN_VALIDATION_FAILED",
+          message: verification.reason,
+          recoverable: false,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+    await this.assertBudgetSafety(1000);
+  }
+
+  /**
+   * Check if execution should yield due to timeout approaching.
+   * Pre-warms next lambda and yields if necessary.
+   */
+  private async checkAndYieldIfNecessary(): Promise<WorkflowResult | null> {
+    const elapsedInSegment = Date.now() - this.segmentStartTime;
+    if (!this.shouldYieldExecution(elapsedInSegment)) return null;
+
+    const nextStepIndex = this.getNextStepIndex();
+    if (nextStepIndex < (this.plan?.steps.length || 0)) {
+      await this.preWarmNextLambda(nextStepIndex, elapsedInSegment);
+    }
+
+    logger.info({
+      message: `[WorkflowMachine] Adaptive batching: yielding after ${elapsedInSegment}ms (elapsed >= ${ADAPTIVE_BATCHING_CONFIG.minElapsedBeforeYieldCheck}ms)`,
+    });
+    return await this.yieldExecution("TIMEOUT_APPROACHING");
+  }
+
+  /**
+   * Handle completion when no more batches are available.
+   * Returns result if all steps are done, throws on deadlock.
+   */
+  private async handleBatchCompletion(
+    startTime: number,
+  ): Promise<WorkflowResult | null> {
+    if (!this.areAllStepsDone()) return null;
+    return this.createCompletionResult(startTime);
+  }
+
+  /**
+   * Check if all steps are complete or failed. Throws on deadlock.
+   */
+  private areAllStepsDone(): boolean {
+    const completedCount = getCompletedSteps(this.state).length;
+    const failedCount = getFailedSteps(this.state).length;
+    const totalCount = this.plan?.steps.length || 0;
+
+    if (completedCount + failedCount !== totalCount) {
+      throw EngineErrorSchema.parse({
+        code: "PLAN_CIRCULAR_DEPENDENCY",
+        message:
+          "Execution deadlock detected: pending steps exist but none are ready",
+        recoverable: false,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    return true;
+  }
+
+  /**
+   * Create result for completed/failed workflow with compensation check.
+   */
+  private async createCompletionResult(
+    startTime: number,
+  ): Promise<WorkflowResult> {
+    const failedCount = getFailedSteps(this.state).length;
+    if (failedCount > 0) {
+      const hasCompensatableSteps = this.plan?.steps.some((step) =>
+        needsCompensation(step.tool_name),
+      );
+      if (hasCompensatableSteps) {
+        return await this.executeCompensation();
+      }
+      return this.createResult(false, startTime, "Steps failed");
+    }
+    return this.createResult(
+      true,
+      startTime,
+      "Workflow completed successfully",
+    );
+  }
+
+  /**
+   * Execute a batch of steps in parallel and return settled results.
+   */
+  private async executeBatch(
+    stepsToExecute: PlanStep[],
+  ): Promise<PromiseSettledResult<ReturnType<typeof this.executeStep>>[]> {
+    const stepResultsSettled = await Promise.allSettled(
+      stepsToExecute.map((step) =>
+        this.executeStep({
+          state: this.state,
+          step,
+          toolExecutor: this.toolExecutor,
+          segmentStartTime: this.segmentStartTime,
+          traceId: this.traceId,
+          correlationId: this.correlationId,
+          idempotencyService: this.idempotencyService,
+        }),
+      ),
+    );
+    return stepResultsSettled as PromiseSettledResult<
+      ReturnType<typeof this.executeStep>
+    >[];
+  }
+
+  /**
+   * Process step execution results. Updates state, handles compensation,
+   * logs outcomes. Returns WorkflowResult on failure, null on success.
+   */
+  private async handleStepCompletion(
+    stepResultsSettled: PromiseSettledResult<
+      ReturnType<typeof this.executeStep>
+    >[],
+    stepsToExecute: PlanStep[],
+    startTime: number,
+  ): Promise<WorkflowResult | null> {
+    this.processSuccessfulSteps(stepResultsSettled, stepsToExecute);
+    return this.detectAndHandleFailure(
+      stepResultsSettled,
+      stepsToExecute,
+      startTime,
+    );
+  }
+
+  /**
+   * Process successful step results: update state, register compensation,
+   * log, and capture state diff.
+   */
+  private processSuccessfulSteps(
+    stepResultsSettled: PromiseSettledResult<
+      ReturnType<typeof this.executeStep>
+    >[],
+    stepsToExecute: PlanStep[],
+  ): void {
+    const stepIds = stepsToExecute.map((s) => s.id);
+
+    for (let i = 0; i < stepResultsSettled.length; i++) {
+      const result = stepResultsSettled[i];
+      if (result.status !== "fulfilled") continue;
+
+      const stepId = stepIds[i];
+      const stepResult = result.value;
+      this.state = updateStepState(this.state, stepId, stepResult.stepState);
+
+      if (stepResult.compensation) {
+        this.compensationsRegistered.push({
+          stepId,
+          compensationTool: stepResult.compensation.toolName,
+          parameters: stepResult.compensation.parameters || {},
+        });
+      }
+
+      logger.info({
+        message: `[WorkflowMachine] Step ${stepId} (${stepsToExecute[i].tool_name}) completed: ${stepResult.stepState.status}`,
+      });
+
+      captureStateDiffOnSave(this.state, false).catch(() => {});
+    }
+  }
+
+  /**
+   * Detect failed steps and return compensation or error result.
+   */
+  private detectAndHandleFailure(
+    stepResultsSettled: PromiseSettledResult<
+      ReturnType<typeof this.executeStep>
+    >[],
+    stepsToExecute: PlanStep[],
+    startTime: number,
+  ): WorkflowResult | null {
+    const failedStep = stepsToExecute.find((step, i) => {
+      const result = stepResultsSettled[i];
+      return (
+        result.status === "fulfilled" &&
+        result.value.stepState.status === "failed"
+      );
+    });
+
+    if (!failedStep) return null;
+
+    const failedStepState = getStepState(this.state, failedStep.id);
+    if (failedStepState?.status !== "failed") return null;
+
+    if (needsCompensation(failedStep.tool_name)) {
+      return this.handleCompensation(startTime);
+    }
+
+    return this.createResult(false, startTime, `Step ${failedStep.id} failed`);
+  }
+
+  /**
+   * Handle saga compensation for a failed step.
+   */
+  private async handleCompensation(startTime: number): Promise<WorkflowResult> {
+    return await this.executeCompensation();
+  }
+
+  /**
+   * Handle execution error: record in span, update state, return error result.
+   */
+  private handleExecutionError(
+    span: {
+      spanContext?: () => { traceId: string };
+      recordException: (err: Error) => void;
+    },
+    error: unknown,
+    startTime: number,
+  ): WorkflowResult {
+    span.recordException(
+      error instanceof Error ? error : new Error(String(error)),
+    );
+
+    this.state = setExecutionError(
+      this.state,
+      error instanceof Error ? error.message : String(error),
+      this.traceId,
+    );
+
+    return this.createResult(
+      false,
+      startTime,
+      error instanceof Error ? error.message : String(error),
+    );
   }
 
   /**

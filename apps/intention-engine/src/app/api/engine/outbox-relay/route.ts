@@ -18,17 +18,24 @@
  * @since 1.0.0
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
-import { withQStashAuth, getOutboxService, getRedisClient, ServiceNamespace } from '@repo/shared';
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import {
+  withQStashAuth,
+  getOutboxService,
+  getRedisClient,
+  ServiceNamespace,
+  Logger,
+} from "@repo/shared";
 
 const redis = getRedisClient(ServiceNamespace.IE);
+const logger = new Logger({ serviceName: "outbox-relay" });
 
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 export const maxDuration = 10; // Vercel Hobby limit
 
 // ============================================================================
@@ -46,13 +53,13 @@ const OutboxRelayRequestSchema = z.object({
 
 async function outboxRelayHandler(
   request: NextRequest,
-  body: z.infer<typeof OutboxRelayRequestSchema>
+  body: z.infer<typeof OutboxRelayRequestSchema>,
 ): Promise<NextResponse> {
   const startTime = performance.now();
   const { executionId } = body;
 
   try {
-    console.log(`[OutboxRelay] Processing outbox for execution ${executionId}`);
+    logger.info(`Processing outbox for execution ${executionId}`);
 
     // Get outbox service
     const outboxService = getOutboxService(redis);
@@ -62,8 +69,8 @@ async function outboxRelayHandler(
     // For now, we process all pending events (batch processing)
     const processedCount = await outboxService.processPendingEvents(20);
 
-    console.log(
-      `[OutboxRelay] Processed ${processedCount} pending outbox events for execution ${executionId}`
+    logger.info(
+      `Processed ${processedCount} pending outbox events for execution ${executionId}`,
     );
 
     const duration = performance.now() - startTime;
@@ -76,17 +83,17 @@ async function outboxRelayHandler(
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('[OutboxRelay] Handler error:', error);
+    logger.error("Handler error", { error: String(error) });
 
     return NextResponse.json(
       {
         success: false,
         error: {
-          code: 'INTERNAL_ERROR',
+          code: "INTERNAL_ERROR",
           message: error instanceof Error ? error.message : String(error),
         },
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -2,6 +2,7 @@ import { Pool } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-serverless";
 import type { NeonDatabase, ExecuteResult } from "drizzle-orm/neon-serverless";
 import type { NeonHttpDatabase } from "drizzle-orm/neon-serverless";
+// Re-export commonly used drizzle-orm utilities
 export {
   eq,
   and,
@@ -15,6 +16,17 @@ export {
   sql,
   asc,
   desc,
+  ne,
+  isNull,
+  isNotNull,
+  inArray,
+  notInArray,
+  notLike,
+  notIlike,
+  exists,
+  notExists,
+  between,
+  notBetween,
 } from "drizzle-orm";
 import * as tablestackSchema from "./schema/tablestack";
 import * as pgvectorSchema from "./schema/pgvector";
@@ -380,9 +392,6 @@ function createTimeoutDbWrapper<
 
 export type { InferSelectModel, InferInsertModel } from "drizzle-orm";
 
-// Re-export sql directly
-export { sql } from "drizzle-orm";
-
 // Database optimization utilities
 export {
   INDEX_DEFINITIONS,
@@ -396,30 +405,6 @@ export {
   measureQuery,
   type QueryOptimizationOptions,
 } from "./optimization";
-
-export {
-  eq,
-  lt,
-  gt,
-  gte,
-  lte,
-  desc,
-  and,
-  or,
-  ne,
-  isNull,
-  isNotNull,
-  inArray,
-  notInArray,
-  like,
-  notLike,
-  ilike,
-  notIlike,
-  exists,
-  notExists,
-  between,
-  notBetween,
-} from "drizzle-orm";
 
 // ============================================================================
 // WEB3 PAYMENT TYPES

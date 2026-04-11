@@ -265,7 +265,17 @@ export class TransactionSpeedUpService {
         );
       }
 
-      // Cap the gas bump
+      // Ensure minimum gas bump (calculated BEFORE max cap to maintain proper ordering)
+      const minGasBump =
+        originalGasPrice + parseGwei(SPEED_UP_CONFIG.minGasBumpGwei.toString());
+      if (newGasPrice < minGasBump) {
+        newGasPrice = minGasBump;
+        gasBumpPercentage = Number(
+          ((newGasPrice - originalGasPrice) * BigInt(100)) / originalGasPrice,
+        );
+      }
+
+      // Cap the gas bump (applied AFTER minGasBump to enforce hard ceiling)
       const maxGasPrice =
         (originalGasPrice *
           BigInt(100 + SPEED_UP_CONFIG.maxGasBumpPercentage)) /
@@ -273,13 +283,6 @@ export class TransactionSpeedUpService {
       if (newGasPrice > maxGasPrice) {
         newGasPrice = maxGasPrice;
         gasBumpPercentage = SPEED_UP_CONFIG.maxGasBumpPercentage;
-      }
-
-      // Ensure minimum gas bump
-      const minGasBump =
-        originalGasPrice + parseGwei(SPEED_UP_CONFIG.minGasBumpGwei.toString());
-      if (newGasPrice < minGasBump) {
-        newGasPrice = minGasBump;
       }
 
       logger.info({

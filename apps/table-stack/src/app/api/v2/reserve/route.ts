@@ -101,6 +101,7 @@ export const POST = withUnifiedApiHandler(
 
     const {
       restaurantId,
+      tableId,
       guestName,
       guestEmail,
       partySize,
@@ -154,6 +155,7 @@ export const POST = withUnifiedApiHandler(
         .where(
           and(
             eq(restaurantReservations.restaurantId, targetRestaurantId),
+            eq(restaurantReservations.tableId, tableId),
             or(
               eq(restaurantReservations.status, "confirmed"),
               eq(restaurantReservations.status, "pending"),

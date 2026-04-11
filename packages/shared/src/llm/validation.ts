@@ -27,7 +27,10 @@
  */
 
 import { z } from "zod";
-import { safeParseJson, sanitizeJsonOutput } from "../utils/json-parser";
+import {
+  parseJsonWithFallback,
+  sanitizeJsonOutput,
+} from "../utils/json-parser";
 import { Logger } from "../logger";
 
 const logger = new Logger({ serviceName: "llm-validation" });
@@ -247,7 +250,7 @@ export async function validateLLMOutput<T>(
   while (attempt <= maxRetries) {
     // Step 1: Parse JSON
     try {
-      parsed = safeParseJson(lastResponse);
+      parsed = await parseJsonWithFallback(lastResponse);
     } catch (parseError) {
       validationLogger.warn({
         message: `[LLM Validation] JSON parse failed (attempt ${attempt + 1})`,
@@ -389,13 +392,13 @@ export function validateLLMOutputSync<T>(
 }
 
 /**
- * Safe parse JSON with fallback error handling.
+ * Parse JSON with robust error handling.
  * Extracts JSON from markdown code blocks and handles parsing errors.
  *
  * @param input - Raw string input
  * @returns Parsed JSON object
  * @throws Error if parsing fails
  */
-export function parseJsonSafely(input: string): unknown {
-  return safeParseJson(input);
+export async function parseJsonSafely(input: string): Promise<unknown> {
+  return parseJsonWithFallback(input);
 }

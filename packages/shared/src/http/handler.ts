@@ -17,6 +17,10 @@
  * ```
  *
  * @package @repo/shared
+ * @deprecated Use `withUnifiedApiHandler` from `@repo/shared` instead.
+ *   `withUnifiedApiHandler` provides consistent OpenTelemetry spans,
+ *   stack trace sanitization, and standardized error responses.
+ *   @see packages/shared/src/middleware/api-error-wrapper.ts
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -105,12 +109,10 @@ function formatErrorToResponse(
 
   // Handle known error types
   if (error instanceof ValidationError) {
-    const fields = (error as any).fields;
     return NextResponse.json(
       errorResponse(error.code, error.message, {
         statusCode: error.statusCode,
         details: error.details,
-        ...(fields && { fields }),
         traceId,
       }),
       { status: error.statusCode },
@@ -151,7 +153,7 @@ function formatErrorToResponse(
   }
 
   if (error instanceof RateLimitError) {
-    const retryAfter = (error.details as any)?.retryAfter;
+    const retryAfter = (error.details as Record<string, unknown>)?.retryAfter;
     return NextResponse.json(
       errorResponse(error.code, error.message, {
         statusCode: error.statusCode,

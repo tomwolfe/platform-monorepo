@@ -28,7 +28,9 @@ export interface QStashWebhookHeaders {
 /**
  * Extract QStash webhook headers from request
  */
-export function getQStashWebhookHeaders(headers: Headers): QStashWebhookHeaders {
+export function getQStashWebhookHeaders(
+  headers: Headers,
+): QStashWebhookHeaders {
   return {
     signature: headers.get("upstash-signature"),
     keyId: headers.get("upstash-key-id"),
@@ -43,7 +45,7 @@ export function getQStashWebhookHeaders(headers: Headers): QStashWebhookHeaders 
 async function verifyEd25519Signature(
   signature: string,
   body: string,
-  signingKey: string
+  signingKey: string,
 ): Promise<boolean> {
   try {
     // QStash signing keys are base64-encoded ED25519 public keys
@@ -57,7 +59,7 @@ async function verifyEd25519Signature(
       keyData,
       { name: "Ed25519", namedCurve: "Ed25519" },
       true,
-      ["verify"]
+      ["verify"],
     );
 
     // Verify the signature
@@ -65,7 +67,7 @@ async function verifyEd25519Signature(
       { name: "Ed25519" },
       publicKey,
       signatureData,
-      bodyData
+      bodyData,
     );
 
     return isValid;
@@ -81,16 +83,36 @@ async function verifyEd25519Signature(
  * @param rawBody - Raw request body (must be text, not JSON-parsed)
  * @param signature - ED25519 signature from upstash-signature header
  * @param keyId - Key ID from upstash-key-id header (optional, tries current then next key)
- * @returns true if signature is valid
+ * @param timestamp - Timestamp from upstash-timestamp header (optional, validated for freshness)
+ * @returns true if signature is valid and timestamp is fresh
  */
 export async function verifyQStashWebhook(
   rawBody: string,
   signature: string | null,
-  keyId?: string | null
+  keyId?: string | null,
+  timestamp?: string | null,
 ): Promise<boolean> {
   if (!signature) {
     console.warn("[QStashWebhook] Missing signature header");
     return false;
+  }
+
+  // Validate timestamp freshness to prevent replay attacks (5-minute window)
+  if (timestamp) {
+    const timestampMs = parseInt(timestamp, 10);
+    if (!isNaN(timestampMs)) {
+      const MAX_AGE_MS = 300_000; // 5 minutes
+      const age = Date.now() - timestampMs;
+      if (age > MAX_AGE_MS) {
+        console.warn(
+          "[QStashWebhook] Webhook timestamp expired - possible replay attack",
+          {
+            age: `${Math.round(age / 1000)}s`,
+          },
+        );
+        return false;
+      }
+    }
   }
 
   const currentSigningKey = process.env.QSTASH_CURRENT_SIGNING_KEY;
@@ -103,7 +125,11 @@ export async function verifyQStashWebhook(
 
   try {
     // Try current signing key first
-    let isValid = await verifyEd25519Signature(signature, rawBody, currentSigningKey);
+    let isValid = await verifyEd25519Signature(
+      signature,
+      rawBody,
+      currentSigningKey,
+    );
 
     if (isValid) {
       console.log("[QStashWebhook] Signature verified with current key");
@@ -112,9 +138,15 @@ export async function verifyQStashWebhook(
 
     // If current key fails, try next key (for key rotation)
     if (nextSigningKey) {
-      isValid = await verifyEd25519Signature(signature, rawBody, nextSigningKey);
+      isValid = await verifyEd25519Signature(
+        signature,
+        rawBody,
+        nextSigningKey,
+      );
       if (isValid) {
-        console.log("[QStashWebhook] Signature verified with next key (rotation in progress)");
+        console.log(
+          "[QStashWebhook] Signature verified with next key (rotation in progress)",
+        );
         return true;
       }
     }
@@ -134,16 +166,16 @@ export async function verifyQStashWebhook(
  * @returns true if verified, false otherwise
  */
 export async function verifyQStashWebhookMiddleware(
-  request: Request
+  request: Request,
 ): Promise<boolean> {
   const headers = request.headers;
-  const { signature, keyId } = getQStashWebhookHeaders(headers);
+  const { signature, keyId, timestamp } = getQStashWebhookHeaders(headers);
 
   // SECURITY: Hard crash if signing key is missing in any environment
   if (!process.env.QSTASH_CURRENT_SIGNING_KEY) {
     throw new Error(
-      'SECURITY CRITICAL: QSTASH_CURRENT_SIGNING_KEY is required. ' +
-      'Webhook verification cannot be skipped. Set the signing key environment variable.'
+      "SECURITY CRITICAL: QSTASH_CURRENT_SIGNING_KEY is required. " +
+        "Webhook verification cannot be skipped. Set the signing key environment variable.",
     );
   }
 
@@ -151,7 +183,12 @@ export async function verifyQStashWebhookMiddleware(
 
   // Cache the body for later use (since we consumed it)
   // Note: In Next.js, you may need to re-create the request with the body
-  const isValid = await verifyQStashWebhook(rawBody, signature, keyId);
+  const isValid = await verifyQStashWebhook(
+    rawBody,
+    signature,
+    keyId,
+    timestamp,
+  );
 
   return isValid;
 }
@@ -167,7 +204,7 @@ export async function verifyQStashWebhookMiddleware(
  * ```
  */
 export async function getRawBodyForVerification(
-  request: Request
+  request: Request,
 ): Promise<string> {
   return await request.text();
 }
@@ -190,10 +227,7 @@ export async function getRawBodyForVerification(
  * @returns Next.js POST handler with built-in verification
  */
 export function withQStashAuth<T extends Record<string, unknown>>(
-  handler: (
-    request: Request,
-    body: T
-  ) => Promise<Response>
+  handler: (request: Request, body: T) => Promise<Response>,
 ) {
   return async (request: Request): Promise<Response> => {
     const headers = request.headers;
@@ -207,8 +241,8 @@ export function withQStashAuth<T extends Record<string, unknown>>(
     // PRODUCTION SAFETY: Hard crash if signing key is missing in production when webhook is received
     if (isQStashWebhook && isProduction && !hasSigningKey) {
       throw new Error(
-        'SECURITY CRITICAL: QStash webhook received but QSTASH_CURRENT_SIGNING_KEY is not configured. ' +
-        'Webhook verification is required in production. Set the signing key environment variable.'
+        "SECURITY CRITICAL: QStash webhook received but QSTASH_CURRENT_SIGNING_KEY is not configured. " +
+          "Webhook verification is required in production. Set the signing key environment variable.",
       );
     }
 
@@ -216,10 +250,18 @@ export function withQStashAuth<T extends Record<string, unknown>>(
     if (isQStashWebhook) {
       if (isProduction && hasSigningKey) {
         const rawBody = await request.text();
-        const isValid = await verifyQStashWebhook(rawBody, upstashSignature, upstashKeyId);
+        const upstashTimestamp = headers.get("upstash-timestamp");
+        const isValid = await verifyQStashWebhook(
+          rawBody,
+          upstashSignature,
+          upstashKeyId,
+          upstashTimestamp,
+        );
 
         if (!isValid) {
-          console.warn("[withQStashAuth] QStash webhook signature verification failed");
+          console.warn(
+            "[withQStashAuth] QStash webhook signature verification failed",
+          );
           return new Response(
             JSON.stringify({
               success: false,
@@ -228,7 +270,7 @@ export function withQStashAuth<T extends Record<string, unknown>>(
                 message: "Invalid QStash signature",
               },
             }),
-            { status: 401, headers: { "Content-Type": "application/json" } }
+            { status: 401, headers: { "Content-Type": "application/json" } },
           );
         }
 
@@ -238,7 +280,9 @@ export function withQStashAuth<T extends Record<string, unknown>>(
       }
 
       // Dev mode or no signing key - skip verification
-      console.warn("[withQStashAuth] QStash webhook verification skipped (dev mode or no key)");
+      console.warn(
+        "[withQStashAuth] QStash webhook verification skipped (dev mode or no key)",
+      );
       const rawBody = await request.text();
       const parsedBody = JSON.parse(rawBody) as T;
       return await handler(request, parsedBody);
@@ -248,7 +292,7 @@ export function withQStashAuth<T extends Record<string, unknown>>(
     if (isProduction && hasSigningKey) {
       console.warn(
         "[withQStashAuth] Direct API call received in production with webhook configured. " +
-        "Ensure this is intentional."
+          "Ensure this is intentional.",
       );
     }
 
@@ -279,11 +323,8 @@ export interface QStashVerificationOptions {
  * ```
  */
 export function withQStashAuthEnhanced<T extends Record<string, unknown>>(
-  handler: (
-    request: Request,
-    body: T
-  ) => Promise<Response>,
-  options: QStashVerificationOptions = {}
+  handler: (request: Request, body: T) => Promise<Response>,
+  options: QStashVerificationOptions = {},
 ) {
   const { skipDevVerification = true, requireWebhook = false } = options;
 
@@ -306,7 +347,7 @@ export function withQStashAuthEnhanced<T extends Record<string, unknown>>(
             message: "QStash webhook signature required",
           },
         }),
-        { status: 401, headers: { "Content-Type": "application/json" } }
+        { status: 401, headers: { "Content-Type": "application/json" } },
       );
     }
 
@@ -314,10 +355,18 @@ export function withQStashAuthEnhanced<T extends Record<string, unknown>>(
     if (isQStashWebhook) {
       if (isProduction && hasSigningKey) {
         const rawBody = await request.text();
-        const isValid = await verifyQStashWebhook(rawBody, upstashSignature, upstashKeyId);
+        const upstashTimestamp = headers.get("upstash-timestamp");
+        const isValid = await verifyQStashWebhook(
+          rawBody,
+          upstashSignature,
+          upstashKeyId,
+          upstashTimestamp,
+        );
 
         if (!isValid) {
-          console.warn("[withQStashAuthEnhanced] QStash webhook signature verification failed");
+          console.warn(
+            "[withQStashAuthEnhanced] QStash webhook signature verification failed",
+          );
           return new Response(
             JSON.stringify({
               success: false,
@@ -326,7 +375,7 @@ export function withQStashAuthEnhanced<T extends Record<string, unknown>>(
                 message: "Invalid QStash signature",
               },
             }),
-            { status: 401, headers: { "Content-Type": "application/json" } }
+            { status: 401, headers: { "Content-Type": "application/json" } },
           );
         }
 
@@ -337,7 +386,9 @@ export function withQStashAuthEnhanced<T extends Record<string, unknown>>(
 
       // Dev mode or no signing key - skip verification
       if (skipDevVerification) {
-        console.warn("[withQStashAuthEnhanced] QStash webhook verification skipped (dev mode)");
+        console.warn(
+          "[withQStashAuthEnhanced] QStash webhook verification skipped (dev mode)",
+        );
       }
       const rawBody = await request.text();
       const parsedBody = JSON.parse(rawBody) as T;

@@ -188,6 +188,8 @@ async function postHandler(req: NextRequest) {
     metadata,
   } = validation.data;
 
+  let dbCommitted = false;
+
   try {
     // Handle shadow restaurant discovery
     let targetRestaurantId = context!.restaurantId;
@@ -241,6 +243,7 @@ async function postHandler(req: NextRequest) {
       startTime: startTime!,
       metadata,
     });
+    dbCommitted = true;
 
     // Fetch restaurant details for notifications
     const restaurant =
@@ -287,8 +290,10 @@ async function postHandler(req: NextRequest) {
       }),
     );
   } catch (err) {
-    // Remove idempotency key on failure to allow retries
-    await idempotencyService.removeKey(idempotencyKey, "reserve_api");
+    // Remove idempotency key on failure to allow retries, but only if DB wasn't committed
+    if (!dbCommitted) {
+      await idempotencyService.removeKey(idempotencyKey, "reserve_api");
+    }
     if (err instanceof ConflictError) {
       return NextResponse.json(formatApiError(err, "CONFLICT"), {
         status: 409,

@@ -1,25 +1,25 @@
-import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
-import { securityHeadersMiddleware, API_SECURITY_CONFIG } from '@repo/shared';
-import { isReplayBlockedInRedis } from '@repo/shared/web3-replay-guard';
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { securityHeadersMiddleware, API_SECURITY_CONFIG } from "@repo/shared";
+import { isReplayBlockedInRedis } from "@repo/shared/web3-replay-guard";
 
 const isPublicRoute = createRouteMatcher([
-  '/api/health',
-  '/api/auth/bridge(.*)',
-  '/api/mcp(.*)',
+  "/api/health",
+  "/api/auth/bridge(.*)",
+  "/api/mcp(.*)",
 ]);
 
 const isProtectedRoute = createRouteMatcher([
-  '/driver(.*)',
-  '/dashboard(.*)',
-  '/onboarding(.*)',
+  "/driver(.*)",
+  "/dashboard(.*)",
+  "/onboarding(.*)",
 ]);
 
-const isApiRoute = createRouteMatcher(['/api/(.*)']);
+const isApiRoute = createRouteMatcher(["/api/(.*)"]);
 
 // Routes that process crypto payments and need replay protection
-const isCryptoPaymentRoute = createRouteMatcher(['/api/checkout(.*)']);
+const isCryptoPaymentRoute = createRouteMatcher(["/api/checkout(.*)"]);
 
 export default clerkMiddleware(async (auth, req) => {
   const request = req as NextRequest;
@@ -39,26 +39,39 @@ export default clerkMiddleware(async (auth, req) => {
   // Uses Redis for fast pre-check (no DB bundle in Edge runtime)
   // The definitive atomic registration happens in the route handler
   if (isCryptoPaymentRoute(req)) {
-    const txHash = request.headers.get('x-tx-hash');
-    if (txHash) {
-      try {
-        const isReplayed = await isReplayBlockedInRedis(txHash);
-        if (isReplayed) {
-          return NextResponse.json(
-            {
-              success: false,
-              error: {
-                code: 'CONFLICT',
-                message: 'Transaction already processed',
-              },
+    const txHash = request.headers.get("x-tx-hash");
+    if (!txHash) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "x-tx-hash header is required for crypto payments",
+          },
+        },
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    try {
+      const isReplayed = await isReplayBlockedInRedis(txHash);
+      if (isReplayed) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: "CONFLICT",
+              message: "Transaction already processed",
             },
-            { status: 409, headers: { 'Content-Type': 'application/json' } }
-          );
-        }
-      } catch (error) {
-        // If Redis is unavailable, log and allow the route handler to perform the definitive check
-        console.warn('[Middleware] Replay guard pre-check unavailable, deferring to route handler:', error);
+          },
+          { status: 409, headers: { "Content-Type": "application/json" } },
+        );
       }
+    } catch (error) {
+      // If Redis is unavailable, log and allow the route handler to perform the definitive check
+      console.warn(
+        "[Middleware] Replay guard pre-check unavailable, deferring to route handler:",
+        error,
+      );
     }
   }
 
@@ -68,14 +81,14 @@ export default clerkMiddleware(async (auth, req) => {
   }
 
   // Skip middleware for _not-found route during build
-  if (req.nextUrl.pathname.startsWith('/_not-found')) {
+  if (req.nextUrl.pathname.startsWith("/_not-found")) {
     return response;
   }
 
   // Standard protection for other routes
   if (isProtectedRoute(req)) {
     // If no Clerk session, check if we have our custom bridge cookie
-    const hasBridge = req.cookies.has('edge_session_bridge');
+    const hasBridge = req.cookies.has("edge_session_bridge");
     if (!hasBridge) {
       await auth.protect();
     }
@@ -87,8 +100,8 @@ export default clerkMiddleware(async (auth, req) => {
 export const config = {
   matcher: [
     // Skip Next.js internals and all static files, unless found in search params
-    '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
     // Always run for API routes
-    '/(api|trpc)(.*)',
+    "/(api|trpc)(.*)",
   ],
 };

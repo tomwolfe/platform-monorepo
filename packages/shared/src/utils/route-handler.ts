@@ -20,6 +20,10 @@
  *
  * @package @repo/shared
  * @since 1.0.0
+ * @deprecated Use `withUnifiedApiHandler` from `@repo/shared` instead.
+ *   `withUnifiedApiHandler` provides consistent OpenTelemetry spans,
+ *   stack trace sanitization, and standardized error responses.
+ *   @see packages/shared/src/middleware/api-error-wrapper.ts
  */
 
 import { z } from "zod";
@@ -219,8 +223,12 @@ export function createRouteHandler<
       // Handler threw an error - let the outer error handler catch it
       const appError =
         error instanceof Error ? error : new Error(String(error));
-      (appError as any).details = {
-        ...(appError as any).details,
+      const existingDetails =
+        appError instanceof Error
+          ? (appError as Record<string, unknown>).details
+          : undefined;
+      (appError as Error & { details?: Record<string, unknown> }).details = {
+        ...(existingDetails as Record<string, unknown>),
         traceId,
         serviceName,
       };

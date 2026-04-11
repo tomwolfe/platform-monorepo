@@ -11,9 +11,13 @@
  */
 
 import { randomUUID } from "crypto";
-import { RealtimeService, Logger } from "@repo/shared";
+import {
+  RealtimeService,
+  Logger,
+  tracingStorage,
+  TRACE_ID_HEADER,
+} from "@repo/shared";
 import { Tracer } from "./tracing";
-import { LRUCache } from "lru-cache";
 import type { Span } from "@opentelemetry/api";
 
 const logger = new Logger({ serviceName: "intention-engine" });
@@ -40,12 +44,6 @@ export interface TraceContext {
 // ============================================================================
 
 export class TraceContextManager {
-  // LRU cache with max 5000 entries and 1-hour TTL to prevent memory leaks
-  public static storage = new LRUCache<string, TraceContext>({
-    max: 5000,
-    ttl: 1000 * 60 * 60, // 1 hour
-  });
-
   /**
    * Create a new trace context
    */
@@ -79,24 +77,52 @@ export class TraceContextManager {
   }
 
   /**
-   * Store context for later retrieval
+   * Store context in AsyncLocalStorage for the current execution scope.
+   * This replaces the LRU cache pattern with native async context propagation.
    */
-  static store(contextId: string, context: TraceContext): void {
-    this.storage.set(contextId, context);
+  static store(context: TraceContext): void {
+    if (!tracingStorage) {
+      return;
+    }
+    const store = tracingStorage.getStore();
+    if (store) {
+      // Update existing store with new trace context
+      Object.assign(store, {
+        traceId: context.traceId,
+        correlationId: context.correlationId,
+        spanId: context.spanId,
+        parentSpanId: context.parentSpanId,
+        baggage: context.baggage,
+      });
+    }
   }
 
   /**
-   * Retrieve stored context
+   * Retrieve stored context from AsyncLocalStorage
    */
-  static retrieve(contextId: string): TraceContext | undefined {
-    return this.storage.get(contextId);
+  static retrieve(): TraceContext | undefined {
+    if (!tracingStorage) {
+      return undefined;
+    }
+    const store = tracingStorage.getStore();
+    if (!store) {
+      return undefined;
+    }
+    return {
+      traceId: store.traceId,
+      spanId: store.spanId,
+      parentSpanId: store.parentSpanId,
+      correlationId: store.correlationId,
+      baggage: store.baggage,
+    };
   }
 
   /**
-   * Clear stored context
+   * Clear stored context (no-op with AsyncLocalStorage - context is scoped automatically)
    */
-  static clear(contextId: string): void {
-    this.storage.delete(contextId);
+  static clear(): void {
+    // With AsyncLocalStorage, context is automatically cleared when the async scope ends
+    // No manual cleanup needed
   }
 
   /**
@@ -326,36 +352,25 @@ export async function publishTracedNervousSystemEvent(
 // ============================================================================
 
 /**
- * Express/Next.js middleware to extract trace context from requests
+ * Express/Next.js middleware to extract trace context from requests.
+ * Stores context in AsyncLocalStorage for automatic propagation.
  */
 export function extractTraceFromRequest(
   headers: Headers | Record<string, string>,
 ): TraceContext {
   const context = TraceContextManager.fromHeaders(headers);
 
-  // Store context for later retrieval
-  const contextId = `req:${context.traceId}`;
-  TraceContextManager.store(contextId, context);
+  // Store context in AsyncLocalStorage
+  TraceContextManager.store(context);
 
   return context;
 }
 
 /**
- * Get current trace context from storage
+ * Get current trace context from AsyncLocalStorage
  */
-export function getCurrentTraceContext(
-  contextId?: string,
-): TraceContext | undefined {
-  if (!contextId) {
-    // Return most recent context (LRUCache iterates in insertion order)
-    let lastContext: TraceContext | undefined;
-    for (const ctx of TraceContextManager.storage.values()) {
-      lastContext = ctx;
-    }
-    return lastContext;
-  }
-
-  return TraceContextManager.retrieve(contextId);
+export function getCurrentTraceContext(): TraceContext | undefined {
+  return TraceContextManager.retrieve();
 }
 
 // ============================================================================

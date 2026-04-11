@@ -4,6 +4,9 @@
  */
 
 import { getDb, users, eq } from "@repo/database";
+import { Logger } from "@repo/shared";
+
+const logger = new Logger({ serviceName: "context-persistence" });
 
 export interface InteractionContext {
   intentType: string;
@@ -20,9 +23,10 @@ export interface InteractionContext {
  */
 export async function saveUserInteractionContext(
   userId: string,
-  context: InteractionContext
+  context: InteractionContext,
 ): Promise<void> {
   try {
+    const db = getDb();
     await db
       .update(users)
       .set({
@@ -30,10 +34,16 @@ export async function saveUserInteractionContext(
         updatedAt: new Date(),
       })
       .where(eq(users.clerkId, userId));
-    
-    console.log(`[Context Persistence] Saved context for user ${userId}: ${context.intentType}`);
+
+    console.log(
+      `[Context Persistence] Saved context for user ${userId}: ${context.intentType}`,
+    );
   } catch (error) {
-    console.error('[Context Persistence] Failed to save context:', error);
+    logger.error({
+      message: `[Context Persistence] Failed to save context for user ${userId}`,
+      error: error instanceof Error ? error.message : String(error),
+      context: { userId, intentType: context.intentType },
+    });
     // Non-critical operation - don't throw
   }
 }
@@ -43,16 +53,19 @@ export async function saveUserInteractionContext(
  * Returns null if no context exists.
  */
 export async function loadUserInteractionContext(
-  clerkId: string
+  clerkId: string,
 ): Promise<InteractionContext | null> {
   try {
     const user = await getDb().query.users.findFirst({
       where: eq(users.clerkId, clerkId),
     });
-    
+
     return user?.lastInteractionContext || null;
   } catch (error) {
-    console.error('[Context Persistence] Failed to load context:', error);
+    logger.error({
+      message: `[Context Persistence] Failed to load context for user ${clerkId}`,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }

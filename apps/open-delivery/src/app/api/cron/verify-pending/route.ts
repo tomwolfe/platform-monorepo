@@ -10,7 +10,7 @@ import {
   AppConfig,
 } from "@repo/shared";
 import { verifyTransaction } from "@repo/shared/utils/web3-verification";
-import { type Address } from "viem";
+import { type Address, isHex, isAddress } from "viem";
 import { processStuckTransactions } from "@repo/shared/services/transaction-speedup";
 import { trace, Span, SpanStatusCode } from "@opentelemetry/api";
 
@@ -18,6 +18,36 @@ export const maxDuration = 10; // Vercel Hobby limit
 
 const logger = new Logger({ serviceName: "verify-pending-cron" });
 const tracer = trace.getTracer("open-delivery-cron");
+
+// ============================================================================
+// SAFE HEX VALIDATION
+// ============================================================================
+
+/**
+ * Safely validate a hex string for use as a transaction hash.
+ * Returns null if invalid so the caller can mark the order as failed.
+ */
+function safeValidateHex(
+  value: string | null,
+  label: string,
+): `0x${string}` | null {
+  if (!value || !isHex(value)) {
+    logger.warn(`Invalid hex for ${label}`, { value });
+    return null;
+  }
+  return value as `0x${string}`;
+}
+
+/**
+ * Safely validate an Ethereum address.
+ * Returns null if invalid.
+ */
+function safeValidateAddress(value: string | null | undefined): Address | null {
+  if (!value || !isAddress(value)) {
+    return null;
+  }
+  return value as Address;
+}
 
 // SERVERLESS RESILIENCE: Reduced from 50 to 15 to stay within Vercel's 10s limit.
 // If more than 15 orders exist, a QStash self-trigger recursively processes the rest.
@@ -201,15 +231,46 @@ async function postHandler(req: NextRequest) {
           try {
             // Move BigInt casting inside try block to catch parsing errors
             const totalBigInt = BigInt(order.total);
-            const tipBigInt = BigInt(order.tip); // Reserved for future tip-based verification
+            const _tipBigInt = BigInt(order.tip); // Reserved for future tip-based verification
+
+            // Safely validate hex strings before verification
+            const txHashHex = safeValidateHex(
+              order.paymentTxHash,
+              "paymentTxHash",
+            );
+            if (!txHashHex) {
+              logger.warn("Order has invalid tx hash hex, marking as failed", {
+                orderId: order.id,
+              });
+              await getDb()
+                .update(orders)
+                .set({ status: "verification_failed" })
+                .where(eq(orders.id, order.id));
+              return { orderId: order.id, success: false };
+            }
+
+            const recipientAddress = safeValidateAddress(
+              order.restaurant.walletAddress,
+            );
+            if (!recipientAddress) {
+              logger.warn(
+                "Order has invalid recipient address, marking as failed",
+                {
+                  orderId: order.id,
+                },
+              );
+              await getDb()
+                .update(orders)
+                .set({ status: "verification_failed" })
+                .where(eq(orders.id, order.id));
+              return { orderId: order.id, success: false };
+            }
 
             // Verify the transaction on-chain
             const verificationResult = await verifyTransaction({
-              txHash: order.paymentTxHash as `0x${string}`,
+              txHash: txHashHex,
               expectedValue: totalBigInt,
-              expectedRecipient: order.restaurant.walletAddress as
-                | Address
-                | undefined,
+              expectedRecipient: recipientAddress,
               paymentCurrency: order.paymentCurrency || "USDC",
             });
 
@@ -343,7 +404,7 @@ async function postHandler(req: NextRequest) {
   });
 }
 
-async function getHandler(req: NextRequest) {
+async function getHandler(_req: NextRequest) {
   return NextResponse.json({
     status: "ok",
     message: "Verify pending cron endpoint is healthy",

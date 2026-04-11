@@ -34,19 +34,17 @@
  * @package apps/intention-engine
  */
 
+import { ExecutionState, TraceEntry, ContextSnapshot, PlanStep } from "./types";
 import {
-  ExecutionState,
-  TraceEntry,
-  ContextSnapshot,
-  PlanStep,
-} from "./types";
-import { getRedisClient, ServiceNamespace, Logger } from '@repo/shared';
-import { Tracer } from "./tracing";
+  getRedisClient,
+  ServiceNamespace,
+  Logger,
+  deepEqual,
+} from "@repo/shared";
 import { loadExecutionTrace } from "./memory";
-import { getToolRegistry, type ToolFunction } from "./tools/registry";
 
 const redis = getRedisClient(ServiceNamespace.IE);
-const logger = new Logger({ serviceName: 'intention-engine' });
+const logger = new Logger({ serviceName: "intention-engine" });
 
 // ============================================================================
 // CONFIGURATION
@@ -163,13 +161,20 @@ export class ContextSnapshotter {
         toolCalls?: unknown[];
       };
       cacheKeys?: string[];
-      dbReferences?: Array<{ table: string; recordId: string; keyFields: Record<string, unknown> }>;
-    }
+      dbReferences?: Array<{
+        table: string;
+        recordId: string;
+        keyFields: Record<string, unknown>;
+      }>;
+    },
   ): Promise<ContextSnapshot | null> {
     const now = Date.now();
 
     // Rate limit snapshots
-    if (now - this.lastSnapshotTime < TIME_TRAVEL_CONFIG.minSnapshotIntervalMs) {
+    if (
+      now - this.lastSnapshotTime <
+      TIME_TRAVEL_CONFIG.minSnapshotIntervalMs
+    ) {
       return null;
     }
 
@@ -189,7 +194,7 @@ export class ContextSnapshotter {
     // Build context snapshot
     const snapshot: ContextSnapshot = {
       executionState: this.sanitizeState(state),
-      stepStates: state.step_states.map(s => ({
+      stepStates: state.step_states.map((s) => ({
         step_id: s.step_id,
         status: s.status,
         output: s.output,
@@ -232,7 +237,12 @@ export class ContextSnapshotter {
     };
 
     // Store snapshot in Redis
-    await this.storeSnapshot(snapshot, stepIndex, options?.phase || "execution", options?.step?.id);
+    await this.storeSnapshot(
+      snapshot,
+      stepIndex,
+      options?.phase || "execution",
+      options?.step?.id,
+    );
 
     return snapshot;
   }
@@ -245,7 +255,7 @@ export class ContextSnapshotter {
 
     // Remove or redact sensitive fields
     if (sanitized.context) {
-      const context = { ...sanitized.context as Record<string, unknown> };
+      const context = { ...(sanitized.context as Record<string, unknown>) };
       delete context.authToken;
       delete context.apiKey;
       sanitized.context = context;
@@ -257,7 +267,9 @@ export class ContextSnapshotter {
   /**
    * Capture cache state for specified keys
    */
-  private async captureCacheState(keys: string[]): Promise<Record<string, unknown>> {
+  private async captureCacheState(
+    keys: string[],
+  ): Promise<Record<string, unknown>> {
     const cacheState: Record<string, unknown> = {};
 
     for (const key of keys) {
@@ -311,7 +323,7 @@ export class ContextSnapshotter {
     snapshot: ContextSnapshot,
     stepIndex: number,
     phase: string,
-    stepId?: string
+    stepId?: string,
   ): Promise<void> {
     const snapshotKey = `snapshot:${this.executionId}:${stepIndex}:${Date.now()}`;
     const metadata: SnapshotMetadata = {
@@ -342,13 +354,12 @@ export class ContextSnapshotter {
       redis?.setex(
         `${snapshotKey}:meta`,
         TIME_TRAVEL_CONFIG.snapshotTTL,
-        JSON.stringify(metadata)
+        JSON.stringify(metadata),
       ),
       // Add to snapshot index
-      redis?.hset(
-        `snapshots:${this.executionId}`,
-        { [`${stepIndex}:${snapshot.capturedAt}`]: snapshotKey }
-      ),
+      redis?.hset(`snapshots:${this.executionId}`, {
+        [`${stepIndex}:${snapshot.capturedAt}`]: snapshotKey,
+      }),
     ]);
 
     logger.info({
@@ -373,7 +384,7 @@ export class ReplayEngine {
   constructor(
     traceId: string,
     startStepIndex: number,
-    options: Partial<ReplayOptions> = {}
+    options: Partial<ReplayOptions> = {},
   ) {
     this.traceId = traceId;
     this.executionId = traceId; // Usually same
@@ -425,7 +436,7 @@ export class ReplayEngine {
       return result;
     } catch (error) {
       logger.error({
-        message: '[TimeTravel] Replay failed',
+        message: "[TimeTravel] Replay failed",
         error: error instanceof Error ? error.message : String(error),
       });
       return {
@@ -448,7 +459,9 @@ export class ReplayEngine {
   /**
    * Load snapshot for a specific step
    */
-  private async loadSnapshot(stepIndex: number): Promise<ContextSnapshot | null> {
+  private async loadSnapshot(
+    stepIndex: number,
+  ): Promise<ContextSnapshot | null> {
     // Get snapshot keys from index
     const snapshotKeys = await redis?.hvals(`snapshots:${this.executionId}`);
     if (!snapshotKeys) return null;
@@ -479,7 +492,7 @@ export class ReplayEngine {
     try {
       // Load execution trace from memory
       const trace = await loadExecutionTrace(this.traceId);
-      
+
       if (!trace) {
         logger.warn({
           message: `[TimeTravel] No trace found for ${this.traceId}`,
@@ -491,7 +504,7 @@ export class ReplayEngine {
       return trace.entries || [];
     } catch (error) {
       logger.error({
-        message: '[TimeTravel] Failed to load original trace',
+        message: "[TimeTravel] Failed to load original trace",
         error: error instanceof Error ? error.message : String(error),
       });
       return [];
@@ -503,7 +516,7 @@ export class ReplayEngine {
    */
   private async executeReplay(
     snapshot: ContextSnapshot,
-    originalTrace: TraceEntry[]
+    originalTrace: TraceEntry[],
   ): Promise<ReplayResult> {
     const differences: ReplayResult["differences"] = [];
     let stepsReplayed = 0;
@@ -511,8 +524,12 @@ export class ReplayEngine {
 
     if (this.options.verbose) {
       logger.info({
-        message: '[TimeTravel] Starting replay execution',
-        details: { snapshot, options: this.options, originalTraceLength: originalTrace.length },
+        message: "[TimeTravel] Starting replay execution",
+        details: {
+          snapshot,
+          options: this.options,
+          originalTraceLength: originalTrace.length,
+        },
       });
     }
 
@@ -522,10 +539,10 @@ export class ReplayEngine {
 
       // Replay pending steps from the snapshot
       const pendingSteps = snapshot.stepStates.slice(this.startStepIndex);
-      
+
       for (let i = 0; i < pendingSteps.length; i++) {
         const stepState = pendingSteps[i];
-        const stepIndex = this.startStepIndex + i;
+        const _stepIndex = this.startStepIndex + i;
 
         // Check if we should skip this step
         if (this.options.skipSteps?.includes(stepState.step_id)) {
@@ -539,10 +556,13 @@ export class ReplayEngine {
         }
 
         // Find the original trace entry for this step
-        const originalEntry = originalTrace.find(e => e.step_id === stepState.step_id);
-        
+        const originalEntry = originalTrace.find(
+          (e) => e.step_id === stepState.step_id,
+        );
+
         // Get the tool definition
-        const toolName = originalEntry?.tool_name || stepState.step_id.split(":")[0];
+        const toolName =
+          originalEntry?.tool_name || stepState.step_id.split(":")[0];
         const toolDef = toolRegistry.getDefinition(toolName);
 
         if (!toolDef) {
@@ -587,7 +607,7 @@ export class ReplayEngine {
           if (originalEntry?.output && output.output) {
             const originalOutputStr = JSON.stringify(originalEntry.output);
             const replayOutputStr = JSON.stringify(output.output);
-            
+
             if (originalOutputStr !== replayOutputStr) {
               differences.push({
                 stepId: stepState.step_id,
@@ -626,12 +646,15 @@ export class ReplayEngine {
         success: true,
         replayedFrom: {
           stepIndex: this.startStepIndex,
-          stepId: snapshot.stepStates[this.startStepIndex]?.step_id || "unknown",
+          stepId:
+            snapshot.stepStates[this.startStepIndex]?.step_id || "unknown",
           timestamp: snapshot.capturedAt,
         },
         replayedTo: {
           stepIndex: this.startStepIndex + stepsReplayed - 1,
-          stepId: snapshot.stepStates[this.startStepIndex + stepsReplayed - 1]?.step_id || "unknown",
+          stepId:
+            snapshot.stepStates[this.startStepIndex + stepsReplayed - 1]
+              ?.step_id || "unknown",
           timestamp: new Date().toISOString(),
         },
         stepsReplayed,
@@ -642,14 +665,15 @@ export class ReplayEngine {
       };
     } catch (error) {
       logger.error({
-        message: '[TimeTravel] Replay execution failed',
+        message: "[TimeTravel] Replay execution failed",
         error: error instanceof Error ? error.message : String(error),
       });
       return {
         success: false,
         replayedFrom: {
           stepIndex: this.startStepIndex,
-          stepId: snapshot.stepStates[this.startStepIndex]?.step_id || "unknown",
+          stepId:
+            snapshot.stepStates[this.startStepIndex]?.step_id || "unknown",
           timestamp: snapshot.capturedAt,
         },
         stepsReplayed: 0,
@@ -672,7 +696,10 @@ export class SnapshotComparator {
   /**
    * Compare two snapshots and identify differences
    */
-  compare(snapshot1: ContextSnapshot, snapshot2: ContextSnapshot): SnapshotComparison {
+  compare(
+    snapshot1: ContextSnapshot,
+    snapshot2: ContextSnapshot,
+  ): SnapshotComparison {
     const differences: SnapshotComparison["differences"] = [];
 
     // Compare execution states
@@ -680,11 +707,15 @@ export class SnapshotComparator {
       snapshot1.executionState,
       snapshot2.executionState,
       "executionState",
-      differences
+      differences,
     );
 
     // Compare step states
-    this.compareStepStates(snapshot1.stepStates, snapshot2.stepStates, differences);
+    this.compareStepStates(
+      snapshot1.stepStates,
+      snapshot2.stepStates,
+      differences,
+    );
 
     // Compare cache states
     if (snapshot1.cacheState && snapshot2.cacheState) {
@@ -692,7 +723,7 @@ export class SnapshotComparator {
         snapshot1.cacheState,
         snapshot2.cacheState,
         "cacheState",
-        differences
+        differences,
       );
     }
 
@@ -702,7 +733,7 @@ export class SnapshotComparator {
         snapshot1.llmContext,
         snapshot2.llmContext,
         "llmContext",
-        differences
+        differences,
       );
     }
 
@@ -720,7 +751,7 @@ export class SnapshotComparator {
     obj1: Record<string, unknown>,
     obj2: Record<string, unknown>,
     path: string,
-    differences: SnapshotComparison["differences"]
+    differences: SnapshotComparison["differences"],
   ): void {
     const allKeys = new Set([...Object.keys(obj1), ...Object.keys(obj2)]);
 
@@ -733,7 +764,7 @@ export class SnapshotComparator {
         differences.push({ path: currentPath, value1: undefined, value2 });
       } else if (value1 !== undefined && value2 === undefined) {
         differences.push({ path: currentPath, value1, value2: undefined });
-      } else if (JSON.stringify(value1) !== JSON.stringify(value2)) {
+      } else if (!deepEqual(value1, value2)) {
         differences.push({ path: currentPath, value1, value2 });
       }
     }
@@ -745,7 +776,7 @@ export class SnapshotComparator {
   private compareStepStates(
     states1: ContextSnapshot["stepStates"],
     states2: ContextSnapshot["stepStates"],
-    differences: SnapshotComparison["differences"]
+    differences: SnapshotComparison["differences"],
   ): void {
     const maxLength = Math.max(states1.length, states2.length);
 
@@ -773,7 +804,7 @@ export class SnapshotComparator {
             value2: state2.status,
           });
         }
-        if (JSON.stringify(state1.output) !== JSON.stringify(state2.output)) {
+        if (!deepEqual(state1.output, state2.output)) {
           differences.push({
             path: `stepStates[${i}].output`,
             value1: state1.output,
@@ -790,14 +821,16 @@ export class SnapshotComparator {
 // Creates snapshot and replay instances
 // ============================================================================
 
-export function createContextSnapshotter(executionId: string): ContextSnapshotter {
+export function createContextSnapshotter(
+  executionId: string,
+): ContextSnapshotter {
   return new ContextSnapshotter(executionId);
 }
 
 export function createReplayEngine(
   traceId: string,
   startStepIndex: number,
-  options?: Partial<ReplayOptions>
+  options?: Partial<ReplayOptions>,
 ): ReplayEngine {
   return new ReplayEngine(traceId, startStepIndex, options);
 }

@@ -7,7 +7,7 @@
  * @see Task 5: Refactor Monolithic Service Files
  */
 
-import { hexToString } from "viem";
+import { hexToString, isHex, isAddress } from "viem";
 import { getPublicClient } from "@repo/web3";
 import {
   isValidTxHash,
@@ -19,6 +19,42 @@ import { rollbackReplayGuard } from "@repo/shared/middleware/web3-replay-guard";
 import { Logger } from "@repo/shared";
 
 const logger = new Logger({ serviceName: "checkout-web3-verify" });
+
+// ============================================================================
+// SAFE HEX VALIDATION
+// ============================================================================
+
+/**
+ * Safely coerce a string to a 0x-prefixed hex string.
+ * Throws a controlled CheckoutError if the format is invalid.
+ */
+function safeToHex(value: string, label: string): `0x${string}` {
+  if (!isHex(value)) {
+    throw new CheckoutError(
+      `Invalid hex format for ${label}: expected 0x-prefixed string`,
+      400,
+      "VALIDATION_ERROR",
+      { details: { label, value } },
+    );
+  }
+  return value as `0x${string}`;
+}
+
+/**
+ * Safely coerce a string to an Ethereum address.
+ * Throws a controlled CheckoutError if the format is invalid.
+ */
+function safeToAddress(value: string | null | undefined): `0x${string}` {
+  if (!value || !isAddress(value)) {
+    throw new CheckoutError(
+      `Invalid Ethereum address format`,
+      400,
+      "VALIDATION_ERROR",
+      { details: { value } },
+    );
+  }
+  return value as `0x${string}`;
+}
 
 // ============================================================================
 // TRANSACTION VERIFICATION
@@ -55,11 +91,11 @@ export async function verifyOnChainTransaction(
       : undefined;
 
   const result = await verifyTransaction({
-    txHash: txHash as `0x${string}`,
+    txHash: safeToHex(txHash, "txHash"),
     expectedValue,
     expectedRecipient: isEscrowPayment
-      ? (AppConfig.getEscrowContractAddress() as `0x${string}`)
-      : (reservation.restaurant?.walletAddress as `0x${string}`),
+      ? safeToHex(AppConfig.getEscrowContractAddress(), "escrowContractAddress")
+      : safeToAddress(reservation.restaurant?.walletAddress),
     paymentCurrency,
     orderId: targetReservationId,
     isEscrowPayment,
@@ -67,7 +103,7 @@ export async function verifyOnChainTransaction(
   });
 
   if (!result.success) {
-    await rollbackReplayGuard(txHash as `0x${string}`);
+    await rollbackReplayGuard(safeToHex(txHash, "txHash"));
     throw new CheckoutError(
       result.error || "Transaction verification failed",
       400,
@@ -91,7 +127,7 @@ export async function verifyTransactionData(
   targetReservationId: string,
 ): Promise<void> {
   const client = getPublicClient("base");
-  const tx = await client.getTransaction({ hash: txHash as `0x${string}` });
+  const tx = await client.getTransaction({ hash: safeToHex(txHash, "txHash") });
 
   if (tx.input && tx.input !== "0x" && tx.input.length > 2) {
     try {

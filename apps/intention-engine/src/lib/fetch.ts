@@ -22,8 +22,15 @@ export async function fetchWithTracing(
     injectTracingHeaders(headers, executionId);
   }
 
-  // Merge incoming signal with options.signal (prefer explicit signal parameter)
-  const effectiveSignal = signal || options.signal;
+  // Merge both signals using AbortSignal.any() so neither is dropped.
+  // If only one is provided, use it directly to avoid unnecessary wrapper overhead.
+  const signalsToCombine = [signal, options.signal].filter(
+    (s): s is AbortSignal => !!s,
+  );
+  const effectiveSignal =
+    signalsToCombine.length > 1
+      ? AbortSignal.any(signalsToCombine)
+      : signalsToCombine[0];
 
   // Wrap fetch in tracing span with otel.span.kind attribute
   return Tracer.startActiveSpan("fetch", async (span) => {

@@ -8,6 +8,10 @@
  * @since 1.0.0
  */
 
+import { Logger } from "../logger";
+
+const jsonLogger = new Logger({ serviceName: "json-parser" });
+
 // ============================================================================
 // TYPE DEFINITIONS
 // ============================================================================
@@ -63,8 +67,8 @@ export function sanitizeJsonOutput(content: string): string {
     try {
       JSON.parse(extracted[0]);
       return extracted[0];
-    } catch (e) {
-      // Fall through if invalid
+    } catch (_e) {
+      // Fall through if invalid — not an error, just control flow
     }
   }
 
@@ -175,7 +179,7 @@ export async function parseJsonWithFallback<T = unknown>(
     if (match) {
       try {
         return JSON.parse(match[1]);
-      } catch (secondError) {
+      } catch (_secondError) {
         // Fall through to repair attempt
       }
     }
@@ -187,6 +191,13 @@ export async function parseJsonWithFallback<T = unknown>(
         try {
           return JSON.parse(repaired);
         } catch (repairError) {
+          jsonLogger.warn({
+            message: "[JSON Parser] Repair function produced invalid JSON",
+            error:
+              repairError instanceof Error
+                ? repairError.message
+                : String(repairError),
+          });
           // Repair produced invalid JSON, fall through to error
         }
       }

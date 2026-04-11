@@ -9,8 +9,10 @@ export interface IdempotencyServiceConfig {
    * SERVERLESS FIX: Processing lock TTL in seconds.
    * If a serverless function crashes before calling markProcessed() or removeKey(),
    * this lock auto-expires to prevent permanent deadlocks.
-   * Default: 15 seconds (matches Vercel serverless max-duration + buffer).
-   * Previously hardcoded to 120s which caused 2-minute lockouts on crash.
+   * Default: 30 seconds (accounts for Vercel max-duration 10-15s + network latency
+   * + retry backoffs, ensuring true mutual exclusion that prevents race-condition
+   * double-processing of escrow payouts).
+   * Previously 15s which cut it too close for concurrent retries.
    */
   processingTtlSeconds?: number;
   /**
@@ -46,7 +48,7 @@ export class IdempotencyService {
     this.redis = redis;
     this.userId = config?.userId;
     this.defaultTtlSeconds = config?.defaultTtlSeconds ?? 24 * 60 * 60;
-    this.processingTtlSeconds = config?.processingTtlSeconds ?? 15; // SERVERLESS FIX: 15s default
+    this.processingTtlSeconds = config?.processingTtlSeconds ?? 30; // SERVERLESS FIX: 30s default (was 15s)
     this.enableCausalKey = config?.enableCausalKey ?? true;
     this.parentIntentId = config?.parentIntentId;
     this.lamportTimestamp = config?.lamportTimestamp;
@@ -209,7 +211,7 @@ export class IdempotencyService {
 
     const set = await this.redis.set(fullKey, "processing", {
       nx: true,
-      ex: this.processingTtlSeconds, // SERVERLESS FIX: configurable TTL (default 15s)
+      ex: this.processingTtlSeconds, // SERVERLESS FIX: configurable TTL (default 30s)
     });
     return set === null;
   }

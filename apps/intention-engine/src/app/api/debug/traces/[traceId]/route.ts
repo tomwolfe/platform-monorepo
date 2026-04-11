@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadExecutionTrace, getMemoryClient } from "@/lib/engine/memory";
-import { withUnifiedApiHandler, Logger } from "@repo/shared";
+import { withUnifiedApiHandler, Logger, deepEqual } from "@repo/shared";
 
 const logger = new Logger({ serviceName: "debug-traces" });
 
@@ -58,11 +58,27 @@ export const GET = withUnifiedApiHandler(getHandler, {
   serviceName: "debug-traces",
 });
 
+interface TraceEntry {
+  step_id?: string;
+  timestamp?: string;
+  event?: string;
+  error?: string;
+  latency_ms?: number;
+  input?: unknown;
+  output?: unknown;
+  token_usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
+  phase?: string;
+}
+
 /**
  * Enrich trace with computed metrics for visualization
  */
-function enrichTrace(trace: any) {
-  const entries = trace.entries || [];
+function enrichTrace(trace: Record<string, unknown>) {
+  const entries = (trace.entries as TraceEntry[]) || [];
 
   // Calculate step-level metrics
   const stepMetrics = new Map<
@@ -76,7 +92,7 @@ function enrichTrace(trace: any) {
     }
   >();
 
-  entries.forEach((entry: any, index: number) => {
+  entries.forEach((entry: TraceEntry, _index: number) => {
     if (!entry.step_id) return;
 
     const timestamp = new Date(entry.timestamp || trace.started_at).getTime();
@@ -121,7 +137,7 @@ function enrichTrace(trace: any) {
   ).length;
 
   const totalLatencyMs = entries.reduce(
-    (sum: number, entry: any) => sum + (entry.latency_ms || 0),
+    (sum: number, entry: TraceEntry) => sum + (entry.latency_ms || 0),
     0,
   );
 
@@ -131,7 +147,7 @@ function enrichTrace(trace: any) {
     totalTokens: 0,
   };
 
-  entries.forEach((entry: any) => {
+  entries.forEach((entry: TraceEntry) => {
     if (entry.token_usage) {
       tokenUsage.promptTokens += entry.token_usage.prompt_tokens || 0;
       tokenUsage.completionTokens += entry.token_usage.completion_tokens || 0;
@@ -150,7 +166,7 @@ function enrichTrace(trace: any) {
       tokenUsage,
       stepDetails: Object.fromEntries(stepMetrics),
     },
-    waterfall: entries.map((entry: any, index: number) => ({
+    waterfall: entries.map((entry: TraceEntry, index: number) => ({
       id: `${entry.step_id || "root"}-${index}`,
       stepId: entry.step_id,
       phase: entry.phase,
@@ -185,14 +201,14 @@ async function computeStateDiffs(traceId: string): Promise<
   Array<{
     stepId: string;
     timestamp: string;
-    previousState?: Record<string, any>;
-    newState?: Record<string, any>;
+    previousState?: Record<string, unknown>;
+    newState?: Record<string, unknown>;
     addedKeys: string[];
     removedKeys: string[];
     changedKeys: Array<{
       key: string;
-      oldValue: any;
-      newValue: any;
+      oldValue: unknown;
+      newValue: unknown;
     }>;
     unchangedKeys: string[];
   }>
@@ -215,12 +231,12 @@ async function computeStateDiffs(traceId: string): Promise<
     const stateSnapshots: Array<{
       stepId?: string;
       timestamp: string;
-      state: Record<string, any>;
+      state: Record<string, unknown>;
     }> = [];
 
     // Build snapshots from task state transitions
     for (const transition of taskState.transitions || []) {
-      const snapshot: any = {
+      const snapshot: Record<string, unknown> = {
         stepId: transition.metadata?.stepId as string | undefined,
         timestamp: transition.timestamp,
         state: {
@@ -252,8 +268,17 @@ async function computeStateDiffs(traceId: string): Promise<
     }
 
     // Compute diffs between consecutive snapshots
-    const stateDiffs: any[] = [];
-    let previousState: Record<string, any> | null = null;
+    const stateDiffs: Array<{
+      stepId: string;
+      timestamp: string;
+      previousState: Record<string, unknown>;
+      newState: Record<string, unknown>;
+      addedKeys: string[];
+      removedKeys: string[];
+      changedKeys: Array<{ key: string; oldValue: unknown; newValue: unknown }>;
+      unchangedKeys: string[];
+    }> = [];
+    let previousState: Record<string, unknown> | null = null;
 
     for (const snapshot of stateSnapshots) {
       if (previousState) {
@@ -285,12 +310,12 @@ async function computeStateDiffs(traceId: string): Promise<
  * Returns added, removed, changed, and unchanged keys
  */
 function computeObjectDiff(
-  prev: Record<string, any>,
-  curr: Record<string, any>,
+  prev: Record<string, unknown>,
+  curr: Record<string, unknown>,
 ): {
   addedKeys: string[];
   removedKeys: string[];
-  changedKeys: Array<{ key: string; oldValue: any; newValue: any }>;
+  changedKeys: Array<{ key: string; oldValue: unknown; newValue: unknown }>;
   unchangedKeys: string[];
 } {
   const prevKeys = new Set(Object.keys(prev));
@@ -298,7 +323,11 @@ function computeObjectDiff(
 
   const addedKeys: string[] = [];
   const removedKeys: string[] = [];
-  const changedKeys: Array<{ key: string; oldValue: any; newValue: any }> = [];
+  const changedKeys: Array<{
+    key: string;
+    oldValue: unknown;
+    newValue: unknown;
+  }> = [];
   const unchangedKeys: string[] = [];
 
   // Find added keys
@@ -321,7 +350,7 @@ function computeObjectDiff(
       const prevValue = prev[key];
       const currValue = curr[key];
 
-      if (JSON.stringify(prevValue) !== JSON.stringify(currValue)) {
+      if (!deepEqual(prevValue, currValue)) {
         changedKeys.push({ key, oldValue: prevValue, newValue: currValue });
       } else {
         unchangedKeys.push(key);

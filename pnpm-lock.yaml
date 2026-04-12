@@ -166,6 +166,9 @@ importers:
         specifier: ^3.25.1
         version: 3.25.1(zod@3.25.76)
     devDependencies:
+      '@next/bundle-analyzer':
+        specifier: ^15.2.9
+        version: 15.5.15
       '@repo/eslint-config':
         specifier: workspace:*
         version: link:../../packages/eslint-config
@@ -241,12 +244,18 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.91.0
         version: 5.91.0(react@19.0.3)
+      '@upstash/ratelimit':
+        specifier: ^2.0.0
+        version: 2.0.8(@upstash/redis@1.36.2)
       '@upstash/redis':
         specifier: ^1.36.2
         version: 1.36.2
       ably:
         specifier: ^2.17.1
         version: 2.17.1(react-dom@19.0.3)(react@19.0.3)
+      drizzle-orm:
+        specifier: 0.38.4
+        version: 0.38.4(@neondatabase/serverless@1.0.2)(@opentelemetry/api@1.9.0)(@types/react@19.2.14)(react@19.0.3)
       jose:
         specifier: ^6.1.3
         version: 6.1.3
@@ -368,6 +377,9 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.62.7
         version: 5.91.0(react@19.0.3)
+      '@upstash/ratelimit':
+        specifier: ^2.0.0
+        version: 2.0.8(@upstash/redis@1.36.2)
       '@upstash/redis':
         specifier: ^1.36.2
         version: 1.36.2
@@ -3215,6 +3227,15 @@ packages:
     dependencies:
       '@types/node': 22.19.11
       '@types/pg': 8.16.0
+
+  /@next/bundle-analyzer@15.5.15:
+    resolution: {integrity: sha512-Y9XFxAGfk7E9Se1WYmmZWhznfWFVugsroZy+gD7qv8vZmHSIlI0izLESz3yRXJ8FPTuDSdIqP1Azw1u88gDx5g==}
+    dependencies:
+      webpack-bundle-analyzer: 4.10.1
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+    dev: true
 
   /@next/bundle-analyzer@16.2.2:
     resolution: {integrity: sha512-wIpZBHyCv1y+y0dnFmqQFlpX91V94Z7RKnpu1TRP0BRaWB/1M74Iqxa9IJ8lzSO0FyTqKldgDHoQJJmn8F+gIA==}

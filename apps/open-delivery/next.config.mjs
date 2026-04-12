@@ -73,8 +73,33 @@ const nextConfig = {
   // This disables server-side route data collection which triggers the VyI error
   experimental: {
     serverMinification: false,
-    serverComponentsExternalPackages: ["@repo/shared"],
   },
+  serverExternalPackages: [
+    "@repo/shared",
+    "@opentelemetry/sdk-node",
+    "@opentelemetry/instrumentation",
+    "@sentry/node",
+    "async_hooks",
+    "node:crypto",
+    "worker_threads",
+    "fs",
+    "path",
+    "crypto",
+    "viem",
+    "zod",
+    "abitype",
+    "@noble/curves",
+    "@noble/hashes",
+    "@scure/bip32",
+    "@scure/bip39",
+    "ox",
+    "ws",
+    "isows",
+    "eventemitter3",
+    "webauthn-p256",
+    "@modelcontextprotocol/sdk",
+    "@t3-oss/env-nextjs",
+  ],
 };
 
 export default nextConfig;

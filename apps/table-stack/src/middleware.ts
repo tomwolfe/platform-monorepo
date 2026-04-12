@@ -1,28 +1,12 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import {
-  securityHeadersMiddleware,
-  API_SECURITY_CONFIG,
-} from "@repo/shared/security-headers";
 import { SecurityProvider } from "@repo/auth";
-import { isReplayBlockedInRedis } from "@repo/shared/web3-replay-guard";
-import { TRACE_ID_HEADER, CORRELATION_ID_HEADER, Logger } from "@repo/shared";
 
-const logger = new Logger({ serviceName: "table-stack-middleware" });
-
-const isProtectedRoute = createRouteMatcher([
-  "/dashboard(.*)",
-  "/onboarding(.*)",
-]);
-
-const isApiRoute = createRouteMatcher(["/api/(.*)"]);
-
-// Routes that process crypto payments and need replay protection
-const isCryptoPaymentRoute = createRouteMatcher([
-  "/api/v1/checkout(.*)",
-  "/api/v2/checkout(.*)",
-]);
+// ============================================================================
+// INLINE SECURITY HEADERS (Edge Runtime compatible - no Node.js deps)
+// Inlined from @repo/shared/security-headers to avoid bundling node:crypto
+// ============================================================================
 
 /**
  * Generate a UUID v4 for trace/correlation IDs
@@ -35,67 +19,80 @@ function generateId(): string {
   });
 }
 
+function generateSecurityHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "X-XSS-Protection": "1; mode=block",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy":
+      "geolocation=(), microphone=(), camera=(), payment=(), usb=()",
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+    Pragma: "no-cache",
+    Expires: "0",
+  };
+
+  // CORS headers
+  const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",") || "*";
+  headers["Access-Control-Allow-Origin"] = Array.isArray(allowedOrigins)
+    ? allowedOrigins.join(", ")
+    : allowedOrigins;
+  headers["Access-Control-Allow-Methods"] =
+    "GET, POST, PUT, DELETE, PATCH, OPTIONS";
+  headers["Access-Control-Allow-Headers"] =
+    "Content-Type, Authorization, X-Internal-Key, X-Trace-Id, X-Request-Id";
+  headers["Access-Control-Max-Age"] = "86400";
+
+  // Rate limit headers
+  const limit = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "100", 10);
+  headers["X-RateLimit-Limit"] = String(limit);
+  headers["X-RateLimit-Remaining"] = String(limit);
+  headers["X-RateLimit-Reset"] = String(
+    Math.floor(Date.now() / 1000) +
+      parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000", 10) / 1000,
+  );
+
+  return headers;
+}
+
+function applySecurityHeaders(response: NextResponse): NextResponse {
+  const headers = generateSecurityHeaders();
+  for (const [key, value] of Object.entries(headers)) {
+    response.headers.set(key, value);
+  }
+  return response;
+}
+
+// Trace header constants (inlined to avoid @repo/shared import)
+const TRACE_ID_HEADER = "x-trace-id";
+const CORRELATION_ID_HEADER = "x-correlation-id";
+
+const isProtectedRoute = createRouteMatcher([
+  "/dashboard(.*)",
+  "/onboarding(.*)",
+]);
+
+const isApiRoute = createRouteMatcher(["/api/(.*)"]);
+
 export default clerkMiddleware(async (auth, req) => {
   const request = req as NextRequest;
 
   // Ensure trace headers are present for downstream propagation
-  // If not provided by client, generate new ones
   const existingTraceId = request.headers.get(TRACE_ID_HEADER);
   const existingCorrelationId = request.headers.get(CORRELATION_ID_HEADER);
 
   const traceId = existingTraceId || generateId();
-  const correlationId = existingCorrelationId || traceId; // Use traceId as correlationId if not provided
+  const correlationId = existingCorrelationId || traceId;
 
   // Apply security headers to all responses
-  const response = NextResponse.next();
+  const response = applySecurityHeaders(NextResponse.next());
 
-  // Inject trace headers into the request context for downstream services
-  // These headers will be available to API routes via req.headers
+  // Inject trace headers into the response for downstream services
   response.headers.set(TRACE_ID_HEADER, traceId);
   response.headers.set(CORRELATION_ID_HEADER, correlationId);
 
-  // Apply API-specific security headers for API routes
-  if (isApiRoute(req)) {
-    securityHeadersMiddleware(response, API_SECURITY_CONFIG);
-  } else {
-    // Apply standard security headers for page routes
-    securityHeadersMiddleware(response);
-  }
-
-  // Web3 Replay Guard: Fast-fail duplicate transaction hashes on payment routes
-  // Uses Redis for fast pre-check (no DB bundle in Edge runtime)
-  // The definitive atomic registration happens in the route handler
-  if (isCryptoPaymentRoute(req)) {
-    const txHash = request.headers.get("x-tx-hash");
-    if (txHash) {
-      try {
-        const isReplayed = await isReplayBlockedInRedis(txHash);
-        if (isReplayed) {
-          return NextResponse.json(
-            {
-              success: false,
-              error: {
-                code: "CONFLICT",
-                message: "Transaction already processed",
-              },
-            },
-            { status: 409, headers: { "Content-Type": "application/json" } },
-          );
-        }
-      } catch (error) {
-        // If Redis is unavailable, log and allow the route handler to perform the definitive check
-        logger.warn(
-          "Replay guard pre-check unavailable, deferring to route handler",
-          {
-            error: error instanceof Error ? error.message : String(error),
-          },
-        );
-      }
-    }
-  }
-
   // Check for internal API key for internal requests (before Clerk auth)
-  // This allows internal services to bypass Clerk authentication
   const internalKey = request.headers.get("x-internal-key");
   const validInternalKey = process.env.INTERNAL_SYSTEM_KEY;
 
@@ -111,7 +108,6 @@ export default clerkMiddleware(async (auth, req) => {
   const authHeader = request.headers.get("Authorization");
   if (isApiRoute(req) && authHeader?.startsWith("Bearer ")) {
     // Service-to-service call with JWT - let Clerk handle JWT verification
-    // Clerk will verify the JWT automatically
   }
 
   // Apply authentication for protected routes

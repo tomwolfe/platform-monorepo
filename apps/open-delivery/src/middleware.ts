@@ -1,8 +1,56 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { securityHeadersMiddleware, API_SECURITY_CONFIG } from "@repo/shared";
-import { isReplayBlockedInRedis } from "@repo/shared/web3-replay-guard";
+
+// ============================================================================
+// INLINE SECURITY HEADERS (Edge Runtime compatible - no Node.js deps)
+// Inlined from @repo/shared/security-headers to avoid bundling node:crypto
+// ============================================================================
+
+function generateSecurityHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "X-XSS-Protection": "1; mode=block",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy":
+      "geolocation=(), microphone=(), camera=(), payment=(), usb=()",
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+    Pragma: "no-cache",
+    Expires: "0",
+  };
+
+  // CORS headers
+  const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",") || "*";
+  headers["Access-Control-Allow-Origin"] = Array.isArray(allowedOrigins)
+    ? allowedOrigins.join(", ")
+    : allowedOrigins;
+  headers["Access-Control-Allow-Methods"] =
+    "GET, POST, PUT, DELETE, PATCH, OPTIONS";
+  headers["Access-Control-Allow-Headers"] =
+    "Content-Type, Authorization, X-Internal-Key, X-Trace-Id";
+  headers["Access-Control-Max-Age"] = "86400";
+
+  // Rate limit headers
+  const limit = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "100", 10);
+  headers["X-RateLimit-Limit"] = String(limit);
+  headers["X-RateLimit-Remaining"] = String(limit);
+  headers["X-RateLimit-Reset"] = String(
+    Math.floor(Date.now() / 1000) +
+      parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000", 10) / 1000,
+  );
+
+  return headers;
+}
+
+function applySecurityHeaders(response: NextResponse): NextResponse {
+  const headers = generateSecurityHeaders();
+  for (const [key, value] of Object.entries(headers)) {
+    response.headers.set(key, value);
+  }
+  return response;
+}
 
 const isPublicRoute = createRouteMatcher([
   "/api/health",
@@ -16,64 +64,11 @@ const isProtectedRoute = createRouteMatcher([
   "/onboarding(.*)",
 ]);
 
-const isApiRoute = createRouteMatcher(["/api/(.*)"]);
-
-// Routes that process crypto payments and need replay protection
-const isCryptoPaymentRoute = createRouteMatcher(["/api/checkout(.*)"]);
-
 export default clerkMiddleware(async (auth, req) => {
   const request = req as NextRequest;
 
   // Apply security headers to all responses
-  const response = NextResponse.next();
-
-  // Apply API-specific security headers for API routes
-  if (isApiRoute(req)) {
-    securityHeadersMiddleware(response, API_SECURITY_CONFIG);
-  } else {
-    // Apply standard security headers for page routes
-    securityHeadersMiddleware(response);
-  }
-
-  // Web3 Replay Guard: Fast-fail duplicate transaction hashes on payment routes
-  // Uses Redis for fast pre-check (no DB bundle in Edge runtime)
-  // The definitive atomic registration happens in the route handler
-  if (isCryptoPaymentRoute(req)) {
-    const txHash = request.headers.get("x-tx-hash");
-    if (!txHash) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: "VALIDATION_ERROR",
-            message: "x-tx-hash header is required for crypto payments",
-          },
-        },
-        { status: 400, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    try {
-      const isReplayed = await isReplayBlockedInRedis(txHash);
-      if (isReplayed) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: {
-              code: "CONFLICT",
-              message: "Transaction already processed",
-            },
-          },
-          { status: 409, headers: { "Content-Type": "application/json" } },
-        );
-      }
-    } catch (error) {
-      // If Redis is unavailable, log and allow the route handler to perform the definitive check
-      console.warn(
-        "[Middleware] Replay guard pre-check unavailable, deferring to route handler:",
-        error,
-      );
-    }
-  }
+  const response = applySecurityHeaders(NextResponse.next());
 
   // Skip middleware for public routes
   if (isPublicRoute(req)) {

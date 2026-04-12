@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { withCronAuth } from "@repo/shared";
+import { withCronAuth } from "@repo/shared/middleware/cron-auth";
 import { PayoutVerificationService } from "@/lib/services/payout-verification.service";
 
 export const maxDuration = 10; // Vercel Hobby limit

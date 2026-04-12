@@ -13,7 +13,9 @@ import {
 import { parseEther, formatEther, type Address } from "viem";
 import { base } from "viem/chains";
 import { ESCROW_ABI } from "@repo/shared/utils/escrow-abi";
-import { withCronAuth, Logger, withDistributedLock } from "@repo/shared";
+import { withCronAuth } from "@repo/shared/middleware/cron-auth";
+import { Logger } from "@repo/shared/logger";
+import { withDistributedLock } from "@repo/shared/services/distributed-lock";
 import { withServerlessTimeout } from "@repo/shared/middleware/serverless-timeout";
 import {
   getEscrowResolverWalletClient,

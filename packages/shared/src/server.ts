@@ -24,6 +24,27 @@
 export * from "./index.shared";
 
 // ============================================================================
+// CRITICAL DIRECT RE-EXPORTS (prevent webpack tree-shaking bugs)
+// These are re-exported directly in server.ts to avoid broken references
+// caused by 3-level star re-export chains (index → server → index.shared → logger)
+// ============================================================================
+export {
+  Logger,
+  getLogger,
+  getGlobalLogger,
+  setGlobalLogger,
+  withRequestLogging,
+  createTraceHeaders,
+  tracedFetch,
+  setTracingStorage,
+  getTracingStorage,
+  secureConsole,
+  scrubPII,
+  type LogContext,
+  type LogLevel,
+} from "./logger";
+
+// ============================================================================
 // APP CONFIG (Reads process.env at module scope)
 // ============================================================================
 export { AppConfig } from "./config";

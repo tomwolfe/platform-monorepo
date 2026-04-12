@@ -8,7 +8,15 @@ import {
   type Config as WagmiConfig,
 } from "wagmi";
 import { base, polygon, mainnet } from "wagmi/chains";
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { coinbaseWallet, metaMask } from "wagmi/connectors";
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+  useEffect,
+  type ReactNode,
+} from "react";
 import { createStorage, fallback } from "wagmi";
 import { getQueryClient } from "../../lib/query-client";
 
@@ -196,6 +204,12 @@ export function Web3Provider({
       rpcUrls,
     });
 
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const web3ContextValue = useMemo<Web3ContextType>(
     () => ({
       escrowContractAddress,
@@ -216,11 +230,18 @@ export function Web3Provider({
 
   return (
     <Web3Context.Provider value={web3ContextValue}>
-      <WagmiProvider config={config}>
-        <QueryClientProvider client={queryClient}>
-          {children}
-        </QueryClientProvider>
-      </WagmiProvider>
+      {isMounted ? (
+        <WagmiProvider config={config}>
+          <QueryClientProvider client={queryClient}>
+            {children}
+          </QueryClientProvider>
+        </WagmiProvider>
+      ) : (
+        // During SSR/SSG, render children without wagmi providers
+        // This prevents wagmi's Hydrate component from calling useRef during SSR
+        // Pages that use wagmi hooks must have `export const dynamic = 'force-dynamic'`
+        <>{children}</>
+      )}
     </Web3Context.Provider>
   );
 }

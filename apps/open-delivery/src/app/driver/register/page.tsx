@@ -1,13 +1,16 @@
 "use client";
 
-import React, { useState } from 'react';
-import { Truck, ArrowLeft, CheckCircle } from 'lucide-react';
-import Link from 'next/link';
-import { registerDriver } from './actions';
+import React, { useState } from "react";
+import { Truck, ArrowLeft, CheckCircle } from "lucide-react";
+import Link from "next/link";
+import { registerDriver } from "./actions";
+
+// Force dynamic rendering for consistency with driver flow
+export const dynamic = "force-dynamic";
 
 export default function DriverRegistration() {
-  const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,10 +25,10 @@ export default function DriverRegistration() {
       if (result.success) {
         setSuccess(true);
       } else {
-        setError(result.error || 'Failed to register');
+        setError(result.error || "Failed to register");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to register');
+      setError(err instanceof Error ? err.message : "Failed to register");
     } finally {
       setIsSubmitting(false);
     }
@@ -38,7 +41,8 @@ export default function DriverRegistration() {
           <CheckCircle className="w-16 h-16 text-emerald-400 mx-auto mb-4" />
           <h1 className="text-2xl font-bold mb-2">Registration Successful!</h1>
           <p className="text-slate-400 mb-6">
-            Your driver profile has been created. You can now start accepting deliveries.
+            Your driver profile has been created. You can now start accepting
+            deliveries.
           </p>
           <Link
             href="/driver"
@@ -67,7 +71,9 @@ export default function DriverRegistration() {
             <Truck className="text-emerald-400" size={32} />
             <div>
               <h1 className="text-2xl font-bold">Driver Registration</h1>
-              <p className="text-slate-400 text-sm">Join the OpenDeliver network</p>
+              <p className="text-slate-400 text-sm">
+                Join the OpenDeliver network
+              </p>
             </div>
           </div>
 
@@ -79,7 +85,10 @@ export default function DriverRegistration() {
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label htmlFor="fullName" className="block text-sm font-medium text-slate-300 mb-2">
+              <label
+                htmlFor="fullName"
+                className="block text-sm font-medium text-slate-300 mb-2"
+              >
                 Full Name
               </label>
               <input
@@ -94,7 +103,10 @@ export default function DriverRegistration() {
             </div>
 
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-slate-300 mb-2">
+              <label
+                htmlFor="email"
+                className="block text-sm font-medium text-slate-300 mb-2"
+              >
                 Email
               </label>
               <input
@@ -113,12 +125,13 @@ export default function DriverRegistration() {
               disabled={isSubmitting || !fullName || !email}
               className="w-full bg-emerald-500 text-white py-3 rounded-xl font-bold hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {isSubmitting ? 'Registering...' : 'Register as Driver'}
+              {isSubmitting ? "Registering..." : "Register as Driver"}
             </button>
           </form>
 
           <p className="text-slate-500 text-sm text-center mt-6">
-            By registering, you agree to our Terms of Service and Privacy Policy.
+            By registering, you agree to our Terms of Service and Privacy
+            Policy.
           </p>
         </div>
       </div>

@@ -1,7 +1,8 @@
 /**
  * Server Environment Variables - Open Delivery
  *
- * Validates required environment variables at BUILD TIME.
+ * Validates required environment variables at RUNTIME.
+ * During Vercel builds, validation is deferred (env vars aren't available at build time).
  * Uses the shared monorepo env schema to prevent configuration drift.
  *
  * @package @repo/open-delivery

@@ -17,8 +17,22 @@ const nextConfig = {
     "fs",
     "path",
     "crypto",
+    "viem",
+    "zod",
+    "abitype",
+    "@noble/curves",
+    "@noble/hashes",
+    "@scure/bip32",
+    "@scure/bip39",
+    "ox",
+    "ws",
+    "isows",
+    "eventemitter3",
+    "webauthn-p256",
+    "@modelcontextprotocol/sdk",
+    "@t3-oss/env-nextjs",
   ],
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, dev }) => {
     if (isServer) {
       config.externals = config.externals || [];
       config.externals.push({
@@ -26,7 +40,21 @@ const nextConfig = {
       });
       config.externals.push("wagmi");
       config.externals.push("viem");
+      config.externals.push("zod");
+      config.externals.push("abitype");
+      config.externals.push("ox");
+      config.externals.push("ws");
+      config.externals.push("isows");
+      config.externals.push("eventemitter3");
+      config.externals.push("@noble/curves");
+      config.externals.push("@noble/hashes");
+      config.externals.push("@scure/bip32");
+      config.externals.push("@scure/bip39");
+      config.externals.push("webauthn-p256");
+      config.externals.push("@modelcontextprotocol/sdk");
+      config.externals.push("@t3-oss/env-nextjs");
     }
+
     config.resolve ||= {};
     config.resolve.fallback ||= {};
     config.resolve.fallback["pino-pretty"] = false;
@@ -40,6 +68,12 @@ const nextConfig = {
   },
   typescript: {
     ignoreBuildErrors: true,
+  },
+  // Prevent webpack from bundling server components
+  // This disables server-side route data collection which triggers the VyI error
+  experimental: {
+    serverMinification: false,
+    serverComponentsExternalPackages: ["@repo/shared"],
   },
 };
 

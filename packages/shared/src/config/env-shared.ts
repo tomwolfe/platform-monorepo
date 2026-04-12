@@ -30,11 +30,25 @@ import { createEnv } from "@t3-oss/env-nextjs";
 import { z } from "zod";
 
 // ============================================================================
+// BUILD-TIME DETECTION
+// ============================================================================
+
+// Detect if we're running during a Vercel build (env vars not yet available at build time)
+// Vercel sets VERCEL=1 during builds, but server-side env vars are only injected at runtime
+const isBuildTime =
+  process.env.VERCEL === "1" &&
+  (process.env.NEXT_PHASE === "phase-production-build" ||
+    process.env.NODE_ENV === "production");
+
+// ============================================================================
 // SHARED SERVER SCHEMA FIELDS (Core variables required by all apps)
 // Spread these into your app's server schema
 // ============================================================================
 
-export const sharedServerFields = {
+/**
+ * Schema for required fields — always enforced at RUNTIME
+ */
+export const requiredServerSchema = {
   // Database
   DATABASE_URL: z.string().url("Must be a valid PostgreSQL URL"),
 
@@ -52,7 +66,12 @@ export const sharedServerFields = {
 
   // Cron Secret for scheduled jobs
   CRON_SECRET: z.string().min(16, "Must be a strong secret (min 16 chars)"),
+} as const;
 
+/**
+ * Schema for optional fields — validated if present
+ */
+export const optionalServerSchema = {
   // Node Environment
   NODE_ENV: z
     .enum(["development", "test", "production"])
@@ -78,6 +97,19 @@ export const sharedServerFields = {
   // Optional: Feature flags
   SKIP_ENV_VALIDATION: z.string().optional(),
 } as const;
+
+// During build time on Vercel, required fields become optional (validated at runtime instead)
+export const sharedServerFields = isBuildTime
+  ? ({
+      ...Object.fromEntries(
+        Object.entries(requiredServerSchema).map(([key, schema]) => [
+          key,
+          schema.optional(),
+        ]),
+      ),
+      ...optionalServerSchema,
+    } as const)
+  : ({ ...requiredServerSchema, ...optionalServerSchema } as const);
 
 // ============================================================================
 // SHARED CLIENT SCHEMA FIELDS (NEXT_PUBLIC_ variables)
@@ -108,7 +140,7 @@ export const sharedClientFields = {
 // ============================================================================
 
 export const sharedRuntimeEnv = {
-  // Required
+  // Required (will be undefined during Vercel builds, validated at runtime)
   DATABASE_URL: process.env.DATABASE_URL,
   CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY,
   INTERNAL_SYSTEM_KEY: process.env.INTERNAL_SYSTEM_KEY,
@@ -126,7 +158,7 @@ export const sharedRuntimeEnv = {
   LLM_MODEL: process.env.LLM_MODEL,
   BASE_RPC_URL: process.env.BASE_RPC_URL,
   ESCROW_RESOLVER_PRIVATE_KEY: process.env.ESCROW_RESOLVER_PRIVATE_KEY,
-  SKIP_ENV_VALIDATION: process.env.SKIP_ENV_VALIDATION,
+  SKIP_ENV_VALIDATION: isBuildTime ? "true" : process.env.SKIP_ENV_VALIDATION,
 
   // Client (NEXT_PUBLIC_)
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:
@@ -161,6 +193,75 @@ export type SharedEnv = SharedServerEnv & SharedClientEnv;
 // ============================================================================
 // DIRECT VALIDATION (for scripts/non-Next.js contexts)
 // ============================================================================
+
+/**
+ * Validate required environment variables at runtime.
+ * Call this in your server startup code (e.g., instrumentation.ts register())
+ * to ensure all required vars are present before the app serves traffic.
+ *
+ * @throws Error if any required variable is missing or invalid
+ */
+export function validateRequiredEnv(): void {
+  const requiredVars = {
+    DATABASE_URL: process.env.DATABASE_URL,
+    CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY,
+    INTERNAL_SYSTEM_KEY: process.env.INTERNAL_SYSTEM_KEY,
+    QSTASH_TOKEN: process.env.QSTASH_TOKEN,
+    CRON_SECRET: process.env.CRON_SECRET,
+  };
+
+  const missingVars: string[] = [];
+  const invalidVars: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(requiredVars)) {
+    if (!value) {
+      missingVars.push(key);
+    }
+  }
+
+  // Validate specific formats if values exist
+  if (
+    requiredVars.DATABASE_URL &&
+    !requiredVars.DATABASE_URL.startsWith("postgres")
+  ) {
+    invalidVars.DATABASE_URL = "Must be a valid PostgreSQL URL";
+  }
+  if (
+    requiredVars.INTERNAL_SYSTEM_KEY &&
+    requiredVars.INTERNAL_SYSTEM_KEY.length !== 64
+  ) {
+    invalidVars.INTERNAL_SYSTEM_KEY =
+      "Must be exactly 64 characters (32 bytes in hex)";
+  }
+  if (
+    requiredVars.INTERNAL_SYSTEM_KEY &&
+    !/^[0-9a-fA-F]+$/.test(requiredVars.INTERNAL_SYSTEM_KEY)
+  ) {
+    invalidVars.INTERNAL_SYSTEM_KEY = "Must be a valid hex string";
+  }
+  if (requiredVars.QSTASH_TOKEN && requiredVars.QSTASH_TOKEN.length < 10) {
+    invalidVars.QSTASH_TOKEN = "Must be a valid QStash token";
+  }
+  if (requiredVars.CRON_SECRET && requiredVars.CRON_SECRET.length < 16) {
+    invalidVars.CRON_SECRET = "Must be a strong secret (min 16 chars)";
+  }
+  if (
+    requiredVars.CLERK_SECRET_KEY &&
+    requiredVars.CLERK_SECRET_KEY.length < 20
+  ) {
+    invalidVars.CLERK_SECRET_KEY = "Must be a valid Clerk secret key";
+  }
+
+  if (missingVars.length > 0 || Object.keys(invalidVars).length > 0) {
+    const messages = [
+      ...missingVars.map((v) => `Missing required: ${v}`),
+      ...Object.entries(invalidVars).map(([k, v]) => `Invalid ${k}: ${v}`),
+    ];
+    throw new Error(
+      `Required environment validation failed:\n${messages.join("\n")}`,
+    );
+  }
+}
 
 /**
  * Validate shared environment variables without t3-env.

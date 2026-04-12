@@ -166,8 +166,7 @@ function recordTokenUsage(
 ): void {
   llmTokensConsumedTotal += totalTokens;
 
-  logger.info({
-    message: `[T2.2] LLM token usage tracked`,
+  logger.info(`[T2.2] LLM token usage tracked`, {
     model_type: modelType,
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
@@ -228,7 +227,7 @@ function sanitizeJsonOutput(content: string): string {
   const markdownCodeBlockRegex = /^```(?:json)?\s*([\s\S]*?)\s*```$/;
   const markdownMatch = sanitized.match(markdownCodeBlockRegex);
 
-  if (markdownMatch) {
+  if (markdownMatch && markdownMatch[1]) {
     sanitized = markdownMatch[1].trim();
   }
 
@@ -284,7 +283,7 @@ function parseJsonWithFallback(content: string): Record<string, unknown> {
     const jsonRegex = /(\{[\s\S]*\}|\[[\s\S]*\])/;
     const match = content.match(jsonRegex);
 
-    if (match) {
+    if (match && match[1]) {
       try {
         return JSON.parse(match[1]) as Record<string, unknown>;
       } catch (secondError) {
@@ -474,7 +473,7 @@ export async function generateStructured<T>(
 
       const cached = await getCachedResponse(redis, cacheKey);
       if (cached) {
-        logger.info({ message: `LLM cache hit for model ${modelType}` });
+        logger.info(`LLM cache hit for model ${modelType}`);
         const latencyMs = Math.round(performance.now() - cacheCheckStartTime);
 
         // P4: Log cache hit observability
@@ -507,9 +506,9 @@ export async function generateStructured<T>(
       }
     } catch (error) {
       // Cache read failure - continue with normal flow
-      logger.warn({
-        message: `LLM cache read failed, proceeding with API call: ${error instanceof Error ? error.message : String(error)}`,
-      });
+      logger.warn(
+        `LLM cache read failed, proceeding with API call: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -593,9 +592,9 @@ export async function generateStructured<T>(
           );
         } catch (error) {
           // Cache write failure - log but don't fail the request
-          logger.warn({
-            message: `LLM cache write failed: ${error instanceof Error ? error.message : String(error)}`,
-          });
+          logger.warn(
+            `LLM cache write failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
       }
 
@@ -627,9 +626,9 @@ export async function generateStructured<T>(
           lastError.name === "ZodError";
 
         if (isSchemaError) {
-          logger.warn({
-            message: `Schema validation failed, retrying (attempt ${attempts}/${maxRetries + 1})`,
-          });
+          logger.warn(
+            `Schema validation failed, retrying (attempt ${attempts}/${maxRetries + 1})`,
+          );
           continue; // Retry
         }
       }

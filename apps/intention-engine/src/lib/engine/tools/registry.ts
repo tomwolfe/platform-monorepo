@@ -607,7 +607,10 @@ export function registerBuiltInTools(): void {
   const registry = getToolRegistry();
 
   // Wait tool
-  registry.register(BuiltInTools[0], async (params) => {
+  const waitTool = BuiltInTools[0];
+  if (!waitTool) throw new Error("Wait tool not found");
+
+  registry.register(waitTool, async (params) => {
     const duration = params.duration_ms as number;
     await new Promise((resolve) => setTimeout(resolve, duration));
     return {
@@ -617,12 +620,13 @@ export function registerBuiltInTools(): void {
   });
 
   // Log tool
-  registry.register(BuiltInTools[1], async (params) => {
+  const logTool = BuiltInTools[1];
+  if (!logTool) throw new Error("Log tool not found");
+
+  registry.register(logTool, async (params) => {
     const message = params.message as string;
     const level = (params.level as string) || "info";
-    logger.info({
-      message: `[${level.toUpperCase()}] ${message}`,
-    });
+    logger.info(`[${level.toUpperCase()}] ${message}`);
     return {
       success: true,
       output: { logged: true },
@@ -630,7 +634,10 @@ export function registerBuiltInTools(): void {
   });
 
   // Self-reflect tool
-  registry.register(BuiltInTools[2], async (params) => {
+  const selfReflectTool = BuiltInTools[2];
+  if (!selfReflectTool) throw new Error("Self-reflect tool not found");
+
+  registry.register(selfReflectTool, async (params) => {
     const intentId = params.intentId as string;
     const persistence = new PersistenceProvider();
     try {

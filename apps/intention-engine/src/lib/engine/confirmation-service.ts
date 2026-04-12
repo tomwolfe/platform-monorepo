@@ -137,9 +137,9 @@ export class ConfirmationService {
       token,
     );
 
-    logger.info({
-      message: `[ConfirmationService] Created confirmation token ${token} for execution ${executionId}, step ${stepIndex} (${toolName}), expires in ${CONFIRMATION_TTL_SECONDS / 60} minutes`,
-    });
+    logger.info(
+      `[ConfirmationService] Created confirmation token ${token} for execution ${executionId}, step ${stepIndex} (${toolName}), expires in ${CONFIRMATION_TTL_SECONDS / 60} minutes`,
+    );
 
     return token;
   }
@@ -260,9 +260,9 @@ export class ConfirmationService {
     // Save updated state
     await saveExecutionState(newState);
 
-    logger.info({
-      message: `[ConfirmationService] Resumed saga ${executionId} from ${state.status} to EXECUTING`,
-    });
+    logger.info(
+      `[ConfirmationService] Resumed saga ${executionId} from ${state.status} to EXECUTING`,
+    );
 
     return newState;
   }
@@ -320,16 +320,18 @@ export class ConfirmationService {
         headers,
       });
 
-      logger.info({
-        message: `[ConfirmationService] Triggered next step for execution ${executionId}${messageId ? ` [message: ${messageId}]` : ""}`,
-      });
+      logger.info(
+        `[ConfirmationService] Triggered next step for execution ${executionId}${messageId ? ` [message: ${messageId}]` : ""}`,
+      );
 
       return !!messageId;
     } catch (error) {
-      logger.error({
-        message: `[ConfirmationService] Failed to trigger next step for ${executionId}`,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error(
+        `[ConfirmationService] Failed to trigger next step for ${executionId}`,
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
       return false;
     }
   }

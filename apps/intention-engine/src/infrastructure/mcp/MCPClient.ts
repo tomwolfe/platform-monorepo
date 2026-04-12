@@ -5,11 +5,19 @@ import { ToolDefinition } from "../../lib/engine/types";
 import { z } from "zod";
 import { mapJsonSchemaToZod } from "../../lib/engine/schema-utils";
 import { mcpConfig } from "../../lib/mcp-config";
-import { PARAMETER_ALIASES as shared_aliases, ToolInput, ToolOutput } from "@repo/mcp-protocol";
-import { CircuitBreaker, CircuitBreakerError, CircuitState } from "./CircuitBreaker";
+import {
+  PARAMETER_ALIASES as shared_aliases,
+  ToolInput,
+  ToolOutput,
+} from "@repo/mcp-protocol";
+import {
+  CircuitBreaker,
+  CircuitBreakerError,
+  CircuitState,
+} from "./CircuitBreaker";
 import { RealtimeService, Logger } from "@repo/shared";
 
-const logger = new Logger({ serviceName: 'mcp-client' });
+const logger = new Logger({ serviceName: "mcp-client" });
 
 /**
  * MCPClient connects to remote MCP servers and maps their tools
@@ -26,7 +34,10 @@ export class MCPClient {
   private abortController: AbortController | null = null;
   private toolTimeoutMs: number = 7000; // 7 seconds for Vercel Hobby Tier (10s limit)
 
-  constructor(serverUrl: string, circuitBreakerConfig?: { serviceName?: string }) {
+  constructor(
+    serverUrl: string,
+    circuitBreakerConfig?: { serviceName?: string },
+  ) {
     this.serverUrl = serverUrl;
     this.transport = new SSEClientTransport(new URL(serverUrl));
     this.client = new Client(
@@ -36,7 +47,7 @@ export class MCPClient {
       },
       {
         capabilities: {},
-      }
+      },
     );
 
     // Initialize circuit breaker for this server
@@ -66,7 +77,7 @@ export class MCPClient {
    * Used when connection drops due to Vercel's aggressive connection culling.
    */
   async reconnect(): Promise<void> {
-    logger.info('Reconnecting to MCP server', { serverUrl: this.serverUrl });
+    logger.info("Reconnecting to MCP server", { serverUrl: this.serverUrl });
 
     try {
       // Close existing connection
@@ -78,9 +89,11 @@ export class MCPClient {
       // Re-connect client
       await this.client.connect(this.transport);
 
-      logger.info('MCP server reconnection successful', { serverUrl: this.serverUrl });
+      logger.info("MCP server reconnection successful", {
+        serverUrl: this.serverUrl,
+      });
     } catch (error) {
-      logger.error('Reconnection failed', {
+      logger.error("Reconnection failed", {
         serverUrl: this.serverUrl,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -117,7 +130,11 @@ export class MCPClient {
    * Phase 5: Enhanced SSE connection drop detection with auto-reconnect.
    * Parameter Mapping: Applies PARAMETER_ALIASES to bridge LLM hallucinations.
    */
-  async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolOutput> {
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<ToolOutput> {
     return this.circuitBreaker.execute(async () => {
       return this.withRetry(async (attemptAbortSignal: AbortSignal) => {
         // Create AbortController for this tool call with timeout
@@ -134,8 +151,8 @@ export class MCPClient {
           const combinedSignal = this.createCombinedSignal([
             signal,
             this.abortController.signal,
-            attemptAbortSignal
-          ].filter(Boolean) as AbortSignal[]);
+            attemptAbortSignal,
+          ]);
 
           // Note: MCP SDK callTool doesn't directly support AbortSignal
           // We use Promise.race to implement timeout-based cancellation
@@ -145,10 +162,10 @@ export class MCPClient {
               arguments: mappedArgs,
             }),
             new Promise<ToolOutput>((_, reject) => {
-              combinedSignal.addEventListener('abort', () => {
-                reject(new Error('AbortError: Tool call cancelled'));
+              combinedSignal.addEventListener("abort", () => {
+                reject(new Error("AbortError: Tool call cancelled"));
               });
-            })
+            }),
           ]);
 
           clearTimeout(timeoutId);
@@ -156,49 +173,62 @@ export class MCPClient {
         } catch (error: unknown) {
           clearTimeout(timeoutId);
 
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          const errorName = error instanceof Error ? error.name : 'Unknown';
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          const errorName = error instanceof Error ? error.name : "Unknown";
 
           // Detect SSE connection drop or premature close (Vercel serverless culling)
           const isConnectionError =
-            errorMessage.includes('premature close') ||
-            errorMessage.includes('connection closed') ||
-            errorMessage.includes('ECONNRESET') ||
-            errorMessage.includes('ETIMEDOUT') ||
-            errorMessage.includes('NetworkError') ||
-            errorMessage.includes('fetch failed') ||
-            (errorName === 'TypeError' && errorMessage.includes('fetch'));
+            errorMessage.includes("premature close") ||
+            errorMessage.includes("connection closed") ||
+            errorMessage.includes("ECONNRESET") ||
+            errorMessage.includes("ETIMEDOUT") ||
+            errorMessage.includes("NetworkError") ||
+            errorMessage.includes("fetch failed") ||
+            (errorName === "TypeError" && errorMessage.includes("fetch"));
 
           if (isConnectionError) {
-            logger.warn('SSE connection drop detected, attempting auto-reconnect', {
-              toolName: name,
-              error: errorMessage,
-            });
+            logger.warn(
+              "SSE connection drop detected, attempting auto-reconnect",
+              {
+                toolName: name,
+                error: errorMessage,
+              },
+            );
 
             // Publish "Service Degraded" event to Ably for observability
-            await RealtimeService.publishNervousSystemEvent('ServiceDegraded', {
+            await RealtimeService.publishNervousSystemEvent("ServiceDegraded", {
               serviceName: this.circuitBreaker.getServiceName(),
               toolName: name,
-              reason: 'connection_drop',
+              reason: "connection_drop",
               error: errorMessage,
               timestamp: new Date().toISOString(),
-            }).catch(err => logger.error('Failed to publish ServiceDegraded event', { error: err instanceof Error ? err.message : String(err) }));
+            }).catch((err) =>
+              logger.error("Failed to publish ServiceDegraded event", {
+                error: err instanceof Error ? err.message : String(err),
+              }),
+            );
 
             // Auto-reconnect: Re-instantiate transport and reconnect
             try {
               await this.reconnect();
-              logger.info('Reconnection successful, retrying', { toolName: name });
-            } catch (reconnectError) {
-              logger.error('Reconnection failed', {
+              logger.info("Reconnection successful, retrying", {
                 toolName: name,
-                error: reconnectError instanceof Error ? reconnectError.message : String(reconnectError),
+              });
+            } catch (reconnectError) {
+              logger.error("Reconnection failed", {
+                toolName: name,
+                error:
+                  reconnectError instanceof Error
+                    ? reconnectError.message
+                    : String(reconnectError),
               });
 
               // Trigger circuit breaker to open if reconnection fails
               await this.circuitBreaker.recordFailure();
               throw new CircuitBreakerError(
                 `Service Degraded: ${name} connection lost and reconnection failed`,
-                CircuitState.OPEN
+                CircuitState.OPEN,
               );
             }
 
@@ -208,25 +238,36 @@ export class MCPClient {
           }
 
           // Handle timeout/abort as "Service Degraded"
-          if (error.message.includes('AbortError') || error.message.includes('cancelled') || this.abortController?.signal.aborted) {
-            logger.warn('Tool timed out - Service Degraded', {
+          if (
+            errorMessage.includes("AbortError") ||
+            errorMessage.includes("cancelled") ||
+            this.abortController?.signal.aborted
+          ) {
+            logger.warn("Tool timed out - Service Degraded", {
               toolName: name,
               timeoutMs: this.toolTimeoutMs,
             });
 
             // Publish "Service Degraded" event to Ably for observability
-            await RealtimeService.publishNervousSystemEvent('ServiceDegraded', {
+            await RealtimeService.publishNervousSystemEvent("ServiceDegraded", {
               serviceName: this.circuitBreaker.getServiceName(),
               toolName: name,
-              reason: 'timeout',
+              reason: "timeout",
               timeoutMs: this.toolTimeoutMs,
               timestamp: new Date().toISOString(),
-            }).catch(err => logger.error('Failed to publish ServiceDegraded event', { error: err instanceof Error ? err.message : String(err) }));
+            }).catch((err) =>
+              logger.error("Failed to publish ServiceDegraded event", {
+                error: err instanceof Error ? err.message : String(err),
+              }),
+            );
 
             // Trigger circuit breaker to open
             await this.circuitBreaker.recordFailure();
 
-            throw new CircuitBreakerError(`Service Degraded: ${name} timed out`, CircuitState.CLOSED);
+            throw new CircuitBreakerError(
+              `Service Degraded: ${name} timed out`,
+              CircuitState.CLOSED,
+            );
           }
 
           throw error;
@@ -241,25 +282,28 @@ export class MCPClient {
    * Applies parameter aliases to bridge LLM naming conventions to tool-specific requirements.
    * Uses both shared aliases from @repo/mcp-protocol and tool-specific mappings.
    */
-  private applyParameterAliases(name: string, args: Record<string, unknown>): Record<string, unknown> {
+  private applyParameterAliases(
+    name: string,
+    args: Record<string, unknown>,
+  ): Record<string, unknown> {
     // Tool-specific aliases (could be extended per-tool if needed)
     const toolSpecificAliases: Record<string, string> = {
-      "reservation_time": "time",
-      "booking_time": "time",
-      "party_size": "guests",
-      "number_of_people": "guests",
-      "location_name": "query",
-      "search_query": "query",
-      "contact_name": "name",
-      "customer_name": "name",
-      "order_summary": "items",
-      "phone_number": "phone",
-      "email_address": "email",
-      "guestEmail": "email",
-      "target_destination": "delivery_address",
-      "source_location": "pickup_address",
-      "user_id": "customer_id",
-      "product_id": "item_id"
+      reservation_time: "time",
+      booking_time: "time",
+      party_size: "guests",
+      number_of_people: "guests",
+      location_name: "query",
+      search_query: "query",
+      contact_name: "name",
+      customer_name: "name",
+      order_summary: "items",
+      phone_number: "phone",
+      email_address: "email",
+      guestEmail: "email",
+      target_destination: "delivery_address",
+      source_location: "pickup_address",
+      user_id: "customer_id",
+      product_id: "item_id",
     };
 
     // Combine with shared aliases
@@ -271,9 +315,16 @@ export class MCPClient {
     const mappedArgs: Record<string, unknown> = { ...args };
 
     for (const [alias, primary] of Object.entries(allAliases)) {
-      if (mappedArgs[alias] !== undefined && mappedArgs[primary] === undefined) {
+      if (
+        mappedArgs[alias] !== undefined &&
+        mappedArgs[primary] === undefined
+      ) {
         mappedArgs[primary] = mappedArgs[alias];
-        logger.debug('Mapped parameter alias', { alias, primary, toolName: name });
+        logger.debug("Mapped parameter alias", {
+          alias,
+          primary,
+          toolName: name,
+        });
       }
     }
 
@@ -283,21 +334,28 @@ export class MCPClient {
   /**
    * Combines multiple AbortSignals into one.
    */
-  private createCombinedSignal(signals: AbortSignal[]): AbortSignal {
-    if (signals.length === 0) {
+  private createCombinedSignal(
+    signals: (AbortSignal | undefined)[],
+  ): AbortSignal {
+    const validSignals = signals.filter(
+      (s): s is AbortSignal => s !== undefined,
+    );
+    if (validSignals.length === 0) {
       return new AbortController().signal;
     }
-    if (signals.length === 1) {
-      return signals[0];
+    if (validSignals.length === 1) {
+      return validSignals[0]!;
     }
 
     const controller = new AbortController();
-    for (const signal of signals) {
+    for (const signal of validSignals) {
       if (signal.aborted) {
         controller.abort();
         return controller.signal;
       }
-      signal.addEventListener('abort', () => controller.abort(), { once: true });
+      signal.addEventListener("abort", () => controller.abort(), {
+        once: true,
+      });
     }
     return controller.signal;
   }
@@ -310,7 +368,7 @@ export class MCPClient {
   private async withRetry<T>(
     fn: (signal: AbortSignal) => Promise<T>,
     maxAttempts: number = 3,
-    baseDelay: number = 1000
+    baseDelay: number = 1000,
   ): Promise<T> {
     let lastError: any;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -319,11 +377,12 @@ export class MCPClient {
         return await fn(attemptController.signal);
       } catch (error: unknown) {
         // Special handling for reconnection-triggered retry
-        if (error.message?.includes('RECONNECT_AND_RETRY')) {
-          logger.info('Reconnection triggered retry', {
+        const errorMsg = error instanceof Error ? error.message : "";
+        if (errorMsg?.includes("RECONNECT_AND_RETRY")) {
+          logger.info("Reconnection triggered retry", {
             attempt: attempt + 1,
             maxAttempts,
-            toolName: error.message.split(':')[1]?.trim() || 'unknown',
+            toolName: errorMsg.split(":")[1]?.trim() || "unknown",
           });
           lastError = error;
           // Short delay before retry after reconnection
@@ -336,12 +395,14 @@ export class MCPClient {
         if (attempt === maxAttempts) break;
 
         // Don't retry if aborted
-        if (error.name === 'AbortError' || attemptController.signal.aborted) {
+        const errorName = error instanceof Error ? error.name : "";
+        if (errorName === "AbortError" || attemptController.signal.aborted) {
           throw error;
         }
 
         // Exponential backoff: baseDelay * 2^(attempt-1) + jitter
-        const delay = baseDelay * Math.pow(2, attempt - 1) + Math.random() * 1000;
+        const delay =
+          baseDelay * Math.pow(2, attempt - 1) + Math.random() * 1000;
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
@@ -360,40 +421,60 @@ export class MCPClient {
       requires_confirmation?: boolean;
     };
 
-    const return_schema = toolWithMetadata.outputSchema || toolWithMetadata.returnSchema || {};
+    const return_schema =
+      toolWithMetadata.outputSchema || toolWithMetadata.returnSchema || {};
 
-    const confirmationKeywords = ["book", "pay", "reserve", "buy", "send", "schedule", "delete", "remove", "dispatch", "deliver"];
+    const confirmationKeywords = [
+      "book",
+      "pay",
+      "reserve",
+      "buy",
+      "send",
+      "schedule",
+      "delete",
+      "remove",
+      "dispatch",
+      "deliver",
+    ];
     const requires_confirmation =
-      confirmationKeywords.some(keyword => tool.name.toLowerCase().includes(keyword)) ||
+      confirmationKeywords.some((keyword) =>
+        tool.name.toLowerCase().includes(keyword),
+      ) ||
       tool.name.toLowerCase().startsWith("delete_") ||
       tool.name.toLowerCase().startsWith("remove_");
 
     // Semantic Parameter Aliases: Bridge common LLM naming to specific tool requirements
     const parameter_aliases: Record<string, string> = {
-      "number_of_people": "guests",
-      "location_name": "query",
-      "search_query": "query",
-      "contact_name": "name",
-      "customer_name": "name",
-      "order_summary": "items",
-      "email_address": "email",
+      number_of_people: "guests",
+      location_name: "query",
+      search_query: "query",
+      contact_name: "name",
+      customer_name: "name",
+      order_summary: "items",
+      email_address: "email",
       ...mcpConfig.parameter_aliases, // Use centralized aliases
       ...shared_aliases,
-      "guestEmail": "email",
-      "target_destination": "delivery_address",
-      "source_location": "pickup_address",
-      "user_id": "customer_id",
-      "product_id": "item_id"
+      guestEmail: "email",
+      target_destination: "delivery_address",
+      source_location: "pickup_address",
+      user_id: "customer_id",
+      product_id: "item_id",
     };
 
     // Safely extract inputSchema properties with type guard
-    const inputSchemaProperties = typeof tool.inputSchema === 'object' && tool.inputSchema !== null
-      ? (tool.inputSchema as Record<string, unknown>).properties as Record<string, unknown> || {}
-      : {};
+    const inputSchemaProperties =
+      typeof tool.inputSchema === "object" && tool.inputSchema !== null
+        ? ((tool.inputSchema as Record<string, unknown>).properties as Record<
+            string,
+            unknown
+          >) || {}
+        : {};
 
-    const inputSchemaRequired = typeof tool.inputSchema === 'object' && tool.inputSchema !== null
-      ? (tool.inputSchema as Record<string, unknown>).required as string[] || []
-      : [];
+    const inputSchemaRequired =
+      typeof tool.inputSchema === "object" && tool.inputSchema !== null
+        ? ((tool.inputSchema as Record<string, unknown>)
+            .required as string[]) || []
+        : [];
 
     return {
       name: tool.name,
@@ -407,7 +488,10 @@ export class MCPClient {
       return_schema: return_schema as Record<string, unknown>,
       parameter_aliases,
       timeout_ms: 30000,
-      requires_confirmation: toolWithMetadata.requiresConfirmation ?? toolWithMetadata.requires_confirmation ?? requires_confirmation,
+      requires_confirmation:
+        toolWithMetadata.requiresConfirmation ??
+        toolWithMetadata.requires_confirmation ??
+        requires_confirmation,
       category: "external",
       origin: this.serverUrl,
     };

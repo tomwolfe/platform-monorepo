@@ -136,22 +136,26 @@ export class StateDiffViewer {
     const stepChanges: StateDiff["stepChanges"] = [];
     const oldStepMap = new Map(oldState.step_states.map((s) => [s.step_id, s]));
     const newStepMap = new Map(newState.step_states.map((s) => [s.step_id, s]));
+    const planSteps = new Map(newState.plan?.steps.map((s) => [s.id, s]) || []);
 
     // Check all steps in new state
     for (const [stepId, newStep] of newStepMap) {
       const oldStep = oldStepMap.get(stepId);
+      const planStep = planSteps.get(stepId);
+      const toolName = planStep?.tool_name || "unknown";
+
       const changed =
         !oldStep ||
         oldStep.status !== newStep.status ||
-        oldStep.result !== newStep.result;
+        oldStep.output !== newStep.output;
 
       stepChanges.push({
         stepId,
-        toolName: newStep.tool_name,
+        toolName,
         previousStatus: oldStep?.status,
         currentStatus: newStep.status,
         changed,
-        resultChanged: oldStep?.result !== newStep.result,
+        resultChanged: oldStep?.output !== newStep.output,
       });
     }
 
@@ -188,9 +192,9 @@ export class StateDiffViewer {
    */
   static async saveDiff(diff: StateDiff): Promise<void> {
     if (!redis) {
-      logger.warn({
-        message: "[StateDiffViewer] Redis not available, skipping diff storage",
-      });
+      logger.warn(
+        "[StateDiffViewer] Redis not available, skipping diff storage",
+      );
       return;
     }
 
@@ -208,19 +212,22 @@ export class StateDiffViewer {
       // Keep timeline bounded (last 100 diffs)
       const currentCount = await redis.zcard(timelineKey);
       if (currentCount > 100) {
-        const toRemove = await redis.zrange(timelineKey, 0, currentCount - 101);
+        const toRemove = (await redis.zrange(
+          timelineKey,
+          0,
+          currentCount - 101,
+        )) as string[];
         await Promise.all([
           redis.zremrangebyrank(timelineKey, 0, currentCount - 101),
           ...toRemove.map((key) => redis.del(key)),
         ]);
       }
 
-      logger.info({
-        message: `[StateDiffViewer] Saved diff for ${diff.executionId}: ${diff.previousStatus} -> ${diff.currentStatus} (${diff.stepChanges.filter((s) => s.changed).length} step changes)`,
-      });
+      logger.info(
+        `[StateDiffViewer] Saved diff for ${diff.executionId}: ${diff.previousStatus} -> ${diff.currentStatus} (${diff.stepChanges.filter((s) => s.changed).length} step changes)`,
+      );
     } catch (error) {
-      logger.error({
-        message: "[StateDiffViewer] Failed to save diff",
+      logger.error("[StateDiffViewer] Failed to save diff", {
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -236,7 +243,7 @@ export class StateDiffViewer {
 
     try {
       const timelineKey = `state:diff:timeline:${executionId}`;
-      const diffKeys = await redis.zrange(timelineKey, 0, -1);
+      const diffKeys = (await redis.zrange(timelineKey, 0, -1)) as string[];
 
       if (!diffKeys || diffKeys.length === 0) {
         return [];
@@ -257,8 +264,7 @@ export class StateDiffViewer {
 
       return diffs.filter((d): d is StateDiff => d !== null);
     } catch (error) {
-      logger.error({
-        message: "[StateDiffViewer] Failed to get diffs",
+      logger.error("[StateDiffViewer] Failed to get diffs", {
         error: error instanceof Error ? error.message : String(error),
       });
       return [];
@@ -277,8 +283,8 @@ export class StateDiffViewer {
       return null;
     }
 
-    const startTime = diffs[0].timestamp;
-    const endTime = diffs[diffs.length - 1].timestamp;
+    const startTime = diffs[0]!.timestamp;
+    const endTime = diffs[diffs.length - 1]!.timestamp;
     const totalDurationMs =
       new Date(endTime).getTime() - new Date(startTime).getTime();
 
@@ -339,7 +345,7 @@ export class StateDiffViewer {
    */
   static async getLatestDiff(executionId: string): Promise<StateDiff | null> {
     const diffs = await this.getExecutionDiffs(executionId);
-    return diffs.length > 0 ? diffs[diffs.length - 1] : null;
+    return diffs.length > 0 ? (diffs[diffs.length - 1] ?? null) : null;
   }
 
   /**
@@ -352,7 +358,7 @@ export class StateDiffViewer {
 
     try {
       const timelineKey = `state:diff:timeline:${executionId}`;
-      const diffKeys = await redis.zrange(timelineKey, 0, -1);
+      const diffKeys = (await redis.zrange(timelineKey, 0, -1)) as string[];
 
       if (diffKeys && diffKeys.length > 0) {
         await Promise.all([
@@ -361,12 +367,9 @@ export class StateDiffViewer {
         ]);
       }
 
-      logger.info({
-        message: `[StateDiffViewer] Cleared diffs for ${executionId}`,
-      });
+      logger.info(`[StateDiffViewer] Cleared diffs for ${executionId}`);
     } catch (error) {
-      logger.error({
-        message: "[StateDiffViewer] Failed to clear diffs",
+      logger.error("[StateDiffViewer] Failed to clear diffs", {
         error: error instanceof Error ? error.message : String(error),
       });
     }

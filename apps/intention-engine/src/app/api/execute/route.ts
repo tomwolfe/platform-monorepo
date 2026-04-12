@@ -10,6 +10,7 @@ import {
 const logger = new Logger({ serviceName: "execute-api" });
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const ExecuteRequestSchema = z.object({
   input: z.string().min(1).max(10000),

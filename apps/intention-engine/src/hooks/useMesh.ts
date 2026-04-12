@@ -69,7 +69,7 @@ export function useMesh(
 
   useEffect(() => {
     let isMounted = true;
-    let listener: ((message: NervousSystemEvent) => void) | null = null;
+    let listener: ((message: Ably.InboundMessage) => void) | null = null;
 
     try {
       // Increment connection count
@@ -97,14 +97,12 @@ export function useMesh(
         }
       });
 
-      listener = (message: NervousSystemEvent) => {
+      listener = (message: Ably.InboundMessage) => {
         if (!isMounted) return;
-        console.log(
-          "[Mesh] Received real-time event:",
-          message.name,
-          message.data,
-        );
-        savedOnEvent.current(message.name!, message.data);
+        const eventName = typeof message.name === "string" ? message.name : "";
+        const eventData = message.data as Record<string, unknown>;
+        console.log("[Mesh] Received real-time event:", eventName, eventData);
+        savedOnEvent.current(eventName, eventData);
       };
 
       channelInstance.subscribe(listener);

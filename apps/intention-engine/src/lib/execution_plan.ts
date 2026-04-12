@@ -11,7 +11,10 @@ export interface ExecutionPlan {
 /**
  * Transforms a validated Intent into a structured Execution Plan.
  */
-export function createExecutionPlan(intent: Intent, dryRun: boolean = true): ExecutionPlan {
+export function createExecutionPlan(
+  intent: Intent,
+  dryRun: boolean = true,
+): ExecutionPlan {
   const guardrail = checkGuardrails(intent);
 
   if (!guardrail.allowed) {
@@ -22,8 +25,11 @@ export function createExecutionPlan(intent: Intent, dryRun: boolean = true): Exe
 
   // Mapping logic based on Intent Type
   if (intent.type === "ACTION") {
-    const toolName = intent.parameters.capability || intent.parameters.tool_name;
-    const parameters = { ...(intent.parameters.arguments as any || intent.parameters) };
+    const toolName = (intent.parameters.capability ||
+      intent.parameters.tool_name) as string;
+    const parameters = {
+      ...((intent.parameters.arguments as any) || intent.parameters),
+    };
 
     // Standardize time fields for booking
     if (toolName === "book_restaurant_table") {
@@ -44,11 +50,13 @@ export function createExecutionPlan(intent: Intent, dryRun: boolean = true): Exe
       dependencies: [],
       requires_confirmation: guardrail.requiresConfirmation,
       timeout_ms: 30000,
-      description: guardrail.reason || `Execute ${toolName}`
+      description: guardrail.reason || `Execute ${toolName}`,
     });
   } else if (intent.type === "SCHEDULE") {
-    const isDinner = intent.rawText.toLowerCase().includes("dinner") || 
-                     (intent.parameters.title && intent.parameters.title.toLowerCase().includes("dinner"));
+    const isDinner =
+      intent.rawText.toLowerCase().includes("dinner") ||
+      (intent.parameters.title &&
+        (intent.parameters.title as string).toLowerCase().includes("dinner"));
 
     if (isDinner) {
       // Special logic for dinner: add route estimate
@@ -59,13 +67,16 @@ export function createExecutionPlan(intent: Intent, dryRun: boolean = true): Exe
         tool_version: "1.0.0",
         parameters: {
           origin: "current_location",
-          destination: intent.parameters.location || intent.parameters.restaurant_address || "the restaurant",
-          travel_mode: "driving"
+          destination:
+            intent.parameters.location ||
+            intent.parameters.restaurant_address ||
+            "the restaurant",
+          travel_mode: "driving",
         },
         dependencies: [],
         requires_confirmation: false,
         timeout_ms: 30000,
-        description: "Calculate travel time for dinner"
+        description: "Calculate travel time for dinner",
       });
     }
 
@@ -75,30 +86,39 @@ export function createExecutionPlan(intent: Intent, dryRun: boolean = true): Exe
       tool_name: "add_calendar_event",
       tool_version: "1.0.0",
       parameters: {
-        events: [{
-          title: intent.parameters.title || "New Event",
-          start_time: intent.parameters.start_time || intent.parameters.temporal_expression,
-          end_time: intent.parameters.end_time,
-          location: intent.parameters.location || intent.parameters.restaurant_address,
-          restaurant_name: intent.parameters.restaurant_name
-        }]
+        events: [
+          {
+            title: intent.parameters.title || "New Event",
+            start_time:
+              intent.parameters.start_time ||
+              intent.parameters.temporal_expression,
+            end_time: intent.parameters.end_time,
+            location:
+              intent.parameters.location ||
+              intent.parameters.restaurant_address,
+            restaurant_name: intent.parameters.restaurant_name,
+          },
+        ],
       },
       dependencies: [],
       requires_confirmation: guardrail.requiresConfirmation,
       timeout_ms: 30000,
-      description: isDinner ? "Schedule dinner and adjust for travel" : "Schedule event"
+      description: isDinner
+        ? "Schedule dinner and adjust for travel"
+        : "Schedule event",
     });
   }
 
   // Transactional intents (high risk) trigger total confirmation
-  const isTransactional = steps.some(s => 
-    ["request_ride", "book_restaurant_table"].includes(s.tool_name)
+  const isTransactional = steps.some((s) =>
+    ["request_ride", "book_restaurant_table"].includes(s.tool_name),
   );
 
   return {
     intent_id: intent.id,
     steps,
-    requires_total_confirmation: guardrail.requiresConfirmation || isTransactional,
-    dry_run: dryRun
+    requires_total_confirmation:
+      guardrail.requiresConfirmation || isTransactional,
+    dry_run: dryRun,
   };
 }

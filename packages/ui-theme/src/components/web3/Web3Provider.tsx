@@ -8,10 +8,9 @@ import {
   type Config as WagmiConfig,
 } from "wagmi";
 import { base, polygon, mainnet } from "wagmi/chains";
-import { coinbaseWallet, metaMask } from "wagmi/connectors";
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { createStorage, fallback } from "wagmi";
-import { getQueryClient } from "../lib/query-client";
+import { getQueryClient } from "../../lib/query-client";
 
 /**
  * T3.1: Consolidated Web3 Provider Component

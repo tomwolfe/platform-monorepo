@@ -13,22 +13,29 @@ export const communicationReturnSchema = {
   status: "string",
   channel: "string",
   recipient: "string",
-  timestamp: "string"
+  timestamp: "string",
 };
 
 /**
  * Send communication using the configured provider
  * Uses dependency injection for testability
  */
-export async function send_comm(params: CommunicationParams): Promise<{ success: boolean; result?: any; error?: string }> {
+export async function send_comm(
+  params: CommunicationParams,
+): Promise<{ success: boolean; result?: any; error?: string }> {
   const validated = CommunicationSchema.safeParse(params);
   if (!validated.success) {
-    return { success: false, error: "Invalid parameters: " + validated.error.message };
+    return {
+      success: false,
+      error: "Invalid parameters: " + validated.error.message,
+    };
   }
 
   try {
     // Use provider abstraction for communication
-    const commRequest: CommunicationRequest = validateCommunicationRequest(validated.data);
+    const commRequest: CommunicationRequest = validateCommunicationRequest(
+      validated.data,
+    );
     const provider = getCommunicationProvider(validated.data.channel);
 
     if (!provider.isConfigured()) {
@@ -46,7 +53,10 @@ export async function send_comm(params: CommunicationParams): Promise<{ success:
       error: result.error,
     };
   } catch (error: unknown) {
-    return { success: false, error: error.message };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -57,12 +67,22 @@ export const sendCommToolDefinition: ToolDefinitionMetadata = {
   inputSchema: {
     type: "object",
     properties: {
-      recipient: { type: "string", description: "The email address or phone number of the recipient." },
-      channel: { type: "string", enum: ["email", "sms"], description: "The communication channel to use." },
+      recipient: {
+        type: "string",
+        description: "The email address or phone number of the recipient.",
+      },
+      channel: {
+        type: "string",
+        enum: ["email", "sms"],
+        description: "The communication channel to use.",
+      },
       message: { type: "string", description: "The content of the message." },
-      subject: { type: "string", description: "The subject of the email (ignored for SMS)." }
+      subject: {
+        type: "string",
+        description: "The subject of the email (ignored for SMS).",
+      },
     },
-    required: ["recipient", "channel", "message"]
+    required: ["recipient", "channel", "message"],
   },
   return_schema: communicationReturnSchema,
   timeout_ms: 30000,
@@ -70,12 +90,12 @@ export const sendCommToolDefinition: ToolDefinitionMetadata = {
   category: "communication",
   rate_limits: {
     requests_per_minute: 60,
-    requests_per_hour: 500
+    requests_per_hour: 500,
   },
   responseSchema: z.object({
     status: z.string(),
     channel: z.enum(["email", "sms"]),
     recipient: z.string(),
-    timestamp: z.string()
-  })
+    timestamp: z.string(),
+  }),
 };

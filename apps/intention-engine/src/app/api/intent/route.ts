@@ -16,7 +16,8 @@ import {
   Logger,
 } from "@repo/shared";
 
-export const runtime = "nodejs"; // AsyncLocalStorage needs nodejs runtime
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic"; // AsyncLocalStorage needs nodejs runtime
 
 const logger = new Logger({ serviceName: "intent-engine" });
 

@@ -31,15 +31,18 @@ import { NextResponse } from "next/server";
 
 const logger = new Logger({ serviceName: "intention-engine-chat" });
 
-// Use AppConfig directly - no local wrapper needed
-const INTERNAL_SYSTEM_KEY = AppConfig.getInternalSystemKey();
-const _LLM_API_KEY = AppConfig.getLlmApiKey();
-const _LLM_BASE_URL = AppConfig.getLlmBaseUrl();
-
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 10; // Vercel Hobby limit
 
-const redis = getRedisClient(ServiceNamespace.IE);
+let redis: ReturnType<typeof getRedisClient>;
+
+function getRedis() {
+  if (!redis) {
+    redis = getRedisClient(ServiceNamespace.IE);
+  }
+  return redis;
+}
 
 const ChatRequestSchema = z.object({
   messages: z.array(

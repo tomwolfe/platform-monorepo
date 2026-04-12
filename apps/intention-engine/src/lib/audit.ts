@@ -1,14 +1,25 @@
 import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
-import { getPrivacyGateway } from "@repo/shared/services/privacy-gateway";
-const redis = getRedisClient(ServiceNamespace.IE);
-import type { Plan, Intent } from "./schema";
+import type { Plan, Intent } from "./engine/types";
 import type { AuditLog } from "./types";
 
 const logger = new Logger({ serviceName: "audit" });
 
 const AUDIT_LOG_PREFIX = "audit_log:";
 const USER_LOGS_PREFIX = "user_logs:";
-const AUDIT_LOGS_INDEX = "audit_logs:index"; // Sorted set for time-ordered lookups
+const AUDIT_LOGS_INDEX = "audit_logs:index";
+
+let redis: ReturnType<typeof getRedisClient> | undefined;
+
+function getRedis() {
+  if (!redis) {
+    try {
+      redis = getRedisClient(ServiceNamespace.IE);
+    } catch {
+      // Redis not available during build
+    }
+  }
+  return redis;
+}
 
 /**
  * Calculates a SHA-256 hash of the intent's core content for cryptographic linking.
@@ -78,14 +89,18 @@ export async function createAuditLog(
     },
   };
 
-  if (redis) {
-    await redis.set(`${AUDIT_LOG_PREFIX}${id}`, JSON.stringify(log), {
+  const r = getRedis();
+  if (r) {
+    await r.set(`${AUDIT_LOG_PREFIX}${id}`, JSON.stringify(log), {
       ex: 86400 * 7,
     }); // Store for 7 days
 
     // Maintain sorted set index for efficient analytics queries
     try {
-      await redis.zadd(AUDIT_LOGS_INDEX, { score: Date.now(), member: id });
+      await getRedis()?.zadd(AUDIT_LOGS_INDEX, {
+        score: Date.now(),
+        member: id,
+      });
     } catch (err) {
       logger.warn("Failed to update audit log index", {
         error: err instanceof Error ? err.message : String(err),
@@ -94,8 +109,8 @@ export async function createAuditLog(
 
     // Track logs for this user
     try {
-      await redis.lpush(`${USER_LOGS_PREFIX}${userId}`, id);
-      await redis.ltrim(`${USER_LOGS_PREFIX}${userId}`, 0, 19); // Keep last 20 logs
+      await getRedis()?.lpush(`${USER_LOGS_PREFIX}${userId}`, id);
+      await getRedis()?.ltrim(`${USER_LOGS_PREFIX}${userId}`, 0, 19); // Keep last 20 logs
     } catch (err) {
       logger.warn("Failed to update user logs index", {
         error: err instanceof Error ? err.message : String(err),
@@ -115,7 +130,7 @@ export async function getUserAuditLogs(
   if (!redis) return [];
 
   try {
-    const ids = await redis.lrange(
+    const ids = await getRedis()?.lrange(
       `${USER_LOGS_PREFIX}${userId}`,
       0,
       limit - 1,
@@ -140,16 +155,20 @@ export async function updateAuditLog(
     const existing = await getAuditLog(id);
     if (existing) {
       const updated = { ...existing, ...update };
-      await redis.set(`${AUDIT_LOG_PREFIX}${id}`, JSON.stringify(updated), {
-        ex: 86400 * 7,
-      });
+      await getRedis()?.set(
+        `${AUDIT_LOG_PREFIX}${id}`,
+        JSON.stringify(updated),
+        {
+          ex: 86400 * 7,
+        },
+      );
     }
   }
 }
 
 export async function getAuditLog(id: string): Promise<AuditLog | undefined> {
   if (redis) {
-    const data = await redis.get(`${AUDIT_LOG_PREFIX}${id}`);
+    const data = await getRedis()?.get(`${AUDIT_LOG_PREFIX}${id}`);
     if (data) {
       return (typeof data === "string" ? JSON.parse(data) : data) as AuditLog;
     }
@@ -179,7 +198,7 @@ export async function supersedeIntent(
   };
 
   if (redis) {
-    await redis.set(
+    await getRedis()?.set(
       `${AUDIT_LOG_PREFIX}${auditLogId}`,
       JSON.stringify(updatedLog),
       { ex: 86400 * 7 },

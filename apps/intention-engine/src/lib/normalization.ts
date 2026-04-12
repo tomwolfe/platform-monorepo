@@ -2,6 +2,7 @@ import { IntentSchema } from "./schema";
 import type { Intent, IntentType } from "./schema";
 import { validateIntentParams, REQUIRED_FIELDS_MAP } from "./resolveAmbiguity";
 import { Logger } from "@repo/shared";
+import { IntentTypeSchema } from "./schema";
 
 const logger = new Logger({ serviceName: "normalization" });
 
@@ -77,7 +78,12 @@ export function normalizeIntent(
 
   // 1. Case-insensitive Intent Type
   if (typeof normalizedCandidate.type === "string") {
-    normalizedCandidate.type = normalizedCandidate.type.toUpperCase();
+    const upperType = normalizedCandidate.type.toUpperCase();
+    // Validate that it's a valid IntentType
+    const parseResult = IntentTypeSchema.safeParse(upperType);
+    if (parseResult.success) {
+      normalizedCandidate.type = parseResult.data;
+    }
   }
 
   // 2. Coerce confidence to number
@@ -177,7 +183,8 @@ export function normalizeIntent(
 
     // Deep Semantic Validation: Check if the date is in the past
     if (intent.parameters.temporal_expression) {
-      const date = new Date(intent.parameters.temporal_expression);
+      const dateStr = String(intent.parameters.temporal_expression);
+      const date = new Date(dateStr);
       if (!isNaN(date.getTime())) {
         const now = new Date();
         // Only penalize if it's significantly in the past (more than 1 hour ago)
@@ -194,8 +201,12 @@ export function normalizeIntent(
 
   // 6. Transactional Argument Check: Penalize confidence if booking/payment lacks target or amount
   if (intent.type === "ACTION") {
-    const capability = (intent.parameters.capability || "").toLowerCase();
-    const args = intent.parameters.arguments || {};
+    const capability = String(intent.parameters.capability || "").toLowerCase();
+    const args =
+      intent.parameters.arguments &&
+      typeof intent.parameters.arguments === "object"
+        ? (intent.parameters.arguments as Record<string, unknown>)
+        : {};
     const isBookingOrPayment =
       capability.includes("booking") ||
       capability.includes("payment") ||

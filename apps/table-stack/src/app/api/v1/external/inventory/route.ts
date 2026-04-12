@@ -5,9 +5,8 @@ import { SecurityProvider } from "@repo/auth";
 import { withUnifiedApiHandler, formatApiSuccess } from "@repo/shared";
 
 async function getHandler(req: NextRequest) {
-  // Security: Require a header x-internal-key that matches INTERNAL_SYSTEM_KEY.
-  const internalKey = req.headers.get("x-internal-key");
-  if (!SecurityProvider.validateInternalKey(internalKey)) {
+  const internalKey = req.headers.get("x-internal-key") || undefined;
+  if (!internalKey || !SecurityProvider.validateInternalKey(internalKey)) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 

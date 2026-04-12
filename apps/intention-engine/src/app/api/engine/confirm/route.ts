@@ -43,6 +43,7 @@ const logger = new Logger({ serviceName: "confirm-endpoint" });
 // ============================================================================
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 10; // Vercel Hobby limit
 
 // ============================================================================

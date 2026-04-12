@@ -642,16 +642,16 @@ Respond with ONLY a JSON object in this format:
           temperature: 0.7,
         });
 
-        const parsed = parseJsonWithFallback(response.content.trim());
+        const parsed = await parseJsonWithFallback(response.content.trim());
         notificationContent = {
-          title: parsed.title || "Second Chance!",
+          title: (parsed as any).title || "Second Chance!",
           message:
-            parsed.message ||
+            (parsed as any).message ||
             `Good news! A table${capacity} is now available at ${restaurantName}. Your previous booking failed, but now's your chance to try again!`,
           proactiveIntent:
-            parsed.proactiveIntent ||
+            (parsed as any).proactiveIntent ||
             `Your chance to book ${restaurantName} is back!`,
-          suggestedAction: parsed.suggestedAction || "Try Again",
+          suggestedAction: (parsed as any).suggestedAction || "Try Again",
         };
       } catch (llmError) {
         logger.warn("LLM re-engagement generation failed, using fallback", {
@@ -901,7 +901,12 @@ Respond with ONLY a JSON object in this format:
         temperature: 0.7,
       });
 
-      const parsed = parseJsonWithFallback(response.content.trim());
+      const parsed = await parseJsonWithFallback<{
+        title?: string;
+        message?: string;
+        proactiveIntent?: string;
+        suggestedAction?: string;
+      }>(response.content.trim());
 
       return {
         title: parsed.title || "Table Available!",

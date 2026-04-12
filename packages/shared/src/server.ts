@@ -60,7 +60,9 @@ export {
   type OutboxEvent,
   type OutboxListener,
 } from "./services/outbox-listener";
-export { OutboxRelayService, getOutboxRelayService } from "./outbox-relay";
+// OutboxRelayService for fire-and-forget QStash triggers
+export { OutboxRelayService } from "./outbox-relay";
+// NOTE: getOutboxRelayService does not exist in outbox-relay
 
 // ============================================================================
 // QSTASH SERVICE (Async workflow orchestration)
@@ -190,7 +192,16 @@ export {
 // ============================================================================
 // LLM CACHE (Redis + Node crypto)
 // ============================================================================
-export { DEFAULT_TTL_SECONDS, getLLMCache, setLLMCache } from "./llm-cache";
+export {
+  DEFAULT_TTL_SECONDS,
+  getCachedResponse as getCachedLLMResponse,
+  cacheResponse as cacheLLMResponse,
+  getLLMCacheClient,
+  invalidateLLMCache,
+  type LLMCacheEntry,
+} from "./llm-cache";
+// NOTE: getLLMCache, setLLMCache do not exist in llm-cache
+// NOTE: generateCacheKey from llm-cache conflicts with cache-middleware.generateCacheKey
 
 // ============================================================================
 // CRON AUTH (Server-only cron job validation)
@@ -206,20 +217,20 @@ export {
 // ============================================================================
 // BOOTSTRAP (Env validation at module scope)
 // ============================================================================
-export { bootstrapEnv, validateEnvSubset, SERVICES } from "./bootstrap";
+export { bootstrapEnv, validateEnvSubset } from "./bootstrap";
+export { SERVICES } from "./services";
 
 // ============================================================================
 // OBSERVABILITY FLUSH (Sentry/OpenTelemetry)
 // ============================================================================
-export {
-  registerObservabilityFlush,
-  flushObservability,
-} from "./error-handler";
+export { registerObservabilityFlush } from "./error-handler";
+// NOTE: flushObservability does not exist in error-handler
 
 // ============================================================================
 // AUTH GATEWAY (Clerk server-side)
 // ============================================================================
-export { validateRequest, getCurrentUser } from "./auth/gateway";
+export { validateRequest } from "./auth/gateway";
+// NOTE: getCurrentUser does not exist in auth/gateway
 
 // ============================================================================
 // SANDBOXES (Node.js Worker Threads & WASM)
@@ -261,98 +272,7 @@ export {
 // ============================================================================
 // SENTRY INTEGRATION (Node.js Only)
 // ============================================================================
-
-/**
- * Sentry instance for error tracking
- * Only available in Node.js environments
- */
-import { Logger } from "./logger";
-import type * as SentryTypes from "@sentry/node";
-
-const sentryLogger = new Logger({ serviceName: "sentry" });
-
-let Sentry: typeof SentryTypes | undefined = undefined;
-
-/**
- * Initialize Sentry error tracking
- * Call this once at application startup in Node.js environments
- *
- * @param dsn - Sentry DSN
- * @param options - Sentry configuration
- */
-export async function initSentry(
-  dsn: string,
-  options: {
-    environment?: string;
-    release?: string;
-    tracesSampleRate?: number;
-  } = {},
-) {
-  try {
-    const SentryModule = await import("@sentry/node");
-    Sentry = SentryModule;
-
-    Sentry.init({
-      dsn,
-      environment: options.environment || process.env.NODE_ENV,
-      release: options.release,
-      tracesSampleRate: options.tracesSampleRate || 0.1,
-      integrations: [
-        new Sentry.Integrations.Http({ tracing: true }),
-        new Sentry.Integrations.Express({ app: undefined }),
-      ],
-    });
-
-    sentryLogger.info({ message: "Sentry initialized" });
-  } catch (error) {
-    sentryLogger.warn({
-      message: "Failed to initialize Sentry",
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
-/**
- * Configure Sentry user context for better error tracking
- */
-export function setSentryUser(user: {
-  id?: string;
-  email?: string;
-  username?: string;
-}) {
-  if (Sentry) {
-    Sentry.setUser(user);
-  }
-}
-
-/**
- * Add Sentry breadcrumb for debugging
- */
-export function addSentryBreadcrumb(
-  message: string,
-  data?: Record<string, unknown>,
-) {
-  if (Sentry) {
-    Sentry.addBreadcrumb({ message, data, level: "info" });
-  }
-}
-
-/**
- * Capture exception with Sentry
- */
-export function captureSentryException(
-  error: Error,
-  context?: Record<string, unknown>,
-) {
-  if (Sentry) {
-    Sentry.captureException(error, { extra: context });
-  }
-}
-
-// ============================================================================
-// TESTING UTILITIES (Server-only - database, drizzle, ably, resend, viem)
-// ============================================================================
-export * from "./testing";
+export * from "./server/sentry";
 
 // ============================================================================
 // MIGRATION & SECURITY SCANNERS
@@ -488,3 +408,22 @@ export {
   openApiSpecification,
   type OpenApiSpecification,
 } from "./openapi-spec";
+
+// ============================================================================
+// API MIDDLEWARE & ERROR UTILITIES
+// ============================================================================
+export { withUnifiedApiHandler } from "./middleware/api-error-wrapper";
+export { createErrorResponse } from "./utils/api-error";
+
+// ============================================================================
+// WEB3 UTILITIES (Nonce sync, wallet provider, verification)
+// ============================================================================
+export {
+  getPublicClient,
+  getEscrowResolverAddress,
+} from "./utils/wallet-provider";
+export {
+  syncNonceFromChain,
+  checkNonceSyncStatus,
+} from "./utils/nonce-tracker";
+export { isValidTxHash, verifyTransaction } from "./utils/web3-verification";

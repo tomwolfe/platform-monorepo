@@ -43,7 +43,7 @@ import {
 import { PARAMETER_ALIASES } from "@repo/mcp-protocol";
 import { Logger } from "@repo/shared";
 
-const logger = new Logger({ serviceName: 'intention-engine' });
+const logger = new Logger({ serviceName: "intention-engine" });
 
 export * from "./types";
 export { DEFAULT_PLAN_CONSTRAINTS } from "./planner-helpers";
@@ -110,23 +110,25 @@ export const DEFAULT_SAFETY_POLICY = {
 
 export function freezePlan(plan: Plan): FrozenPlan {
   const frozenAt = new Date().toISOString();
-  
+
   // Use Web Crypto API for Edge runtime compatibility
   const encoder = new TextEncoder();
-  const data = encoder.encode(JSON.stringify({
-    plan_id: plan.id,
-    steps: plan.steps.map((s) => ({
-      tool_name: s.tool_name,
-      parameters: s.parameters,
-      dependencies: s.dependencies,
-    })),
-    timestamp: frozenAt,
-  }));
-  
+  const data = encoder.encode(
+    JSON.stringify({
+      plan_id: plan.id,
+      steps: plan.steps.map((s) => ({
+        tool_name: s.tool_name,
+        parameters: s.parameters,
+        dependencies: s.dependencies,
+      })),
+      timestamp: frozenAt,
+    }),
+  );
+
   // For Edge runtime, we'll use a simple hash (in production, use a proper crypto library)
   // This is a simplified version - in production use a proper hashing library
-  const hash = data.reduce((acc, byte) => acc + byte.toString(16), '');
-  
+  const hash = data.reduce((acc, byte) => acc + byte.toString(16), "");
+
   return {
     plan,
     frozen_at: frozenAt,
@@ -142,26 +144,26 @@ export function freezePlan(plan: Plan): FrozenPlan {
 export function calculatePlanConfidence(
   plan: Plan,
   intent: Intent,
-  context: PlanningContext
+  context: PlanningContext,
 ): number {
   let confidence = 0.5;
   if (plan.steps.length > 0) confidence += 0.2;
-  
+
   const availableTools = context.available_tools || [];
   const allToolsValid = plan.steps.every((step) =>
-    availableTools.some((t) => t.name === step.tool_name)
+    availableTools.some((t) => t.name === step.tool_name),
   );
   if (allToolsValid) confidence += 0.15;
-  
+
   const stepIds = new Set(plan.steps.map((s) => s.id));
   const allDepsValid = plan.steps.every((step) =>
-    step.dependencies.every((depId) => stepIds.has(depId))
+    step.dependencies.every((depId) => stepIds.has(depId)),
   );
   if (allDepsValid) confidence += 0.1;
-  
+
   const constraints = { ...DEFAULT_PLAN_CONSTRAINTS, ...context.constraints };
   if (validatePlanConstraints(plan, constraints).valid) confidence += 0.05;
-  
+
   return Math.min(confidence, 1.0);
 }
 
@@ -169,13 +171,18 @@ export function calculatePlanConfidence(
 // SAFETY VALIDATION
 // ============================================================================
 
-export function verifyPlan(plan: Plan, policy = DEFAULT_SAFETY_POLICY): {
+export function verifyPlan(
+  plan: Plan,
+  policy = DEFAULT_SAFETY_POLICY,
+): {
   valid: boolean;
   reason?: string;
   violation?: string;
 } {
   for (const step of plan.steps) {
-    const limits = policy.parameterLimits.filter((l) => l.tool === step.tool_name);
+    const limits = policy.parameterLimits.filter(
+      (l) => l.tool === step.tool_name,
+    );
     for (const limit of limits) {
       const value = step.parameters[limit.parameter];
       if (typeof value === "number") {
@@ -198,7 +205,7 @@ export function verifyPlan(plan: Plan, policy = DEFAULT_SAFETY_POLICY): {
 
 async function generateRawPlan(
   intent: Intent,
-  context: PlanningContext
+  context: PlanningContext,
 ): Promise<any> {
   const constraints = { ...DEFAULT_PLAN_CONSTRAINTS, ...context.constraints };
   const systemPrompt = buildPlanningPrompt({
@@ -207,21 +214,25 @@ async function generateRawPlan(
   });
 
   // Fetch recent successful intentions for context injection
-  let contextHistory: Array<{ input?: string; summary?: string; status: string }> = [];
+  let contextHistory: Array<{
+    input?: string;
+    summary?: string;
+    status: string;
+  }> = [];
   try {
     const { getMemoryClient } = await import("./memory");
     const memory = getMemoryClient();
     const recentIntents = await memory.getRecentSuccessfulIntents(3);
-    contextHistory = recentIntents.map(s => ({
+    contextHistory = recentIntents.map((s) => ({
       input: s.intent?.rawText,
       summary: s.plan?.summary,
-      status: s.status
+      status: s.status,
     }));
   } catch (error) {
-    logger.warn({
-      message: '[UnifiedPlanner] Memory client unavailable, skipping context injection',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "[UnifiedPlanner] Memory client unavailable, skipping context injection",
+      { error: error instanceof Error ? error.message : String(error) },
+    );
   }
 
   const basePrompt = JSON.stringify({
@@ -255,7 +266,7 @@ async function generateRawPlan(
 
 export async function generatePlan(
   intent: Intent,
-  context: PlanningContext = {}
+  context: PlanningContext = {},
 ): Promise<PlanningResult> {
   const startTime = performance.now();
   const timestamp = new Date().toISOString();
@@ -276,25 +287,34 @@ export async function generatePlan(
     let liveStateConstraint = "";
     if (intent.type === "ACTION" || intent.type === "SCHEDULE") {
       const intentParams = intent.parameters as Record<string, any>;
-      const restaurantId = intentParams.restaurant_id || intentParams.restaurantId;
+      const restaurantId =
+        intentParams.restaurant_id || intentParams.restaurantId;
 
       if (restaurantId) {
         try {
-          const { get_live_operational_state } = await import("../tools/operational_state");
-          const liveState = await get_live_operational_state({ restaurant_id: restaurantId });
+          const { get_live_operational_state } =
+            await import("../tools/operational_state");
+          const liveState = await get_live_operational_state({
+            restaurant_id: restaurantId,
+          });
 
-          if (liveState && typeof liveState === 'object') {
-            const tableStatus = (liveState as any).table_status || (liveState as any).status;
-            if (tableStatus === 'occupied' || tableStatus === 'dirty' || tableStatus === 'full') {
-              liveStateConstraint = "Constraint: Target table is currently unavailable (occupied/dirty/full). Proactively suggest a delivery alternative via OpenDelivery instead of a booking. Do not attempt table reservation.";
-              logger.info({
-                message: `[Live State Gate] Restaurant ${restaurantId} has table status '${tableStatus}'. Adding delivery constraint.`,
-              });
+          if (liveState && typeof liveState === "object") {
+            const tableStatus =
+              (liveState as any).table_status || (liveState as any).status;
+            if (
+              tableStatus === "occupied" ||
+              tableStatus === "dirty" ||
+              tableStatus === "full"
+            ) {
+              liveStateConstraint =
+                "Constraint: Target table is currently unavailable (occupied/dirty/full). Proactively suggest a delivery alternative via OpenDelivery instead of a booking. Do not attempt table reservation.";
+              logger.info(
+                `[Live State Gate] Restaurant ${restaurantId} has table status '${tableStatus}'. Adding delivery constraint.`,
+              );
             }
           }
         } catch (err) {
-          logger.warn({
-            message: '[Live State Gate] Failed to check operational state',
+          logger.warn("[Live State Gate] Failed to check operational state", {
             error: err instanceof Error ? err.message : String(err),
           });
           // Continue without the constraint - don't block planning
@@ -314,7 +334,7 @@ export async function generatePlan(
       intent,
       constraints,
       "planning-model-v1",
-      context.available_tools
+      context.available_tools,
     );
 
     // Validate constraints
@@ -427,20 +447,20 @@ export async function generatePlan(
 
 export function validatePlan(
   plan: Plan,
-  context: PlanningContext = {}
+  context: PlanningContext = {},
 ): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
-  
+
   const constraints = { ...DEFAULT_PLAN_CONSTRAINTS, ...context.constraints };
   const constraintsValid = validatePlanConstraints(plan, constraints);
   if (!constraintsValid.valid) errors.push(constraintsValid.error!);
-  
+
   const mergeValid = validateMergeRule(plan, {} as Intent);
   if (!mergeValid.valid) errors.push(mergeValid.reason!);
-  
+
   const safetyValid = verifyPlan(plan);
   if (!safetyValid.valid) errors.push(safetyValid.reason!);
-  
+
   return { valid: errors.length === 0, errors };
 }
 
@@ -451,7 +471,7 @@ export function validatePlan(
 
 export async function executePlan(
   plan: FrozenPlan,
-  context: PlanningContext = {}
+  context: PlanningContext = {},
 ): Promise<{ success: boolean; error?: string; result?: any }> {
   if (!plan.is_frozen) {
     return { success: false, error: "Plan must be frozen before execution" };
@@ -502,8 +522,7 @@ export async function executePlan(
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error({
-      message: '[UnifiedPlanner] executePlan failed',
+    logger.error("[UnifiedPlanner] executePlan failed", {
       error: errorMessage,
     });
     return {
@@ -518,7 +537,10 @@ export async function executePlan(
 // Explicit DAG validation (redundant with PlanSchema but explicit)
 // ============================================================================
 
-export function validatePlanDag(plan: Plan): { valid: boolean; cycles?: string[] } {
+export function validatePlanDag(plan: Plan): {
+  valid: boolean;
+  cycles?: string[];
+} {
   const visited = new Set<string>();
   const recursionStack = new Set<string>();
   const cycles: string[] = [];
@@ -539,7 +561,7 @@ export function validatePlanDag(plan: Plan): { valid: boolean; cycles?: string[]
     visited.add(stepId);
     recursionStack.add(stepId);
 
-    const step = plan.steps.find(s => s.id === stepId);
+    const step = plan.steps.find((s) => s.id === stepId);
     if (step) {
       for (const depId of step.dependencies) {
         if (!visit(depId, [...path, stepId])) {
@@ -591,7 +613,7 @@ export function getTopologicalOrder(plan: Plan): PlanStep[] {
   const result: PlanStep[] = [];
 
   // Start with nodes having no dependencies
-  Array.from(inDegree.keys()).forEach(stepId => {
+  Array.from(inDegree.keys()).forEach((stepId) => {
     const degree = inDegree.get(stepId);
     if (degree === 0) {
       queue.push(stepId);
@@ -600,7 +622,7 @@ export function getTopologicalOrder(plan: Plan): PlanStep[] {
 
   while (queue.length > 0) {
     const stepId = queue.shift()!;
-    const step = plan.steps.find(s => s.id === stepId)!;
+    const step = plan.steps.find((s) => s.id === stepId)!;
     result.push(step);
 
     for (const dependentId of adjacency.get(stepId) || []) {
@@ -627,29 +649,34 @@ export function getTopologicalOrder(plan: Plan): PlanStep[] {
 
 export async function generatePlanWithRepair(
   intent: Intent,
-  context: PlanningContext = {}
+  context: PlanningContext = {},
 ): Promise<PlanningResult> {
   try {
     // Attempt 1: Normal generation
     return await generatePlan(intent, context);
   } catch (error: unknown) {
     // Check if it's a validation error
+    const errorCode =
+      error instanceof Error && "code" in error
+        ? (error as any).code
+        : undefined;
     const isValidationError =
-      error.code === "PLAN_VALIDATION_FAILED" ||
-      error.code === "LLM_SCHEMA_VALIDATION_FAILED";
+      errorCode === "PLAN_VALIDATION_FAILED" ||
+      errorCode === "LLM_SCHEMA_VALIDATION_FAILED";
 
     if (!isValidationError) {
       throw error; // Re-throw if it's not a validation error
     }
 
-    logger.warn({
-      message: `Plan validation failed. Attempting repair... Error: ${error.message}`,
-    });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.warn(
+      `Plan validation failed. Attempting repair... Error: ${errorMessage}`,
+    );
 
     // Attempt 2: Repair generation with error feedback
     const repairFeedback = `The previous plan generation failed validation with the following error:
-${error.message}
-${error.details ? `Details: ${JSON.stringify(error.details)}` : ""}
+${errorMessage}
+${error instanceof Error && "details" in error ? `Details: ${JSON.stringify((error as any).details)}` : ""}
 
 Please correct the plan and ensure it strictly follows the schema and constraints.
 Original Intent: ${intent.rawText}

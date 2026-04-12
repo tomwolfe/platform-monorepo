@@ -139,31 +139,30 @@ async function postHandler(req: NextRequest) {
           isShadow,
           ownerEmail,
           claimToken,
-        } = payload;
+        } = payload as Record<string, unknown>;
 
-        const origin = payload.origin || process.env.NEXT_PUBLIC_APP_URL;
+        const origin =
+          (payload.origin as string) || process.env.NEXT_PUBLIC_APP_URL;
 
         if (isShadow) {
-          // Send claim invitation to shadow restaurant owner
           await NotifyService.sendClaimInvitation(
-            ownerEmail,
-            restaurantName,
-            claimToken,
+            ownerEmail as string,
+            restaurantName as string,
+            claimToken as string,
           );
           await NotifyService.notifyOwner(
-            ownerEmail,
+            ownerEmail as string,
             {
-              guestName,
-              partySize,
-              startTime,
+              guestName: guestName as string,
+              partySize: partySize as number,
+              startTime: new Date(startTime as string),
             },
             true,
           );
         } else {
-          // Send confirmation email to guest
           const verifyUrl = `${origin}/verify/${verificationToken}`;
           await NotifyService.sendNotification({
-            to: guestEmail,
+            to: guestEmail as string,
             subject: `Confirm your reservation at ${restaurantName}`,
             html: `<h1>Hello ${guestName},</h1><p>Please confirm your reservation for ${partySize} people.</p><p><a href="${verifyUrl}">Click here to confirm</a></p>`,
           });
@@ -178,17 +177,16 @@ async function postHandler(req: NextRequest) {
       }
 
       case "invalidate_availability_cache": {
-        const { restaurantId } = payload;
+        const restaurantId = (payload.restaurantId as string) || "";
 
-        // Redis cache invalidation
         const pattern = `availability:${restaurantId}:*`;
         const keys = await redis.keys(pattern);
         if (keys.length > 0) {
           await redis.del(...keys);
-          logger.info({
-            message: `[T2.1] Invalidated ${keys.length} availability cache entries`,
-            restaurantId,
-          });
+          logger.info(
+            `[T2.1] Invalidated ${keys.length} availability cache entries`,
+            { restaurantId },
+          );
         }
 
         // Next.js ISR cache invalidation
@@ -203,23 +201,29 @@ async function postHandler(req: NextRequest) {
       }
 
       case "send_checkout_webhook": {
-        const { webhookUrl, reservationId, txHash, status, message } = payload;
+        const {
+          webhookUrl: wUrl,
+          reservationId: rId,
+          txHash: th,
+          status: st,
+          message: msg,
+        } = payload as Record<string, unknown>;
 
         await withRetry(
           async () => {
-            const response = await fetch(webhookUrl, {
+            const response = await fetch(wUrl as string, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
                 "X-Webhook-Source": "table-stack-checkout",
-                "X-Reservation-Id": reservationId,
+                "X-Reservation-Id": rId as string,
               },
               body: JSON.stringify({
                 success: true,
-                reservationId,
-                txHash,
-                status,
-                message,
+                reservationId: rId,
+                txHash: th,
+                status: st,
+                message: msg,
                 timestamp: new Date().toISOString(),
               }),
               signal: AbortSignal.timeout(10000),
@@ -242,8 +246,8 @@ async function postHandler(req: NextRequest) {
         );
 
         logger.info("Checkout webhook sent successfully", {
-          reservationId,
-          webhookUrl,
+          reservationId: rId,
+          webhookUrl: wUrl,
         });
         break;
       }
@@ -279,10 +283,13 @@ async function postHandler(req: NextRequest) {
   }
 }
 
-export const POST = withServerlessTimeout(
-  withUnifiedApiHandler(postHandler, {
+export const POST = withUnifiedApiHandler(
+  async (req, ctx) => {
+    const wrapped = withServerlessTimeout(postHandler, 8000);
+    return wrapped(req);
+  },
+  {
     serviceName: "dispatch-handler",
     includeStackTrace: process.env.NODE_ENV !== "production",
-  }),
-  8000,
+  },
 );

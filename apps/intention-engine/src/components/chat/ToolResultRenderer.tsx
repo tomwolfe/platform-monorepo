@@ -42,8 +42,8 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
   toolInvocation,
   onRestaurantSelect,
 }) => {
-  // Handle loading state
-  if (toolInvocation.state === "call") {
+  // Handle loading/streaming state
+  if (toolInvocation.state === "input-streaming") {
     return (
       <div className="flex items-center gap-2 text-sm text-slate-400">
         <Loader2 size={14} className="animate-spin" />
@@ -77,7 +77,13 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
 
     // Geocode Location
     if (toolName === "geocode_location") {
-      if (output.success) {
+      if (
+        output.success &&
+        output.result &&
+        typeof output.result === "object" &&
+        "lat" in output.result &&
+        "lon" in output.result
+      ) {
         return (
           <div className="bg-slate-50 rounded-lg p-4 border border-slate-100">
             <div className="flex items-center gap-3">
@@ -89,7 +95,8 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
                   Location Found
                 </p>
                 <p className="text-xs text-slate-500">
-                  {output.result.lat.toFixed(4)}, {output.result.lon.toFixed(4)}
+                  {(output.result as any).lat.toFixed(4)},{" "}
+                  {(output.result as any).lon.toFixed(4)}
                 </p>
               </div>
             </div>
@@ -113,12 +120,12 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
         const restaurants: Restaurant[] = (
           output.result as Array<Record<string, unknown>>
         ).map((r) => ({
-          name: r.name,
-          address: r.address,
-          rating: r.rating,
-          cuisine: r.cuisine,
-          priceRange: r.price_range,
-          image: r.image_url,
+          name: String(r.name ?? ""),
+          address: String(r.address ?? ""),
+          rating: Number(r.rating ?? 0),
+          cuisine: String(r.cuisine ?? ""),
+          priceRange: String(r.price_range ?? ""),
+          image: String(r.image_url ?? ""),
         }));
 
         return (
@@ -146,8 +153,11 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
 
     // Add Calendar Event
     if (toolName === "add_calendar_event") {
-      if (output.success && output.result?.download_url) {
-        const details = output.result.event_details;
+      const resultObj = output.result as Record<string, unknown> | undefined;
+      if (output.success && resultObj?.download_url) {
+        const details = resultObj.event_details as
+          | Record<string, unknown>
+          | undefined;
         return (
           <div className="bg-green-50 border border-green-100 rounded-lg p-4">
             <div className="flex items-start gap-3 mb-3">
@@ -167,23 +177,31 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
             {details && (
               <div className="bg-white/60 backdrop-blur-sm rounded-lg p-3 mb-3 space-y-2">
                 <p className="text-sm font-semibold text-slate-900">
-                  {details.title}
+                  {String(details.title ?? "")}
                 </p>
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 text-xs text-slate-600">
                     <Calendar size={12} />
-                    <span>{new Date(details.start_time).toLocaleString()}</span>
+                    <span>
+                      {new Date(
+                        String(details.start_time ?? ""),
+                      ).toLocaleString()}
+                    </span>
                   </div>
-                  {details.location && (
+                  {Boolean(details.location) && (
                     <div className="flex items-center gap-2 text-xs text-slate-600">
                       <MapPin size={12} />
-                      <span>{details.location}</span>
+                      <span>{String(details.location)}</span>
                     </div>
                   )}
-                  {details.end_time && (
+                  {Boolean(details.end_time) && (
                     <div className="flex items-center gap-2 text-xs text-slate-600">
                       <Clock size={12} />
-                      <span>{new Date(details.end_time).toLocaleString()}</span>
+                      <span>
+                        {new Date(
+                          String(details.end_time ?? ""),
+                        ).toLocaleString()}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -191,7 +209,7 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
             )}
 
             <a
-              href={output.result.download_url}
+              href={String(resultObj?.download_url ?? "#")}
               className="flex items-center justify-center gap-2 w-full py-2.5 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 transition-colors shadow-sm"
             >
               <Calendar size={16} />

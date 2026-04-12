@@ -29,6 +29,7 @@ import {
 import { getOutboxListener } from "@repo/shared";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 10; // Vercel Hobby limit
 
 const logger = new Logger({ serviceName: "outbox-sweep-cron" });

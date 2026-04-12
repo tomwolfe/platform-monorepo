@@ -701,7 +701,11 @@ export async function generateWithSchemaValidation<T>(
       if (isRetry) {
         // Already retried, increment counter and throw
         promptRetriesTotal++;
-        recordPromptRetryEvent("schema_validation_failure", output, lastError);
+        recordPromptRetryEvent(
+          "schema_validation_failure",
+          output || "",
+          lastError || "Unknown error",
+        );
         throw new Error(
           `LLM output failed schema validation after retry: ${lastError}`,
         );
@@ -709,7 +713,11 @@ export async function generateWithSchemaValidation<T>(
 
       // First attempt failed, log and retry
       promptRetriesTotal++;
-      recordPromptRetryEvent("schema_validation_failure", output, lastError);
+      recordPromptRetryEvent(
+        "schema_validation_failure",
+        output || "",
+        lastError || "Unknown error",
+      );
       console.warn(
         "[T3.2] LLM output failed schema validation, retrying with stricter prompt",
         {

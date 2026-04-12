@@ -48,7 +48,7 @@ export function parseNaturalLanguageDate(
   });
 
   if (results.length > 0) {
-    return results[0].start.date();
+    return results[0]!.start.date();
   }
 
   // Final fallback: try native Date (will return Invalid Date if unparseable)
@@ -155,7 +155,7 @@ export function extractDateTimeComponents(
     return null;
   }
 
-  const result = results[0];
+  const result = results[0]!;
   const date = result.start.date();
 
   // Determine if time was specified
@@ -168,13 +168,10 @@ export function extractDateTimeComponents(
 
   // Calculate confidence based on certainty of components
   let confidence: "high" | "medium" | "low" = "high";
-  const certaintyCount = Object.values(result.start.knownValues).filter(
-    (v) => v !== null && v !== undefined,
-  ).length;
-
-  if (certaintyCount < 3) {
+  // Use hasTime and hasDate which were already computed above
+  if (!hasDate) {
     confidence = "low";
-  } else if (certaintyCount < 5) {
+  } else if (!hasTime) {
     confidence = "medium";
   }
 

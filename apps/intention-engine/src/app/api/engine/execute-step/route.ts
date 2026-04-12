@@ -31,6 +31,7 @@ const logger = new Logger({ serviceName: "execute-step" });
 // Distributed Tracing: x-trace-id header extracted and propagated
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 8; // Vercel Hobby limit - 8s buffer before 10s hard limit
 
 // ============================================================================

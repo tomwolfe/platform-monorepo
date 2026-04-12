@@ -8,7 +8,7 @@ import {
 } from "@repo/shared";
 
 const logger = new Logger({ serviceName: "reservation-webhook" });
-const redis = getRedisClient(ServiceNamespace.TABLESTACK);
+const redis = getRedisClient(ServiceNamespace.TS);
 
 /**
  * Reservation Webhook Handler

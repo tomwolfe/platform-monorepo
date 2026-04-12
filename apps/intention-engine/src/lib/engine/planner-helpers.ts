@@ -28,13 +28,13 @@ const logger = new Logger({ serviceName: "intention-engine" });
  * Generate a random UUID (Edge runtime compatible)
  */
 function generateUUID(): string {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID();
   }
   // Fallback for environments without crypto.randomUUID
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = Math.random() * 16 | 0;
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
 }
@@ -121,12 +121,15 @@ Return JSON with: steps, summary, estimated_total_tokens, estimated_latency_ms`;
 export function buildPlanningPrompt(context: PlannerContext): string {
   const constraints = { ...DEFAULT_PLAN_CONSTRAINTS, ...context.constraints };
   const toolList = context.available_tools?.length
-    ? context.available_tools.map((t) => `- ${t.name}: ${t.description}`).join("\n")
+    ? context.available_tools
+        .map((t) => `- ${t.name}: ${t.description}`)
+        .join("\n")
     : "NO_TOOLS_AVAILABLE";
 
-  return PLANNING_PROMPT_TEMPLATE
-    .replace("{max_steps}", String(constraints.max_steps))
-    .replace("{available_tools}", toolList);
+  return PLANNING_PROMPT_TEMPLATE.replace(
+    "{max_steps}",
+    String(constraints.max_steps),
+  ).replace("{available_tools}", toolList);
 }
 
 // ============================================================================
@@ -135,7 +138,7 @@ export function buildPlanningPrompt(context: PlannerContext): string {
 
 function applyParameterAliases(
   parameters: Record<string, unknown>,
-  toolName?: string
+  toolName?: string,
 ): Record<string, unknown> {
   const resolved: Record<string, unknown> = { ...parameters };
   let aliasApplied = false;
@@ -144,17 +147,17 @@ function applyParameterAliases(
     if (resolved[alias] !== undefined && resolved[primary] === undefined) {
       resolved[primary] = resolved[alias];
       delete resolved[alias];
-      logger.info({
-        message: `[Planner] Applied alias: ${alias} -> ${primary} for ${toolName || "unknown"}`,
-      });
+      logger.info(
+        `[Planner] Applied alias: ${alias} -> ${primary} for ${toolName || "unknown"}`,
+      );
       aliasApplied = true;
     }
   }
 
   if (aliasApplied) {
-    logger.info({
-      message: `[Planner] Alias resolution complete for ${toolName || "unknown"}`,
-    });
+    logger.info(
+      `[Planner] Alias resolution complete for ${toolName || "unknown"}`,
+    );
   }
 
   return resolved;
@@ -169,7 +172,7 @@ export function convertRawPlanToPlan(
   intent: Intent,
   constraints: PlanConstraints,
   modelId: string,
-  availableTools: ToolDefinition[] = []
+  availableTools: ToolDefinition[] = [],
 ): Plan {
   const timestamp = new Date().toISOString();
   const expandedSteps: RawPlanStep[] = [];
@@ -185,7 +188,11 @@ export function convertRawPlanToPlan(
     if (toolDef) {
       for (const [key, value] of Object.entries(rawStep.parameters)) {
         const propDef = toolDef.inputSchema.properties[key];
-        if (propDef && Array.isArray(value) && ["string", "number", "boolean"].includes(propDef.type)) {
+        if (
+          propDef &&
+          Array.isArray(value) &&
+          ["string", "number", "boolean"].includes(propDef.type)
+        ) {
           fanOutParamKey = key;
           fanOutValues = value;
           break;
@@ -234,12 +241,17 @@ export function convertRawPlanToPlan(
     const dependencyUuids = rawStep.dependencies.map((depNum) => {
       const depId = stepIdMap.get(depNum);
       if (!depId) {
-        throw new Error(`Invalid dependency: step ${rawStep.step_number} references non-existent step ${depNum}`);
+        throw new Error(
+          `Invalid dependency: step ${rawStep.step_number} references non-existent step ${depNum}`,
+        );
       }
       return depId;
     });
 
-    const normalizedParameters = applyParameterAliases(rawStep.parameters, rawStep.tool_name);
+    const normalizedParameters = applyParameterAliases(
+      rawStep.parameters,
+      rawStep.tool_name,
+    );
 
     return PlanStepSchema.parse({
       id: stepIdMap.get(rawStep.step_number)!,
@@ -255,7 +267,10 @@ export function convertRawPlanToPlan(
     });
   });
 
-  const totalEstimatedTokens = steps.reduce((sum, step) => sum + (step.estimated_tokens || 0), 0);
+  const totalEstimatedTokens = steps.reduce(
+    (sum, step) => sum + (step.estimated_tokens || 0),
+    0,
+  );
 
   return PlanSchema.parse({
     id: generateUUID(),
@@ -279,7 +294,7 @@ export function convertRawPlanToPlan(
 
 export function validatePlanConstraints(
   plan: Plan,
-  constraints: PlanConstraints
+  constraints: PlanConstraints,
 ): { valid: boolean; error?: string } {
   if (plan.steps.length > constraints.max_steps) {
     return {
@@ -288,7 +303,10 @@ export function validatePlanConstraints(
     };
   }
 
-  const totalTokens = plan.steps.reduce((sum, step) => sum + (step.estimated_tokens || 0), 0);
+  const totalTokens = plan.steps.reduce(
+    (sum, step) => sum + (step.estimated_tokens || 0),
+    0,
+  );
   if (totalTokens > constraints.max_total_tokens) {
     return {
       valid: false,
@@ -305,12 +323,22 @@ export function validatePlanConstraints(
 
 export function validateMergeRule(
   plan: Plan,
-  intent: Intent
+  intent: Intent,
 ): { valid: boolean; reason?: string } {
   const intentParams = intent.parameters as Record<string, any>;
 
-  const deliveryTools = ["calculateQuote", "calculate_delivery_quote", "fulfill_intent", "dispatch_intent"];
-  const reservationTools = ["reserve_restaurant", "reserve_table", "bookTable", "create_reservation"];
+  const deliveryTools = [
+    "calculateQuote",
+    "calculate_delivery_quote",
+    "fulfill_intent",
+    "dispatch_intent",
+  ];
+  const reservationTools = [
+    "reserve_restaurant",
+    "reserve_table",
+    "bookTable",
+    "create_reservation",
+  ];
 
   const hasDeliveryElement =
     intentParams.delivery ||
@@ -326,40 +354,57 @@ export function validateMergeRule(
     intent.rawText.toLowerCase().includes("reserve") ||
     intent.rawText.toLowerCase().includes("booking");
 
-  const celebrationKeywords = ["celebration", "anniversary", "birthday", "proposal", "special occasion"];
+  const celebrationKeywords = [
+    "celebration",
+    "anniversary",
+    "birthday",
+    "proposal",
+    "special occasion",
+  ];
   const hasCelebrationElement = celebrationKeywords.some((kw) =>
-    intent.rawText.toLowerCase().includes(kw)
+    intent.rawText.toLowerCase().includes(kw),
   );
 
   if (hasDeliveryElement && hasDiningElement) {
     const hasDeliveryStep = plan.steps.some((step) =>
-      deliveryTools.some((tool) => step.tool_name.toLowerCase().includes(tool.toLowerCase()))
+      deliveryTools.some((tool) =>
+        step.tool_name.toLowerCase().includes(tool.toLowerCase()),
+      ),
     );
 
     const hasReservationStep = plan.steps.some((step) =>
-      reservationTools.some((tool) => step.tool_name.toLowerCase().includes(tool.toLowerCase()))
+      reservationTools.some((tool) =>
+        step.tool_name.toLowerCase().includes(tool.toLowerCase()),
+      ),
     );
 
     if (hasDeliveryStep && hasReservationStep) {
       const deliveryStep = plan.steps.find((step) =>
-        deliveryTools.some((tool) => step.tool_name.toLowerCase().includes(tool.toLowerCase()))
+        deliveryTools.some((tool) =>
+          step.tool_name.toLowerCase().includes(tool.toLowerCase()),
+        ),
       );
 
       const reservationStep = plan.steps.find((step) =>
-        reservationTools.some((tool) => step.tool_name.toLowerCase().includes(tool.toLowerCase()))
+        reservationTools.some((tool) =>
+          step.tool_name.toLowerCase().includes(tool.toLowerCase()),
+        ),
       );
 
       if (deliveryStep && reservationStep) {
         const hasCoordination =
           deliveryStep.dependencies.includes(reservationStep.id) ||
           reservationStep.dependencies.includes(deliveryStep.id) ||
-          deliveryStep.parameters.restaurant_id === reservationStep.parameters.restaurant_id ||
-          deliveryStep.parameters.restaurantId === reservationStep.parameters.restaurantId;
+          deliveryStep.parameters.restaurant_id ===
+            reservationStep.parameters.restaurant_id ||
+          deliveryStep.parameters.restaurantId ===
+            reservationStep.parameters.restaurantId;
 
         if (!hasCoordination) {
           return {
             valid: false,
-            reason: "Delivery and reservation steps are not coordinated. Add dependencies or shared parameters.",
+            reason:
+              "Delivery and reservation steps are not coordinated. Add dependencies or shared parameters.",
           };
         }
       }
@@ -368,21 +413,26 @@ export function validateMergeRule(
     if (hasCelebrationElement && (!hasDeliveryStep || !hasReservationStep)) {
       return {
         valid: false,
-        reason: "Celebration intent detected. Create a unified plan with both reservation and delivery.",
+        reason:
+          "Celebration intent detected. Create a unified plan with both reservation and delivery.",
       };
     }
   }
 
-  const restaurantDeliveryPattern = /to the restaurant|at the restaurant|for when we arrive/i;
+  const restaurantDeliveryPattern =
+    /to the restaurant|at the restaurant|for when we arrive/i;
   if (restaurantDeliveryPattern.test(intent.rawText)) {
     const hasDeliveryStep = plan.steps.some((step) =>
-      deliveryTools.some((tool) => step.tool_name.toLowerCase().includes(tool.toLowerCase()))
+      deliveryTools.some((tool) =>
+        step.tool_name.toLowerCase().includes(tool.toLowerCase()),
+      ),
     );
 
     if (!hasDeliveryStep) {
       return {
         valid: false,
-        reason: "User requested delivery 'to the restaurant' but plan has no delivery step.",
+        reason:
+          "User requested delivery 'to the restaurant' but plan has no delivery step.",
       };
     }
   }

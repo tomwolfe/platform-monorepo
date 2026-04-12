@@ -1,5 +1,4 @@
 import { getRedisClient, ServiceNamespace } from "@repo/shared";
-const redis = getRedisClient(ServiceNamespace.IE);
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { verifySignature } from "@repo/auth";
@@ -10,6 +9,15 @@ import {
   withUnifiedApiHandler,
   AppError,
 } from "@repo/shared";
+
+let redis: ReturnType<typeof getRedisClient>;
+
+function getRedis() {
+  if (!redis) {
+    redis = getRedisClient(ServiceNamespace.IE);
+  }
+  return redis;
+}
 
 // Schema for Ably message payloads from TableStack
 const AblyStateSchema = z.object({
@@ -23,6 +31,7 @@ const AblyStateSchema = z.object({
 });
 
 async function postHandler(req: Request) {
+  const redis = getRedis();
   const rawBody = await req.text();
   const signature = req.headers.get("x-signature");
   const timestamp = Number(req.headers.get("x-timestamp"));

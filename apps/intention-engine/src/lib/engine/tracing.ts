@@ -25,7 +25,7 @@ export class Tracer {
 
   static async startActiveSpan<T>(
     name: string,
-    fn: (span: Span) => Promise<T>
+    fn: (span: Span) => Promise<T>,
   ): Promise<T> {
     return this.tracer.startActiveSpan(name, async (span) => {
       try {
@@ -90,9 +90,9 @@ export class ExecutionTracer {
   constructor(executionId: string, config: Partial<TracerConfig> = {}) {
     this.executionId = executionId;
     this.config = { ...DEFAULT_TRACER_CONFIG, ...config };
-    
+
     const timestamp = new Date().toISOString();
-    
+
     this.trace = ExecutionTraceSchema.parse({
       trace_id: executionId,
       execution_id: executionId,
@@ -101,12 +101,18 @@ export class ExecutionTracer {
     });
   }
 
-  addEntry(entry: Omit<TraceEntry, "timestamp"> & { timestamp?: string }): TraceEntry {
+  addEntry(
+    entry: Omit<TraceEntry, "timestamp"> & { timestamp?: string },
+  ): TraceEntry {
     if (this.trace.entries.length >= this.config.maxEntries) {
-      logger.warn({
-        message: `Trace entry limit (${this.config.maxEntries}) reached, dropping entry`,
-      });
-      return this.trace.entries[this.trace.entries.length - 1];
+      logger.warn(
+        `Trace entry limit (${this.config.maxEntries}) reached, dropping entry`,
+      );
+      const lastEntry = this.trace.entries[this.trace.entries.length - 1];
+      if (!lastEntry) {
+        throw new Error("No entries in trace to return");
+      }
+      return lastEntry;
     }
 
     const timestamp = entry.timestamp || new Date().toISOString();
@@ -129,8 +135,7 @@ export class ExecutionTracer {
 
     if (this.config.persistToMemory) {
       this.persist().catch((error) => {
-        logger.error({
-          message: `Failed to persist trace`,
+        logger.error(`Failed to persist trace`, {
           error: error instanceof Error ? error.message : String(error),
         });
       });
@@ -144,7 +149,7 @@ export class ExecutionTracer {
     output: unknown,
     latencyMs: number,
     modelId: string,
-    tokenUsage?: { prompt: number; completion: number }
+    tokenUsage?: { prompt: number; completion: number },
   ): TraceEntry {
     return this.addEntry({
       phase: "intent",
@@ -169,7 +174,7 @@ export class ExecutionTracer {
     output: unknown,
     latencyMs: number,
     modelId: string,
-    tokenUsage?: { prompt: number; completion: number }
+    tokenUsage?: { prompt: number; completion: number },
   ): TraceEntry {
     return this.addEntry({
       phase: "planning",
@@ -195,7 +200,7 @@ export class ExecutionTracer {
     input: unknown,
     output?: unknown,
     error?: string,
-    latencyMs?: number
+    latencyMs?: number,
   ): TraceEntry {
     return this.addEntry({
       phase: "execution",
@@ -209,10 +214,7 @@ export class ExecutionTracer {
     });
   }
 
-  addSystemEntry(
-    event: string,
-    details?: unknown
-  ): TraceEntry {
+  addSystemEntry(event: string, details?: unknown): TraceEntry {
     return this.addEntry({
       phase: "system",
       event,
@@ -224,7 +226,7 @@ export class ExecutionTracer {
   addStateTransitionEntry(
     fromState: string,
     toState: string,
-    success: boolean
+    success: boolean,
   ): TraceEntry {
     return this.addEntry({
       phase: "system",
@@ -240,7 +242,7 @@ export class ExecutionTracer {
     errorCode: string,
     errorMessage: string,
     stepId?: string,
-    details?: unknown
+    details?: unknown,
   ): TraceEntry {
     return this.addEntry({
       phase,
@@ -254,10 +256,10 @@ export class ExecutionTracer {
 
   finalize(): TracerResult {
     const timestamp = new Date().toISOString();
-    
+
     const totalLatencyMs = this.trace.entries.reduce(
       (sum, entry) => sum + (entry.latency_ms || 0),
-      0
+      0,
     );
 
     const totalTokenUsage = this.trace.entries.reduce(
@@ -265,13 +267,14 @@ export class ExecutionTracer {
         if (entry.token_usage) {
           return {
             promptTokens: sum.promptTokens + entry.token_usage.prompt_tokens,
-            completionTokens: sum.completionTokens + entry.token_usage.completion_tokens,
+            completionTokens:
+              sum.completionTokens + entry.token_usage.completion_tokens,
             totalTokens: sum.totalTokens + entry.token_usage.total_tokens,
           };
         }
         return sum;
       },
-      { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+      { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     );
 
     this.trace = ExecutionTraceSchema.parse({
@@ -287,8 +290,7 @@ export class ExecutionTracer {
 
     if (this.config.persistToMemory) {
       this.persist().catch((error) => {
-        logger.error({
-          message: `Failed to persist trace`,
+        logger.error(`Failed to persist trace`, {
           error: error instanceof Error ? error.message : String(error),
         });
       });
@@ -310,21 +312,22 @@ export class ExecutionTracer {
     try {
       await saveExecutionTrace(this.trace);
     } catch (error) {
-      logger.error({
-        message: `Failed to persist trace`,
+      logger.error(`Failed to persist trace`, {
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
 }
 
-export async function loadTrace(executionId: string): Promise<ExecutionTrace | null> {
+export async function loadTrace(
+  executionId: string,
+): Promise<ExecutionTrace | null> {
   return loadExecutionTrace(executionId);
 }
 
 export function createTracer(
   executionId: string,
-  config?: Partial<TracerConfig>
+  config?: Partial<TracerConfig>,
 ): ExecutionTracer {
   return new ExecutionTracer(executionId, config);
 }

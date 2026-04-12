@@ -88,7 +88,7 @@ export class McpAdapter {
       }
 
       if (param.default_value !== undefined) {
-        schema.default = param.default_value;
+        schema.default = param.default_value as any;
       }
 
       return schema;
@@ -115,8 +115,7 @@ export class McpAdapter {
     return {
       name: tool.name,
       description: tool.description,
-      inputSchema:
-        tool.inputSchema || this.parametersToInputSchema(tool.parameters || []),
+      inputSchema: tool.inputSchema,
     };
   }
 }
@@ -170,9 +169,7 @@ export class McpManager {
         validatedArgs = validationResult as Record<string, unknown>;
       } else {
         // For dynamic/unknown tools, use JSON Schema to Zod conversion
-        const schema =
-          tool.inputSchema ||
-          McpAdapter.parametersToInputSchema(tool.parameters || []);
+        const schema = tool.inputSchema;
         const zodSchema = mapJsonSchemaToZod(schema);
         validatedArgs = zodSchema.parse(args) as Record<string, unknown>;
       }

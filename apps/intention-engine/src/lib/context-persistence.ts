@@ -40,11 +40,13 @@ export async function saveUserInteractionContext(
       intentType: context.intentType,
     });
   } catch (error) {
-    logger.error({
-      message: `[Context Persistence] Failed to save context for user ${userId}`,
-      error: error instanceof Error ? error.message : String(error),
-      context: { userId, intentType: context.intentType },
-    });
+    logger.error(
+      `[Context Persistence] Failed to save context for user ${userId}`,
+      {
+        error: error instanceof Error ? error.message : String(error),
+        context: { userId, intentType: context.intentType },
+      },
+    );
     // Non-critical operation - don't throw
   }
 }
@@ -63,10 +65,12 @@ export async function loadUserInteractionContext(
 
     return user?.lastInteractionContext || null;
   } catch (error) {
-    logger.error({
-      message: `[Context Persistence] Failed to load context for user ${clerkId}`,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      `[Context Persistence] Failed to load context for user ${clerkId}`,
+      {
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
     return null;
   }
 }

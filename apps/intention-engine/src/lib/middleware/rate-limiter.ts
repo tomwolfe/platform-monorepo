@@ -305,7 +305,7 @@ export class RateLimiterService {
       endpointConfig.maxRequests + endpointConfig.burstAllowance;
     return {
       remaining:
-        currentCount !== null
+        currentCount != null
           ? Math.max(0, maxRequests - currentCount)
           : maxRequests,
       limit: maxRequests,

@@ -21,7 +21,7 @@ export function resolveAmbiguity(intents: Intent[]): IntentHypotheses {
 
   // Sort by confidence descending
   const sorted = [...intents].sort((a, b) => b.confidence - a.confidence);
-  const primary = sorted[0];
+  const primary = sorted[0]!;
   const alternatives = sorted.slice(1);
 
   let isAmbiguous = false;
@@ -30,13 +30,18 @@ export function resolveAmbiguity(intents: Intent[]): IntentHypotheses {
   // Rule 1: Low Absolute Confidence
   if (primary.confidence < CONFIDENCE_THRESHOLD) {
     isAmbiguous = true;
-    clarificationQuestion = primary.explanation || "I'm not sure what you want to do. Could you clarify?";
+    clarificationQuestion =
+      primary.explanation ||
+      "I'm not sure what you want to do. Could you clarify?";
   }
 
   // Rule 2: Narrow Gap between Top 2
-  if (alternatives.length > 0 && (primary.confidence - alternatives[0].confidence) < AMBIGUITY_GAP) {
+  if (
+    alternatives.length > 0 &&
+    primary.confidence - alternatives[0]!.confidence < AMBIGUITY_GAP
+  ) {
     isAmbiguous = true;
-    clarificationQuestion = `I'm torn between ${primary.type} and ${alternatives[0].type}. Which did you mean?`;
+    clarificationQuestion = `I'm torn between ${primary.type} and ${alternatives[0]!.type}. Which did you mean?`;
   }
 
   // Rule 3: Explicit SERVICE_DEGRADED or UNKNOWN
@@ -53,6 +58,6 @@ export function resolveAmbiguity(intents: Intent[]): IntentHypotheses {
     primary,
     alternatives,
     isAmbiguous,
-    clarificationQuestion
+    clarificationQuestion,
   };
 }

@@ -10,7 +10,26 @@
  * - Edge runtime and browsers also support Web Crypto API
  */
 
-import { createHmac, timingSafeEqual, getRandomValues } from "node:crypto";
+let timingSafeEqual:
+  | ((a: Buffer, b: Buffer) => boolean)
+  | undefined
+  | undefined;
+let createHmac:
+  | ((
+      algo: string,
+      key: Buffer,
+    ) => { update: (data: string) => { digest: () => Buffer } })
+  | undefined;
+let getRandomValues: ((array: Uint8Array) => Uint8Array) | undefined;
+
+function ensureCryptoLoaded() {
+  if (!timingSafeEqual) {
+    const cryptoModule = require("node:crypto");
+    timingSafeEqual = cryptoModule.timingSafeEqual;
+    createHmac = cryptoModule.createHmac;
+    getRandomValues = cryptoModule.getRandomValues;
+  }
+}
 
 /**
  * Timing-safe secret comparison to prevent timing attacks.
@@ -33,11 +52,12 @@ import { createHmac, timingSafeEqual, getRandomValues } from "node:crypto";
  * ```
  */
 export function isTimingSafeEqual(a: string, b: string): boolean {
+  ensureCryptoLoaded();
   // Hash both strings with the same random key to normalize lengths securely
-  const key = getRandomValues(new Uint8Array(32));
-  const hashA = createHmac("sha256", key).update(a).digest();
-  const hashB = createHmac("sha256", key).update(b).digest();
-  return timingSafeEqual(hashA, hashB);
+  const key = getRandomValues!(new Uint8Array(32));
+  const hashA = createHmac!("sha256", key).update(a).digest();
+  const hashB = createHmac!("sha256", key).update(b).digest();
+  return timingSafeEqual!(hashA, hashB);
 }
 
 /**

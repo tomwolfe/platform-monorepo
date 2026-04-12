@@ -163,30 +163,34 @@ export async function findAvailableDrivers(
     if (geocodeResult.success && geocodeResult.result) {
       pickupLat = geocodeResult.result.lat;
       pickupLng = geocodeResult.result.lng;
-      logger.info({
-        message: `[Dispatcher] Geocoded pickup address "${orderIntent.pickupAddress}" to (${pickupLat}, ${pickupLng})`,
-      });
+      logger.info(
+        `[Dispatcher] Geocoded pickup address "${orderIntent.pickupAddress}" to (${pickupLat}, ${pickupLng})`,
+      );
     } else {
       // Geocoding failed - return empty array, do NOT use fallback coordinates
-      logger.error({
-        message: `[Dispatcher] Geocoding failed for "${orderIntent.pickupAddress}": ${geocodeResult.error}. Cannot match drivers without valid coordinates.`,
-        details: {
-          orderId: orderIntent.orderId,
-          fulfillmentId: orderIntent.fulfillmentId,
+      logger.error(
+        `[Dispatcher] Geocoding failed for "${orderIntent.pickupAddress}": ${geocodeResult.error}. Cannot match drivers without valid coordinates.`,
+        {
+          details: {
+            orderId: orderIntent.orderId,
+            fulfillmentId: orderIntent.fulfillmentId,
+          },
         },
-      });
+      );
       return [];
     }
   } catch (error) {
     // Geocoding error - return empty array, do NOT use fallback coordinates
-    logger.error({
-      message: `[Dispatcher] Geocoding error for "${orderIntent.pickupAddress}"`,
-      error: error instanceof Error ? error.message : String(error),
-      details: {
-        orderId: orderIntent.orderId,
-        fulfillmentId: orderIntent.fulfillmentId,
+    logger.error(
+      `[Dispatcher] Geocoding error for "${orderIntent.pickupAddress}"`,
+      {
+        error: error instanceof Error ? error.message : String(error),
+        details: {
+          orderId: orderIntent.orderId,
+          fulfillmentId: orderIntent.fulfillmentId,
+        },
       },
-    });
+    );
     return [];
   }
 
@@ -227,9 +231,9 @@ export async function findAvailableDrivers(
     .limit(20);
 
   if (drivers.length === 0) {
-    logger.info({
-      message: `[Dispatcher] No active drivers available for order ${orderIntent.orderId}`,
-    });
+    logger.info(
+      `[Dispatcher] No active drivers available for order ${orderIntent.orderId}`,
+    );
     return [];
   }
 
@@ -250,12 +254,14 @@ export async function findAvailableDrivers(
       b.matchScore - a.matchScore,
   );
 
-  logger.info({
-    message: `[Dispatcher] Found ${scoredDrivers.length} drivers for order ${orderIntent.orderId}`,
-    details: {
-      bestMatch: `${scoredDrivers[0].fullName} (score: ${scoredDrivers[0].matchScore.toFixed(1)})`,
+  logger.info(
+    `[Dispatcher] Found ${scoredDrivers.length} drivers for order ${orderIntent.orderId}`,
+    {
+      details: {
+        bestMatch: `${scoredDrivers[0].fullName} (score: ${scoredDrivers[0].matchScore.toFixed(1)})`,
+      },
     },
-  });
+  );
 
   return scoredDrivers;
 }
@@ -294,19 +300,18 @@ export async function assignOrderToDriver(
     const assigned = result.length > 0;
 
     if (assigned) {
-      logger.info({
-        message: `[Dispatcher] Order ${orderId} assigned to driver ${driverId}`,
-      });
+      logger.info(
+        `[Dispatcher] Order ${orderId} assigned to driver ${driverId}`,
+      );
     } else {
-      logger.info({
-        message: `[Dispatcher] Failed to assign order ${orderId} to driver ${driverId} - order no longer available`,
-      });
+      logger.info(
+        `[Dispatcher] Failed to assign order ${orderId} to driver ${driverId} - order no longer available`,
+      );
     }
 
     return assigned;
   } catch (error) {
-    logger.error({
-      message: "[Dispatcher] Error assigning order",
+    logger.error("[Dispatcher] Error assigning order", {
       error: error instanceof Error ? error.message : String(error),
     });
     return false;
@@ -322,9 +327,9 @@ export async function dispatchOrder(
 ): Promise<MatchResult> {
   const traceId = orderIntent.traceId || randomUUID();
 
-  logger.info({
-    message: `[Dispatcher:${traceId}] Starting dispatch for order ${orderIntent.orderId}`,
-  });
+  logger.info(
+    `[Dispatcher:${traceId}] Starting dispatch for order ${orderIntent.orderId}`,
+  );
 
   try {
     // Step 1: Find available drivers
@@ -387,8 +392,7 @@ export async function dispatchOrder(
     // Step 3: Create match result and broadcast
     return createMatchResult(orderIntent, topDriver, traceId);
   } catch (error) {
-    logger.error({
-      message: `[Dispatcher:${traceId}] Error dispatching order`,
+    logger.error(`[Dispatcher:${traceId}] Error dispatching order`, {
       error: error instanceof Error ? error.message : String(error),
     });
 
@@ -456,21 +460,20 @@ async function createMatchResult(
       },
     );
 
-    logger.info({
-      message: `[Dispatcher:${traceId}] Broadcast DeliveryDispatched for ${orderIntent.orderId}`,
-    });
+    logger.info(
+      `[Dispatcher:${traceId}] Broadcast DeliveryDispatched for ${orderIntent.orderId}`,
+    );
   } catch (error) {
-    logger.warn({
-      message: `[Dispatcher:${traceId}] Failed to broadcast to Ably`,
+    logger.warn(`[Dispatcher:${traceId}] Failed to broadcast to Ably`, {
       error: error instanceof Error ? error.message : String(error),
     });
   }
 
   // Step 6: Send notification to matched driver (future: push notification)
   // For now, just log - in production, send SMS/push notification
-  logger.info({
-    message: `[Dispatcher:${traceId}] Driver ${driver.fullName} (${driver.email}) matched to order ${orderIntent.orderId}`,
-  });
+  logger.info(
+    `[Dispatcher:${traceId}] Driver ${driver.fullName} (${driver.email}) matched to order ${orderIntent.orderId}`,
+  );
 
   return matchResult;
 }
@@ -496,9 +499,9 @@ export async function retryPendingDispatches(): Promise<number> {
       // Max 3 retries
       if (attemptCount > 3) {
         await redis.del(key);
-        logger.info({
-          message: `[Dispatcher] Max retries reached for order ${orderIntent.orderId}, removing from queue`,
-        });
+        logger.info(
+          `[Dispatcher] Max retries reached for order ${orderIntent.orderId}, removing from queue`,
+        );
         continue;
       }
 
@@ -511,16 +514,15 @@ export async function retryPendingDispatches(): Promise<number> {
       if (result.success) {
         await redis.del(key);
         successfulRetries++;
-        logger.info({
-          message: `[Dispatcher] Retry successful for order ${orderIntent.orderId} (attempt ${attemptCount})`,
-        });
+        logger.info(
+          `[Dispatcher] Retry successful for order ${orderIntent.orderId} (attempt ${attemptCount})`,
+        );
       } else {
         // Update retry count in Redis
         await redis.setex(key, 300, JSON.stringify(orderIntent));
       }
     } catch (error) {
-      logger.error({
-        message: `[Dispatcher] Error retrying dispatch for ${key}`,
+      logger.error(`[Dispatcher] Error retrying dispatch for ${key}`, {
         error: error instanceof Error ? error.message : String(error),
       });
     }

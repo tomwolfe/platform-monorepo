@@ -56,7 +56,7 @@ async function getCronHandler(req: NextRequest) {
   const traceId = req.headers.get("x-trace-id") || undefined;
   const requestLogger = traceId ? logger.child({ traceId }) : logger;
 
-  requestLogger.info({ message: "Starting driver tip release processing" });
+  requestLogger.info("Starting driver tip release processing");
 
   try {
     // ============================================================================
@@ -77,8 +77,7 @@ async function getCronHandler(req: NextRequest) {
       .limit(50);
 
     if (orphanedPayouts.length > 0) {
-      logger.info({
-        message: "Recovering orphaned payouts stuck in releasing",
+      logger.info("Recovering orphaned payouts stuck in releasing", {
         count: orphanedPayouts.length,
       });
 
@@ -101,7 +100,7 @@ async function getCronHandler(req: NextRequest) {
               type: "event",
               anonymous: false,
               inputs: [
-                { indexed: false, name: "orderId", type: "string" },
+                { indexed: true, name: "orderId", type: "string" },
                 { indexed: true, name: "driver", type: "address" },
                 { indexed: false, name: "tipAmount", type: "uint256" },
               ],
@@ -122,8 +121,7 @@ async function getCronHandler(req: NextRequest) {
             stillLocked.push(order.id);
           }
         } catch (chainError) {
-          logger.warn({
-            message: "Could not check on-chain tip status for order",
+          logger.warn("Could not check on-chain tip status for order", {
             orderId: order.id,
             error:
               chainError instanceof Error
@@ -142,8 +140,7 @@ async function getCronHandler(req: NextRequest) {
           .where(inArray(orders.id, stillLocked));
       }
 
-      logger.info({
-        message: "Successfully recovered orphaned payouts",
+      logger.info("Successfully recovered orphaned payouts", {
         totalChecked: orphanedPayouts.length,
         revertedToLocked: stillLocked.length,
         alreadyReleasedOnChain: alreadyReleased.length,
@@ -211,8 +208,7 @@ async function getCronHandler(req: NextRequest) {
 
         // Skip if no payment was made
         if (!order.paymentTxHash) {
-          logger.warn({
-            message: "Order has no payment transaction, skipping",
+          logger.warn("Order has no payment transaction, skipping", {
             orderId: order.id,
           });
           continue;
@@ -220,8 +216,7 @@ async function getCronHandler(req: NextRequest) {
 
         // Skip if driver has no wallet address
         if (!order.driver?.walletAddress) {
-          logger.warn({
-            message: "Driver has no wallet address, skipping payout",
+          logger.warn("Driver has no wallet address, skipping payout", {
             orderId: order.id,
           });
           continue;
@@ -235,16 +230,14 @@ async function getCronHandler(req: NextRequest) {
           driverName: order.driver.fullName || "Unknown",
         });
 
-        logger.info({
-          message: "Queued tip release",
+        logger.info("Queued tip release", {
           orderId: order.id,
           tipAmount: tip.toString(),
           currency,
           driverAddress: order.driver.walletAddress,
         });
       } catch (error: unknown) {
-        logger.error({
-          message: "Error processing order",
+        logger.error("Error processing order", {
           orderId: order.id,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -282,10 +275,9 @@ async function getCronHandler(req: NextRequest) {
           if (!isRetryable) throw error;
 
           const delay = Math.random() * BASE_DELAY * Math.pow(2, attempt);
-          logger.warn({
-            message: `Payout nonce retry ${attempt + 1}/${MAX_RETRIES}`,
+          logger.warn(`Payout nonce retry ${attempt + 1}/${MAX_RETRIES}`, {
             delay,
-            error: error.message,
+            error: errorMsg,
           });
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
@@ -307,6 +299,16 @@ async function getCronHandler(req: NextRequest) {
         const walletClient = await getEscrowResolverWalletClient(base.id);
         const resolverAccount = walletClient.account;
 
+        if (!resolverAccount) {
+          logger.error(
+            "CRITICAL: No resolver account configured, aborting tip releases",
+          );
+          return NextResponse.json(
+            { success: false, error: "No resolver account configured" },
+            { status: 500 },
+          );
+        }
+
         // ============================================================================
         // GAS MONITORING: Check resolver wallet has sufficient gas before executing
         // Prevents silent failures from depleted resolver wallet
@@ -317,7 +319,10 @@ async function getCronHandler(req: NextRequest) {
 
         try {
           // Calculate $15.00 USD in ETH (as wei)
-          const minBalanceWei = await usdToCryptoBigInt(1500n, "ETH");
+          const minBalanceWei = await usdToCryptoBigInt(
+            BigInt(1500) as bigint,
+            "ETH",
+          );
           const minBalanceEth = parseFloat(formatEther(minBalanceWei));
 
           const resolverBalance = await publicClient.getBalance({
@@ -326,31 +331,31 @@ async function getCronHandler(req: NextRequest) {
           const balanceInEth =
             Number(resolverBalance) / Number(parseEther("1"));
 
-          logger.info({
-            message: "Resolver wallet balance check",
+          logger.info("Resolver wallet balance check", {
             address: resolverAccount.address,
             balanceEth: balanceInEth,
             minBalanceEth: minBalanceEth,
           });
 
           if (balanceInEth < minBalanceEth) {
-            logger.error({
-              message:
-                "CRITICAL: Resolver wallet balance below minimum, aborting tip releases",
-              address: resolverAccount.address,
-              currentBalance: balanceInEth,
-              minimumBalance: minBalanceEth,
-              pendingPayouts: driverPayouts.length,
-            });
+            logger.error(
+              "CRITICAL: Resolver wallet balance below minimum, aborting tip releases",
+              {
+                address: resolverAccount.address,
+                currentBalance: balanceInEth,
+                minimumBalance: minBalanceEth,
+                pendingPayouts: driverPayouts.length,
+              },
+            );
 
             // Send monitoring alert if MonitoringService is available
             try {
-              const { MonitoringService } =
+              const { MonitoringService, AlertLevel } =
                 await import("@repo/shared/services/monitoring");
-              await MonitoringService.sendAlert({
-                severity: "CRITICAL",
-                message: `Escrow resolver wallet low on gas`,
-                details: {
+              await MonitoringService.sendAlert(
+                `Escrow resolver wallet low on gas`,
+                AlertLevel.CRITICAL,
+                {
                   address: resolverAccount.address,
                   currentBalance: `${balanceInEth.toFixed(6)} ETH`,
                   minimumBalance: `${minBalanceEth.toFixed(6)} ETH`,
@@ -358,10 +363,9 @@ async function getCronHandler(req: NextRequest) {
                   action:
                     "Fund resolver wallet immediately to resume tip releases",
                 },
-              });
+              );
             } catch (alertError: unknown) {
-              logger.error({
-                message: "Failed to send monitoring alert",
+              logger.error("Failed to send monitoring alert", {
                 error:
                   alertError instanceof Error
                     ? alertError.message
@@ -384,8 +388,7 @@ async function getCronHandler(req: NextRequest) {
             );
           }
         } catch (balanceError: unknown) {
-          logger.error({
-            message: "Failed to check resolver wallet balance",
+          logger.error("Failed to check resolver wallet balance", {
             error:
               balanceError instanceof Error
                 ? balanceError.message
@@ -394,8 +397,7 @@ async function getCronHandler(req: NextRequest) {
           // Don't abort - proceed with caution, the balance check is best-effort
         }
 
-        logger.info({
-          message: "Releasing tips via escrow",
+        logger.info("Releasing tips via escrow", {
           tipCount: driverPayouts.length,
           resolverAddress: resolverAccount.address,
         });
@@ -440,14 +442,15 @@ async function getCronHandler(req: NextRequest) {
                 abi: ESCROW_ABI,
                 functionName: "releaseTip",
                 args: [payout.orderId, payout.address as Address],
+                account: resolverAccount,
+                chain: base,
                 nonce,
                 gasPrice,
               }),
               timeoutPromise,
             ]);
 
-            logger.info({
-              message: "Tip release submitted",
+            logger.info("Tip release submitted", {
               orderId: payout.orderId,
               driverAddress: payout.address,
               tipAmount: payout.tipAmount,
@@ -472,11 +475,10 @@ async function getCronHandler(req: NextRequest) {
             const errorMsg =
               error instanceof Error ? error.message : String(error);
             if (errorMsg === "RPC_TIMEOUT") {
-              logger.warn({
-                message:
-                  "RPC call timed out, checking on-chain status before marking failed",
-                orderId: payout.orderId,
-              });
+              logger.warn(
+                "RPC call timed out, checking on-chain status before marking failed",
+                { orderId: payout.orderId },
+              );
 
               // CRITICAL FIX: On RPC timeout, check on-chain for TipReleased event
               // before marking as failed. If the tx was actually broadcast, we don't
@@ -494,17 +496,16 @@ async function getCronHandler(req: NextRequest) {
                       { indexed: false, name: "tipAmount", type: "uint256" },
                     ],
                   } as const,
-                  args: { orderId: payout.orderId },
+                  args: { driver: payout.address as `0x${string}` },
                   fromBlock: "earliest",
                 });
 
                 if (logs.length > 0) {
                   // Transaction succeeded on-chain despite RPC timeout
-                  logger.info({
-                    message:
-                      "On-chain check shows tip was released despite RPC timeout",
-                    orderId: payout.orderId,
-                  });
+                  logger.info(
+                    "On-chain check shows tip was released despite RPC timeout",
+                    { orderId: payout.orderId },
+                  );
                   await getDb()
                     .update(orders)
                     .set({ escrowStatus: "released" })
@@ -512,14 +513,16 @@ async function getCronHandler(req: NextRequest) {
                   return true;
                 }
               } catch (chainCheckError) {
-                logger.warn({
-                  message: "On-chain tip status check failed after RPC timeout",
-                  orderId: payout.orderId,
-                  error:
-                    chainCheckError instanceof Error
-                      ? chainCheckError.message
-                      : String(chainCheckError),
-                });
+                logger.warn(
+                  "On-chain tip status check failed after RPC timeout",
+                  {
+                    orderId: payout.orderId,
+                    error:
+                      chainCheckError instanceof Error
+                        ? chainCheckError.message
+                        : String(chainCheckError),
+                  },
+                );
               }
 
               // No on-chain release found - mark as failed (safe to retry next run)
@@ -528,8 +531,7 @@ async function getCronHandler(req: NextRequest) {
                 .set({ escrowStatus: "failed" })
                 .where(eq(orders.id, payout.orderId));
             } else {
-              logger.error({
-                message: "Failed to release tip",
+              logger.error("Failed to release tip", {
                 orderId: payout.orderId,
                 error: errorMsg,
               });
@@ -550,8 +552,7 @@ async function getCronHandler(req: NextRequest) {
           batches.push(driverPayouts.slice(i, i + BATCH_SIZE));
         }
 
-        logger.info({
-          message: "Processing tip releases in batches",
+        logger.info("Processing tip releases in batches", {
           totalTips: driverPayouts.length,
           batchCount: batches.length,
           batchSize: BATCH_SIZE,
@@ -563,16 +564,14 @@ async function getCronHandler(req: NextRequest) {
 
           // Check timeout before starting batch
           if (Date.now() - startTime > VERCEL_TIMEOUT_THRESHOLD) {
-            logger.warn({
-              message:
-                "Approaching Vercel timeout before batch, stopping execution",
-              batchIndex: batchIndex + 1,
-            });
+            logger.warn(
+              "Approaching Vercel timeout before batch, stopping execution",
+              { batchIndex: batchIndex + 1 },
+            );
             break;
           }
 
-          logger.info({
-            message: "Executing batch",
+          logger.info("Executing batch", {
             batchIndex: batchIndex + 1,
             totalBatches: batches.length,
             tipCount: batch.length,
@@ -590,21 +589,16 @@ async function getCronHandler(req: NextRequest) {
 
           executedCount += batchSuccesses;
 
-          logger.info({
-            message: "Batch completed",
+          logger.info("Batch completed", {
             batchIndex: batchIndex + 1,
             successes: batchSuccesses,
             total: batch.length,
           });
         }
 
-        logger.info({
-          message: "Successfully released tips",
-          executedCount,
-        });
+        logger.info("Successfully released tips", { executedCount });
       } catch (error: unknown) {
-        logger.error({
-          message: "Critical error during tip release execution",
+        logger.error("Critical error during tip release execution", {
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -621,16 +615,14 @@ async function getCronHandler(req: NextRequest) {
       timestamp: new Date().toISOString(),
     };
 
-    logger.info({
-      message: "Payout cron completed successfully",
+    logger.info("Payout cron completed successfully", {
       processedCount: driverPayouts.length,
       executedCount,
     });
 
     return NextResponse.json(result);
   } catch (error: unknown) {
-    logger.error({
-      message: "Critical error in payout cron",
+    logger.error("Critical error in payout cron", {
       error: error instanceof Error ? error.message : String(error),
     });
     return NextResponse.json(
@@ -678,7 +670,7 @@ export const GET = withServerlessTimeout(
     }
   }),
   8000,
-);
+) as any;
 
 export const POST = withServerlessTimeout(
   withCronAuth(async (req: NextRequest) => {
@@ -706,4 +698,4 @@ export const POST = withServerlessTimeout(
     }
   }),
   8000,
-);
+) as any;

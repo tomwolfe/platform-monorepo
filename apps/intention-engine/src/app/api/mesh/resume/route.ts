@@ -30,7 +30,7 @@ import {
   getToolRegistry,
   ToolExecutionContext,
 } from "@/lib/engine/tools/registry";
-import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
+import { getRedisClient, ServiceNamespace } from "@repo/shared";
 import { getDb } from "@repo/database";
 import { Redis } from "@upstash/redis";
 import type { NeonDatabase } from "drizzle-orm/neon-serverless";

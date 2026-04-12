@@ -143,14 +143,13 @@ export function resetLLMFallbackCount(): void {
  * Logs the event and increments the counter.
  */
 function recordFallbackEvent(
-  reason: "low_confidence" | "llm_error" | "llm_5xx",
+  reason: "low_confidence" | "llm_error" | "llm_5xx" | "llm_timeout",
   originalInput: string,
   confidence?: number,
 ): void {
   llmFallbackTriggerCount++;
 
-  logger.warn({
-    message: `[T1.2] LLM fallback triggered — routing to rule-based intent`,
+  logger.warn(`[T1.2] LLM fallback triggered — routing to rule-based intent`, {
     reason,
     confidence,
     input_preview: originalInput.slice(0, 100),
@@ -216,7 +215,8 @@ export function classifyIntentByKeywords(input: string): {
     intentCounts[intentType] = (intentCounts[intentType] || 0) + 1;
   }
 
-  let bestIntent: IntentType = matchedKeywords[0].intentType;
+  const firstMatch = matchedKeywords[0];
+  let bestIntent: IntentType = firstMatch!.intentType;
   let bestCount = 0;
 
   for (const [intentType, count] of Object.entries(intentCounts)) {
@@ -270,13 +270,13 @@ function extractParametersByKeywords(input: string): Record<string, unknown> {
   const numberMatch = normalizedInput.match(
     /\b(for\s+)?(\d{1,2})\s*(?:people|persons?|pax|guests?)?\b/i,
   );
-  if (numberMatch) {
+  if (numberMatch && numberMatch[2]) {
     params.party_size = parseInt(numberMatch[2], 10);
   }
 
   // Extract quoted strings as named entities
   const quotedMatch = input.match(/"([^"]+)"/);
-  if (quotedMatch) {
+  if (quotedMatch && quotedMatch[1]) {
     params.query = quotedMatch[1];
   }
 
@@ -497,10 +497,12 @@ export async function parseIntent(
           ? ("llm_5xx" as const)
           : ("llm_error" as const);
 
-      logger.warn({
-        message: `[Intent Engine] Structured generation failed (${isTimeout ? "TIMEOUT" : "ERROR"}), falling back to rule-based classification`,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        `[Intent Engine] Structured generation failed (${isTimeout ? "TIMEOUT" : "ERROR"}), falling back to rule-based classification`,
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
 
       recordFallbackEvent(fallbackReason, input);
 
@@ -837,8 +839,7 @@ Respond with a JSON object: {"score": number (0-1), "explanation": string}`;
         reason: validationResult.data.explanation,
       };
     } catch (e) {
-      logger.warn({
-        message: `Semantic validation failed, falling back to heuristic`,
+      logger.warn(`Semantic validation failed, falling back to heuristic`, {
         error: e instanceof Error ? e.message : String(e),
       });
       return {
@@ -893,12 +894,13 @@ export async function inferIntent(
 
   // AI-03: Confidence-Based Clarification Routing
   if (intent.confidence < 0.6 && intent.type !== "CLARIFICATION_REQUIRED") {
-    logger.info({
-      message:
-        "[AI-03] Low confidence intent detected, routing to clarification",
-      confidence: intent.confidence,
-      intentType: intent.type,
-    });
+    logger.info(
+      "[AI-03] Low confidence intent detected, routing to clarification",
+      {
+        confidence: intent.confidence,
+        intentType: intent.type,
+      },
+    );
 
     // Override to CLARIFICATION_REQUIRED status
     intent = {
@@ -908,6 +910,11 @@ export async function inferIntent(
       clarification_prompt:
         intent.clarification_prompt ||
         generateFallbackClarificationPrompt(text),
+      metadata: intent.metadata || {
+        version: "1.0.0",
+        timestamp: new Date().toISOString(),
+        source: "clarification_routing",
+      },
       explanation: `${intent.explanation || ""} [AI-03: Confidence below 0.6 threshold, clarification required]`,
     };
   }
@@ -944,7 +951,9 @@ function generateFallbackClarificationPrompt(originalInput: string): string {
   const prompt =
     FALLBACK_CLARIFICATION_PROMPTS[
       fallbackPromptIndex % FALLBACK_CLARIFICATION_PROMPTS.length
-    ];
+    ] ||
+    FALLBACK_CLARIFICATION_PROMPTS[0] ||
+    "Could you please provide more details about what you'd like to do?";
   fallbackPromptIndex++;
   return prompt;
 }

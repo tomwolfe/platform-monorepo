@@ -2,8 +2,10 @@
   "name": "@repo/database",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./schema": "./src/schema/tablestack.ts"
   },
   "scripts": {
     "db:push": "drizzle-kit push",

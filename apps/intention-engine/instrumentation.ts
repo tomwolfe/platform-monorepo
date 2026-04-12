@@ -17,13 +17,15 @@ export async function register() {
     const { initObservability } = await import("./src/lib/observability");
     initObservability("intention-engine");
 
-    // Initialize Sentry error tracking (if DSN is configured)
-    if (process.env.SENTRY_DSN) {
-      const { initSentry } = await import("@repo/shared/server");
-      await initSentry(process.env.SENTRY_DSN, {
-        environment: process.env.NODE_ENV,
-        release: process.env.SENTRY_RELEASE,
-      });
-    }
+    // NOTE: Sentry integration has been disabled in @repo/shared/server
+    // because it imports node:child_process, node:fs, node:http, etc.
+    // which Next.js webpack cannot bundle.
+    // if (process.env.SENTRY_DSN) {
+    //   const { initSentry } = await import("@repo/shared/server");
+    //   await initSentry(process.env.SENTRY_DSN, {
+    //     environment: process.env.NODE_ENV,
+    //     release: process.env.SENTRY_RELEASE,
+    //   });
+    // }
   }
 }

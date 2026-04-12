@@ -6,7 +6,7 @@
  */
 
 import { inferIntent } from "@/lib/engine/intent";
-import { generatePlan } from "@/lib/engine/unified-planner";
+import { generatePlan, PlanningResult } from "@/lib/engine/unified-planner";
 import { AppConfig, Logger } from "@repo/shared";
 
 const logger = new Logger({
@@ -18,7 +18,7 @@ export async function handleTableStackRejection(payload: {
   partySize: number;
   startTime: string;
   restaurantName: string;
-}) {
+}): Promise<{ hypotheses: any; plan: any; intent: any }> {
   const { guestEmail, partySize, startTime, restaurantName } = payload;
 
   const prompt = `
@@ -40,7 +40,7 @@ export async function handleTableStackRejection(payload: {
   // Trigger Inference & Planning
   const { hypotheses } = await inferIntent(prompt, []);
   const intent = hypotheses.primary;
-  const plan = await generatePlan(prompt);
+  const plan = await generatePlan(intent);
 
   return {
     hypotheses,

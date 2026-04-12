@@ -47,6 +47,7 @@ const WarmCacheRequestSchema = z.object({
 });
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 5; // Short timeout - this is a best-effort cache warm
 
 async function warmCacheHandler(req: NextRequest) {

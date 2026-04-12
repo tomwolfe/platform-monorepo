@@ -7,7 +7,7 @@ import {
   ReadableSpan,
 } from "@opentelemetry/sdk-trace-base";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { Resource } from "@opentelemetry/resources";
+import { resourceFromAttributes } from "@opentelemetry/resources";
 import {
   SEMRESATTRS_SERVICE_NAME,
   SEMRESATTRS_SERVICE_VERSION,
@@ -34,10 +34,13 @@ class DualExporter implements SpanExporter {
     this.consoleExporter = consoleExporter;
   }
 
-  export(spans: ReadableSpan[], callback: () => void): void {
+  export(
+    spans: ReadableSpan[],
+    resultCallback: (result: { code: number }) => void,
+  ): void {
     // Export to both OTLP and console
     this.otlpExporter.export(spans, () => {});
-    this.consoleExporter.export(spans, callback);
+    this.consoleExporter.export(spans, resultCallback);
   }
 
   async shutdown(): Promise<void> {
@@ -73,7 +76,7 @@ export function initObservability(serviceName = "intention-engine") {
     : otlpExporter;
 
   sdk = new NodeSDK({
-    resource: new Resource({
+    resource: resourceFromAttributes({
       [SEMRESATTRS_SERVICE_NAME]: serviceName,
       [SEMRESATTRS_SERVICE_VERSION]:
         process.env.npm_package_version ||
@@ -90,8 +93,7 @@ export function initObservability(serviceName = "intention-engine") {
 
   try {
     sdk.start();
-    logger.info({
-      message: "OpenTelemetry SDK initialized",
+    logger.info("OpenTelemetry SDK initialized", {
       serviceName,
       environment: process.env.NODE_ENV,
     });
@@ -99,12 +101,11 @@ export function initObservability(serviceName = "intention-engine") {
     // Register the flush function with shared error handler
     registerObservabilityFlush(async () => {
       if (sdk) {
-        await sdk.forceFlush();
+        await sdk.shutdown();
       }
     });
   } catch (e) {
-    logger.error({
-      message: "Failed to start OpenTelemetry SDK",
+    logger.error("Failed to start OpenTelemetry SDK", {
       error: e instanceof Error ? e.message : String(e),
     });
   }
@@ -146,7 +147,11 @@ export function startActiveTrace<T>(
           code: 2, // ERROR
           message: error instanceof Error ? error.message : String(error),
         });
-        span.recordException(error);
+        if (error instanceof Error) {
+          span.recordException(error);
+        } else {
+          span.recordException(new Error(String(error)));
+        }
         throw error;
       } finally {
         span.end();
@@ -182,10 +187,9 @@ export function startTrace(name: string, traceId: string) {
 export async function flushObservability(): Promise<void> {
   if (sdk) {
     try {
-      await sdk.forceFlush();
+      await sdk.shutdown();
     } catch (error) {
-      logger.warn({
-        message: "Failed to flush spans",
+      logger.warn("Failed to flush spans", {
         error: error instanceof Error ? error.message : String(error),
       });
     }

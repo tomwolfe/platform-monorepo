@@ -42,6 +42,7 @@ import {
   deepEqual,
 } from "@repo/shared";
 import { loadExecutionTrace } from "./memory";
+import { getToolRegistry, executeTool } from "@/lib/engine/tools/registry";
 
 const redis = getRedisClient(ServiceNamespace.IE);
 const logger = new Logger({ serviceName: "intention-engine" });
@@ -180,9 +181,9 @@ export class ContextSnapshotter {
 
     // Check snapshot limit
     if (this.snapshotCount >= TIME_TRAVEL_CONFIG.maxSnapshotsPerExecution) {
-      logger.warn({
-        message: `[TimeTravel] Snapshot limit reached for ${this.executionId}`,
-      });
+      logger.warn(
+        `[TimeTravel] Snapshot limit reached for ${this.executionId}`,
+      );
       return null;
     }
 
@@ -279,8 +280,7 @@ export class ContextSnapshotter {
           cacheState[key] = value;
         }
       } catch (error) {
-        logger.warn({
-          message: `[TimeTravel] Failed to capture cache key ${key}`,
+        logger.warn(`[TimeTravel] Failed to capture cache key ${key}`, {
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -343,9 +343,9 @@ export class ContextSnapshotter {
     if (dataToStore.length > TIME_TRAVEL_CONFIG.compressionThresholdBytes) {
       // In production: dataToStore = await compress(dataToStore)
       metadata.compressed = true;
-      logger.info({
-        message: `[TimeTravel] Snapshot compressed (${(dataToStore.length / 1024).toFixed(1)}KB)`,
-      });
+      logger.info(
+        `[TimeTravel] Snapshot compressed (${(dataToStore.length / 1024).toFixed(1)}KB)`,
+      );
     }
 
     // Store snapshot and metadata
@@ -362,9 +362,9 @@ export class ContextSnapshotter {
       }),
     ]);
 
-    logger.info({
-      message: `[TimeTravel] Snapshot captured for step ${stepIndex} (${(dataToStore.length / 1024).toFixed(1)}KB)`,
-    });
+    logger.info(
+      `[TimeTravel] Snapshot captured for step ${stepIndex} (${(dataToStore.length / 1024).toFixed(1)}KB)`,
+    );
   }
 }
 
@@ -403,9 +403,9 @@ export class ReplayEngine {
    * Replay execution from a specific step
    */
   async replayFromStep(): Promise<ReplayResult> {
-    logger.info({
-      message: `[TimeTravel] Starting replay from step ${this.startStepIndex} (trace: ${this.traceId})`,
-    });
+    logger.info(
+      `[TimeTravel] Starting replay from step ${this.startStepIndex} (trace: ${this.traceId})`,
+    );
 
     try {
       // Load snapshot
@@ -435,8 +435,7 @@ export class ReplayEngine {
 
       return result;
     } catch (error) {
-      logger.error({
-        message: "[TimeTravel] Replay failed",
+      logger.error("[TimeTravel] Replay failed", {
         error: error instanceof Error ? error.message : String(error),
       });
       return {
@@ -469,7 +468,9 @@ export class ReplayEngine {
     // Find the closest snapshot at or before the target step
     const matchingKeys = snapshotKeys.filter((key: string) => {
       const parts = key.split(":");
-      const snapshotStepIndex = parseInt(parts[parts.length - 3]);
+      const snapshotStepStr = parts[parts.length - 3];
+      if (!snapshotStepStr) return false;
+      const snapshotStepIndex = parseInt(snapshotStepStr);
       return snapshotStepIndex <= stepIndex;
     });
 
@@ -494,17 +495,14 @@ export class ReplayEngine {
       const trace = await loadExecutionTrace(this.traceId);
 
       if (!trace) {
-        logger.warn({
-          message: `[TimeTravel] No trace found for ${this.traceId}`,
-        });
+        logger.warn(`[TimeTravel] No trace found for ${this.traceId}`);
         return [];
       }
 
       // Return the trace entries
       return trace.entries || [];
     } catch (error) {
-      logger.error({
-        message: "[TimeTravel] Failed to load original trace",
+      logger.error("[TimeTravel] Failed to load original trace", {
         error: error instanceof Error ? error.message : String(error),
       });
       return [];
@@ -523,8 +521,7 @@ export class ReplayEngine {
     let stepsSkipped = 0;
 
     if (this.options.verbose) {
-      logger.info({
-        message: "[TimeTravel] Starting replay execution",
+      logger.info("[TimeTravel] Starting replay execution", {
         details: {
           snapshot,
           options: this.options,
@@ -542,15 +539,15 @@ export class ReplayEngine {
 
       for (let i = 0; i < pendingSteps.length; i++) {
         const stepState = pendingSteps[i];
+        if (!stepState) continue;
+
         const _stepIndex = this.startStepIndex + i;
 
         // Check if we should skip this step
         if (this.options.skipSteps?.includes(stepState.step_id)) {
           stepsSkipped++;
           if (this.options.verbose) {
-            logger.info({
-              message: `[TimeTravel] Skipping step ${stepState.step_id}`,
-            });
+            logger.info(`[TimeTravel] Skipping step ${stepState.step_id}`);
           }
           continue;
         }
@@ -561,20 +558,35 @@ export class ReplayEngine {
         );
 
         // Get the tool definition
-        const toolName =
-          originalEntry?.tool_name || stepState.step_id.split(":")[0];
+        const stepId = stepState.step_id;
+        if (!stepId) {
+          logger.warn(`[TimeTravel] Step ID missing, skipping step`);
+          stepsSkipped++;
+          continue;
+        }
+
+        const toolName = stepId.split(":")[0];
+        if (!toolName) {
+          logger.warn(
+            `[TimeTravel] Cannot extract tool name from step ID ${stepId}, skipping`,
+          );
+          stepsSkipped++;
+          continue;
+        }
+
         const toolDef = toolRegistry.getDefinition(toolName);
 
         if (!toolDef) {
-          logger.warn({
-            message: `[TimeTravel] Tool not found: ${toolName}, skipping step`,
-          });
+          logger.warn(
+            `[TimeTravel] Tool not found: ${toolName}, skipping step`,
+          );
           stepsSkipped++;
           continue;
         }
 
         // Get parameters from original trace or use defaults
-        const parameters = originalEntry?.parameters || {};
+        const parameters =
+          (originalEntry?.input as Record<string, unknown>) || {};
 
         // Apply parameter overrides if specified
         const finalParameters = this.options.parameterOverrides
@@ -582,19 +594,19 @@ export class ReplayEngine {
           : parameters;
 
         // Mock LLM responses if enabled
-        if (this.options.mockLLM && originalEntry?.llm_response) {
+        if (this.options.mockLLM && originalEntry?.output) {
           // In a full implementation, we would mock the LLM provider here
           if (this.options.verbose) {
-            logger.info({
-              message: `[TimeTravel] Using mocked LLM response for step ${stepState.step_id}`,
-            });
+            logger.info(
+              `[TimeTravel] Using mocked LLM response for step ${stepState.step_id}`,
+            );
           }
         }
 
         // Execute the tool
         const startTime = Date.now();
         try {
-          const output = await toolDef.implementation(finalParameters, {
+          const output = await executeTool(toolName, finalParameters, {
             executionId: this.executionId,
             stepId: stepState.step_id,
             timeoutMs: 10000,
@@ -617,9 +629,9 @@ export class ReplayEngine {
               });
 
               if (this.options.verbose) {
-                logger.info({
-                  message: `[TimeTravel] Difference detected in step ${stepState.step_id}`,
-                });
+                logger.info(
+                  `[TimeTravel] Difference detected in step ${stepState.step_id}`,
+                );
               }
             }
           }
@@ -627,17 +639,17 @@ export class ReplayEngine {
           // Check if we should stop after this step
           if (this.options.stopAfterStep === stepState.step_id) {
             if (this.options.verbose) {
-              logger.info({
-                message: `[TimeTravel] Stopping after step ${stepState.step_id}`,
-              });
+              logger.info(
+                `[TimeTravel] Stopping after step ${stepState.step_id}`,
+              );
             }
             break;
           }
         } catch (error) {
-          logger.error({
-            message: `[TimeTravel] Error replaying step ${stepState.step_id}`,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          logger.error(
+            `[TimeTravel] Error replaying step ${stepState.step_id}`,
+            { error: error instanceof Error ? error.message : String(error) },
+          );
           // Continue with next step even if this one fails
         }
       }
@@ -664,8 +676,7 @@ export class ReplayEngine {
         durationMs: Date.now() - this.startTime,
       };
     } catch (error) {
-      logger.error({
-        message: "[TimeTravel] Replay execution failed",
+      logger.error("[TimeTravel] Replay execution failed", {
         error: error instanceof Error ? error.message : String(error),
       });
       return {

@@ -30,6 +30,9 @@ export {
   type ApiErrorResponse,
   type ErrorCategory,
 } from "./error-handler";
+// NOTE: flushObservability does not exist in error-handler
+// (error-handler exports: registerObservabilityFlush, sanitizeErrorForExternal,
+//  installGlobalErrorHandler, formatError, formatSuccess, withRetry, withTimeout, settleAll)
 
 // ============================================================================
 // LOGGER (Full structured logging)
@@ -76,7 +79,11 @@ export {
 // TRACING (Full tracing with AsyncLocalStorage)
 // ============================================================================
 export * from "./tracing";
-export * from "./tracing-types";
+// NOTE: Removed `export * from "./tracing-types"` to avoid star export conflicts
+// with ./tracing for: CORRELATION_ID_HEADER, TRACE_ID_HEADER, IDEMPOTENCY_KEY_HEADER,
+// EXECUTION_ID_HEADER, ExecutionTraceEntrySchema, ExecutionTraceSchema, emitTrace,
+// getCorrelationId, getGlobalTraceEmitter, getTraceId, injectTracingHeaders,
+// setGlobalTraceEmitter. The ./tracing module re-exports these from tracing-types already.
 
 // Trace Context Propagation
 export {
@@ -93,8 +100,25 @@ export * from "./otel/constants";
 // ============================================================================
 export * from "./runtime-registry";
 export * from "./types/tool";
-export * from "./types/execution";
+// NOTE: Selective exports from ./types/execution to avoid ExecutionTraceSchema conflict with ./tracing
+export {
+  ExecutionStatusSchema,
+  StepExecutionStateSchema,
+  ExecutionStateSchema,
+  TraceEntrySchema,
+  ValidStateTransitions,
+  isValidExecutionStatus,
+  isValidStateTransition,
+  isTerminalStatus,
+  type ExecutionStatus,
+  type StepExecutionState,
+  type ExecutionState,
+  type TraceEntry,
+} from "./types/execution";
 export type { DatabaseSchema } from "./types/database";
+
+// Service registry (SERVICES is exported from ./services, not ./bootstrap)
+export { SERVICES } from "./services";
 
 // ============================================================================
 // STATE MACHINE TYPES (Types only, NOT the Redis-backed class)
@@ -173,13 +197,14 @@ export {
 // ============================================================================
 // API UTILITIES (Isomorphic server action/route handlers)
 // ============================================================================
-export { serverActionResponse, handleServerAction } from "./outbox-relay";
+// NOTE: handleServerAction, serverActionResponse not exported from outbox-relay
+// (only OutboxRelayService and publishToQStash are exported there)
 
 export {
   withUnifiedApiHandler,
-  type ApiHandler,
-  type UnifiedApiContext,
-} from "./error-handler";
+  type UnifiedApiHandler,
+  type UnifiedApiHandlerOptions,
+} from "./middleware/api-error-wrapper";
 
 export {
   withValidatedResponse,
@@ -188,24 +213,19 @@ export {
 } from "./utils/with-validated-response";
 
 export { jsonSuccess, jsonError, type ApiResponse } from "./http";
+export { createErrorResponse, formatApiError } from "./utils/api-error";
 
 // ============================================================================
 // VALIDATED RESPONSE (Isomorphic)
 // ============================================================================
-export {
-  createApiResponse,
-  type ApiResponseOptions,
-} from "./utils/next-errors";
+// NOTE: createApiResponse does not exist in utils/next-errors
 
 // ============================================================================
 // LLM VALIDATION (Isomorphic Zod schemas)
 // ============================================================================
-export {
-  validateLLMInput,
-  sanitizeLLMOutput,
-  type LLMInputSchema,
-  type LLMOutputSchema,
-} from "./llm-cache";
+// NOTE: validateLLMInput, sanitizeLLMOutput do not exist in llm-cache
+// (llm-cache exports: generateCacheKey, getCachedResponse, cacheResponse,
+//  getLLMCacheClient, invalidateLLMCache, LLMCacheEntry, DEFAULT_TTL_SECONDS)
 
 // ============================================================================
 // LLM OUTPUT VALIDATION PIPELINE (Zod + JSON repair)
@@ -240,7 +260,8 @@ export {
 // ============================================================================
 export * from "./utils/erc20-abi";
 export * from "./utils/escrow-abi";
-export * from "./utils/next-errors";
+// NOTE: utils/next-errors only exports isNextRedirectError (not createApiResponse)
+export { isNextRedirectError } from "./utils/next-errors";
 
 // ============================================================================
 // ASYNC BOUNDARY ERRORS (for QStash, Ably, Webhooks)

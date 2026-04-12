@@ -22,6 +22,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { isTimingSafeEqual } from "../utils/crypto";
 import { Logger } from "../logger";
 
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+
 const logger = new Logger({ serviceName: "cron-auth" });
 
 // ============================================================================
@@ -139,9 +142,9 @@ export function verifyCronAuth(
  * ```
  */
 export function withCronAuth<
-  T extends (...args: any[]) => Promise<NextResponse>,
+  T extends (...args: unknown[]) => Promise<NextResponse>,
 >(handler: T, options: CronAuthOptions = {}): T {
-  return (async (...args: any[]) => {
+  return (async (...args: unknown[]) => {
     const req = args[0] as NextRequest;
 
     // Verify authentication

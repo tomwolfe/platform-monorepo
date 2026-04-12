@@ -15,7 +15,7 @@ import { z } from "zod";
 export const runtime = "nodejs";
 
 const idempotencyService = new IdempotencyService(
-  getRedisClient(ServiceNamespace.TABLESTACK),
+  getRedisClient(ServiceNamespace.TS),
 );
 
 const DeliveryLogSchema = z.object({
@@ -30,13 +30,6 @@ const DeliveryLogSchema = z.object({
 export async function POST(req: NextRequest) {
   return withInternalWebhookAuth(
     async (ctx) => {
-      const { error, status, authContext } = await validateRequest(req);
-      if (error)
-        return NextResponse.json(
-          formatApiError(new Error(error), "VALIDATION_ERROR"),
-          { status },
-        );
-
       const parseResult = DeliveryLogSchema.safeParse(ctx.parsedBody);
       if (!parseResult.success) {
         return NextResponse.json(
@@ -57,24 +50,12 @@ export async function POST(req: NextRequest) {
         priceDetails,
       } = parseResult.data;
 
-      const targetRestaurantId = authContext!.isInternal
-        ? restaurantId
-        : authContext!.resourceId;
+      const targetRestaurantId = restaurantId;
 
       if (!targetRestaurantId) {
         return NextResponse.json(
           { message: "Missing restaurantId" },
           { status: 400 },
-        );
-      }
-
-      if (
-        !authContext!.isInternal &&
-        targetRestaurantId !== authContext!.resourceId
-      ) {
-        return NextResponse.json(
-          { message: "Unauthorized access to this restaurant" },
-          { status: 403 },
         );
       }
 

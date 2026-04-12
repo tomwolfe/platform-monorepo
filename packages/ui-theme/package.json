@@ -17,7 +17,9 @@
     "./components/ui/card": "./src/components/ui/card.tsx",
     "./components/ui/toast": "./src/components/ui/toast.tsx",
     "./components/ui/toaster": "./src/components/ui/toaster.tsx",
-    "./lib/utils": "./src/lib/utils.ts"
+    "./components/web3": "./src/components/web3/index.ts",
+    "./lib/utils": "./src/lib/utils.ts",
+    "./lib/query-client": "./src/lib/query-client.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.2",

@@ -41,7 +41,7 @@ const logger = new Logger({ serviceName: "sync-nonces-cron" });
  */
 async function postHandler(_req: NextRequest) {
   try {
-    logger.info({ message: "Starting nonce sync cron" });
+    logger.info("Starting nonce sync cron");
 
     const chainId = base.id;
     const publicClient = await getPublicClient(chainId);
@@ -54,10 +54,7 @@ async function postHandler(_req: NextRequest) {
       publicClient,
     );
 
-    logger.info({
-      message: "Nonce sync status check",
-      ...syncStatus,
-    });
+    logger.info("Nonce sync status check", { ...syncStatus });
 
     if (syncStatus.isSynced) {
       return NextResponse.json(
@@ -80,8 +77,7 @@ async function postHandler(_req: NextRequest) {
       publicClient,
     );
 
-    logger.info({
-      message: "Nonce tracker synced with on-chain value",
+    logger.info("Nonce tracker synced with on-chain value", {
       chainId,
       resolverAddress,
       syncedNonce,
@@ -100,8 +96,7 @@ async function postHandler(_req: NextRequest) {
       }),
     );
   } catch (error) {
-    logger.error({
-      message: "Nonce sync cron failed",
+    logger.error("Nonce sync cron failed", {
       error: error instanceof Error ? error.message : String(error),
     });
 

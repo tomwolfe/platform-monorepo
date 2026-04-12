@@ -23,6 +23,20 @@ import { mapJsonSchemaToZod } from "./engine/schema-utils";
 
 const logger = new Logger({ serviceName: "dynamic-mcp-client" });
 
+// ============================================================================
+// TOOL REGISTRY ENTRY TYPE
+// Extended tool info stored in the registry
+// ============================================================================
+
+interface ToolRegistryEntry {
+  name: string;
+  description: string;
+  inputSchema: any;
+  zodSchema: any;
+  requires_confirmation: boolean;
+  origin: string;
+}
+
 /**
  * MCP Client - Enhanced with Dynamic Tool Discovery and Schema Evolution
  *
@@ -93,9 +107,8 @@ export class ParameterAliaser {
   private async initializeSchemaEvolution(): Promise<void> {
     try {
       // Lazy load to avoid circular dependencies
-      const redis = getRedisClient(ServiceNamespace.IE);
-      if (redis) {
-        this.schemaEvolutionService = createSchemaEvolutionService({ redis });
+      this.schemaEvolutionService = createSchemaEvolutionService();
+      if (this.schemaEvolutionService) {
         logger.info("ParameterAliaser schema evolution tracking enabled");
       }
     } catch (error) {
@@ -200,8 +213,7 @@ export class ParameterAliaser {
 
 export class DynamicMcpClientManager {
   private clients: Map<string, Client> = new Map();
-  private toolRegistry: Map<string, McpToolRegistry[keyof McpToolRegistry]> =
-    new Map();
+  private toolRegistry: Map<string, ToolRegistryEntry> = new Map();
   private parameterAliaser: ParameterAliaser;
   private serviceRegistry: ServiceRegistryEntry[];
 
@@ -557,6 +569,8 @@ export class DynamicMcpClientManager {
             name: tool.name,
             description: tool.description || "",
             inputSchema: tool.inputSchema,
+            zodSchema: undefined,
+            requires_confirmation: false,
             origin: name,
           });
         }

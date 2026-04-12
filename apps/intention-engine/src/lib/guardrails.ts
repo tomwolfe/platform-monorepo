@@ -14,73 +14,74 @@ const CAPABILITY_GUARDRAILS: Record<string, CapabilityGuardrail> = {
     capability: "calendar.create",
     riskLevel: "LOW",
     requiresConfirmation: false,
-    description: "Creating a calendar event."
+    description: "Creating a calendar event.",
   },
   "calendar.delete": {
     capability: "calendar.delete",
     riskLevel: "HIGH",
     requiresConfirmation: true,
-    description: "Deleting a calendar event."
+    description: "Deleting a calendar event.",
   },
   "email.send": {
     capability: "email.send",
     riskLevel: "MEDIUM",
     requiresConfirmation: true,
-    description: "Sending an email."
+    description: "Sending an email.",
   },
-  "request_ride": {
+  request_ride: {
     capability: "request_ride",
     riskLevel: "HIGH",
     requiresConfirmation: true,
-    description: "Requesting a ride via Uber or Tesla."
+    description: "Requesting a ride via Uber or Tesla.",
   },
-  "book_restaurant_table": {
+  book_restaurant_table: {
     capability: "book_restaurant_table",
     riskLevel: "HIGH",
     requiresConfirmation: true,
-    description: "Finalizing a restaurant reservation."
+    description: "Finalizing a restaurant reservation.",
   },
-  "send_comm": {
+  send_comm: {
     capability: "send_comm",
     riskLevel: "MEDIUM",
     requiresConfirmation: true,
-    description: "Sending a communication (Email/SMS)."
+    description: "Sending a communication (Email/SMS).",
   },
-  "get_weather_data": {
+  get_weather_data: {
     capability: "get_weather_data",
     riskLevel: "LOW",
     requiresConfirmation: false,
-    description: "Fetching weather information."
+    description: "Fetching weather information.",
   },
-  "get_route_estimate": {
+  get_route_estimate: {
     capability: "get_route_estimate",
     riskLevel: "LOW",
     requiresConfirmation: false,
-    description: "Calculating travel time and distance."
-  }
+    description: "Calculating travel time and distance.",
+  },
 };
 
 /**
  * Checks if an intent violates safety guardrails or requires confirmation.
  */
-export function checkGuardrails(intent: Intent): { 
-  allowed: boolean; 
-  requiresConfirmation: boolean; 
-  reason?: string; 
+export function checkGuardrails(intent: Intent): {
+  allowed: boolean;
+  requiresConfirmation: boolean;
+  reason?: string;
 } {
   if (intent.type !== "ACTION" && intent.type !== "SCHEDULE") {
     return { allowed: true, requiresConfirmation: false };
   }
 
-  const capability = intent.parameters.capability || intent.parameters.tool_name;
+  const capability = (intent.parameters.capability ||
+    intent.parameters.tool_name) as string;
   const guardrail = CAPABILITY_GUARDRAILS[capability];
 
   if (!guardrail) {
     // If it's a known tool but not in guardrails, default to safe but cautious
-    return { 
-      allowed: true, 
-      requiresConfirmation: true, 
-      reason: `Capability ${capability} has no defined guardrail, requiring confirmation by default.` 
+    return {
+      allowed: true,
+      requiresConfirmation: true,
+      reason: `Capability ${capability} has no defined guardrail, requiring confirmation by default.`,
     };
   }
 
@@ -91,13 +92,13 @@ export function checkGuardrails(intent: Intent): {
     return {
       allowed: false,
       requiresConfirmation: true,
-      reason: `HIGH risk action ${capability} requires higher confidence or explicit user confirmation.`
+      reason: `HIGH risk action ${capability} requires higher confidence or explicit user confirmation.`,
     };
   }
 
   return {
     allowed: true,
     requiresConfirmation: guardrail.requiresConfirmation,
-    reason: guardrail.description
+    reason: guardrail.description,
   };
 }

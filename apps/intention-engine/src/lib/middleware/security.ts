@@ -30,7 +30,10 @@
 import { z } from "zod";
 import { randomUUID } from "crypto";
 import { RateLimiterService, rateLimitMiddleware } from "./rate-limiter";
-import { promptInjectionMiddleware, detectPromptInjection } from "./prompt-injection";
+import {
+  promptInjectionMiddleware,
+  detectPromptInjection,
+} from "./prompt-injection";
 import { AppConfig } from "@repo/shared";
 
 // ============================================================================
@@ -129,40 +132,44 @@ export const DEFAULT_SECURITY_CONFIG: SecurityConfig = {
 
 export const SECURITY_HEADERS = {
   // Content Security Policy - Restrict resource loading
-  "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
-  
+  "Content-Security-Policy":
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+
   // HTTP Strict Transport Security - Force HTTPS
   "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
-  
+
   // X-Frame-Options - Prevent clickjacking
   "X-Frame-Options": "DENY",
-  
+
   // X-Content-Type-Options - Prevent MIME sniffing
   "X-Content-Type-Options": "nosniff",
-  
+
   // X-XSS-Protection - Enable XSS filter (legacy browsers)
   "X-XSS-Protection": "1; mode=block",
-  
+
   // Referrer-Policy - Control referrer information
   "Referrer-Policy": "strict-origin-when-cross-origin",
-  
+
   // Permissions-Policy - Control browser features
-  "Permissions-Policy": "geolocation=(), microphone=(), camera=(), payment=(), usb=()",
-  
+  "Permissions-Policy":
+    "geolocation=(), microphone=(), camera=(), payment=(), usb=()",
+
   // Cache-Control - Prevent caching of sensitive data
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-  
+
   // Pragma - HTTP/1.0 backward compatibility
-  "Pragma": "no-cache",
-  
+  Pragma: "no-cache",
+
   // Expires - Expire immediately
-  "Expires": "0",
+  Expires: "0",
 };
 
 /**
  * Get security headers for response
  */
-export function getSecurityHeaders(customHeaders?: Record<string, string>): Record<string, string> {
+function getSecurityHeaders(
+  customHeaders?: Record<string, string>,
+): Record<string, string> {
   return {
     ...SECURITY_HEADERS,
     ...customHeaders,
@@ -176,7 +183,7 @@ export function getSecurityHeaders(customHeaders?: Record<string, string>): Reco
 /**
  * Validate and sanitize input
  */
-export function validateInput<T extends z.ZodType>(
+function validateInput<T extends z.ZodType>(
   data: unknown,
   schema: T,
   options?: {
@@ -184,18 +191,19 @@ export function validateInput<T extends z.ZodType>(
     stripUnknown?: boolean;
     /** Custom error message */
     errorMessage?: string;
-  }
+  },
 ): { success: boolean; data?: z.infer<T>; error?: string } {
   try {
     const result = schema.safeParse(data);
-    
+
     if (!result.success) {
       return {
         success: false,
-        error: options?.errorMessage || `Validation error: ${result.error.message}`,
+        error:
+          options?.errorMessage || `Validation error: ${result.error.message}`,
       };
     }
-    
+
     return {
       success: true,
       data: result.data,
@@ -212,25 +220,25 @@ export function validateInput<T extends z.ZodType>(
 /**
  * Sanitize string input (remove potentially dangerous characters)
  */
-export function sanitizeInput(input: string): string {
+function sanitizeInput(input: string): string {
   if (typeof input !== "string") {
     return String(input);
   }
-  
+
   // Remove null bytes
   let sanitized = input.replace(/\0/g, "");
-  
+
   // Remove control characters (except newlines and tabs)
   sanitized = sanitized.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
-  
+
   // Trim whitespace
   sanitized = sanitized.trim();
-  
+
   // Limit length
   if (sanitized.length > 10000) {
     sanitized = sanitized.substring(0, 10000);
   }
-  
+
   return sanitized;
 }
 
@@ -241,10 +249,10 @@ export function sanitizeInput(input: string): string {
 /**
  * Generate a signature for a request
  */
-export async function signRequest(
+async function signRequest(
   payload: string,
   secret: string,
-  timestamp: number = Date.now()
+  timestamp: number = Date.now(),
 ): Promise<{ signature: string; timestamp: number }> {
   const encoder = new TextEncoder();
   const keyData = encoder.encode(secret);
@@ -255,12 +263,12 @@ export async function signRequest(
     keyData,
     { name: "HMAC", hash: "SHA-256" },
     false,
-    ["sign"]
+    ["sign"],
   );
 
   const signature = await crypto.subtle.sign("HMAC", key, payloadData);
   const signatureHex = Array.from(new Uint8Array(signature))
-    .map(b => b.toString(16).padStart(2, "0"))
+    .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 
   return {
@@ -272,7 +280,7 @@ export async function signRequest(
 /**
  * Verify a request signature
  */
-export async function verifyRequestSignature(
+async function verifyRequestSignature(
   payload: string,
   signature: string,
   timestamp: number,
@@ -280,7 +288,7 @@ export async function verifyRequestSignature(
   options?: {
     /** Max age of signature in ms (default: 5 minutes) */
     maxAge?: number;
-  }
+  },
 ): Promise<boolean> {
   const maxAge = options?.maxAge || 5 * 60 * 1000; // 5 minutes
 
@@ -328,7 +336,7 @@ export async function verifyRequestSignature(
  * @param request - Request with Authorization header
  * @returns True if valid JWT from trusted service
  */
-export function verifyInternalJWT(request: Request): boolean {
+function verifyInternalJWT(request: Request): boolean {
   const authHeader = request.headers.get("authorization");
 
   if (!authHeader?.startsWith("Bearer ")) {
@@ -349,27 +357,25 @@ export function verifyInternalJWT(request: Request): boolean {
 /**
  * Log security audit event
  */
-export async function logSecurityAudit(
-  auditData: SecurityAuditData
-): Promise<void> {
+async function logSecurityAudit(auditData: SecurityAuditData): Promise<void> {
   if (!DEFAULT_SECURITY_CONFIG.enableAuditLogging) {
     return;
   }
-  
+
   try {
     const logEntry = {
       type: "SECURITY_AUDIT",
       ...auditData,
       timestamp: new Date().toISOString(),
     };
-    
+
     // Log to console (in production, send to logging service)
     if (auditData.action === "blocked") {
       console.warn("[Security Audit] Blocked request:", logEntry);
     } else {
       console.log("[Security Audit]", logEntry);
     }
-    
+
     // TODO: Send to centralized logging service (e.g., Upstash QStash, Axiom)
     // await QStashService.publishJSON({
     //   url: "https://your-logging-service.com/api/audit",
@@ -386,7 +392,7 @@ export async function logSecurityAudit(
 
 /**
  * Main security middleware function
- * 
+ *
  * Applies all security checks in sequence:
  * 1. Security headers
  * 2. Request ID generation
@@ -399,13 +405,13 @@ export async function logSecurityAudit(
  */
 export async function securityMiddleware(
   request: Request,
-  config?: Partial<SecurityConfig>
+  config?: Partial<SecurityConfig>,
 ): Promise<SecurityResult> {
   const finalConfig: SecurityConfig = {
     ...DEFAULT_SECURITY_CONFIG,
     ...config,
   };
-  
+
   const requestId = randomUUID();
   const auditData: SecurityAuditData = {
     timestamp: new Date().toISOString(),
@@ -417,33 +423,33 @@ export async function securityMiddleware(
     riskLevel: "low",
     action: "allowed",
   };
-  
+
   const headers: Record<string, string> = {};
-  
+
   try {
     // 1. Add security headers
     if (finalConfig.enableSecurityHeaders) {
       Object.assign(headers, getSecurityHeaders());
       auditData.checksPassed.push("security_headers");
     }
-    
+
     // 2. Extract user identity
     const clerkId = request.headers.get("x-clerk-id");
     const userIp = request.headers.get("x-forwarded-for") || "anonymous";
     const userId = clerkId || userIp;
-    
+
     if (userId) {
       auditData.userId = userId;
     }
-    
+
     // 3. Check authentication (if required)
     if (finalConfig.requireAuth && !clerkId) {
       auditData.checksFailed.push("authentication");
       auditData.action = "blocked";
       auditData.riskLevel = "medium";
-      
+
       await logSecurityAudit(auditData);
-      
+
       return {
         allowed: false,
         requestId,
@@ -458,13 +464,13 @@ export async function securityMiddleware(
               "Content-Type": "application/json",
               ...headers,
             },
-          }
+          },
         ),
         headers,
         auditData,
       };
     }
-    
+
     // 4. Check internal system key (if required)
     // Zero-Trust: Only JWT-based authentication is supported
     if (finalConfig.requireInternalKey) {
@@ -489,7 +495,7 @@ export async function securityMiddleware(
                 "Content-Type": "application/json",
                 ...headers,
               },
-            }
+            },
           ),
           headers,
           auditData,
@@ -497,18 +503,21 @@ export async function securityMiddleware(
       }
       auditData.checksPassed.push("jwt_auth");
     }
-    
+
     // 5. Check rate limiting
     if (finalConfig.enableRateLimiting) {
-      const rateLimitResult = await rateLimitMiddleware(userId, finalConfig.endpointType);
-      
+      const rateLimitResult = await rateLimitMiddleware(
+        userId,
+        finalConfig.endpointType,
+      );
+
       if (!rateLimitResult.allowed) {
         auditData.checksFailed.push("rate_limit");
         auditData.action = "blocked";
         auditData.riskLevel = "medium";
-        
+
         await logSecurityAudit(auditData);
-        
+
         return {
           allowed: false,
           requestId,
@@ -525,7 +534,7 @@ export async function securityMiddleware(
                 ...headers,
                 ...rateLimitResult.result.headers,
               },
-            }
+            },
           ),
           headers: {
             ...headers,
@@ -534,33 +543,40 @@ export async function securityMiddleware(
           auditData,
         };
       }
-      
+
       auditData.checksPassed.push("rate_limit");
     }
-    
+
     // 6. Check prompt injection (for text inputs)
-    if (finalConfig.enablePromptInjectionDetection && finalConfig.endpointType === "chat") {
+    if (
+      finalConfig.enablePromptInjectionDetection &&
+      finalConfig.endpointType === "chat"
+    ) {
       try {
-        const body = await request.clone().json().catch(() => null);
+        const body = await request
+          .clone()
+          .json()
+          .catch(() => null);
         const userText = extractUserTextFromRequest(body);
-        
+
         if (userText) {
           const detectionResult = await detectPromptInjection(userText, userId);
-          
+
           if (!detectionResult.isSafe) {
             auditData.checksFailed.push("prompt_injection");
             auditData.action = "blocked";
             auditData.riskLevel = detectionResult.riskLevel;
-            
+
             await logSecurityAudit(auditData);
-            
+
             return {
               allowed: false,
               requestId,
               response: new Response(
                 JSON.stringify({
                   error: "Input blocked for security reasons",
-                  message: "Your input contains patterns that may attempt to manipulate the AI system.",
+                  message:
+                    "Your input contains patterns that may attempt to manipulate the AI system.",
                   ...(process.env.NODE_ENV === "development" && {
                     debug: {
                       attackTypes: detectionResult.attackTypes,
@@ -574,13 +590,13 @@ export async function securityMiddleware(
                     "Content-Type": "application/json",
                     ...headers,
                   },
-                }
+                },
               ),
               headers,
               auditData,
             };
           }
-          
+
           auditData.checksPassed.push("prompt_injection");
         }
       } catch (error) {
@@ -588,19 +604,19 @@ export async function securityMiddleware(
         // Don't block on error, just log
       }
     }
-    
+
     // 7. Check request signing (if enabled)
     if (finalConfig.enableRequestSigning) {
       const signature = request.headers.get("x-request-signature");
       const timestamp = request.headers.get("x-request-timestamp");
-      
+
       if (!signature || !timestamp) {
         auditData.checksFailed.push("request_signature");
         auditData.action = "blocked";
         auditData.riskLevel = "high";
-        
+
         await logSecurityAudit(auditData);
-        
+
         return {
           allowed: false,
           requestId,
@@ -615,25 +631,31 @@ export async function securityMiddleware(
                 "Content-Type": "application/json",
                 ...headers,
               },
-            }
+            },
           ),
           headers,
           auditData,
         };
       }
-      
+
       try {
         const body = await request.clone().text();
-        const secret = process.env.INTERNAL_API_SECRET || AppConfig.getInternalSystemKey();
-        const isValid = await verifyRequestSignature(body, signature, parseInt(timestamp));
-        
+        const secret =
+          process.env.INTERNAL_API_SECRET || AppConfig.getInternalSystemKey();
+        const isValid = await verifyRequestSignature(
+          body,
+          signature,
+          parseInt(timestamp),
+          secret,
+        );
+
         if (!isValid) {
           auditData.checksFailed.push("request_signature");
           auditData.action = "blocked";
           auditData.riskLevel = "high";
-          
+
           await logSecurityAudit(auditData);
-          
+
           return {
             allowed: false,
             requestId,
@@ -648,22 +670,25 @@ export async function securityMiddleware(
                   "Content-Type": "application/json",
                   ...headers,
                 },
-              }
+              },
             ),
             headers,
             auditData,
           };
         }
-        
+
         auditData.checksPassed.push("request_signature");
       } catch (error) {
-        console.error("[Security] Request signature verification error:", error);
+        console.error(
+          "[Security] Request signature verification error:",
+          error,
+        );
         auditData.checksFailed.push("request_signature");
         auditData.action = "blocked";
         auditData.riskLevel = "high";
-        
+
         await logSecurityAudit(auditData);
-        
+
         return {
           allowed: false,
           requestId,
@@ -678,18 +703,18 @@ export async function securityMiddleware(
                 "Content-Type": "application/json",
                 ...headers,
               },
-            }
+            },
           ),
           headers,
           auditData,
         };
       }
     }
-    
+
     // All checks passed
     auditData.action = "allowed";
     await logSecurityAudit(auditData);
-    
+
     return {
       allowed: true,
       requestId,
@@ -699,14 +724,14 @@ export async function securityMiddleware(
     };
   } catch (error) {
     console.error("[Security] Middleware error:", error);
-    
+
     // Fail closed (block) on unexpected errors
     auditData.checksFailed.push("internal_error");
     auditData.action = "blocked";
     auditData.riskLevel = "high";
-    
+
     await logSecurityAudit(auditData);
-    
+
     return {
       allowed: false,
       requestId,
@@ -721,7 +746,7 @@ export async function securityMiddleware(
             "Content-Type": "application/json",
             ...headers,
           },
-        }
+        },
       ),
       headers,
       auditData,
@@ -738,13 +763,15 @@ export async function securityMiddleware(
  */
 function extractUserTextFromRequest(body: any): string {
   if (!body) return "";
-  
+
   if (typeof body === "string") {
     return body;
   }
-  
+
   if (body.messages && Array.isArray(body.messages)) {
-    const lastUserMessage = [...body.messages].reverse().find((m: any) => m.role === "user");
+    const lastUserMessage = [...body.messages]
+      .reverse()
+      .find((m: any) => m.role === "user");
     if (lastUserMessage) {
       if (typeof lastUserMessage.content === "string") {
         return lastUserMessage.content;
@@ -757,15 +784,15 @@ function extractUserTextFromRequest(body: any): string {
       }
     }
   }
-  
+
   if (body.input) {
     return String(body.input);
   }
-  
+
   if (body.text) {
     return String(body.text);
   }
-  
+
   return "";
 }
 
@@ -776,8 +803,10 @@ function extractUserTextFromRequest(body: any): string {
 /**
  * Create a security middleware wrapper for Next.js API routes
  */
-export function createSecurityMiddleware(config?: Partial<SecurityConfig>) {
-  return async function securityMiddlewareWrapper(request: Request): Promise<SecurityResult> {
+function createSecurityMiddleware(config?: Partial<SecurityConfig>) {
+  return async function securityMiddlewareWrapper(
+    request: Request,
+  ): Promise<SecurityResult> {
     return await securityMiddleware(request, config);
   };
 }
@@ -785,29 +814,22 @@ export function createSecurityMiddleware(config?: Partial<SecurityConfig>) {
 /**
  * Apply security headers to a response
  */
-export function withSecurityHeaders(
+function withSecurityHeaders(
   response: Response,
-  customHeaders?: Record<string, string>
+  customHeaders?: Record<string, string>,
 ): Response {
   const headers = getSecurityHeaders(customHeaders);
-  
+
   for (const [key, value] of Object.entries(headers)) {
     response.headers.set(key, value);
   }
-  
+
   return response;
 }
 
 // ============================================================================
 // EXPORTS
 // ============================================================================
-
-export type {
-  SecurityConfig,
-  SecurityResult,
-  SecurityAuditData,
-  ValidatedRequest,
-};
 
 export {
   validateInput,

@@ -28,9 +28,44 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import { Logger } from "@repo/shared";
 import { SecurityProvider } from "@repo/auth";
 import { randomUUID } from "crypto";
+
+// Simple logger to avoid circular dependency with @repo/shared
+const createLogger = (serviceName: string) => ({
+  info: (
+    msg: string | Record<string, unknown>,
+    meta?: Record<string, unknown>,
+  ) => {
+    const message = typeof msg === "string" ? msg : msg.message || "";
+    const metadata = typeof msg === "object" && msg.message ? msg : meta || {};
+    console.log(`[INFO] [${serviceName}] ${message}`, metadata);
+  },
+  warn: (
+    msg: string | Record<string, unknown>,
+    meta?: Record<string, unknown>,
+  ) =>
+    console.warn(
+      `[WARN] [${serviceName}] ${typeof msg === "string" ? msg : msg.message}`,
+      typeof msg === "object" && msg.message ? msg : meta || "",
+    ),
+  error: (
+    msg: string | Record<string, unknown>,
+    meta?: Record<string, unknown>,
+  ) =>
+    console.error(
+      `[ERROR] [${serviceName}] ${typeof msg === "string" ? msg : msg.message}`,
+      typeof msg === "object" && msg.message ? msg : meta || "",
+    ),
+  debug: (
+    msg: string | Record<string, unknown>,
+    meta?: Record<string, unknown>,
+  ) =>
+    console.debug(
+      `[DEBUG] [${serviceName}] ${typeof msg === "string" ? msg : msg.message}`,
+      typeof msg === "object" && msg.message ? msg : meta || "",
+    ),
+});
 
 /**
  * Extended SSEServerTransport with custom properties for trace propagation
@@ -168,7 +203,7 @@ export function createMcpServerRoutes(
       }
 
       if (enableLogging) {
-        const logger = new Logger({ serviceName: "mcp-protocol" });
+        const logger = createLogger("mcp-protocol");
         logger.info({
           message: "MCP SSE connection established",
           traceId,

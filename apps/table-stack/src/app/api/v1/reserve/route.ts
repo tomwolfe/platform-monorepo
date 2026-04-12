@@ -301,10 +301,34 @@ async function postHandler(req: NextRequest) {
   }
 }
 
-export const POST = withServerlessTimeout(
-  withUnifiedApiHandler(postHandler, {
+export const POST = withUnifiedApiHandler(
+  async (req, ctx) => {
+    const abortController = new AbortController();
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error("Request timed out"));
+      }, 8000);
+    });
+
+    const handlerPromise = postHandler(req);
+
+    try {
+      return await Promise.race([handlerPromise, timeoutPromise]);
+    } catch (error) {
+      if ((error as Error).message === "Request timed out") {
+        return NextResponse.json(
+          {
+            error: "Gateway Timeout",
+            message: "Request exceeded 8000ms timeout",
+          },
+          { status: 504 },
+        );
+      }
+      throw error;
+    }
+  },
+  {
     serviceName: "reserve-api",
     includeStackTrace: process.env.NODE_ENV !== "production",
-  }),
-  8000,
+  },
 );

@@ -170,7 +170,7 @@ export class ChatOrchestratorService {
     const inferenceResult = await inferIntent(
       userText,
       avoidTools,
-      history,
+      history as any,
       lastInteractionContext || undefined,
       this.userContext.clerkId || undefined,
     );
@@ -179,17 +179,14 @@ export class ChatOrchestratorService {
 
     // Normalize intent parameters against schemas
     const normalizationResult = NormalizationService.normalizeIntentParameters(
-      intent.type,
+      intent.type as any,
       intent.parameters || {},
     );
 
     if (!normalizationResult.success) {
-      logger.warn({
-        message: "[NormalizationService] Intent parameter validation failed",
-        error: JSON.stringify({
-          intentType: intent.type,
-          errors: normalizationResult.errors,
-        }),
+      logger.warn("[NormalizationService] Intent parameter validation failed", {
+        intentType: intent.type,
+        errors: normalizationResult.errors,
       });
       // Reduce confidence if parameters fail validation
       intent.confidence = Math.min(intent.confidence * 0.5, 0.3);
@@ -272,14 +269,13 @@ export class ChatOrchestratorService {
         correlationId: executionId,
       });
 
-      logger.info({
-        message: `[ChatOrchestrator] Triggered async execution ${executionId} for intent ${intent.type} [trace: ${executionId}]`,
-      });
+      logger.info(
+        `[ChatOrchestrator] Triggered async execution ${executionId} for intent ${intent.type} [trace: ${executionId}]`,
+      );
 
       return executionId;
     } catch (error) {
-      logger.error({
-        message: "[ChatOrchestrator] Failed to trigger async execution",
+      logger.error("[ChatOrchestrator] Failed to trigger execution", {
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;

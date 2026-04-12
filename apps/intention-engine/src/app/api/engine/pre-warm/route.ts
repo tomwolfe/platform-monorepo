@@ -54,6 +54,7 @@ const PreWarmRequestSchema = z.object({
 });
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 5; // Short timeout - this is just warming
 
 export async function POST(req: NextRequest) {

@@ -2,21 +2,21 @@
  * Shared Memory Client
  * Moved from apps/intention-engine/src/lib/engine/memory.ts
  * Provides standardized Redis-backed memory for all services.
- * 
+ *
  * Vercel Hobby Tier Optimization:
  * - Task Queue pattern for durable state machine transitions
  * - Atomic state transitions for resumable execution
  * - Upstash QStash integration for background triggers
  */
 
-import { Redis } from '@upstash/redis';
+import { Redis } from "@upstash/redis";
 import {
   ExecutionState,
   ExecutionTrace,
   ExecutionStateSchema,
-  ExecutionTraceSchema
-} from '../types/execution';
-import { getRedisClient, ServiceNamespace } from '../redis';
+  ExecutionTraceSchema,
+} from "../types/execution";
+import { getRedisClient, ServiceNamespace } from "../redis";
 
 // ============================================================================
 // MEMORY CONFIGURATION
@@ -28,16 +28,16 @@ export const MEMORY_CONFIG = {
   default_ttl_seconds: 3600, // 1 hour
   max_ttl_seconds: 86400 * 7, // 7 days
   key_separator: ":",
-  
+
   // TTL by entry type
   ttl_by_type: {
-    execution_state: 3600,      // 1 hour
-    execution_trace: 86400,     // 24 hours
-    intent_history: 86400 * 3,  // 3 days
-    plan_cache: 3600,           // 1 hour
-    tool_result: 1800,          // 30 minutes
-    user_context: 86400 * 7,    // 7 days
-    system_config: 0,           // No TTL (persistent)
+    execution_state: 3600, // 1 hour
+    execution_trace: 86400, // 24 hours
+    intent_history: 86400 * 3, // 3 days
+    plan_cache: 3600, // 1 hour
+    tool_result: 1800, // 30 minutes
+    user_context: 86400 * 7, // 7 days
+    system_config: 0, // No TTL (persistent)
   } as Record<string, number>,
 };
 
@@ -45,13 +45,13 @@ export const MEMORY_CONFIG = {
 // MEMORY ENTRY TYPES
 // ============================================================================
 
-export type MemoryEntryType = 
-  | "execution_state" 
-  | "execution_trace" 
-  | "intent_history" 
-  | "plan_cache" 
-  | "tool_result" 
-  | "user_context" 
+export type MemoryEntryType =
+  | "execution_state"
+  | "execution_trace"
+  | "intent_history"
+  | "plan_cache"
+  | "tool_result"
+  | "user_context"
   | "system_config";
 
 export interface MemoryEntry {
@@ -75,7 +75,10 @@ export interface MemoryQuery {
   limit: number;
 }
 
-export type MemoryEntryInput = Omit<MemoryEntry, "key" | "created_at" | "expires_at">;
+export type MemoryEntryInput = Omit<
+  MemoryEntry,
+  "key" | "created_at" | "expires_at"
+>;
 
 // ============================================================================
 // MEMORY ERROR
@@ -94,7 +97,7 @@ export interface MemoryError {
 // State machine pattern for durable execution
 // ============================================================================
 
-export type TaskStatus = 
+export type TaskStatus =
   | "pending"
   | "in_progress"
   | "awaiting_confirmation"
@@ -168,10 +171,13 @@ export interface StateTransitionResult {
 // ============================================================================
 
 export class MemoryClient {
-  private redis: Redis;
-  private namespace: string;
+  protected redis: Redis;
+  protected namespace: string;
 
-  constructor(redis: Redis, namespace: string = MEMORY_CONFIG.default_namespace) {
+  constructor(
+    redis: Redis,
+    namespace: string = MEMORY_CONFIG.default_namespace,
+  ) {
     this.redis = redis;
     this.namespace = namespace;
   }
@@ -181,11 +187,13 @@ export class MemoryClient {
   // Build namespaced keys
   // ========================================================================
 
-  private buildKey(type: MemoryEntryType, id: string): string {
+  protected buildKey(type: MemoryEntryType, id: string): string {
     return `${this.namespace}${MEMORY_CONFIG.key_separator}${type}${MEMORY_CONFIG.key_separator}${id}`;
   }
 
-  private parseKey(key: string): { namespace: string; type: string; id: string } | null {
+  private parseKey(
+    key: string,
+  ): { namespace: string; type: string; id: string } | null {
     const parts = key.split(MEMORY_CONFIG.key_separator);
     if (parts.length !== 3) return null;
     return {
@@ -202,20 +210,24 @@ export class MemoryClient {
 
   async store(entry: MemoryEntryInput): Promise<MemoryEntry> {
     const timestamp = new Date().toISOString();
-    
+
     // Generate key
     const key = this.buildKey(entry.type, entry.namespace);
-    
+
     // Calculate TTL
-    const ttlSeconds = entry.ttl_seconds ?? MEMORY_CONFIG.ttl_by_type[entry.type] ?? MEMORY_CONFIG.default_ttl_seconds;
-    
+    const ttlSeconds =
+      entry.ttl_seconds ??
+      MEMORY_CONFIG.ttl_by_type[entry.type] ??
+      MEMORY_CONFIG.default_ttl_seconds;
+
     // Validate TTL doesn't exceed maximum
     const effectiveTtl = Math.min(ttlSeconds, MEMORY_CONFIG.max_ttl_seconds);
-    
+
     // Calculate expiration
-    const expiresAt = effectiveTtl > 0
-      ? new Date(Date.now() + effectiveTtl * 1000).toISOString()
-      : undefined;
+    const expiresAt =
+      effectiveTtl > 0
+        ? new Date(Date.now() + effectiveTtl * 1000).toISOString()
+        : undefined;
 
     // Build complete entry
     const completeEntry: MemoryEntry = {
@@ -230,7 +242,11 @@ export class MemoryClient {
     try {
       // Store in Redis with TTL
       if (effectiveTtl > 0) {
-        await this.redis.setex(key, effectiveTtl, JSON.stringify(completeEntry));
+        await this.redis.setex(
+          key,
+          effectiveTtl,
+          JSON.stringify(completeEntry),
+        );
       } else {
         await this.redis.set(key, JSON.stringify(completeEntry));
       }
@@ -255,7 +271,7 @@ export class MemoryClient {
   async retrieve(key: string): Promise<MemoryEntry | null> {
     try {
       const data = await this.redis.get<string>(key);
-      
+
       if (!data) {
         return null;
       }
@@ -279,7 +295,10 @@ export class MemoryClient {
   // Convenience method for retrieving by type and id
   // ========================================================================
 
-  async retrieveByTypeAndId(type: MemoryEntryType, id: string): Promise<MemoryEntry | null> {
+  async retrieveByTypeAndId(
+    type: MemoryEntryType,
+    id: string,
+  ): Promise<MemoryEntry | null> {
     const key = this.buildKey(type, id);
     return this.retrieve(key);
   }
@@ -319,27 +338,27 @@ export class MemoryClient {
       // Scan for matching keys
       const keys: string[] = [];
       let cursor = 0;
-      
+
       do {
         const result = await this.redis.scan(cursor, {
           match: pattern,
           count: 100,
         });
-        
+
         cursor = parseInt(result[0] as string, 10);
         keys.push(...(result[1] as string[]));
       } while (cursor !== 0);
 
       // Retrieve all entries
       const entries: MemoryEntry[] = [];
-      
+
       for (const key of keys.slice(0, query.limit)) {
         const entry = await this.retrieve(key);
         if (entry) {
           // Filter by time range if specified
           if (query.after && entry.created_at < query.after) continue;
           if (query.before && entry.created_at > query.before) continue;
-          
+
           entries.push(entry);
         }
       }
@@ -412,15 +431,20 @@ export class MemoryClient {
       // Add to priority queue (sorted set by priority)
       await this.redis.zadd(queueKey, {
         member: taskState.task_id,
-        score: taskState.context.priority as number || 0,
+        score: (taskState.context.priority as number) || 0,
       });
 
-      console.log(`[TaskQueue] Created task ${taskState.task_id} for execution ${taskState.execution_id}`);
+      console.log(
+        `[TaskQueue] Created task ${taskState.task_id} for execution ${taskState.execution_id}`,
+      );
     } catch (error) {
       throw {
         code: "MEMORY_OPERATION_FAILED",
         message: `Failed to create task state: ${error}`,
-        details: { task_id: taskState.task_id, execution_id: taskState.execution_id },
+        details: {
+          task_id: taskState.task_id,
+          execution_id: taskState.execution_id,
+        },
         recoverable: false,
         timestamp: new Date().toISOString(),
       } as MemoryError;
@@ -435,7 +459,7 @@ export class MemoryClient {
     executionId: string,
     newStatus: TaskStatus,
     reason?: string,
-    metadata?: Record<string, unknown>
+    metadata?: Record<string, unknown>,
   ): Promise<StateTransitionResult> {
     const key = this.buildTaskKey(executionId);
     const timestamp = new Date().toISOString();
@@ -459,7 +483,13 @@ export class MemoryClient {
       // Validate transition (prevent invalid state changes)
       const validTransitions: Record<TaskStatus, TaskStatus[]> = {
         pending: ["in_progress", "cancelled"],
-        in_progress: ["completed", "failed", "awaiting_confirmation", "cancelled", "compensating"],
+        in_progress: [
+          "completed",
+          "failed",
+          "awaiting_confirmation",
+          "cancelled",
+          "compensating",
+        ],
         awaiting_confirmation: ["in_progress", "cancelled", "failed"],
         completed: [],
         failed: ["compensating"],
@@ -494,16 +524,20 @@ export class MemoryClient {
         status: newStatus,
         updated_at: timestamp,
         transitions: [...currentState.transitions, transition],
-        completed_at: newStatus === "completed" || newStatus === "failed" || newStatus === "cancelled" || newStatus === "compensated"
-          ? timestamp
-          : currentState.completed_at,
+        completed_at:
+          newStatus === "completed" ||
+          newStatus === "failed" ||
+          newStatus === "cancelled" ||
+          newStatus === "compensated"
+            ? timestamp
+            : currentState.completed_at,
       };
 
       // Atomic update
       await this.redis.setex(key, 86400, JSON.stringify(newState));
 
       console.log(
-        `[TaskQueue] Transitioned ${executionId}: ${previousStatus} -> ${newStatus}${reason ? ` (${reason})` : ''}`
+        `[TaskQueue] Transitioned ${executionId}: ${previousStatus} -> ${newStatus}${reason ? ` (${reason})` : ""}`,
       );
 
       return {
@@ -541,7 +575,10 @@ export class MemoryClient {
   /**
    * Updates task context (e.g., storing step results, compensation data).
    */
-  async updateTaskContext(executionId: string, contextUpdate: Record<string, unknown>): Promise<boolean> {
+  async updateTaskContext(
+    executionId: string,
+    contextUpdate: Record<string, unknown>,
+  ): Promise<boolean> {
     const key = this.buildTaskKey(executionId);
 
     try {
@@ -578,7 +615,7 @@ export class MemoryClient {
       output?: unknown;
       error?: string;
       latency_ms: number;
-    }
+    },
   ): Promise<boolean> {
     const contextKey = `step_result:${stepIndex}`;
     return this.updateTaskContext(executionId, { [contextKey]: result });
@@ -587,7 +624,10 @@ export class MemoryClient {
   /**
    * Retrieves a stored step result.
    */
-  async getStepResult(executionId: string, stepIndex: number): Promise<unknown | null> {
+  async getStepResult(
+    executionId: string,
+    stepIndex: number,
+  ): Promise<unknown | null> {
     const taskState = await this.getTaskState(executionId);
     if (!taskState) return null;
 
@@ -602,10 +642,12 @@ export class MemoryClient {
   async scheduleTaskResume(
     executionId: string,
     delaySeconds: number,
-    payload: TaskQueueItem["payload"]
+    payload: TaskQueueItem["payload"],
   ): Promise<void> {
     const queueKey = this.buildQueueKey();
-    const scheduledAt = new Date(Date.now() + delaySeconds * 1000).toISOString();
+    const scheduledAt = new Date(
+      Date.now() + delaySeconds * 1000,
+    ).toISOString();
 
     const queueItem: TaskQueueItem = {
       task_id: `resume:${executionId}`,
@@ -629,7 +671,7 @@ export class MemoryClient {
       });
 
       console.log(
-        `[TaskQueue] Scheduled resume for ${executionId} in ${delaySeconds}s [segment ${payload.segment_number}]`
+        `[TaskQueue] Scheduled resume for ${executionId} in ${delaySeconds}s [segment ${payload.segment_number}]`,
       );
     } catch (error) {
       throw {
@@ -656,7 +698,7 @@ export class MemoryClient {
         `${queueKey}:scheduled`,
         0,
         now,
-        { byScore: true, offset: 0, count: limit }
+        { byScore: true, offset: 0, count: limit },
       );
 
       const tasks: TaskQueueItem[] = [];
@@ -689,7 +731,10 @@ export class MemoryClient {
       // Delete the queue item
       await this.redis.del(`${queueKey}:${executionId}`);
     } catch (error) {
-      console.error(`Failed to mark task processing for ${executionId}:`, error);
+      console.error(
+        `Failed to mark task processing for ${executionId}:`,
+        error,
+      );
     }
   }
 
@@ -701,7 +746,7 @@ export class MemoryClient {
     executionId: string,
     stepId: string,
     requiresConfirmation: boolean,
-    confirmationStatus: "pending" | "confirmed" | "rejected" = "pending"
+    confirmationStatus: "pending" | "confirmed" | "rejected" = "pending",
   ): Promise<void> {
     const confirmationKey = `confirmation:${stepId}`;
     await this.updateTaskContext(executionId, {
@@ -718,13 +763,16 @@ export class MemoryClient {
    */
   async getConfirmationState(
     executionId: string,
-    stepId: string
+    stepId: string,
   ): Promise<{ requires_confirmation: boolean; status: string } | null> {
     const taskState = await this.getTaskState(executionId);
     if (!taskState) return null;
 
     const confirmationKey = `confirmation:${stepId}`;
-    return taskState.context[confirmationKey] as { requires_confirmation: boolean; status: string } | null;
+    return taskState.context[confirmationKey] as {
+      requires_confirmation: boolean;
+      status: string;
+    } | null;
   }
 
   // ========================================================================
@@ -753,13 +801,13 @@ export class MemoryClient {
   async updateStateAtomically(
     executionId: string,
     newState: Partial<ExecutionState> & { version?: number },
-    expectedVersion: number
+    expectedVersion: number,
   ): Promise<{
     success: boolean;
     newVersion?: number;
     currentVersion?: number;
     error?: {
-      code: 'NOT_FOUND' | 'CONFLICT' | 'OPERATION_FAILED';
+      code: "NOT_FOUND" | "CONFLICT" | "OPERATION_FAILED";
       message: string;
     };
   }> {
@@ -799,7 +847,7 @@ export class MemoryClient {
       const result = await this.redis.eval(
         script,
         [key], // keys array
-        [expectedVersion.toString(), JSON.stringify(newState), timestamp] // args array
+        [expectedVersion.toString(), JSON.stringify(newState), timestamp], // args array
       );
 
       return {
@@ -807,27 +855,28 @@ export class MemoryClient {
         newVersion: parseInt(result as string, 10),
       };
     } catch (error: unknown) {
-      const errorMessage = typeof error === 'string' ? error : error?.message || String(error);
+      const errorMessage =
+        typeof error === "string" ? error : error?.message || String(error);
 
-      if (errorMessage.includes('NOT_FOUND')) {
+      if (errorMessage.includes("NOT_FOUND")) {
         return {
           success: false,
           error: {
-            code: 'NOT_FOUND',
+            code: "NOT_FOUND",
             message: `Execution state not found for ${executionId}`,
           },
         };
       }
 
-      if (errorMessage.includes('CONFLICT')) {
+      if (errorMessage.includes("CONFLICT")) {
         const match = errorMessage.match(/CONFLICT:(\d+)/);
         const currentVersion = match ? parseInt(match[1], 10) : undefined;
         return {
           success: false,
           currentVersion,
           error: {
-            code: 'CONFLICT',
-            message: `Version conflict - expected ${expectedVersion}, got ${currentVersion ?? 'unknown'}`,
+            code: "CONFLICT",
+            message: `Version conflict - expected ${expectedVersion}, got ${currentVersion ?? "unknown"}`,
           },
         };
       }
@@ -835,7 +884,7 @@ export class MemoryClient {
       return {
         success: false,
         error: {
-          code: 'OPERATION_FAILED',
+          code: "OPERATION_FAILED",
           message: `Failed to update state atomically: ${errorMessage}`,
         },
       };
@@ -849,7 +898,7 @@ export class MemoryClient {
   async getStateVersion(executionId: string): Promise<number | null> {
     const taskState = await this.getTaskState(executionId);
     if (!taskState) return null;
-    return taskState.context.version as number ?? 1;
+    return (taskState.context.version as number) ?? 1;
   }
 
   /**
@@ -915,7 +964,7 @@ export class MemoryClient {
       baseDelayMs?: number;
       /** Enable debug logging */
       debug?: boolean;
-    }
+    },
   ): Promise<{
     success: boolean;
     version?: number;
@@ -933,13 +982,13 @@ export class MemoryClient {
     while (attempts <= maxRetries) {
       try {
         // Load current state
-        const currentState = await this.redis.get<any>(key);
+        const currentState = await this.redis.get(key);
 
         if (!currentState) {
           return {
             success: false,
             attempts,
-            error: 'State does not exist',
+            error: "State does not exist",
           };
         }
 
@@ -951,7 +1000,7 @@ export class MemoryClient {
           if (debug) {
             console.log(
               `[MemoryClient:OCC] Version changed during retry for ${executionId}: ` +
-              `expected ${expectedVersion}, got ${currentVersion}`
+                `expected ${expectedVersion}, got ${currentVersion}`,
             );
           }
         }
@@ -968,14 +1017,14 @@ export class MemoryClient {
         const casResult = await this.updateStateAtomically(
           executionId,
           mergedState,
-          currentVersion
+          currentVersion,
         );
 
         if (casResult.success) {
           if (debug && attempts > 0) {
             console.log(
               `[MemoryClient:OCC] Successfully saved state for ${executionId} ` +
-              `at version ${casResult.newVersion} after ${attempts} retry attempts`
+                `at version ${casResult.newVersion} after ${attempts} retry attempts`,
             );
           }
 
@@ -987,7 +1036,7 @@ export class MemoryClient {
         }
 
         // Conflict detected
-        if (casResult.error?.code === 'CONFLICT') {
+        if (casResult.error?.code === "CONFLICT") {
           attempts++;
 
           if (attempts > maxRetries) {
@@ -1006,7 +1055,7 @@ export class MemoryClient {
           if (debug) {
             console.log(
               `[MemoryClient:OCC] Conflict detected for ${executionId}, ` +
-              `retrying in ${delay.toFixed(0)}ms (attempt ${attempts}/${maxRetries})`
+                `retrying in ${delay.toFixed(0)}ms (attempt ${attempts}/${maxRetries})`,
             );
           }
 
@@ -1024,7 +1073,6 @@ export class MemoryClient {
             };
           }
         }
-
       } catch (error: unknown) {
         lastError = error?.message || String(error);
         attempts++;
@@ -1048,7 +1096,7 @@ export class MemoryClient {
     return {
       success: false,
       attempts,
-      error: lastError || 'Unknown error',
+      error: lastError || "Unknown error",
     };
   }
 
@@ -1056,7 +1104,7 @@ export class MemoryClient {
    * Sleep helper for backoff
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   // ========================================================================
@@ -1090,7 +1138,7 @@ export class MemoryClient {
       gitSha?: string;
       logicVersion?: string;
       toolVersions?: Record<string, { version: string; schemaHash: string }>;
-    }
+    },
   ): Promise<{
     success: boolean;
     checkpointId: string;
@@ -1098,8 +1146,10 @@ export class MemoryClient {
   }> {
     const timestamp = new Date().toISOString();
     const checkpointKey = `${this.namespace}${MEMORY_CONFIG.key_separator}checkpoint${MEMORY_CONFIG.key_separator}${executionId}`;
-    const gitSha = options?.gitSha || process.env.VERCEL_GIT_COMMIT_SHA || 'unknown';
-    const logicVersion = options?.logicVersion || process.env.NEXT_PUBLIC_APP_VERSION || '1.0.0';
+    const gitSha =
+      options?.gitSha || process.env.VERCEL_GIT_COMMIT_SHA || "unknown";
+    const logicVersion =
+      options?.logicVersion || process.env.NEXT_PUBLIC_APP_VERSION || "1.0.0";
 
     const checkpoint = {
       execution_id: executionId,
@@ -1113,11 +1163,15 @@ export class MemoryClient {
 
     try {
       // Store checkpoint with 7-day TTL (for long-running sagas)
-      await this.redis.setex(checkpointKey, 86400 * 7, JSON.stringify(checkpoint));
+      await this.redis.setex(
+        checkpointKey,
+        86400 * 7,
+        JSON.stringify(checkpoint),
+      );
 
       console.log(
         `[MemoryClient] Stored checkpoint for ${executionId} ` +
-        `[SHA: ${gitSha.substring(0, 7)}, Version: ${logicVersion}]`
+          `[SHA: ${gitSha.substring(0, 7)}, Version: ${logicVersion}]`,
       );
 
       return {
@@ -1146,21 +1200,22 @@ export class MemoryClient {
    */
   async loadCheckpointWithDriftDetection(
     executionId: string,
-    currentGitSha?: string
+    currentGitSha?: string,
   ): Promise<{
-    checkpoint: any | null;
+    checkpoint: unknown | null;
     hasDrift: boolean;
     driftDetails?: {
       checkpointSha: string;
       currentSha: string;
       checkpointLogicVersion: string;
       currentLogicVersion: string;
-      recommendation: 'PROCEED' | 'SHADOW_DRY_RUN' | 'MANUAL_REVIEW';
+      recommendation: "PROCEED" | "SHADOW_DRY_RUN" | "MANUAL_REVIEW";
     };
   }> {
     const checkpointKey = `${this.namespace}${MEMORY_CONFIG.key_separator}checkpoint${MEMORY_CONFIG.key_separator}${executionId}`;
-    const currentSha = currentGitSha || process.env.VERCEL_GIT_COMMIT_SHA || 'unknown';
-    const currentLogicVersion = process.env.NEXT_PUBLIC_APP_VERSION || '1.0.0';
+    const currentSha =
+      currentGitSha || process.env.VERCEL_GIT_COMMIT_SHA || "unknown";
+    const currentLogicVersion = process.env.NEXT_PUBLIC_APP_VERSION || "1.0.0";
 
     try {
       const checkpointJson = await this.redis.get<string>(checkpointKey);
@@ -1169,30 +1224,36 @@ export class MemoryClient {
       }
 
       const checkpoint = JSON.parse(checkpointJson);
-      const checkpointSha = checkpoint.git_sha || 'unknown';
-      const checkpointLogicVersion = checkpoint.logic_version || '1.0.0';
+      const checkpointSha = checkpoint.git_sha || "unknown";
+      const checkpointLogicVersion = checkpoint.logic_version || "1.0.0";
 
       // Detect logic drift
       const hasDrift = checkpointSha !== currentSha;
 
-      let recommendation: 'PROCEED' | 'SHADOW_DRY_RUN' | 'MANUAL_REVIEW' = 'PROCEED';
+      let recommendation: "PROCEED" | "SHADOW_DRY_RUN" | "MANUAL_REVIEW" =
+        "PROCEED";
       if (hasDrift) {
         // Major version change or completely different SHA = manual review
         const majorVersionChanged =
-          checkpointLogicVersion.split('.')[0] !== currentLogicVersion.split('.')[0];
-        recommendation = majorVersionChanged ? 'MANUAL_REVIEW' : 'SHADOW_DRY_RUN';
+          checkpointLogicVersion.split(".")[0] !==
+          currentLogicVersion.split(".")[0];
+        recommendation = majorVersionChanged
+          ? "MANUAL_REVIEW"
+          : "SHADOW_DRY_RUN";
       }
 
       return {
         checkpoint,
         hasDrift,
-        driftDetails: hasDrift ? {
-          checkpointSha,
-          currentSha,
-          checkpointLogicVersion,
-          currentLogicVersion,
-          recommendation,
-        } : undefined,
+        driftDetails: hasDrift
+          ? {
+              checkpointSha,
+              currentSha,
+              checkpointLogicVersion,
+              currentLogicVersion,
+              recommendation,
+            }
+          : undefined,
       };
     } catch (error) {
       console.error(`[MemoryClient] Failed to load checkpoint:`, error);
@@ -1221,14 +1282,14 @@ export class MemoryClient {
   async logFinancialOutcome(
     executionId: string,
     outcomeData: {
-      outcome: 'SUCCESS' | 'FAILURE' | 'COMPENSATED' | 'TIMEOUT';
+      outcome: "SUCCESS" | "FAILURE" | "COMPENSATED" | "TIMEOUT";
       totalCostUsd: number;
       totalTokens: number;
       businessValueUsd?: number; // e.g., order value, delivery fee
       stepId?: string;
       errorCode?: string;
       timestamp?: string;
-    }
+    },
   ): Promise<void> {
     const financialKey = `${this.namespace}${MEMORY_CONFIG.key_separator}financial_outcomes${MEMORY_CONFIG.key_separator}${executionId}`;
     const timestamp = outcomeData.timestamp || new Date().toISOString();
@@ -1240,7 +1301,10 @@ export class MemoryClient {
       total_tokens: outcomeData.totalTokens,
       business_value_usd: outcomeData.businessValueUsd || 0,
       roi: outcomeData.businessValueUsd
-        ? ((outcomeData.businessValueUsd - outcomeData.totalCostUsd) / outcomeData.totalCostUsd).toFixed(2)
+        ? (
+            (outcomeData.businessValueUsd - outcomeData.totalCostUsd) /
+            outcomeData.totalCostUsd
+          ).toFixed(2)
         : null,
       step_id: outcomeData.stepId,
       error_code: outcomeData.errorCode,
@@ -1249,7 +1313,11 @@ export class MemoryClient {
 
     try {
       // Store financial outcome with 30-day TTL for analytics
-      await this.redis.setex(financialKey, 86400 * 30, JSON.stringify(financialRecord));
+      await this.redis.setex(
+        financialKey,
+        86400 * 30,
+        JSON.stringify(financialRecord),
+      );
 
       // Also append to global financial log (sorted set by timestamp for time-series queries)
       const globalLogKey = `${this.namespace}${MEMORY_CONFIG.key_separator}financial_log_global`;
@@ -1259,24 +1327,32 @@ export class MemoryClient {
       });
 
       // Log value leak detection
-      if (outcomeData.outcome === 'FAILURE' || outcomeData.outcome === 'COMPENSATED') {
+      if (
+        outcomeData.outcome === "FAILURE" ||
+        outcomeData.outcome === "COMPENSATED"
+      ) {
         const valueLeak = outcomeData.totalCostUsd > 0;
         if (valueLeak) {
           console.warn(
             `[FinancialOutcome] VALUE LEAK DETECTED: ${executionId} ` +
-            `spent $${outcomeData.totalCostUsd.toFixed(4)} on ${outcomeData.outcome.toLowerCase()}` +
-            (outcomeData.businessValueUsd ? ` (business value: $${outcomeData.businessValueUsd.toFixed(2)})` : '')
+              `spent $${outcomeData.totalCostUsd.toFixed(4)} on ${outcomeData.outcome.toLowerCase()}` +
+              (outcomeData.businessValueUsd
+                ? ` (business value: $${outcomeData.businessValueUsd.toFixed(2)})`
+                : ""),
           );
         }
       }
 
       console.log(
         `[FinancialOutcome] Logged ${outcomeData.outcome} for ${executionId}: ` +
-        `$${outcomeData.totalCostUsd.toFixed(4)} / ${outcomeData.totalTokens} tokens` +
-        (financialRecord.roi ? `, ROI: ${financialRecord.roi}` : '')
+          `$${outcomeData.totalCostUsd.toFixed(4)} / ${outcomeData.totalTokens} tokens` +
+          (financialRecord.roi ? `, ROI: ${financialRecord.roi}` : ""),
       );
     } catch (error) {
-      console.error(`[FinancialOutcome] Failed to log financial outcome:`, error);
+      console.error(
+        `[FinancialOutcome] Failed to log financial outcome:`,
+        error,
+      );
       // Non-critical - don't throw, just log
     }
   }
@@ -1290,16 +1366,18 @@ export class MemoryClient {
   async queryFinancialOutcomes(options?: {
     startTime?: number;
     endTime?: number;
-    outcomeType?: 'SUCCESS' | 'FAILURE' | 'COMPENSATED' | 'TIMEOUT';
+    outcomeType?: "SUCCESS" | "FAILURE" | "COMPENSATED" | "TIMEOUT";
     limit?: number;
-  }): Promise<Array<{
-    execution_id: string;
-    outcome: string;
-    total_cost_usd: number;
-    business_value_usd?: number;
-    roi?: string | null;
-    timestamp: string;
-  }>> {
+  }): Promise<
+    Array<{
+      execution_id: string;
+      outcome: string;
+      total_cost_usd: number;
+      business_value_usd?: number;
+      roi?: string | null;
+      timestamp: string;
+    }>
+  > {
     const globalLogKey = `${this.namespace}${MEMORY_CONFIG.key_separator}financial_log_global`;
     const limit = options?.limit || 100;
 
@@ -1312,10 +1390,10 @@ export class MemoryClient {
         globalLogKey,
         startScore,
         endScore,
-        { byScore: true, offset: 0, count: limit }
+        { byScore: true, offset: 0, count: limit },
       );
 
-      const outcomes: any[] = [];
+      const outcomes: unknown[] = [];
       for (const executionId of executionIds) {
         const financialKey = `${this.namespace}${MEMORY_CONFIG.key_separator}financial_outcomes${MEMORY_CONFIG.key_separator}${executionId}`;
         const data = await this.redis.get<string>(financialKey);
@@ -1329,7 +1407,10 @@ export class MemoryClient {
 
       return outcomes;
     } catch (error) {
-      console.error(`[FinancialOutcome] Failed to query financial outcomes:`, error);
+      console.error(
+        `[FinancialOutcome] Failed to query financial outcomes:`,
+        error,
+      );
       return [];
     }
   }
@@ -1361,9 +1442,12 @@ export class ExecutionStateStorage {
   }
 
   async loadState(executionId: string): Promise<ExecutionState | null> {
-    const entry = await this.memory.retrieveByTypeAndId("execution_state", executionId);
+    const entry = await this.memory.retrieveByTypeAndId(
+      "execution_state",
+      executionId,
+    );
     if (!entry) return null;
-    
+
     const parsed = ExecutionStateSchema.safeParse(entry.data);
     return parsed.success ? parsed.data : null;
   }
@@ -1400,22 +1484,26 @@ export class ExecutionTraceStorage {
   }
 
   async loadTrace(executionId: string): Promise<ExecutionTrace | null> {
-    const entry = await this.memory.retrieveByTypeAndId("execution_trace", executionId);
+    const entry = await this.memory.retrieveByTypeAndId(
+      "execution_trace",
+      executionId,
+    );
     if (!entry) return null;
-    
+
     const parsed = ExecutionTraceSchema.safeParse(entry.data);
     return parsed.success ? parsed.data : null;
   }
 
   async appendTraceEntry(
     executionId: string,
-    traceEntry: ExecutionTrace["entries"][0]
+    traceEntry: ExecutionTrace["entries"][0],
   ): Promise<void> {
     const existing = await this.loadTrace(executionId);
 
     if (existing) {
       existing.entries.push(traceEntry);
-      existing.total_latency_ms = (existing.total_latency_ms || 0) + (traceEntry.latency_ms || 0);
+      existing.total_latency_ms =
+        (existing.total_latency_ms || 0) + (traceEntry.latency_ms || 0);
       await this.saveTrace(existing);
     } else {
       // Create new trace
@@ -1438,7 +1526,9 @@ export class ExecutionTraceStorage {
 
 let defaultMemoryClient: MemoryClient | null = null;
 
-export function getMemoryClient(namespace: string = MEMORY_CONFIG.default_namespace): MemoryClient {
+export function getMemoryClient(
+  namespace: string = MEMORY_CONFIG.default_namespace,
+): MemoryClient {
   if (!defaultMemoryClient) {
     const redis = getRedisClient(ServiceNamespace.SHARED);
     defaultMemoryClient = new MemoryClient(redis, namespace);

@@ -28,6 +28,7 @@ import {
 } from "@/lib/engine/webhook-dispatcher-service";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const logger = new Logger({ serviceName: "webhooks" });
 

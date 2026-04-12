@@ -85,17 +85,16 @@ export class MemoryClient extends SharedMemoryClient {
     // Check if Redis is actually available
     this.isAvailable = !!redis;
     if (!this.isAvailable) {
-      logger.warn({
-        message:
-          "[MemoryClient] Redis client not available. Degrading to stateless mode.",
-      });
+      logger.warn(
+        "[MemoryClient] Redis client not available. Degrading to stateless mode.",
+      );
     }
   }
 
   /**
    * Override store to handle Redis unavailability gracefully
    */
-  async store(entry: MemoryEntryInput): Promise<MemoryEntry> {
+  async store(entry: MemoryEntryInput): Promise<SharedMemoryEntry> {
     const timestamp = new Date().toISOString();
     const key = this.buildKey(entry.type, entry.namespace);
     const ttlSeconds =
@@ -108,20 +107,20 @@ export class MemoryClient extends SharedMemoryClient {
         ? new Date(Date.now() + effectiveTtl * 1000).toISOString()
         : undefined;
 
-    const completeEntry: MemoryEntry = MemoryEntrySchema.parse({
+    const completeEntry = MemoryEntrySchema.parse({
       ...entry,
+      data: entry.data ?? null,
       key,
       created_at: timestamp,
       expires_at: expiresAt,
       ttl_seconds: effectiveTtl > 0 ? effectiveTtl : undefined,
-    });
+    }) as SharedMemoryEntry;
 
     // RESILIENCE FIX: Gracefully handle Redis unavailability
     if (!this.isAvailable) {
-      logger.warn({
-        message:
-          "[MemoryClient] Redis unavailable, skipping store operation in stateless mode.",
-      });
+      logger.warn(
+        "[MemoryClient] Redis unavailable, skipping store operation in stateless mode.",
+      );
       return completeEntry;
     }
 
@@ -154,28 +153,29 @@ export class MemoryClient extends SharedMemoryClient {
   /**
    * Override retrieve to handle Redis unavailability gracefully
    */
-  async retrieve(key: string): Promise<MemoryEntry | null> {
+  async retrieve(key: string): Promise<SharedMemoryEntry | null> {
     if (!this.isAvailable) {
-      logger.warn({
-        message:
-          "[MemoryClient] Redis unavailable, returning null in stateless mode.",
-      });
+      logger.warn(
+        "[MemoryClient] Redis unavailable, returning null in stateless mode.",
+      );
       return null;
     }
 
     try {
-      const data = await this.redis.get<string>(key);
-      if (!data) return null;
-      const parsed = JSON.parse(data);
-      return MemoryEntrySchema.parse(parsed);
-    } catch (error) {
-      throw EngineErrorSchema.parse({
-        code: "MEMORY_OPERATION_FAILED",
-        message: `Failed to retrieve memory entry: ${error}`,
-        details: { key },
-        recoverable: false,
-        timestamp: new Date().toISOString(),
+      const cached = await this.redis.get(key);
+      if (!cached) return null;
+
+      const parsed = typeof cached === "string" ? JSON.parse(cached) : cached;
+      const entry = MemoryEntrySchema.parse({
+        ...parsed,
+        data: parsed.data ?? null,
       });
+      return entry as SharedMemoryEntry;
+    } catch (error) {
+      logger.error(`[MemoryClient] Failed to retrieve key ${key}`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
     }
   }
 
@@ -204,8 +204,7 @@ export class MemoryClient extends SharedMemoryClient {
         )
         .slice(0, limit);
     } catch (error) {
-      logger.error({
-        message: "Failed to get recent successful intents",
+      logger.error("Failed to get recent successful intents", {
         error: error instanceof Error ? error.message : String(error),
       });
       return [];
@@ -326,8 +325,7 @@ export function getMemoryClientSafe(): MemoryClient | null {
   try {
     return getMemoryClient();
   } catch (error) {
-    logger.warn({
-      message: "[MemoryClient] Redis unavailable, returning null",
+    logger.warn("[MemoryClient] Redis unavailable, returning null", {
       error: error instanceof Error ? error.message : String(error),
     });
     return null;

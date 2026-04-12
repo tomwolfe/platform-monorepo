@@ -2,6 +2,8 @@ import { Pool } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-serverless";
 import type { NeonDatabase, ExecuteResult } from "drizzle-orm/neon-serverless";
 import type { NeonHttpDatabase } from "drizzle-orm/neon-serverless";
+// Re-export database types for consumers
+export type { NeonHttpDatabase } from "drizzle-orm/neon-serverless";
 // Re-export commonly used drizzle-orm utilities
 export {
   eq,
@@ -213,7 +215,7 @@ export function resetQueryStats(): void {
 
 // Standard Next.js global caching to prevent connection bloat during HMR
 const globalForDb = globalThis as unknown as {
-  _dbInstance: unknown;
+  _dbInstance: NeonHttpDatabase | null;
 };
 
 /**
@@ -238,7 +240,7 @@ const globalForDb = globalThis as unknown as {
  * @throws Error if DATABASE_URL is not configured
  * @throws TimeoutError if query exceeds the configured timeout
  */
-export function getDb() {
+export function getDb(): NeonHttpDatabase {
   if (globalForDb._dbInstance) return globalForDb._dbInstance;
 
   const databaseUrl = process.env.DATABASE_URL;

@@ -10,9 +10,18 @@ import {
 } from "@repo/database";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { z } from "zod";
-import { Logger } from "@repo/shared";
 
-const logger = new Logger({ serviceName: "mcp-bridge" });
+// Simple logger to avoid circular dependency with @repo/shared
+const logger = {
+  info: (msg: string, meta?: Record<string, unknown>) =>
+    console.log(`[INFO] [mcp-bridge] ${msg}`, meta || ""),
+  warn: (msg: string, meta?: Record<string, unknown>) =>
+    console.warn(`[WARN] [mcp-bridge] ${msg}`, meta || ""),
+  error: (msg: string, meta?: Record<string, unknown>) =>
+    console.error(`[ERROR] [mcp-bridge] ${msg}`, meta || ""),
+  debug: (msg: string, meta?: Record<string, unknown>) =>
+    console.debug(`[DEBUG] [mcp-bridge] ${msg}`, meta || ""),
+};
 
 /**
  * Drizzle-to-MCP Bridge

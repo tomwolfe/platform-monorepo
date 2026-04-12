@@ -12,17 +12,16 @@ import { createAuditLog } from "@/lib/audit";
 import { getAblyClient } from "@repo/shared";
 import { listTools } from "@/lib/tools/registry";
 import { getEventSchemaRegistry } from "@repo/mcp-protocol";
-
-const logger = new Logger({ serviceName: "intention-engine-mesh-listener" });
 import {
   SystemEventSchema,
   ReservationEventPayloadSchema,
   HighValueGuestEventPayloadSchema,
   DeliveryEventPayloadSchema,
   type SystemEventType,
-} from "@repo/mcp-protocol/schemas/events";
+} from "@repo/mcp-protocol/src/schemas/events";
 import { z } from "zod";
 
+const logger = new Logger({ serviceName: "intention-engine-mesh-listener" });
 const redis = getRedisClient(ServiceNamespace.IE);
 
 /**
@@ -256,14 +255,21 @@ export class ProactiveIntentGenerator {
       }
 
       // Generate plan
-      const plan = await generatePlan(proactivePrompt);
+      const planningResult = await generatePlan(intent);
 
       // Build reasoning
-      const reasoning = this.buildReasoning(eventName, data, intent, plan);
+      const reasoning = this.buildReasoning(eventName, data, intent, {
+        steps: planningResult.plan.steps as Array<{ [key: string]: unknown }>,
+        summary: planningResult.plan.summary,
+        ...planningResult,
+      });
 
       const proactivePlan: ProactivePlan = {
         intent,
-        plan,
+        plan: {
+          steps: planningResult.plan.steps as Array<{ [key: string]: unknown }>,
+          summary: planningResult.plan.summary,
+        },
         confidence: intent.confidence,
         reasoning,
       };
@@ -518,13 +524,13 @@ export class MeshListener {
         return;
       }
 
-      // Create audit log
-      const auditLog = await createAuditLog(
-        proactivePlan.intent,
-        proactivePlan.plan,
-        undefined,
-        userId ? `mesh:${userId}` : "mesh:system",
-      );
+      // Skip audit log for proactive suggestions (not a real user action)
+      // const auditLog = await createAuditLog(
+      //   proactivePlan.intent,
+      //   proactivePlan.plan,
+      //   undefined,
+      //   userId ? `mesh:${userId}` : "mesh:system",
+      // );
 
       // Push to user's Ably channel
       if (userChannel) {
@@ -538,7 +544,7 @@ export class MeshListener {
             plan: proactivePlan.plan,
             confidence: proactivePlan.confidence,
             reasoning: proactivePlan.reasoning,
-            auditLogId: auditLog.id,
+            auditLogId: undefined,
             timestamp: new Date().toISOString(),
           },
           { traceId },
@@ -584,11 +590,16 @@ export class MeshListener {
 
     const { hypotheses } = await inferIntent(proactiveText, []);
     const intent = hypotheses.primary;
-    const plan = await generatePlan(proactiveText);
+    const planningResult = await generatePlan(intent);
 
-    await createAuditLog(intent, plan, undefined, `mesh:${guest.email}`);
+    await createAuditLog(
+      intent,
+      planningResult.plan,
+      undefined,
+      `mesh:${guest.email}`,
+    );
 
-    return { intent, plan };
+    return { intent, plan: planningResult.plan };
   }
 
   /**

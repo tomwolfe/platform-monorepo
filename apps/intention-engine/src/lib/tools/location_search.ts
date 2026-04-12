@@ -8,7 +8,6 @@ import {
   CircuitBreakerOpenError,
 } from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.IE);
-import { env } from "../config";
 import { RestaurantResultSchema } from "../schema";
 import {
   GeocodeSchema,
@@ -95,9 +94,7 @@ export async function geocode_location_photon(
     "current location",
   ];
   if (vagueTerms.includes(location.toLowerCase()) && userLocation) {
-    logger.info({
-      message: "Vague location detected, using userLocation bias",
-    });
+    logger.info("Vague location detected, using userLocation bias");
     return {
       success: true,
       result: {
@@ -107,7 +104,7 @@ export async function geocode_location_photon(
     };
   }
 
-  logger.info({ message: "Geocoding location via Photon", location });
+  logger.info("Geocoding location via Photon", { location });
 
   try {
     // Photon API with location bias
@@ -159,19 +156,14 @@ export async function geocode_location_photon(
       }
 
       // Fallback to Nominatim if Photon returns no results
-      logger.info({
-        message: "Photon returned no results, falling back to Nominatim",
-      });
+      logger.info("Photon returned no results, falling back to Nominatim");
       return await geocode_location_nominatim(params);
     });
   } catch (error: unknown) {
     if (error instanceof CircuitBreakerOpenError) {
-      logger.warn({
-        message: "Photon circuit breaker open, falling back to Nominatim",
-      });
+      logger.warn("Photon circuit breaker open, falling back to Nominatim");
     } else {
-      logger.warn({
-        message: "Photon geocoding failed, falling back to Nominatim",
+      logger.warn("Photon geocoding failed, falling back to Nominatim", {
         error: (error as Error).message,
       });
     }
@@ -205,9 +197,7 @@ export async function geocode_location_nominatim(
     "current location",
   ];
   if (vagueTerms.includes(location.toLowerCase()) && userLocation) {
-    logger.info({
-      message: "Vague location detected, using userLocation bias",
-    });
+    logger.info("Vague location detected, using userLocation bias");
     return {
       success: true,
       result: {
@@ -217,7 +207,7 @@ export async function geocode_location_nominatim(
     };
   }
 
-  logger.info({ message: "Geocoding location via Nominatim", location });
+  logger.info("Geocoding location via Nominatim", { location });
   try {
     let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`;
 
@@ -259,7 +249,10 @@ export async function geocode_location_nominatim(
       return { success: false, error: "Location not found" };
     });
   } catch (error: unknown) {
-    return { success: false, error: error.message };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -312,22 +305,18 @@ export async function search_restaurant(
     try {
       const cached = await redis.get(cacheKey);
       if (cached) {
-        logger.info({
-          message: "Using cached restaurant search results",
-          cacheKey,
-        });
+        logger.info("Using cached restaurant search results", { cacheKey });
         return {
           success: true,
           result: cached,
         };
       }
     } catch (err) {
-      logger.warn({ message: "Redis cache read failed", error: String(err) });
+      logger.warn("Redis cache read failed", { error: String(err) });
     }
   }
 
-  logger.info({
-    message: "Searching for restaurants",
+  logger.info("Searching for restaurants", {
     cuisine: cuisine || "any",
     lat,
     lon,
@@ -369,10 +358,9 @@ export async function search_restaurant(
 
         // Handle circuit breaker open
         if (fetchError instanceof CircuitBreakerOpenError) {
-          logger.warn({
-            message:
-              "Overpass API circuit breaker open, returning graceful fallback",
-          });
+          logger.warn(
+            "Overpass API circuit breaker open, returning graceful fallback",
+          );
           return {
             success: true,
             result: [],
@@ -386,10 +374,9 @@ export async function search_restaurant(
           (fetchError instanceof Error && fetchError.name === "AbortError") ||
           (fetchError instanceof Error && fetchError.message?.includes("fetch"))
         ) {
-          logger.warn({
-            message:
-              "Overpass API timeout or network error, returning graceful fallback",
-          });
+          logger.warn(
+            "Overpass API timeout or network error, returning graceful fallback",
+          );
           return {
             success: true,
             result: [],
@@ -409,11 +396,10 @@ export async function search_restaurant(
 
         // Handle rate limiting (429) or service unavailable (503)
         if (statusCode === 429) {
-          logger.warn({
-            message:
-              "Overpass API rate limited (429), returning graceful fallback",
-            statusCode,
-          });
+          logger.warn(
+            "Overpass API rate limited (429), returning graceful fallback",
+            { statusCode },
+          );
           return {
             success: true,
             result: [],
@@ -423,8 +409,7 @@ export async function search_restaurant(
         }
 
         if (statusCode === 503 || statusCode >= 500) {
-          logger.warn({
-            message: "Overpass API unavailable, returning graceful fallback",
+          logger.warn("Overpass API unavailable, returning graceful fallback", {
             statusCode,
           });
           return {
@@ -487,10 +472,7 @@ export async function search_restaurant(
         try {
           await redis.setex(cacheKey, 3600, results);
         } catch (err) {
-          logger.warn({
-            message: "Redis cache write failed",
-            error: String(err),
-          });
+          logger.warn("Redis cache write failed", { error: String(err) });
         }
       }
 
@@ -500,8 +482,7 @@ export async function search_restaurant(
       };
     });
   } catch (error: unknown) {
-    logger.error({
-      message: "Error in search_restaurant",
+    logger.error("Error in search_restaurant", {
       error: error instanceof Error ? error.message : String(error),
     });
     // Graceful fallback for any unhandled errors
@@ -518,7 +499,7 @@ export async function search_web(
   query: string,
   context?: ToolExecutionContext,
 ): Promise<{ success: boolean; result?: any; error?: string }> {
-  logger.info({ message: "Searching web", query });
+  logger.info("Searching web", { query });
 
   try {
     return await withNervousSystemTracing(async ({ correlationId }) => {
@@ -576,8 +557,7 @@ export async function search_web(
             };
           }
         } catch (error: unknown) {
-          logger.warn({
-            message: "Tavily API failed, falling back to mock",
+          logger.warn("Tavily API failed, falling back to mock", {
             error: (error as Error).message,
           });
         }
@@ -586,10 +566,9 @@ export async function search_web(
       // FALLBACK: Production guardrail - NEVER generate fake contact information in production
       // SECURITY: In production, return failure so the Intention Engine can gracefully replan
       if (AppConfig.isProduction()) {
-        logger.error({
-          message:
-            "Tavily API unavailable in production - returning failure (no fake contact data generation)",
-        });
+        logger.error(
+          "Tavily API unavailable in production - returning failure (no fake contact data generation)",
+        );
         return {
           success: false,
           error: "Search service unavailable. Please try again later.",
@@ -597,10 +576,9 @@ export async function search_web(
       }
 
       // Development/test mode only: deterministic mock for offline/rate-limited scenarios
-      logger.info({
-        message:
-          "Using deterministic mock (dev/test mode - no API key or API unavailable)",
-      });
+      logger.info(
+        "Using deterministic mock (dev/test mode - no API key or API unavailable)",
+      );
 
       // Extract potential restaurant/business name from query
       const queryLower = query.toLowerCase();
@@ -632,7 +610,7 @@ export async function search_web(
     });
   } catch (error: unknown) {
     // Graceful fallback on any error
-    logger.error({ message: "Search failed", error: (error as Error).message });
+    logger.error("Search failed", { error: (error as Error).message });
 
     return {
       success: true,

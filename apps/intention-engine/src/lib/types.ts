@@ -1,4 +1,4 @@
-import { Plan, Intent } from "./schema";
+import { Plan, Intent } from "./engine/types";
 
 export interface AuditLog {
   id: string;

@@ -137,9 +137,9 @@ export class RegistryManager {
       // Get MCP URL from service config
       const mcpUrl = (serviceConfig as any).MCP_URL;
       if (!mcpUrl) {
-        logger.debug({
-          message: `[RegistryManager] Service ${serviceName} has no MCP_URL, skipping`,
-        });
+        logger.debug(
+          `[RegistryManager] Service ${serviceName} has no MCP_URL, skipping`,
+        );
         continue;
       }
 
@@ -191,14 +191,14 @@ export class RegistryManager {
           });
         }
 
-        logger.info({
-          message: `[RegistryManager] Discovered ${remoteTools.length} tools from service: ${serviceName}`,
-        });
+        logger.info(
+          `[RegistryManager] Discovered ${remoteTools.length} tools from service: ${serviceName}`,
+        );
       } catch (error) {
-        logger.error({
-          message: `[RegistryManager] Failed to discover tools from service ${serviceName}`,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.error(
+          `[RegistryManager] Failed to discover tools from service ${serviceName}`,
+          { error: error instanceof Error ? error.message : String(error) },
+        );
       }
     }
   }
@@ -253,14 +253,14 @@ export class RegistryManager {
           });
         }
 
-        logger.info({
-          message: `[RegistryManager] Discovered ${remoteTools.length} tools from MCP client: ${name}`,
-        });
+        logger.info(
+          `[RegistryManager] Discovered ${remoteTools.length} tools from MCP client: ${name}`,
+        );
       } catch (error) {
-        logger.error({
-          message: `[RegistryManager] Failed to discover tools from MCP client ${name}`,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.error(
+          `[RegistryManager] Failed to discover tools from MCP client ${name}`,
+          { error: error instanceof Error ? error.message : String(error) },
+        );
       }
     }
   }

@@ -110,10 +110,7 @@ export class TraceContextManager {
     }
     return {
       traceId: store.traceId,
-      spanId: store.spanId,
-      parentSpanId: store.parentSpanId,
       correlationId: store.correlationId,
-      baggage: store.baggage,
     };
   }
 
@@ -286,7 +283,8 @@ export function createTracedToolExecutor(
             traceId: context.traceId,
           };
         } catch (error: unknown) {
-          span.recordException(error);
+          const err = error instanceof Error ? error : new Error(String(error));
+          span.recordException(err);
           throw error;
         }
       });
@@ -326,9 +324,9 @@ export async function publishTracedEvent(
     correlationId: traceContext.correlationId,
   });
 
-  logger.info({
-    message: `[TracePropagation] Published ${eventName} to ${channelName} [trace: ${traceContext.traceId}]`,
-  });
+  logger.info(
+    `[TracePropagation] Published ${eventName} to ${channelName} [trace: ${traceContext.traceId}]`,
+  );
 }
 
 /**

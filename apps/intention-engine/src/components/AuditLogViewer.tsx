@@ -1,7 +1,13 @@
-import React from 'react';
-import { CheckCircle2, XCircle, Clock, ChevronRight, Activity, AlertTriangle } from 'lucide-react';
-import { AuditLog } from '@/lib/types';
-
+import React from "react";
+import {
+  CheckCircle2,
+  XCircle,
+  Clock,
+  ChevronRight,
+  Activity,
+  AlertTriangle,
+} from "lucide-react";
+import { AuditLog } from "@/lib/types";
 
 interface AuditLogViewerProps {
   logs: AuditLog[];
@@ -24,28 +30,48 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({ logs }) => {
       </h2>
       <div className="space-y-4">
         {logs.map((log) => {
-          const successfulSteps = log.steps.filter(s => s.status === 'executed').length;
+          const successfulSteps = log.steps.filter(
+            (s) => s.status === "executed",
+          ).length;
           const replans = log.replanned_count || 0;
           // Efficiency Score: ratio of successful steps to total re-plans
           // We'll use (success) / (success + replans) as a normalized score
-          const efficiencyScore = (successfulSteps + replans) > 0 
-            ? (successfulSteps / (successfulSteps + replans)).toFixed(2) 
-            : "1.00";
+          const efficiencyScore =
+            successfulSteps + replans > 0
+              ? (successfulSteps / (successfulSteps + replans)).toFixed(2)
+              : "1.00";
 
           return (
-            <div key={log.id} className="border rounded-lg bg-white overflow-hidden shadow-sm">
+            <div
+              key={log.id}
+              className="border rounded-lg bg-white overflow-hidden shadow-sm"
+            >
               <div className="bg-slate-50 p-4 border-b flex justify-between items-center">
                 <div>
-                  <span className="text-xs font-mono text-slate-400 block uppercase tracking-wider">Session ID: {log.id}</span>
-                  <h3 className="font-bold text-slate-800">"{typeof log.intent === 'string' ? log.intent : log.intent.rawText}"</h3>
-                  {typeof log.intent !== 'string' && (
+                  <span className="text-xs font-mono text-slate-400 block uppercase tracking-wider">
+                    Session ID: {log.id}
+                  </span>
+                  <h3 className="font-bold text-slate-800">
+                    "
+                    {typeof log.intent === "string"
+                      ? log.intent
+                      : log.intent.rawText}
+                    "
+                  </h3>
+                  {typeof log.intent !== "string" && (
                     <span className="text-[10px] font-bold text-blue-600 uppercase tracking-tighter">
-                      Intent: {log.intent.type} ({Math.round(log.intent.confidence * 100)}%)
+                      Intent: {log.intent.type} (
+                      {Math.round(log.intent.confidence * 100)}%)
                     </span>
                   )}
                 </div>
                 <div className="text-right flex flex-col items-end gap-1">
-                  <span className="text-xs text-slate-500 block" suppressHydrationWarning>{new Date(log.timestamp).toLocaleString()}</span>
+                  <span
+                    className="text-xs text-slate-500 block"
+                    suppressHydrationWarning
+                  >
+                    {new Date(log.timestamp).toLocaleString()}
+                  </span>
                   <div className="flex gap-2 items-center">
                     {log.efficiency_flag === "LOW" && (
                       <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-red-500 text-white animate-pulse">
@@ -57,10 +83,14 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({ logs }) => {
                       Efficiency: {efficiencyScore}
                     </span>
                     {log.final_outcome && (
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
-                        log.final_outcome.toLowerCase().includes('success') ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-                      }`}>
-                        {log.final_outcome.split(':')[0]}
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                          log.final_outcome.toLowerCase().includes("success")
+                            ? "bg-green-100 text-green-700"
+                            : "bg-amber-100 text-amber-700"
+                        }`}
+                      >
+                        {log.final_outcome.split(":")[0]}
                       </span>
                     )}
                   </div>
@@ -73,7 +103,10 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({ logs }) => {
                     <p className="text-xs font-bold text-blue-700 uppercase mb-1 flex justify-between">
                       <span>Generated Plan</span>
                       {log.toolExecutionLatencies?.totalToolExecutionTime && (
-                        <span>Total Tool Latency: {log.toolExecutionLatencies.totalToolExecutionTime}ms</span>
+                        <span>
+                          Total Tool Latency:{" "}
+                          {log.toolExecutionLatencies.totalToolExecutionTime}ms
+                        </span>
                       )}
                     </p>
                     <p className="text-sm text-blue-900">{log.plan.summary}</p>
@@ -82,7 +115,9 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({ logs }) => {
 
                 {log.intent_history && log.intent_history.length > 0 && (
                   <div className="bg-slate-50 p-3 rounded border border-slate-100">
-                    <p className="text-xs font-bold text-slate-500 uppercase mb-1">Intent History</p>
+                    <p className="text-xs font-bold text-slate-500 uppercase mb-1">
+                      Intent History
+                    </p>
                     <div className="space-y-1">
                       {log.intent_history.map((prev, idx) => (
                         <p key={idx} className="text-[10px] text-slate-400">
@@ -94,60 +129,101 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({ logs }) => {
                 )}
 
                 <div className="space-y-2">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-tight">Execution Steps</p>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-tight">
+                    Execution Steps
+                  </p>
                   {log.steps.length === 0 ? (
-                    <p className="text-xs text-slate-500 italic">No steps executed yet.</p>
+                    <p className="text-xs text-slate-500 italic">
+                      No steps executed yet.
+                    </p>
                   ) : (
                     <div className="space-y-3">
-                      {log.steps.sort((a, b) => a.step_index - b.step_index).map((step, idx) => (
-                        <div key={idx} className="flex gap-3">
-                          <div className="flex flex-col items-center">
-                            <div className={`w-6 h-6 rounded-full flex items-center justify-center border ${
-                              step.status === 'executed' ? 'bg-green-100 border-green-200 text-green-600' :
-                              step.status === 'failed' ? 'bg-red-100 border-red-200 text-red-600' :
-                              'bg-slate-100 border-slate-200 text-slate-400'
-                            }`}>
-                              {step.status === 'executed' ? <CheckCircle2 size={14} /> :
-                               step.status === 'failed' ? <XCircle size={14} /> :
-                               <Clock size={14} />}
-                            </div>
-                            {idx < log.steps.length - 1 && <div className="w-px h-full bg-slate-100 my-1" />}
-                          </div>
-                          <div className="flex-1 pb-2">
-                            <div className="flex justify-between items-start">
-                              <span className="text-sm font-bold text-slate-700">
-                                {step.tool_name.replace(/_/g, ' ')}
-                                {step.latency && <span className="ml-2 text-[10px] font-normal text-slate-400">({step.latency}ms)</span>}
-                              </span>
-                              <span className="text-[10px] text-slate-400" suppressHydrationWarning>{new Date(step.timestamp).toLocaleTimeString()}</span>
-                            </div>
-                            <div className="mt-1 space-y-1">
-                              <div className="text-[11px] bg-slate-50 p-1.5 rounded border font-mono overflow-x-auto max-w-full">
-                                <span className="text-slate-400">Input:</span> {JSON.stringify(step.input)}
+                      {log.steps
+                        .sort((a, b) => a.step_index - b.step_index)
+                        .map((step, idx) => (
+                          <div key={idx} className="flex gap-3">
+                            <div className="flex flex-col items-center">
+                              <div
+                                className={`w-6 h-6 rounded-full flex items-center justify-center border ${
+                                  step.status === "executed"
+                                    ? "bg-green-100 border-green-200 text-green-600"
+                                    : step.status === "failed"
+                                      ? "bg-red-100 border-red-200 text-red-600"
+                                      : "bg-slate-100 border-slate-200 text-slate-400"
+                                }`}
+                              >
+                                {step.status === "executed" ? (
+                                  <CheckCircle2 size={14} />
+                                ) : step.status === "failed" ? (
+                                  <XCircle size={14} />
+                                ) : (
+                                  <Clock size={14} />
+                                )}
                               </div>
-                              {step.output && (
-                                <div className="text-[11px] bg-green-50/30 p-1.5 rounded border border-green-100 font-mono overflow-x-auto max-w-full">
-                                  <span className="text-green-600 font-bold">Result:</span> {JSON.stringify(step.output).substring(0, 200)}
-                                  {JSON.stringify(step.output).length > 200 ? '...' : ''}
-                                </div>
-                              )}
-                              {step.error && (
-                                <div className="text-[11px] bg-red-50 p-1.5 rounded border border-red-100 text-red-600 font-mono">
-                                  <span className="font-bold">Error:</span> {step.error}
-                                </div>
+                              {idx < log.steps.length - 1 && (
+                                <div className="w-px h-full bg-slate-100 my-1" />
                               )}
                             </div>
+                            <div className="flex-1 pb-2">
+                              <div className="flex justify-between items-start">
+                                <span className="text-sm font-bold text-slate-700">
+                                  {step.tool_name.replace(/_/g, " ")}
+                                  {step.latency && (
+                                    <span className="ml-2 text-[10px] font-normal text-slate-400">
+                                      ({step.latency}ms)
+                                    </span>
+                                  )}
+                                </span>
+                                <span
+                                  className="text-[10px] text-slate-400"
+                                  suppressHydrationWarning
+                                >
+                                  {new Date(
+                                    step.timestamp,
+                                  ).toLocaleTimeString()}
+                                </span>
+                              </div>
+                              <div className="mt-1 space-y-1">
+                                <div className="text-[11px] bg-slate-50 p-1.5 rounded border font-mono overflow-x-auto max-w-full">
+                                  <span className="text-slate-400">Input:</span>{" "}
+                                  {JSON.stringify(step.input)}
+                                </div>
+                                {Boolean(step.output) && (
+                                  <div className="text-[11px] bg-green-50/30 p-1.5 rounded border border-green-100 font-mono overflow-x-auto max-w-full">
+                                    <span className="text-green-600 font-bold">
+                                      Result:
+                                    </span>{" "}
+                                    {JSON.stringify(step.output).substring(
+                                      0,
+                                      200,
+                                    )}
+                                    {JSON.stringify(step.output).length > 200
+                                      ? "..."
+                                      : ""}
+                                  </div>
+                                )}
+                                {step.error && (
+                                  <div className="text-[11px] bg-red-50 p-1.5 rounded border border-red-100 text-red-600 font-mono">
+                                    <span className="font-bold">Error:</span>{" "}
+                                    {step.error}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        ))}
                     </div>
                   )}
                 </div>
 
                 {log.final_outcome && (
                   <div className="mt-4 pt-4 border-t">
-                    <p className="text-xs font-bold text-slate-400 uppercase mb-1">Final Outcome</p>
-                    <p className="text-sm text-slate-600 italic">"{log.final_outcome}"</p>
+                    <p className="text-xs font-bold text-slate-400 uppercase mb-1">
+                      Final Outcome
+                    </p>
+                    <p className="text-sm text-slate-600 italic">
+                      "{log.final_outcome}"
+                    </p>
                   </div>
                 )}
               </div>

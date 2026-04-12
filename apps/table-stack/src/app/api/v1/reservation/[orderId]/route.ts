@@ -15,7 +15,7 @@ import {
   formatApiSuccess,
   NotFoundError,
 } from "@repo/shared";
-import { db } from "@repo/database";
+import { getDb } from "@repo/database";
 import { eq } from "drizzle-orm";
 import { restaurantReservations } from "@repo/database/schema";
 
@@ -24,6 +24,7 @@ async function getHandler(
   { params }: { params: Promise<{ orderId: string }> },
 ) {
   const { orderId } = await params;
+  const db = getDb();
   const logger = getLogger({
     serviceName: "table-stack",
     operation: "get-reservation-status",

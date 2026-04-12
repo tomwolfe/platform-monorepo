@@ -569,7 +569,7 @@ export const MemoryEntrySchema = z.object({
   key: z.string(),
   type: MemoryEntryTypeSchema,
   namespace: z.string(),
-  data: z.unknown(),
+  data: z.unknown().optional(),
   created_at: z.string().datetime(),
   expires_at: z.string().datetime().optional(),
   ttl_seconds: z.number().int().nonnegative().optional(),

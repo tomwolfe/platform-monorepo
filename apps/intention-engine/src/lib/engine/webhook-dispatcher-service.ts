@@ -122,9 +122,8 @@ export class WebhookDispatcherService {
       const body = JSON.parse(rawBody);
       const validatedBody = this.validateEventBody(body);
 
-      if (!validatedBody.valid) {
-        logger.warn({
-          message: "[WebhookDispatcher] Schema mismatch",
+      if (!validatedBody.valid || !validatedBody.data) {
+        logger.warn("[WebhookDispatcher] Schema mismatch", {
           error: validatedBody.error,
         });
         return {
@@ -148,8 +147,7 @@ export class WebhookDispatcherService {
           return this.handleTableVacated(validatedBody.data);
 
         default:
-          logger.info({
-            message: "[WebhookDispatcher] Unknown event type",
+          logger.info("[WebhookDispatcher] Unknown event type", {
             details: { event },
           });
           return {
@@ -158,8 +156,7 @@ export class WebhookDispatcherService {
           };
       }
     } catch (error) {
-      logger.error({
-        message: "[WebhookDispatcher] Error processing webhook",
+      logger.error("[WebhookDispatcher] Error processing webhook", {
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
@@ -232,9 +229,9 @@ export class WebhookDispatcherService {
         },
       );
 
-      logger.info({
-        message: `[Failover Orchestrator] Alternative pushed to Ably for ${failoverPayload.guestEmail}`,
-      });
+      logger.info(
+        `[Failover Orchestrator] Alternative pushed to Ably for ${failoverPayload.guestEmail}`,
+      );
     }
 
     return {
@@ -272,17 +269,21 @@ export class WebhookDispatcherService {
       proactiveText += ` Prepare a welcome message or special offer for their arrival.`;
     }
 
-    logger.info({
-      message: "[WebhookDispatcher] Proactive Trigger",
+    logger.info("[WebhookDispatcher] Proactive Trigger", {
       details: { proactiveText },
     });
 
     // Infer intent and generate plan
     const { hypotheses } = await inferIntent(proactiveText, []);
     const intent = hypotheses.primary;
-    const plan = await generatePlan(proactiveText);
+    const planningResult = await generatePlan(intent);
 
-    await createAuditLog(intent, plan, undefined, `webhook:${guest.email}`);
+    await createAuditLog(
+      intent,
+      planningResult.plan,
+      undefined,
+      `webhook:${guest.email}`,
+    );
 
     return {
       success: true,
@@ -312,19 +313,18 @@ export class WebhookDispatcherService {
     } = data;
 
     if (!tableId || !restaurantId) {
-      logger.warn({
-        message:
-          "[TableVacated] Missing required fields (tableId or restaurantId)",
-      });
+      logger.warn(
+        "[TableVacated] Missing required fields (tableId or restaurantId)",
+      );
       return {
         success: true,
         message: "Event received but missing required fields",
       };
     }
 
-    logger.info({
-      message: `[TableVacated] Table ${tableId} at ${restaurantName || restaurantId} is now available`,
-    });
+    logger.info(
+      `[TableVacated] Table ${tableId} at ${restaurantName || restaurantId} is now available`,
+    );
 
     // Create TableVacated event payload
     const tableVacatedEvent: TableVacatedEvent = {
@@ -358,15 +358,17 @@ export class WebhookDispatcherService {
     });
 
     if (result.success) {
-      logger.info({
-        message: `[TableVacated] Proactive re-engagement complete: ${result.usersNotified} users notified`,
-        details: {
-          usersNotified: result.usersNotified,
-          llmGenerated: !!result.llmGeneratedContent,
-          proactiveIntent: result.llmGeneratedContent?.proactiveIntent,
-          suggestedAction: result.llmGeneratedContent?.suggestedAction,
+      logger.info(
+        `[TableVacated] Proactive re-engagement complete: ${result.usersNotified} users notified`,
+        {
+          details: {
+            usersNotified: result.usersNotified,
+            llmGenerated: !!result.llmGeneratedContent,
+            proactiveIntent: result.llmGeneratedContent?.proactiveIntent,
+            suggestedAction: result.llmGeneratedContent?.suggestedAction,
+          },
         },
-      });
+      );
 
       return {
         success: true,
@@ -379,8 +381,7 @@ export class WebhookDispatcherService {
         },
       };
     } else {
-      logger.warn({
-        message: "[TableVacated] Re-engagement failed",
+      logger.warn("[TableVacated] Re-engagement failed", {
         error: result.error,
       });
       return {
@@ -465,8 +466,7 @@ export class WebhookDispatcherService {
     try {
       await RealtimeService.publish(channelName, eventName, data, {});
     } catch (err) {
-      logger.error({
-        message: "[WebhookDispatcher] Ably publish failed",
+      logger.error("[WebhookDispatcher] Ably publish failed", {
         error: err instanceof Error ? err.message : String(err),
       });
     }

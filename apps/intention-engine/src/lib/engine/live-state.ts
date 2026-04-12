@@ -151,9 +151,9 @@ export async function fetchLiveOperationalState(
       return { rawText: "No specific restaurants mentioned in conversation" };
     }
 
-    logger.info({
-      message: `[LiveOperationalState] Fetching state for restaurants: ${Array.from(restaurantMentions).join(", ")}`,
-    });
+    logger.info(
+      `[LiveOperationalState] Fetching state for restaurants: ${Array.from(restaurantMentions).join(", ")}`,
+    );
 
     // Fetch state from Redis cache (populated by TableStack events)
     const restaurantStates: RestaurantState[] = [];
@@ -192,7 +192,7 @@ export async function fetchLiveOperationalState(
         // Fallback: Try to fetch from database directly
         try {
           const {
-            db,
+            getDb,
             eq,
             restaurants: restaurantsTable,
             restaurantTables,
@@ -239,10 +239,13 @@ export async function fetchLiveOperationalState(
             }
           }
         } catch (dbError) {
-          logger.warn({
-            message: `[LiveOperationalState] Failed to fetch restaurant ${restaurantRef}`,
-            error: dbError instanceof Error ? dbError.message : String(dbError),
-          });
+          logger.warn(
+            `[LiveOperationalState] Failed to fetch restaurant ${restaurantRef}`,
+            {
+              error:
+                dbError instanceof Error ? dbError.message : String(dbError),
+            },
+          );
         }
       }
 
@@ -330,24 +333,29 @@ export async function fetchLiveOperationalState(
           ) {
             const offsets = (result.recommended_action.parameters
               ?.time_offset_minutes as number[]) || [-30, 30];
-            const [hours, mins] = intentContext.requestedTime
+            const timeParts = intentContext.requestedTime
               .split(":")
               .map(Number);
-            const baseTotalMins = hours * 60 + mins;
+            const hours = timeParts[0];
+            const mins = timeParts[1];
 
-            offsets.slice(0, 2).forEach((offset, idx) => {
-              const newTotal = baseTotalMins + offset;
-              if (newTotal >= 0 && newTotal < 24 * 60) {
-                const newHours = Math.floor(newTotal / 60);
-                const newMins = newTotal % 60;
-                failoverSuggestions.push({
-                  type: "alternative_time",
-                  value: `${newHours.toString().padStart(2, "0")}:${newMins.toString().padStart(2, "0")}`,
-                  confidence: 0.9 - idx * 0.1,
-                  message: `How about ${newHours.toString().padStart(2, "0")}:${newMins.toString().padStart(2, "0")} instead?`,
-                });
-              }
-            });
+            if (hours !== undefined && mins !== undefined) {
+              const baseTotalMins = hours * 60 + mins;
+
+              offsets.slice(0, 2).forEach((offset, idx) => {
+                const newTotal = baseTotalMins + offset;
+                if (newTotal >= 0 && newTotal < 24 * 60) {
+                  const newHours = Math.floor(newTotal / 60);
+                  const newMins = newTotal % 60;
+                  failoverSuggestions.push({
+                    type: "alternative_time",
+                    value: `${newHours.toString().padStart(2, "0")}:${newMins.toString().padStart(2, "0")}`,
+                    confidence: 0.9 - idx * 0.1,
+                    message: `How about ${newHours.toString().padStart(2, "0")}:${newMins.toString().padStart(2, "0")} instead?`,
+                  });
+                }
+              });
+            }
           }
 
           if (result.recommended_action.type === "TRIGGER_DELIVERY") {
@@ -379,8 +387,7 @@ export async function fetchLiveOperationalState(
           }
         }
       } catch (policyError) {
-        logger.warn({
-          message: "[FailoverPolicy] Failed to evaluate policies",
+        logger.warn("[FailoverPolicy] Failed to evaluate policies", {
           error:
             policyError instanceof Error
               ? policyError.message
@@ -395,7 +402,8 @@ export async function fetchLiveOperationalState(
 
     try {
       // Fetch pending orders count and active drivers from database
-      const { db, sql, orders, drivers } = await import("@repo/database");
+      const { getDb, sql, orders, drivers } = await import("@repo/database");
+      const db = getDb();
 
       const [pendingCountResult, activeDriversResult] = await Promise.all([
         db.execute(
@@ -458,8 +466,7 @@ export async function fetchLiveOperationalState(
         });
       }
     } catch (error) {
-      logger.warn({
-        message: "[DeliveryLoadState] Failed to fetch delivery load state",
+      logger.warn("[DeliveryLoadState] Failed to fetch delivery load state", {
         error: error instanceof Error ? error.message : String(error),
       });
       // Continue without delivery load state
@@ -474,8 +481,7 @@ export async function fetchLiveOperationalState(
         failoverSuggestions.length > 0 ? failoverSuggestions : undefined,
     };
   } catch (error) {
-    logger.error({
-      message: "[LiveOperationalState] Failed to fetch operational state",
+    logger.error("[LiveOperationalState] Failed to fetch operational state", {
       error: error instanceof Error ? error.message : String(error),
     });
     return { rawText: "Unable to fetch live restaurant states" };

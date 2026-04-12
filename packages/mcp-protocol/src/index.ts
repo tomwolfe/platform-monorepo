@@ -13,6 +13,8 @@ export * from "./schemas/delivery_fulfillment";
 
 // Phase 2: Event Backbone
 export * from "./schemas/events";
+// Explicit type export for webpack compatibility (export * doesn't always pick up type-only exports)
+export type { EventPayloadByType } from "./schemas/events";
 
 // Phase 3: Saga Patterns
 export * from "./schemas/compensations";

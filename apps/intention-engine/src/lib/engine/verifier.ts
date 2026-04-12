@@ -7,7 +7,7 @@ export interface SafetyPolicy {
   // Forbidden tool sequences. Use '*' for any tool.
   // Example: [['search', 'delete']] means a search followed by a delete is forbidden.
   forbiddenSequences: string[][];
-  
+
   // Parameter limits for specific tools
   parameterLimits: Array<{
     tool: string;
@@ -33,10 +33,15 @@ export interface VerificationResult {
  * Deterministic Verification Gate.
  * Validates a plan against a SafetyPolicy without using LLMs.
  */
-export function verifyPlan(plan: Plan, policy: SafetyPolicy): VerificationResult {
+export function verifyPlan(
+  plan: Plan,
+  policy: SafetyPolicy,
+): VerificationResult {
   // 1. Validate parameter limits
   for (const step of plan.steps) {
-    const limits = policy.parameterLimits.filter(l => l.tool === step.tool_name);
+    const limits = policy.parameterLimits.filter(
+      (l) => l.tool === step.tool_name,
+    );
     for (const limit of limits) {
       const value = step.parameters[limit.parameter];
       if (typeof value === "number") {
@@ -62,14 +67,17 @@ export function verifyPlan(plan: Plan, policy: SafetyPolicy): VerificationResult
   // We need to check all paths in the DAG for forbidden sequences.
   // A sequence [A, B] is violated if there is a dependency A -> B.
   // More generally, [A, B] could mean A is executed before B in any path.
-  
-  // For simplicity and based on the requirement of "forbidden tool sequences", 
+
+  // For simplicity and based on the requirement of "forbidden tool sequences",
   // let's check direct dependencies first.
   for (const forbidden of policy.forbiddenSequences) {
     if (forbidden.length < 2) continue;
 
+    const lastTool = forbidden[forbidden.length - 1];
+    if (!lastTool) continue;
+
     for (const step of plan.steps) {
-      if (matchTool(step.tool_name, forbidden[forbidden.length - 1])) {
+      if (matchTool(step.tool_name, lastTool)) {
         // Look back through dependencies
         if (checkSequence(plan, step, forbidden.slice(0, -1))) {
           return {
@@ -102,20 +110,25 @@ export function verifyPlan(plan: Plan, policy: SafetyPolicy): VerificationResult
 /**
  * Recursively check if a sequence exists ending at the given step
  */
-function checkSequence(plan: Plan, step: PlanStep, sequence: string[]): boolean {
+function checkSequence(
+  plan: Plan,
+  step: PlanStep,
+  sequence: string[],
+): boolean {
   if (sequence.length === 0) return true;
-  
+
   const targetTool = sequence[sequence.length - 1];
-  
+  if (!targetTool) return false;
+
   for (const depId of step.dependencies) {
-    const depStep = plan.steps.find(s => s.id === depId);
+    const depStep = plan.steps.find((s) => s.id === depId);
     if (depStep) {
       if (matchTool(depStep.tool_name, targetTool)) {
         if (checkSequence(plan, depStep, sequence.slice(0, -1))) {
           return true;
         }
       } else {
-        // Continue searching up the tree? 
+        // Continue searching up the tree?
         // If the sequence is [A, B] and we have A -> X -> B, does it count?
         // Usually "sequence" implies direct or indirect dependency.
         // Let's assume indirect for safety.
@@ -125,7 +138,7 @@ function checkSequence(plan: Plan, step: PlanStep, sequence: string[]): boolean 
       }
     }
   }
-  
+
   return false;
 }
 
@@ -140,7 +153,7 @@ function matchTool(actual: string, pattern: string): boolean {
 export const DEFAULT_SAFETY_POLICY: SafetyPolicy = {
   forbiddenSequences: [
     ["search", "delete_account"], // Never allow automated deletion after search without filter
-    ["*", "export_data"],         // Example: audit all data exports
+    ["*", "export_data"], // Example: audit all data exports
   ],
   parameterLimits: [
     {
@@ -152,6 +165,6 @@ export const DEFAULT_SAFETY_POLICY: SafetyPolicy = {
       tool: "schedule_meeting",
       parameter: "duration_minutes",
       max: 240, // 4 hours max
-    }
+    },
   ],
 };

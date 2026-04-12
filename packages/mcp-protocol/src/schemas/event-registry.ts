@@ -29,9 +29,19 @@
  * @package @repo/mcp-protocol
  */
 
-import { Logger } from "@repo/shared";
-
 import { z } from "zod";
+
+// Simple logger to avoid circular dependency with @repo/shared
+const logger = {
+  info: (msg: string, meta?: Record<string, unknown>) =>
+    console.log(`[INFO] [event-schema-registry] ${msg}`, meta || ""),
+  warn: (msg: string, meta?: Record<string, unknown>) =>
+    console.warn(`[WARN] [event-schema-registry] ${msg}`, meta || ""),
+  error: (msg: string, meta?: Record<string, unknown>) =>
+    console.error(`[ERROR] [event-schema-registry] ${msg}`, meta || ""),
+  debug: (msg: string, meta?: Record<string, unknown>) =>
+    console.debug(`[DEBUG] [event-schema-registry] ${msg}`, meta || ""),
+};
 
 // ============================================================================
 // BASE EVENT SCHEMA
@@ -589,8 +599,7 @@ export class EventSchemaRegistry {
     };
 
     this.validators.set(key, validator);
-    const logger = new Logger({ serviceName: "event-schema-registry" });
-    logger.debug({ message: "Registered schema", schemaKey: key });
+    logger.debug("Registered schema", { schemaKey: key });
   }
 
   /**

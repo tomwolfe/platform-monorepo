@@ -36,7 +36,7 @@ import { getCompletedSteps, getFailedSteps } from "./state-machine";
 import { generateText, SUMMARIZATION_PROMPT } from "./llm";
 import { Logger } from "@repo/shared";
 
-const logger = new Logger({ serviceName: 'intention-engine' });
+const logger = new Logger({ serviceName: "intention-engine" });
 
 // ============================================================================
 // CONFIGURATION
@@ -101,7 +101,7 @@ export interface SummarizeResult {
 
 /**
  * Template Registry
- * 
+ *
  * Each template has:
  * - id: Unique identifier
  * - pattern: Function to match execution results
@@ -124,39 +124,51 @@ const SUMMARY_TEMPLATES: Array<{
     pattern: (result) => {
       const plan = result.state.plan;
       if (!plan || !result.success) return false;
-      
+
       // Check if plan contains booking-related steps
       const hasBookingStep = plan.steps.some(
-        step => 
-          step.tool_name.includes("book") || 
+        (step) =>
+          step.tool_name.includes("book") ||
           step.tool_name.includes("reserve") ||
-          step.tool_name.includes("create_reservation")
+          step.tool_name.includes("create_reservation"),
       );
-      
+
       return hasBookingStep && result.failedSteps === 0;
     },
-    template: "✅ Confirmed: {restaurantName} at {reservationTime} for {partySize} guests{confirmationDetails}",
+    template:
+      "✅ Confirmed: {restaurantName} at {reservationTime} for {partySize} guests{confirmationDetails}",
     extractor: (result) => {
       const plan = result.state.plan;
       const stepStates = result.state.step_states;
-      
+
       // Find booking step output
       const bookingStep = plan?.steps.find(
-        step => step.tool_name.includes("create_reservation") || step.tool_name.includes("book")
+        (step) =>
+          step.tool_name.includes("create_reservation") ||
+          step.tool_name.includes("book"),
       );
-      
-      const bookingState = bookingStep 
-        ? stepStates.find(s => s.step_id === bookingStep.id)
+
+      const bookingState = bookingStep
+        ? stepStates.find((s) => s.step_id === bookingStep.id)
         : null;
-      
+
       const output = bookingState?.output as any;
       const parameters = bookingStep?.parameters as any;
-      
+
       // Extract reservation details
-      const restaurantName = output?.restaurant?.name || parameters?.restaurant_name || "Restaurant";
-      const reservationTime = output?.reservation_time || parameters?.time || parameters?.reservation_time || "TBD";
-      const partySize = output?.party_size || parameters?.party_size || parameters?.guests || "N/A";
-      
+      const restaurantName =
+        output?.restaurant?.name || parameters?.restaurant_name || "Restaurant";
+      const reservationTime =
+        output?.reservation_time ||
+        parameters?.time ||
+        parameters?.reservation_time ||
+        "TBD";
+      const partySize =
+        output?.party_size ||
+        parameters?.party_size ||
+        parameters?.guests ||
+        "N/A";
+
       // Build confirmation details
       let confirmationDetails = "";
       if (output?.confirmation_number || output?.reservationId) {
@@ -165,7 +177,7 @@ const SUMMARY_TEMPLATES: Array<{
       if (output?.table_name) {
         confirmationDetails += ` at ${output.table_name}`;
       }
-      
+
       return {
         restaurantName,
         reservationTime: formatTime(reservationTime),
@@ -174,7 +186,7 @@ const SUMMARY_TEMPLATES: Array<{
       };
     },
   },
-  
+
   // ============================================================================
   // RESTAURANT SEARCH SUCCESS
   // ============================================================================
@@ -184,28 +196,33 @@ const SUMMARY_TEMPLATES: Array<{
     pattern: (result) => {
       const plan = result.state.plan;
       if (!plan || !result.success) return false;
-      
+
       const hasSearchStep = plan.steps.some(
-        step => step.tool_name.includes("search") || step.tool_name.includes("find")
+        (step) =>
+          step.tool_name.includes("search") || step.tool_name.includes("find"),
       );
-      
+
       return hasSearchStep && result.failedSteps === 0;
     },
-    template: "🔍 Found {restaurantCount} restaurants{cuisineInfo}{locationInfo}",
+    template:
+      "🔍 Found {restaurantCount} restaurants{cuisineInfo}{locationInfo}",
     extractor: (result) => {
       const stepStates = result.state.step_states;
-      
+
       // Find search step output
-      const searchState = stepStates.find(s => 
-        s.output && typeof s.output === "object" && 
-        (s.output as any).restaurants
+      const searchState = stepStates.find(
+        (s) =>
+          s.output &&
+          typeof s.output === "object" &&
+          (s.output as any).restaurants,
       );
-      
+
       const output = searchState?.output as any;
       const restaurants = output?.restaurants || [];
-      const cuisine = output?.cuisine || result.state.plan?.steps[0]?.parameters?.cuisine;
+      const cuisine =
+        output?.cuisine || result.state.plan?.steps[0]?.parameters?.cuisine;
       const location = output?.location || result.state.context?.location;
-      
+
       return {
         restaurantCount: String(restaurants.length || 0),
         cuisineInfo: cuisine ? ` serving ${cuisine} cuisine` : "",
@@ -213,7 +230,7 @@ const SUMMARY_TEMPLATES: Array<{
       };
     },
   },
-  
+
   // ============================================================================
   // DELIVERY FULFILLMENT SUCCESS
   // ============================================================================
@@ -223,33 +240,39 @@ const SUMMARY_TEMPLATES: Array<{
     pattern: (result) => {
       const plan = result.state.plan;
       if (!plan || !result.success) return false;
-      
+
       const hasDeliveryStep = plan.steps.some(
-        step => step.tool_name.includes("fulfill") || step.tool_name.includes("delivery")
+        (step) =>
+          step.tool_name.includes("fulfill") ||
+          step.tool_name.includes("delivery"),
       );
-      
+
       return hasDeliveryStep && result.failedSteps === 0;
     },
-    template: "🚚 Delivery dispatched! ETA: {estimatedDeliveryTime}. Driver: {driverName}. Order: {orderId}",
+    template:
+      "🚚 Delivery dispatched! ETA: {estimatedDeliveryTime}. Driver: {driverName}. Order: {orderId}",
     extractor: (result) => {
       const stepStates = result.state.step_states;
-      
+
       // Find fulfillment step output
-      const fulfillmentState = stepStates.find(s => 
-        s.output && typeof s.output === "object" && 
-        (s.output as any).fulfillmentId
+      const fulfillmentState = stepStates.find(
+        (s) =>
+          s.output &&
+          typeof s.output === "object" &&
+          (s.output as any).fulfillmentId,
       );
-      
+
       const output = fulfillmentState?.output as any;
-      
+
       return {
-        estimatedDeliveryTime: formatTime(output?.estimated_delivery_time) || "TBD",
+        estimatedDeliveryTime:
+          formatTime(output?.estimated_delivery_time) || "TBD",
         driverName: output?.driver_name || "Assigned",
         orderId: output?.orderId || output?.order_id || "N/A",
       };
     },
   },
-  
+
   // ============================================================================
   // CANCELLATION SUCCESS
   // ============================================================================
@@ -259,34 +282,42 @@ const SUMMARY_TEMPLATES: Array<{
     pattern: (result) => {
       const plan = result.state.plan;
       if (!plan || !result.success) return false;
-      
-      const hasCancelStep = plan.steps.some(
-        step => step.tool_name.includes("cancel")
+
+      const hasCancelStep = plan.steps.some((step) =>
+        step.tool_name.includes("cancel"),
       );
-      
+
       return hasCancelStep && result.failedSteps === 0;
     },
     template: "❌ Cancelled: {itemType} {itemName}. {refundInfo}",
     extractor: (result) => {
       const plan = result.state.plan;
       const stepStates = result.state.step_states;
-      
+
       // Find cancellation step
-      const cancelStep = plan?.steps.find(
-        step => step.tool_name.includes("cancel")
+      const cancelStep = plan?.steps.find((step) =>
+        step.tool_name.includes("cancel"),
       );
-      
-      const cancelState = cancelStep 
-        ? stepStates.find(s => s.step_id === cancelStep.id)
+
+      const cancelState = cancelStep
+        ? stepStates.find((s) => s.step_id === cancelStep.id)
         : null;
-      
+
       const output = cancelState?.output as any;
       const parameters = cancelStep?.parameters as any;
-      
-      const itemType = cancelStep?.tool_name.includes("reservation") ? "Reservation" : "Booking";
-      const itemName = output?.name || parameters?.reservation_id || parameters?.booking_id || "N/A";
-      const refundInfo = output?.refund_issued ? "Refund issued." : "No refund applicable.";
-      
+
+      const itemType = cancelStep?.tool_name.includes("reservation")
+        ? "Reservation"
+        : "Booking";
+      const itemName =
+        output?.name ||
+        parameters?.reservation_id ||
+        parameters?.booking_id ||
+        "N/A";
+      const refundInfo = output?.refund_issued
+        ? "Refund issued."
+        : "No refund applicable.";
+
       return {
         itemType,
         itemName: String(itemName).substring(0, 50),
@@ -294,7 +325,7 @@ const SUMMARY_TEMPLATES: Array<{
       };
     },
   },
-  
+
   // ============================================================================
   // MODIFICATION SUCCESS
   // ============================================================================
@@ -304,44 +335,50 @@ const SUMMARY_TEMPLATES: Array<{
     pattern: (result) => {
       const plan = result.state.plan;
       if (!plan || !result.success) return false;
-      
+
       const hasModifyStep = plan.steps.some(
-        step => step.tool_name.includes("update") || step.tool_name.includes("modify")
+        (step) =>
+          step.tool_name.includes("update") ||
+          step.tool_name.includes("modify"),
       );
-      
+
       return hasModifyStep && result.failedSteps === 0;
     },
     template: "✏️ Updated: {itemType}. New details: {newDetails}",
     extractor: (result) => {
       const plan = result.state.plan;
       const stepStates = result.state.step_states;
-      
+
       // Find update step
       const updateStep = plan?.steps.find(
-        step => step.tool_name.includes("update") || step.tool_name.includes("modify")
+        (step) =>
+          step.tool_name.includes("update") ||
+          step.tool_name.includes("modify"),
       );
-      
-      const updateState = updateStep 
-        ? stepStates.find(s => s.step_id === updateStep.id)
+
+      const updateState = updateStep
+        ? stepStates.find((s) => s.step_id === updateStep.id)
         : null;
-      
+
       const output = updateState?.output as any;
       const parameters = updateStep?.parameters as any;
-      
-      const itemType = updateStep?.tool_name.includes("reservation") ? "Reservation" : "Details";
+
+      const itemType = updateStep?.tool_name.includes("reservation")
+        ? "Reservation"
+        : "Details";
       const newDetails = Object.entries(parameters || {})
         .filter(([key]) => !key.includes("id"))
         .map(([key, value]) => `${key}: ${value}`)
         .join(", ")
         .substring(0, 100);
-      
+
       return {
         itemType,
         newDetails: newDetails || "No changes",
       };
     },
   },
-  
+
   // ============================================================================
   // GENERIC SUCCESS
   // ============================================================================
@@ -357,15 +394,19 @@ const SUMMARY_TEMPLATES: Array<{
       };
     },
   },
-  
+
   // ============================================================================
   // PARTIAL SUCCESS
   // ============================================================================
   {
     id: "partial_success",
     name: "Partial Success",
-    pattern: (result) => result.success && result.failedSteps > 0 && result.failedSteps < result.totalSteps,
-    template: "⚠️ Partially completed: {completedSteps}/{totalSteps} steps. {failedSteps} step(s) failed.",
+    pattern: (result) =>
+      result.success &&
+      result.failedSteps > 0 &&
+      result.failedSteps < result.totalSteps,
+    template:
+      "⚠️ Partially completed: {completedSteps}/{totalSteps} steps. {failedSteps} step(s) failed.",
     extractor: (result) => {
       return {
         completedSteps: String(result.completedSteps),
@@ -374,14 +415,15 @@ const SUMMARY_TEMPLATES: Array<{
       };
     },
   },
-  
+
   // ============================================================================
   // COMPLETE FAILURE
   // ============================================================================
   {
     id: "complete_failure",
     name: "Complete Failure",
-    pattern: (result) => !result.success && result.failedSteps === result.totalSteps,
+    pattern: (result) =>
+      !result.success && result.failedSteps === result.totalSteps,
     template: "❌ Execution failed: {errorSummary}",
     extractor: (result) => {
       const errorSummary = result.error?.message || "Unknown error";
@@ -444,8 +486,7 @@ export class ResultSummarizer {
             confidence: 1.0,
           };
         } catch (error) {
-          logger.warn({
-            message: '[ResultSummarizer] Template extractor failed',
+          logger.warn("[ResultSummarizer] Template extractor failed", {
             error: error instanceof Error ? error.message : String(error),
           });
           // Continue to next template
@@ -460,49 +501,55 @@ export class ResultSummarizer {
    */
   private applyTemplate(match: TemplateMatch): string {
     const { template, variables } = match;
-    
+
     let summary = template.template;
-    
+
     // Replace variables
     for (const [key, value] of Object.entries(variables)) {
       summary = summary.replace(new RegExp(`\\{${key}\\}`, "g"), value);
     }
-    
+
     // Add execution metadata if configured
     const parts = [summary];
-    
+
     if (this.config.includeStepCount) {
-      parts.push(`${match.template.id.includes("success") ? "✅" : "⚠️"} ${match.template.name}`);
+      parts.push(
+        `${match.template.id.includes("success") ? "✅" : "⚠️"} ${match.template.name}`,
+      );
     }
-    
+
     if (this.config.includeExecutionTime) {
-      parts.push(`(${formatDuration(match.template.id.includes("success") ? 0 : 0)})`);
+      parts.push(
+        `(${formatDuration(match.template.id.includes("success") ? 0 : 0)})`,
+      );
     }
-    
+
     // Truncate if too long
     summary = parts.join(" ");
     if (summary.length > this.config.maxSummaryLength) {
       summary = summary.substring(0, this.config.maxSummaryLength - 3) + "...";
     }
-    
+
     return summary;
   }
 
   /**
    * Fallback LLM summarization
    */
-  private async summarizeWithLLM(result: ExecutionResult): Promise<SummarizeResult> {
-    logger.info({
-      message: '[ResultSummarizer] Falling back to LLM summarization',
-    });
+  private async summarizeWithLLM(
+    result: ExecutionResult,
+  ): Promise<SummarizeResult> {
+    logger.info("[ResultSummarizer] Falling back to LLM summarization");
 
     // Build the summarization prompt using the template from llm.ts
-    const intent = result.state.intent?.content || JSON.stringify(result.state.intent);
-    const planSummary = result.state.plan?.summary || "No plan summary available";
-    
+    const intent =
+      result.state.intent?.rawText || JSON.stringify(result.state.intent);
+    const planSummary =
+      result.state.plan?.summary || "No plan summary available";
+
     // Extract tool outputs from completed steps
     const toolOutputs = result.state.step_states
-      .filter(s => s.status === "completed" && s.output)
+      .filter((s) => s.status === "completed" && s.output)
       .map((s, idx) => ({
         step_number: idx + 1,
         step_id: s.step_id,
@@ -512,8 +559,7 @@ export class ResultSummarizer {
     const toolOutputsJson = JSON.stringify(toolOutputs, null, 2);
 
     // Construct prompt using SUMMARIZATION_PROMPT template
-    const prompt = SUMMARIZATION_PROMPT
-      .replace("{intent}", intent)
+    const prompt = SUMMARIZATION_PROMPT.replace("{intent}", intent)
       .replace("{plan_summary}", planSummary)
       .replace("{tool_outputs}", toolOutputsJson);
 
@@ -522,7 +568,8 @@ export class ResultSummarizer {
       const response = await generateText({
         modelType: "summarization",
         prompt,
-        systemPrompt: "You are a concise execution summarizer. Provide clear, accurate summaries of workflow execution results.",
+        systemPrompt:
+          "You are a concise execution summarizer. Provide clear, accurate summaries of workflow execution results.",
         temperature: 0.2,
         maxTokens: 500,
         timeoutMs: 10000,
@@ -533,10 +580,10 @@ export class ResultSummarizer {
         source: "llm",
       };
     } catch (error) {
-      logger.warn({
-        message: '[ResultSummarizer] LLM summarization failed, using fallback',
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        "[ResultSummarizer] LLM summarization failed, using fallback",
+        { error: error instanceof Error ? error.message : String(error) },
+      );
       // Fall back to generic summary if LLM fails
       return this.createFallbackSummary(result);
     }
@@ -549,13 +596,13 @@ export class ResultSummarizer {
     const status = result.success ? "✅ Success" : "❌ Failed";
     const steps = `${result.completedSteps}/${result.totalSteps} steps completed`;
     const duration = formatDuration(result.executionTimeMs);
-    
+
     let summary = `${status}: ${steps} in ${duration}`;
-    
+
     if (result.error) {
       summary += `. Error: ${result.error.message.substring(0, 100)}`;
     }
-    
+
     return {
       summary,
       source: "fallback",
@@ -565,7 +612,7 @@ export class ResultSummarizer {
   /**
    * Register a custom template
    */
-  registerTemplate(template: typeof SUMMARY_TEMPLATES[number]): void {
+  registerTemplate(template: (typeof SUMMARY_TEMPLATES)[number]): void {
     SUMMARY_TEMPLATES.push(template);
   }
 }
@@ -576,23 +623,28 @@ export class ResultSummarizer {
 
 function formatTime(timeString: string): string {
   if (!timeString) return "TBD";
-  
+
   try {
     // Handle ISO format
     if (timeString.includes("T")) {
       const date = new Date(timeString);
-      return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      return date.toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      });
     }
-    
+
     // Handle HH:MM format
     if (timeString.includes(":")) {
-      const [hours, minutes] = timeString.split(":");
+      const parts = timeString.split(":");
+      const hours = parts[0] || "0";
+      const minutes = parts[1] || "00";
       const hour = parseInt(hours, 10);
       const ampm = hour >= 12 ? "PM" : "AM";
       const displayHour = hour % 12 || 12;
       return `${displayHour}:${minutes} ${ampm}`;
     }
-    
+
     return timeString;
   } catch {
     return timeString;
@@ -603,12 +655,12 @@ function formatDuration(ms: number): string {
   if (ms < 1000) {
     return `${ms}ms`;
   }
-  
+
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) {
     return `${seconds}s`;
   }
-  
+
   const minutes = Math.round(seconds / 60);
   return `${minutes}m`;
 }
@@ -618,7 +670,7 @@ function formatDuration(ms: number): string {
 // ============================================================================
 
 export function createResultSummarizer(
-  config?: Partial<typeof SUMMARIZER_CONFIG>
+  config?: Partial<typeof SUMMARIZER_CONFIG>,
 ): ResultSummarizer {
   return new ResultSummarizer(config);
 }

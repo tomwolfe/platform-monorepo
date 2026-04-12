@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^6.10.6",
+    "@repo/web3": "workspace:*",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
@@ -45,6 +46,7 @@
     "swagger-ui-react": "^5.32.2",
     "tailwind-merge": "^3.4.0",
     "viem": "^2.21.52",
+    "wagmi": "^2.14.11",
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.25.1"
   },

@@ -1,30 +1,24 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { usdToCryptoBigInt } from "@repo/shared/utils/crypto-price";
+import { CheckoutRequestSchema } from "@repo/shared";
 import {
-  CheckoutRequestSchema,
-  _CheckoutResponseSchema,
   createValidationMiddleware,
   errorResponse,
+  Logger,
   successResponse,
   withUnifiedApiHandler,
-  Logger,
-  _AppConfig,
 } from "@repo/shared";
-import { checkoutService } from "@/lib/services/checkout";
 import {
-  _getEIP712Domain,
-  _EIP712_TYPES,
-  validateDeadline,
-  validateChainId,
-  _validatePaymentMode,
+  checkoutService,
   verifySignature,
   CheckoutError,
 } from "@/lib/services/checkout";
+import { validateDeadline, validateChainId } from "@/lib/services/checkout";
 
 export const runtime = "nodejs";
 
-const _logger = new Logger({ serviceName: "table-stack" });
+const logger = new Logger({ serviceName: "table-stack" });
 
 /**
  * Crypto Payment Verification Endpoint

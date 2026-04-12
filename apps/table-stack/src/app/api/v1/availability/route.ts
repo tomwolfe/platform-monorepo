@@ -217,16 +217,8 @@ export const GET = withUnifiedApiHandler(
       );
     },
     {
-      ttl: 60, // 60 second cache for availability (reduces DB load under high traffic)
+      ttlSeconds: 60,
       tags: ["availability"],
-      keyPrefix: "availability",
-      generateKey: (req: NextRequest) => {
-        const { searchParams } = new URL(req.url);
-        const restaurantId = searchParams.get("restaurantId");
-        const date = searchParams.get("date");
-        const partySize = searchParams.get("partySize");
-        return `availability:${restaurantId}:${date}:${partySize}`;
-      },
     },
   ),
 );

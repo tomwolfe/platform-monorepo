@@ -27,7 +27,7 @@ import {
   type SagaEventPayload as MCPSagaEventPayload,
   type CircuitBreakerEventPayload as MCPCircuitBreakerEventPayload,
   type HighValueGuestEventPayload as MCPHighValueGuestEventPayload,
-  EventPayloadByType,
+  type EventPayloadByType,
   createSystemEvent,
   createTypedSystemEvent,
 } from "@repo/mcp-protocol";

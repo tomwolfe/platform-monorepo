@@ -9,14 +9,24 @@ import {
 import { AuditLog } from "@/lib/types";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-const redis = getRedisClient(ServiceNamespace.IE);
+let redis: ReturnType<typeof getRedisClient>;
+
+function getRedis() {
+  if (!redis) {
+    redis = getRedisClient(ServiceNamespace.IE);
+  }
+  return redis;
+}
+
 const AUDIT_LOGS_INDEX = "audit_logs:index";
 const AUDIT_LOG_PREFIX = "audit_log:";
 const MAX_ANALYTICS_LOGS = 100;
 
 async function getHandler(req: NextRequest) {
   const traceId = req.headers.get("x-trace-id");
+  const redis = getRedis();
 
   if (!redis) {
     return NextResponse.json(

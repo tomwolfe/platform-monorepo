@@ -6,7 +6,11 @@ import {
   AppConfig,
 } from "@repo/shared";
 import { verifyTransaction } from "@repo/shared/utils/web3-verification";
-import { type Address, isHex, isAddress } from "viem";
+import {
+  safeToHex,
+  safeToAddress,
+  type Address,
+} from "@repo/shared/web3/verifier";
 import { processStuckTransactions } from "@repo/shared/services/transaction-speedup";
 import { trace, Span, SpanStatusCode } from "@opentelemetry/api";
 import { NextRequest, NextResponse } from "next/server";
@@ -17,28 +21,6 @@ const logger = new Logger({ serviceName: "pending-verification-service" });
 const QSTASH_HOP_HEADER = "x-qstash-hop-count";
 const MAX_QSTASH_HOP_COUNT = 5;
 const BATCH_SIZE = 2;
-
-// ============================================================================
-// SAFE HEX VALIDATION
-// ============================================================================
-
-function safeValidateHex(
-  value: string | null,
-  label: string,
-): `0x${string}` | null {
-  if (!value || !isHex(value)) {
-    logger.warn(`Invalid hex for ${label}`, { value });
-    return null;
-  }
-  return value as `0x${string}`;
-}
-
-function safeValidateAddress(value: string | null | undefined): Address | null {
-  if (!value || !isAddress(value)) {
-    return null;
-  }
-  return value as Address;
-}
 
 // ============================================================================
 // TYPES
@@ -302,9 +284,10 @@ export class PendingOrderVerificationService {
           const totalBigInt = BigInt(order.total);
 
           // Safely validate hex strings before verification
-          const txHashHex = safeValidateHex(
-            order.paymentTxHash,
+          const txHashHex = safeToHex(
+            order.paymentTxHash || "",
             "paymentTxHash",
+            "return-null",
           );
           if (!txHashHex) {
             logger.warn("Order has invalid tx hash hex, marking as failed", {
@@ -317,8 +300,9 @@ export class PendingOrderVerificationService {
             return { orderId: order.id, success: false };
           }
 
-          const recipientAddress = safeValidateAddress(
+          const recipientAddress = safeToAddress(
             order.restaurant?.walletAddress,
+            "return-null",
           );
           if (!recipientAddress) {
             logger.warn(

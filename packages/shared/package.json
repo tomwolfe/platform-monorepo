@@ -68,6 +68,7 @@
     "./middleware/rate-limiter": "./src/middleware/rate-limiter.ts",
     "./services/dispatch-queue": "./src/services/dispatch-queue.ts",
     "./services/distributed-lock": "./src/services/distributed-lock.ts",
+    "./services/durable-executor": "./src/services/durable-executor.ts",
     "./llm-cache": "./src/llm-cache.ts",
     "./outbox-relay": "./src/outbox-relay.ts",
     "./outbox": "./src/outbox.ts",
@@ -82,7 +83,8 @@
     "./security-audit": "./src/security-audit.ts",
     "./state-machine": "./src/state-machine.ts",
     "./policies/failover-policy": "./src/policies/failover-policy.ts",
-    "./testing": "./src/testing/index.ts"
+    "./testing": "./src/testing/index.ts",
+    "./web3/verifier": "./src/web3/verifier.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

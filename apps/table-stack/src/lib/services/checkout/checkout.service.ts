@@ -28,6 +28,7 @@ import { CheckoutError } from "./validation";
 import { verifyOnChainTransaction as defaultVerifyOnChainTransaction } from "./web3-verify";
 import { markReservationAsVerified as defaultMarkReservationAsVerified } from "./reservation-update";
 import { notifyOwnerOfVerification as defaultNotifyOwnerOfVerification } from "./notifications";
+import { type Result, ok, err } from "@repo/shared/errors/result-pattern";
 
 const logger = new Logger({ serviceName: "checkout-service" });
 
@@ -79,8 +80,12 @@ export class CheckoutService {
    *
    * If any step fails before DB commit, the processing lock is released
    * to allow immediate retries.
+   *
+   * @returns Result<CheckoutResult, CheckoutError>
    */
-  async processCheckout(input: CheckoutInput): Promise<CheckoutResult> {
+  async processCheckout(
+    input: CheckoutInput,
+  ): Promise<Result<CheckoutResult, CheckoutError>> {
     const {
       txHash,
       reservationId,
@@ -91,15 +96,21 @@ export class CheckoutService {
     } = input;
 
     // Step 1: Fetch and validate reservation
-    const reservation = await this.fetchReservation(reservationId);
+    const reservationResult = await this.fetchReservation(reservationId);
+    if (!reservationResult.success) {
+      return err(reservationResult.error);
+    }
+    const reservation = reservationResult.data;
 
     // Step 2: Acquire replay processing lock (two-phase commit)
     const lockAcquired = await tryAcquireReplayProcessingLock(txHash as Hex);
     if (!lockAcquired) {
-      throw new CheckoutError(
-        "Payment transaction is currently being processed",
-        409,
-        ERROR_CODES.CONFLICT,
+      return err(
+        new CheckoutError(
+          "Payment transaction is currently being processed",
+          409,
+          ERROR_CODES.CONFLICT,
+        ),
       );
     }
 
@@ -111,10 +122,12 @@ export class CheckoutService {
 
     if (!replayAllowed) {
       await releaseReplayProcessingLock(txHash as Hex);
-      throw new CheckoutError(
-        "Payment transaction already used or blocked",
-        409,
-        ERROR_CODES.CONFLICT,
+      return err(
+        new CheckoutError(
+          "Payment transaction already used or blocked",
+          409,
+          ERROR_CODES.CONFLICT,
+        ),
       );
     }
 
@@ -134,11 +147,13 @@ export class CheckoutService {
 
       confirmations = verificationResult.receipt?.confirmations || 0;
       if (confirmations < 1) {
-        throw new CheckoutError(
-          "Waiting for more confirmations",
-          400,
-          ERROR_CODES.VALIDATION_ERROR,
-          { details: { confirmations } },
+        return err(
+          new CheckoutError(
+            "Waiting for more confirmations",
+            400,
+            ERROR_CODES.VALIDATION_ERROR,
+            { details: { confirmations } },
+          ),
         );
       }
 
@@ -162,7 +177,7 @@ export class CheckoutService {
       frontendCallbackUrl,
     });
 
-    return { txHash, confirmations, reservationId };
+    return ok({ txHash, confirmations, reservationId });
   }
 
   // ========================================================================
@@ -172,55 +187,66 @@ export class CheckoutService {
   /**
    * Fetch reservation with restaurant details.
    * Validates payment mode configuration.
+   * @returns Result<typeof restaurantReservations.$inferSelect, CheckoutError>
    */
-  private async fetchReservation(reservationId: string) {
+  private async fetchReservation(
+    reservationId: string,
+  ): Promise<
+    Result<typeof restaurantReservations.$inferSelect, CheckoutError>
+  > {
     const reservation = await getDb().query.restaurantReservations.findFirst({
       where: eq(restaurantReservations.id, reservationId),
       with: { restaurant: true },
     });
 
     if (!reservation) {
-      throw new CheckoutError(
-        "Reservation not found",
-        404,
-        ERROR_CODES.NOT_FOUND,
+      return err(
+        new CheckoutError("Reservation not found", 404, ERROR_CODES.NOT_FOUND),
       );
     }
 
     if (reservation.isVerified) {
-      throw new CheckoutError(
-        "Reservation already verified",
-        200,
-        ERROR_CODES.ALREADY_VERIFIED,
+      return err(
+        new CheckoutError(
+          "Reservation already verified",
+          200,
+          ERROR_CODES.ALREADY_VERIFIED,
+        ),
       );
     }
 
     // Validate payment mode configuration
     if (AppConfig.isDirectP2PMode() && !reservation.restaurant?.walletAddress) {
-      throw new CheckoutError(
-        "Restaurant wallet address not configured",
-        400,
-        ERROR_CODES.VALIDATION_ERROR,
+      return err(
+        new CheckoutError(
+          "Restaurant wallet address not configured",
+          400,
+          ERROR_CODES.VALIDATION_ERROR,
+        ),
       );
     }
 
     if (AppConfig.isEscrowMode() && !AppConfig.getEscrowContractAddress()) {
-      throw new CheckoutError(
-        "Escrow contract address not configured",
-        400,
-        ERROR_CODES.VALIDATION_ERROR,
+      return err(
+        new CheckoutError(
+          "Escrow contract address not configured",
+          400,
+          ERROR_CODES.VALIDATION_ERROR,
+        ),
       );
     }
 
     if (AppConfig.isPaymentDisabled()) {
-      throw new CheckoutError(
-        "Web3 payments are disabled",
-        400,
-        ERROR_CODES.VALIDATION_ERROR,
+      return err(
+        new CheckoutError(
+          "Web3 payments are disabled",
+          400,
+          ERROR_CODES.VALIDATION_ERROR,
+        ),
       );
     }
 
-    return reservation;
+    return ok(reservation);
   }
 
   /**

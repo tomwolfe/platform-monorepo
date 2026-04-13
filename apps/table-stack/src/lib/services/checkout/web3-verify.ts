@@ -5,56 +5,27 @@
  * Handles on-chain transaction verification and data validation.
  *
  * @see Task 5: Refactor Monolithic Service Files
+ * @see T1: Unify Web3 Logic - Audit Roadmap
  */
 
-import { hexToString, isHex, isAddress } from "viem";
+import { hexToString } from "viem";
 import { getPublicClient } from "@repo/web3";
 import {
   isValidTxHash,
   verifyTransaction,
 } from "@repo/shared/utils/web3-verification";
 import { AppConfig, ERROR_CODES } from "@repo/shared";
-import { CheckoutError } from "./validation";
+import {
+  safeToHex,
+  safeToAddress,
+  validateTransactionHash,
+} from "@repo/shared/web3/verifier";
+import { AppConfig as SharedAppConfig } from "@repo/shared";
 import { rollbackReplayGuard } from "@repo/shared/middleware/web3-replay-guard";
 import { Logger } from "@repo/shared";
+import { CheckoutError } from "./validation";
 
 const logger = new Logger({ serviceName: "checkout-web3-verify" });
-
-// ============================================================================
-// SAFE HEX VALIDATION
-// ============================================================================
-
-/**
- * Safely coerce a string to a 0x-prefixed hex string.
- * Throws a controlled CheckoutError if the format is invalid.
- */
-export function safeToHex(value: string, label: string): `0x${string}` {
-  if (!isHex(value)) {
-    throw new CheckoutError(
-      `Invalid hex format for ${label}: expected 0x-prefixed string`,
-      400,
-      ERROR_CODES.VALIDATION_ERROR,
-      { details: { label, value } },
-    );
-  }
-  return value as `0x${string}`;
-}
-
-/**
- * Safely coerce a string to an Ethereum address.
- * Throws a controlled CheckoutError if the format is invalid.
- */
-export function safeToAddress(value: string | null | undefined): `0x${string}` {
-  if (!value || !isAddress(value)) {
-    throw new CheckoutError(
-      `Invalid Ethereum address format`,
-      400,
-      ERROR_CODES.VALIDATION_ERROR,
-      { details: { value } },
-    );
-  }
-  return value as `0x${string}`;
-}
 
 // ============================================================================
 // TRANSACTION VERIFICATION
@@ -84,17 +55,20 @@ export async function verifyOnChainTransaction(
     targetReservationId,
   } = params;
 
-  const isEscrowPayment = AppConfig.isEscrowMode();
+  const isEscrowPayment = SharedAppConfig.isEscrowMode();
   const slippageBps =
     paymentCurrency === "ETH" && !isEscrowPayment
-      ? AppConfig.getSlippageBps()
+      ? SharedAppConfig.getSlippageBps()
       : undefined;
 
   const result = await verifyTransaction({
     txHash: safeToHex(txHash, "txHash"),
     expectedValue,
     expectedRecipient: isEscrowPayment
-      ? safeToHex(AppConfig.getEscrowContractAddress(), "escrowContractAddress")
+      ? safeToHex(
+          SharedAppConfig.getEscrowContractAddress(),
+          "escrowContractAddress",
+        )
       : safeToAddress(reservation.restaurant?.walletAddress),
     paymentCurrency,
     orderId: targetReservationId,
@@ -152,15 +126,6 @@ export async function verifyTransactionData(
   }
 }
 
-/**
- * Validate transaction hash format
- */
-export function validateTransactionHash(txHash: string): void {
-  if (!isValidTxHash(txHash)) {
-    throw new CheckoutError(
-      "Invalid transaction hash format",
-      400,
-      ERROR_CODES.VALIDATION_ERROR,
-    );
-  }
-}
+// Re-export validateTransactionHash for backward compatibility
+// Now uses the unified implementation from @repo/shared/web3/verifier
+export { validateTransactionHash };

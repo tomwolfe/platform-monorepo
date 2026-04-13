@@ -159,31 +159,32 @@ async function postHandler(req: NextRequest) {
   }
 
   // Delegate to checkout service (handles replay guard, verification, DB update, notifications)
-  try {
-    const result = await checkoutService.processCheckout({
-      txHash,
-      reservationId: targetReservationId,
-      paymentCurrency,
-      expectedValue,
-      frontendCallbackUrl,
-      requestOrigin: new URL(req.url).origin,
-    });
+  const result = await checkoutService.processCheckout({
+    txHash,
+    reservationId: targetReservationId,
+    paymentCurrency,
+    expectedValue,
+    frontendCallbackUrl,
+    requestOrigin: new URL(req.url).origin,
+  });
 
-    const responseData = successResponse(
-      { txHash: result.txHash, confirmations: result.confirmations },
-      { message: "Crypto payment verified successfully" },
+  if (!result.success) {
+    return NextResponse.json(
+      errorResponse(
+        result.error.code,
+        result.error.message,
+        result.error.details,
+      ),
+      { status: result.error.statusCode },
     );
-
-    return NextResponse.json(responseData);
-  } catch (err) {
-    if (err instanceof CheckoutError) {
-      return NextResponse.json(
-        errorResponse(err.code, err.message, err.details),
-        { status: err.statusCode },
-      );
-    }
-    throw err;
   }
+
+  const responseData = successResponse(
+    { txHash: result.data.txHash, confirmations: result.data.confirmations },
+    { message: "Crypto payment verified successfully" },
+  );
+
+  return NextResponse.json(responseData);
 }
 
 export const POST = withUnifiedApiHandler(postHandler, {

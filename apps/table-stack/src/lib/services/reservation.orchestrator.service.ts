@@ -1,17 +1,16 @@
 /**
  * Reservation Orchestrator Service
  *
- * Coordinates the complete reservation workflow:
- * - Shadow restaurant discovery (find-or-create)
+ * Coordinates the complete reservation workflow within transaction boundaries:
+ * - Restaurant resolution (delegates to ShadowRestaurantService for discovery)
  * - Reservation creation (with retry)
- * - Email notification dispatch
- * - Cache invalidation dispatch
+ * - Post-execution notification dispatch (delegates to PostExecutionNotificationService)
  *
- * Following the pattern established in CheckoutService, this orchestrator
- * encapsulates business workflow logic while delegating pure business operations
- * to the extracted ReservationService (reservation-service.ts).
+ * The orchestrator now focuses solely on managing the transaction boundary and
+ * workflow coordination, with side effects delegated to dedicated services.
  *
  * @see Task 2: Standardize reserve controller
+ * @see T3: Decompose Orchestrators - Audit Roadmap
  */
 
 import {
@@ -19,11 +18,12 @@ import {
   IDEMPOTENCY_KEY_HEADER,
   getRedisClient,
   ServiceNamespace,
-  dispatchTask,
   Logger,
 } from "@repo/shared";
 import { ConflictError } from "@repo/shared/errors";
 import { reservationService } from "../reservation-service";
+import { shadowRestaurantService } from "./shadow-restaurant";
+import { postExecutionNotificationService } from "./post-execution-notifications";
 import { TableStackError } from "../error-factory";
 
 const logger = new Logger({ serviceName: "reservation-orchestrator" });
@@ -52,23 +52,18 @@ export interface ReserveResult {
 }
 
 export interface ReserveServiceOverrides {
-  findOrCreateShadowRestaurant?: typeof reservationService.findOrCreateShadowRestaurant;
   createReservation?: typeof reservationService.createReservation;
   getRestaurant?: typeof reservationService.getRestaurant;
 }
 
 export class ReservationOrchestratorService {
   private readonly idempotencyService: IdempotencyService;
-  private readonly findOrCreateShadowRestaurant: typeof reservationService.findOrCreateShadowRestaurant;
   private readonly createReservation: typeof reservationService.createReservation;
   private readonly getRestaurant: typeof reservationService.getRestaurant;
 
   constructor(overrides?: ReserveServiceOverrides) {
     const redis = getRedisClient(ServiceNamespace.TS);
     this.idempotencyService = new IdempotencyService(redis);
-    this.findOrCreateShadowRestaurant =
-      overrides?.findOrCreateShadowRestaurant ??
-      reservationService.findOrCreateShadowRestaurant.bind(reservationService);
     this.createReservation =
       overrides?.createReservation ??
       reservationService.createReservation.bind(reservationService);
@@ -122,7 +117,7 @@ export class ReservationOrchestratorService {
 
   /**
    * Resolve the target restaurant ID, creating a shadow restaurant if needed.
-   * This handles the "find-or-create" logic for shadow restaurant discovery.
+   * Delegates to ShadowRestaurantService for discovery logic.
    */
   async resolveRestaurant(
     context: ReserveContext,
@@ -138,7 +133,7 @@ export class ReservationOrchestratorService {
       discoveryName &&
       discoveryEmail
     ) {
-      const restaurant = await this.findOrCreateShadowRestaurant(
+      const { restaurant } = await shadowRestaurantService.resolve(
         discoveryName,
         discoveryEmail,
       );
@@ -149,9 +144,13 @@ export class ReservationOrchestratorService {
       throw TableStackError.identifierMissing("restaurant");
     }
 
+    // Check if the resolved restaurant is a shadow
+    const isShadow =
+      await shadowRestaurantService.isShadowRestaurant(targetRestaurantId);
+
     return {
       restaurantId: targetRestaurantId,
-      isShadow: false, // Will be updated during reservation creation
+      isShadow,
     };
   }
 
@@ -221,38 +220,28 @@ export class ReservationOrchestratorService {
       // Step 4: Fetch restaurant details for notifications
       const restaurant = await this.getRestaurant(targetRestaurantId);
 
-      // Step 5: Dispatch email notification via QStash
-      await dispatchTask(
-        "send_reservation_email",
-        {
-          reservationId: result.reservation.id,
-          guestEmail: result.reservation.guestEmail!,
-          guestName: result.reservation.guestName || "",
-          restaurantName: restaurant.name || "",
-          partySize: result.reservation.partySize!,
-          startTime: (result.reservation.startTime as Date).toISOString(),
-          verificationToken: result.reservation.verificationToken || "",
-          isShadow: result.isShadow,
-          ownerEmail: restaurant.ownerEmail || undefined,
-          claimToken: restaurant.claimToken || undefined,
-          origin,
-        },
-        `email:${idempotencyKey}`,
-      );
+      // Step 5: Dispatch post-execution notifications (email + cache invalidation)
+      // This is async and best-effort - the reservation is already committed
+      await postExecutionNotificationService.dispatch({
+        reservationId: result.reservation.id,
+        guestEmail: result.reservation.guestEmail!,
+        guestName: result.reservation.guestName || "",
+        restaurantName: restaurant.name || "",
+        partySize: result.reservation.partySize!,
+        startTime: (result.reservation.startTime as Date).toISOString(),
+        verificationToken: result.reservation.verificationToken || "",
+        isShadow: result.isShadow,
+        ownerEmail: restaurant.ownerEmail || undefined,
+        claimToken: restaurant.claimToken || undefined,
+        origin,
+        restaurantId: targetRestaurantId,
+        idempotencyKey,
+      });
 
       // Step 6: Mark idempotency key as processed
       await this.idempotencyService.markProcessed(
         idempotencyKey,
         "reserve_api",
-      );
-
-      // Step 7: Dispatch cache invalidation via QStash
-      await dispatchTask(
-        "invalidate_availability_cache",
-        {
-          restaurantId: targetRestaurantId,
-        },
-        `cache:${idempotencyKey}`,
       );
 
       return {

@@ -28,6 +28,7 @@ import { loadExecutionState, saveExecutionState } from "@/lib/engine/memory";
 import { transitionState, ExecutionState } from "@/lib/engine/types";
 import { QStashService, AppConfig } from "@repo/shared";
 import { signAsymmetricJWT } from "@repo/auth";
+import { type Result, ok, err } from "@repo/shared/errors/result-pattern";
 
 const logger = new Logger({ serviceName: "intention-engine" });
 
@@ -146,15 +147,16 @@ export class ConfirmationService {
 
   /**
    * Validate and consume a confirmation token
+   * @returns Result<ConfirmationData, Error> - Success with data, or Error with failure reason
    */
   static async validateToken(
     token: string,
     userContext?: { clerkId?: string; userId?: string },
-  ): Promise<ConfirmationData | null> {
+  ): Promise<Result<ConfirmationData, Error>> {
     const data = await redis.get<ConfirmationData>(this.buildTokenKey(token));
 
     if (!data) {
-      return null;
+      return err(new Error("Confirmation token not found"));
     }
 
     // Check expiration
@@ -162,8 +164,8 @@ export class ConfirmationService {
     if (expiresAt < new Date()) {
       // Token expired - clean up
       await this.deleteToken(token);
-      throw new Error(
-        `Confirmation token expired. Please restart the operation.`,
+      return err(
+        new Error(`Confirmation token expired. Please restart the operation.`),
       );
     }
 
@@ -174,8 +176,10 @@ export class ConfirmationService {
         data.clerkId &&
         userContext.clerkId !== data.clerkId
       ) {
-        throw new Error(
-          "Unauthorized: Confirmation token belongs to a different user",
+        return err(
+          new Error(
+            "Unauthorized: Confirmation token belongs to a different user",
+          ),
         );
       }
       if (
@@ -183,13 +187,15 @@ export class ConfirmationService {
         data.userId &&
         userContext.userId !== data.userId
       ) {
-        throw new Error(
-          "Unauthorized: Confirmation token belongs to a different user",
+        return err(
+          new Error(
+            "Unauthorized: Confirmation token belongs to a different user",
+          ),
         );
       }
     }
 
-    return data;
+    return ok(data);
   }
 
   /**
@@ -214,15 +220,16 @@ export class ConfirmationService {
 
   /**
    * Resume a suspended saga
+   * @returns Result<ExecutionState, Error>
    */
   static async resumeSuspendedSaga(
     executionId: string,
     confirmationData: ConfirmationData,
-  ): Promise<ExecutionState> {
+  ): Promise<Result<ExecutionState, Error>> {
     // Load current state
     const state = await loadExecutionState(executionId);
     if (!state) {
-      throw new Error(`Execution state not found for ${executionId}`);
+      return err(new Error(`Execution state not found for ${executionId}`));
     }
 
     // Validate state is SUSPENDED or AWAITING_CONFIRMATION
@@ -230,9 +237,11 @@ export class ConfirmationService {
       state.status !== "SUSPENDED" &&
       state.status !== "AWAITING_CONFIRMATION"
     ) {
-      throw new Error(
-        `Invalid state for confirmation: ${state.status}. ` +
-          `Expected SUSPENDED or AWAITING_CONFIRMATION`,
+      return err(
+        new Error(
+          `Invalid state for confirmation: ${state.status}. ` +
+            `Expected SUSPENDED or AWAITING_CONFIRMATION`,
+        ),
       );
     }
 
@@ -264,7 +273,7 @@ export class ConfirmationService {
       `[ConfirmationService] Resumed saga ${executionId} from ${state.status} to EXECUTING`,
     );
 
-    return newState;
+    return ok(newState);
   }
 
   /**

@@ -14,6 +14,8 @@
  *   server: { ...sharedServerFields, MY_APP_VAR: z.string() },
  *   client: { ...sharedClientFields, NEXT_PUBLIC_MY_VAR: z.string().optional() },
  *   runtimeEnv: { ...sharedRuntimeEnv, MY_APP_VAR: process.env.MY_APP_VAR },
+ *   skipValidation: !!process.env.SKIP_ENV_VALIDATION,
+ *   emptyStringAsUndefined: true,
  * });
  * ```
  *
@@ -92,7 +94,26 @@ export const optionalServerSchema = {
 
   // Optional: Web3
   BASE_RPC_URL: z.string().url().optional(),
+  POLYGON_RPC_URL: z.string().url().optional(),
+  ETHEREUM_RPC_URL: z.string().url().optional(),
   ESCROW_RESOLVER_PRIVATE_KEY: z.string().optional(),
+  INTENTION_ENGINE_PRIVATE_KEY: z.string().optional(),
+
+  // Optional: AI/ML Services
+  HUGGINGFACE_API_KEY: z.string().optional(),
+  UPSTASH_VECTOR_URL: z.string().url().optional(),
+  UPSTASH_VECTOR_TOKEN: z.string().optional(),
+
+  // Optional: Routing & Delivery
+  OPENROUTESERVICE_API_KEY: z.string().optional(),
+  ORS_ROUTING_TIMEOUT_MS: z
+    .string()
+    .regex(/^\d+$/, "Must be a number")
+    .optional(),
+  DRIVER_BASE_PAY_CENTS: z
+    .string()
+    .regex(/^\d+$/, "Must be a number")
+    .optional(),
 
   // Optional: Feature flags
   SKIP_ENV_VALIDATION: z.string().optional(),
@@ -132,6 +153,10 @@ export const sharedClientFields = {
     .startsWith("0x", "Must be a valid Ethereum address (0x prefix)")
     .optional(),
   NEXT_PUBLIC_BASE_RPC_URL: z.string().url().optional(),
+  NEXT_PUBLIC_MIN_CONFIRMATIONS: z
+    .string()
+    .regex(/^\d+$/, "Must be a number")
+    .optional(),
 } as const;
 
 // ============================================================================
@@ -157,7 +182,16 @@ export const sharedRuntimeEnv = {
   LLM_BASE_URL: process.env.LLM_BASE_URL,
   LLM_MODEL: process.env.LLM_MODEL,
   BASE_RPC_URL: process.env.BASE_RPC_URL,
+  POLYGON_RPC_URL: process.env.POLYGON_RPC_URL,
+  ETHEREUM_RPC_URL: process.env.ETHEREUM_RPC_URL,
   ESCROW_RESOLVER_PRIVATE_KEY: process.env.ESCROW_RESOLVER_PRIVATE_KEY,
+  INTENTION_ENGINE_PRIVATE_KEY: process.env.INTENTION_ENGINE_PRIVATE_KEY,
+  HUGGINGFACE_API_KEY: process.env.HUGGINGFACE_API_KEY,
+  UPSTASH_VECTOR_URL: process.env.UPSTASH_VECTOR_URL,
+  UPSTASH_VECTOR_TOKEN: process.env.UPSTASH_VECTOR_TOKEN,
+  OPENROUTESERVICE_API_KEY: process.env.OPENROUTESERVICE_API_KEY,
+  ORS_ROUTING_TIMEOUT_MS: process.env.ORS_ROUTING_TIMEOUT_MS,
+  DRIVER_BASE_PAY_CENTS: process.env.DRIVER_BASE_PAY_CENTS,
   SKIP_ENV_VALIDATION: isBuildTime ? "true" : process.env.SKIP_ENV_VALIDATION,
 
   // Client (NEXT_PUBLIC_)
@@ -170,6 +204,7 @@ export const sharedRuntimeEnv = {
     process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS,
   NEXT_PUBLIC_PLATFORM_FEE_WALLET: process.env.NEXT_PUBLIC_PLATFORM_FEE_WALLET,
   NEXT_PUBLIC_BASE_RPC_URL: process.env.NEXT_PUBLIC_BASE_RPC_URL,
+  NEXT_PUBLIC_MIN_CONFIRMATIONS: process.env.NEXT_PUBLIC_MIN_CONFIRMATIONS,
 } as const;
 
 // ============================================================================
@@ -297,7 +332,16 @@ export function validateSharedEnv(
     LLM_BASE_URL: process.env.LLM_BASE_URL,
     LLM_MODEL: process.env.LLM_MODEL,
     BASE_RPC_URL: process.env.BASE_RPC_URL,
+    POLYGON_RPC_URL: process.env.POLYGON_RPC_URL,
+    ETHEREUM_RPC_URL: process.env.ETHEREUM_RPC_URL,
     ESCROW_RESOLVER_PRIVATE_KEY: process.env.ESCROW_RESOLVER_PRIVATE_KEY,
+    INTENTION_ENGINE_PRIVATE_KEY: process.env.INTENTION_ENGINE_PRIVATE_KEY,
+    HUGGINGFACE_API_KEY: process.env.HUGGINGFACE_API_KEY,
+    UPSTASH_VECTOR_URL: process.env.UPSTASH_VECTOR_URL,
+    UPSTASH_VECTOR_TOKEN: process.env.UPSTASH_VECTOR_TOKEN,
+    OPENROUTESERVICE_API_KEY: process.env.OPENROUTESERVICE_API_KEY,
+    ORS_ROUTING_TIMEOUT_MS: process.env.ORS_ROUTING_TIMEOUT_MS,
+    DRIVER_BASE_PAY_CENTS: process.env.DRIVER_BASE_PAY_CENTS,
     SKIP_ENV_VALIDATION: process.env.SKIP_ENV_VALIDATION,
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:
       process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
@@ -309,6 +353,7 @@ export function validateSharedEnv(
     NEXT_PUBLIC_PLATFORM_FEE_WALLET:
       process.env.NEXT_PUBLIC_PLATFORM_FEE_WALLET,
     NEXT_PUBLIC_BASE_RPC_URL: process.env.NEXT_PUBLIC_BASE_RPC_URL,
+    NEXT_PUBLIC_MIN_CONFIRMATIONS: process.env.NEXT_PUBLIC_MIN_CONFIRMATIONS,
   });
 
   if (!result.success) {

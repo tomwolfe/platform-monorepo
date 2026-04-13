@@ -19,19 +19,17 @@ import { z } from "zod";
 export const env = createEnv({
   server: {
     ...sharedServerFields,
-    // Add any table-stack-only server vars here
+    // No table-stack-specific server vars required
   },
 
   client: {
     ...sharedClientFields,
-    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.string().min(20).optional(),
+    // No table-stack-specific client vars required
   },
 
   runtimeEnv: {
     ...sharedRuntimeEnv,
-    // Table-stack specific runtime mappings
-    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:
-      process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+    // No table-stack-specific runtime mappings required
   },
 
   skipValidation: !!process.env.SKIP_ENV_VALIDATION,

@@ -38,6 +38,12 @@
 import { getRedisClient, ServiceNamespace } from "../redis";
 import { randomUUID } from "crypto";
 import { Logger } from "../logger";
+import {
+  AsyncBoundaryError as _AsyncBoundaryError,
+  AsyncBoundaryErrorCode,
+  retryableError,
+} from "../errors/async-boundary";
+import { AppError as _AppError, ErrorCode as _ErrorCode } from "../errors";
 
 const logger = new Logger({ serviceName: "distributed-lock" });
 
@@ -142,8 +148,10 @@ export async function acquireDistributedLock(
   ttlSeconds: number,
   options?: DistributedLockOptions,
 ): Promise<LockResult> {
-  const { namespace = ServiceNamespace.SHARED, recoverStale = true } =
-    options || {};
+  const {
+    namespace = ServiceNamespace.SHARED,
+    recoverStale: _recoverStale = true,
+  } = options || {};
   const redis = getRedisClient(namespace);
   const ownerId = randomUUID();
 
@@ -175,15 +183,22 @@ export async function acquireDistributedLock(
     }
 
     // Lock already held
-    const currentOwner = await redis.get(lockKey);
+    const _currentOwner = await redis.get(lockKey);
     return {
       acquired: false,
       lockKey,
       ownerId: "",
     };
   } catch (error) {
-    throw new Error(
+    throw retryableError(
+      AsyncBoundaryErrorCode.RATE_LIMITED_RETRYABLE,
       `Failed to acquire distributed lock ${lockKey}: ${error instanceof Error ? error.message : String(error)}`,
+      {
+        source: "distributed-lock",
+        operation: "acquireDistributedLock",
+        originalError:
+          error instanceof Error ? error : new Error(String(error)),
+      },
     );
   }
 }
@@ -247,7 +262,7 @@ export async function getLockInfo(
       owner: (owner as string) || undefined,
       ttlRemaining: ttl > 0 ? ttl : undefined,
     };
-  } catch (error) {
+  } catch (_error) {
     return { isLocked: false };
   }
 }
@@ -272,7 +287,11 @@ export async function withDistributedLock<T>(
   const lock = await acquireDistributedLock(lockKey, ttlSeconds, options);
 
   if (!lock.acquired) {
-    throw new Error(`Failed to acquire distributed lock: ${lockKey}`);
+    throw retryableError(
+      AsyncBoundaryErrorCode.RATE_LIMITED_RETRYABLE,
+      `Failed to acquire distributed lock: ${lockKey}`,
+      { source: "distributed-lock", operation: "withDistributedLock" },
+    );
   }
 
   try {
@@ -326,8 +345,10 @@ export async function acquireReentrantLock(
   ttlSeconds: number,
   options?: ReentrantLockOptions,
 ): Promise<ReentrantLockResult> {
-  const { namespace = ServiceNamespace.SHARED, recoverStale = true } =
-    options || {};
+  const {
+    namespace = ServiceNamespace.SHARED,
+    recoverStale: _recoverStale = true,
+  } = options || {};
   const redis = getRedisClient(namespace);
 
   const executionId = options?.executionId;
@@ -472,7 +493,11 @@ export async function withReentrantDistributedLock<T>(
   const lock = await acquireReentrantLock(lockKey, ttlSeconds, options);
 
   if (!lock.acquired) {
-    throw new Error(`Failed to acquire distributed lock: ${lockKey}`);
+    throw retryableError(
+      AsyncBoundaryErrorCode.RATE_LIMITED_RETRYABLE,
+      `Failed to acquire distributed lock: ${lockKey}`,
+      { source: "distributed-lock", operation: "withReentrantDistributedLock" },
+    );
   }
 
   try {

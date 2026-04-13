@@ -9,8 +9,39 @@
  */
 
 import { Logger } from "../logger";
+import {
+  AppError,
+  ErrorCode,
+  ValidationError as _ValidationError,
+} from "../errors";
 
 const jsonLogger = new Logger({ serviceName: "json-parser" });
+
+// ============================================================================
+// JSON PARSE ERROR
+// ============================================================================
+
+/**
+ * Error thrown when JSON parsing fails
+ */
+export class JsonParseError extends AppError {
+  public readonly originalContent: string;
+  public readonly sanitizedContent: string;
+
+  constructor(
+    message: string,
+    originalContent: string,
+    sanitizedContent: string,
+  ) {
+    super(ErrorCode.INVALID_FORMAT, message, 400, {
+      originalContentPreview: originalContent.substring(0, 200),
+      sanitizedContentPreview: sanitizedContent.substring(0, 200),
+    });
+    this.name = "JsonParseError";
+    this.originalContent = originalContent;
+    this.sanitizedContent = sanitizedContent;
+  }
+}
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -67,7 +98,7 @@ export function sanitizeJsonOutput(content: string): string {
     try {
       JSON.parse(extracted[0]);
       return extracted[0];
-    } catch (_e) {
+    } catch {
       // Fall through if invalid — not an error, just control flow
     }
   }
@@ -179,7 +210,7 @@ export async function parseJsonWithFallback<T = unknown>(
     if (match) {
       try {
         return JSON.parse(match[1]);
-      } catch (_secondError) {
+      } catch {
         // Fall through to repair attempt
       }
     }
@@ -206,14 +237,11 @@ export async function parseJsonWithFallback<T = unknown>(
     // Throw with helpful error message including sanitized content preview
     const preview =
       sanitized.substring(0, 200) + (sanitized.length > 200 ? "..." : "");
-    const error = new Error(
-      `Failed to parse JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}\n\n` +
-        `Content preview: ${preview}`,
+    throw new JsonParseError(
+      `Failed to parse JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}\n\nContent preview: ${preview}`,
+      content,
+      sanitized,
     );
-    (error as Record<string, unknown>).code = "JSON_PARSE_ERROR";
-    (error as Record<string, unknown>).originalContent = content;
-    (error as Record<string, unknown>).sanitizedContent = sanitized;
-    throw error;
   }
 }
 

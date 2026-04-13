@@ -23,6 +23,7 @@
 
 import { z } from "zod";
 import { Logger } from "../logger";
+import { AppError, ErrorCode } from "../errors";
 
 const logger = new Logger({ serviceName: "privacy-gateway" });
 
@@ -318,8 +319,11 @@ export class PrivacyGatewayService {
   private async encryptValue(value: string): Promise<EncryptedToken> {
     if (!this.config.encryptionKey) {
       if (process.env.NODE_ENV === "production") {
-        throw new Error(
+        throw new AppError(
+          ErrorCode.INVALID_INPUT,
           "CRITICAL: Privacy Gateway encryption requested but no encryptionKey provided. Refusing to store unencrypted PII.",
+          400,
+          { missingConfig: "encryptionKey" },
         );
       }
       logger.warn(
@@ -371,8 +375,11 @@ export class PrivacyGatewayService {
       logger.error("PrivacyGateway encryption failed", {
         errorMessage: error instanceof Error ? error.message : String(error),
       });
-      throw new Error(
+      throw new AppError(
+        ErrorCode.EXECUTION_FAILED,
         `Encryption failed: ${error instanceof Error ? error.message : String(error)}`,
+        500,
+        { operation: "encrypt", service: "PrivacyGateway" },
       );
     }
   }
@@ -442,8 +449,11 @@ export class PrivacyGatewayService {
       logger.error("PrivacyGateway decryption failed", {
         errorMessage: error instanceof Error ? error.message : String(error),
       });
-      throw new Error(
+      throw new AppError(
+        ErrorCode.EXECUTION_FAILED,
         `Decryption failed: ${error instanceof Error ? error.message : String(error)}`,
+        500,
+        { operation: "decrypt", service: "PrivacyGateway" },
       );
     }
   }
@@ -465,9 +475,15 @@ export class PrivacyGatewayService {
 
       // Validate key length (must be 32 bytes for AES-256)
       if (keyBytes.byteLength !== 32) {
-        throw new Error(
-          `Invalid key length: expected 32 bytes (256 bits), got ${keyBytes.byteLength} bytes. ` +
-            "Ensure encryptionKey is a base64-encoded 32-byte key.",
+        throw new AppError(
+          ErrorCode.INVALID_INPUT,
+          `Invalid key length: expected 32 bytes (256 bits), got ${keyBytes.byteLength} bytes. Ensure encryptionKey is a base64-encoded 32-byte key.`,
+          400,
+          {
+            operation: "importKey",
+            expectedKeyLength: 32,
+            actualKeyLength: keyBytes.byteLength,
+          },
         );
       }
 
@@ -488,8 +504,11 @@ export class PrivacyGatewayService {
       logger.error("Failed to import encryption key", {
         errorMessage: error instanceof Error ? error.message : String(error),
       });
-      throw new Error(
+      throw new AppError(
+        ErrorCode.EXECUTION_FAILED,
         `Key import failed: ${error instanceof Error ? error.message : String(error)}`,
+        500,
+        { operation: "importKey", service: "PrivacyGateway" },
       );
     }
   }

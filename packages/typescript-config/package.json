@@ -5,7 +5,8 @@
   "license": "MIT",
   "exports": {
     "./base.json": "./base.json",
-    "./nextjs.json": "./nextjs.json"
+    "./nextjs.json": "./nextjs.json",
+    "./next-base.mjs": "./next-base.mjs"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",

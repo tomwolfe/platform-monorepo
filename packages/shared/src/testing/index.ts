@@ -58,3 +58,15 @@ export {
 } from "./mocks/redis";
 
 export { createMockLogger, type MockLogger } from "./mocks/logger";
+
+// Web3 Testing Utilities (Anvil, viem mocks, MSW RPC handlers)
+export {
+  setupViemMocks,
+  setupWagmiMocks,
+  setupERC20Mock,
+  createMockPublicClient,
+  getAnvilRpcUrl,
+  isAnvilRunning,
+  skipIfAnvilNotRunning,
+  createWeb3RpcHandlers,
+} from "./web3";

@@ -21,6 +21,12 @@
 import { Client } from "@upstash/qstash";
 import { signAsymmetricJWT } from "@repo/auth";
 import { Logger } from "../logger";
+import {
+  AsyncBoundaryError as _AsyncBoundaryError,
+  AsyncBoundaryErrorCode,
+  retryableError,
+  permanentError,
+} from "../errors/async-boundary";
 
 const logger = new Logger({ serviceName: "qstash-service" });
 
@@ -161,7 +167,11 @@ export class QStashService {
         "QStash token not configured. Set QSTASH_TOKEN or UPSTASH_QSTASH_TOKEN.";
 
       if (shouldThrow && process.env.NODE_ENV === "production") {
-        throw new Error(`[QStashService] CRITICAL: ${errorMsg}`);
+        throw permanentError(
+          AsyncBoundaryErrorCode.CONFIGURATION_ERROR,
+          `[QStashService] CRITICAL: ${errorMsg}`,
+          { source: "qstash", operation: "preflightCheck" },
+        );
       }
 
       return { configured: false, canConnect: false, error: errorMsg };
@@ -179,7 +189,15 @@ export class QStashService {
       const errorMsg = `QStash connectivity test failed: ${error instanceof Error ? error.message : String(error)}`;
 
       if (shouldThrow && process.env.NODE_ENV === "production") {
-        throw new Error(`[QStashService] ${errorMsg}`);
+        throw retryableError(
+          AsyncBoundaryErrorCode.QSTASH_PUBLISH_FAILED,
+          `[QStashService] ${errorMsg}`,
+          {
+            source: "qstash",
+            operation: "preflightCheck",
+            originalError: error instanceof Error ? error : undefined,
+          },
+        );
       }
 
       logger.warn("QStash preflight check warning", { error: errorMsg });
@@ -198,9 +216,10 @@ export class QStashService {
 
     // PRODUCTION HARDENING: Force QStash in production; no unreliable fetch fallbacks
     if (process.env.NODE_ENV === "production" && !this.config?.enabled) {
-      throw new Error(
-        "QStash must be configured for production saga reliability. " +
-          "Set QSTASH_TOKEN or UPSTASH_QSTASH_TOKEN environment variable.",
+      throw permanentError(
+        AsyncBoundaryErrorCode.CONFIGURATION_ERROR,
+        "QStash must be configured for production saga reliability. Set QSTASH_TOKEN or UPSTASH_QSTASH_TOKEN environment variable.",
+        { source: "qstash", operation: "getClient" },
       );
     }
 
@@ -252,9 +271,17 @@ export class QStashService {
     // PRODUCTION HARDENING: No fallback in production - QStash is required
     if (!client || !this.config?.enabled) {
       if (process.env.NODE_ENV === "production") {
-        throw new Error(
-          "QStash is required for production reliability. " +
-            "Fallback to fetch(self) is disabled in production.",
+        throw permanentError(
+          AsyncBoundaryErrorCode.CONFIGURATION_ERROR,
+          "QStash is required for production reliability. Fallback to fetch(self) is disabled in production.",
+          {
+            source: "qstash",
+            operation: "triggerNextStep",
+            context: {
+              executionId: options.executionId,
+              stepIndex: options.stepIndex,
+            },
+          },
         );
       }
       // Development only: allow fallback to fetch
@@ -515,9 +542,17 @@ export class QStashService {
 
     if (!client || !this.config?.enabled) {
       if (process.env.NODE_ENV === "production") {
-        throw new Error(
-          "QStash is required for production parallel execution. " +
-            "Multi-trigger is not supported in fallback mode.",
+        throw permanentError(
+          AsyncBoundaryErrorCode.CONFIGURATION_ERROR,
+          "QStash is required for production parallel execution. Multi-trigger is not supported in fallback mode.",
+          {
+            source: "qstash",
+            operation: "triggerMultiStep",
+            context: {
+              executionId: options.executionId,
+              stepIndices: options.stepIndices,
+            },
+          },
         );
       }
       // Development: fallback to sequential execution
@@ -750,9 +785,14 @@ export class QStashService {
 
     if (!client || !this.config?.enabled) {
       if (process.env.NODE_ENV === "production") {
-        throw new Error(
-          "QStash is required for production reliability. " +
-            "Fallback to fetch(self) is disabled in production.",
+        throw permanentError(
+          AsyncBoundaryErrorCode.CONFIGURATION_ERROR,
+          "QStash is required for production reliability. Fallback to fetch(self) is disabled in production.",
+          {
+            source: "qstash",
+            operation: "publishTask",
+            context: { url: options.url },
+          },
         );
       }
       // Development only: allow fallback to fetch

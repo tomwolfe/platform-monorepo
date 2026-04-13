@@ -42,7 +42,7 @@ const logger = new Logger({ serviceName: "llm-validation" });
 /**
  * Error thrown when LLM output fails validation after retries
  */
-export class ValidationError extends Error {
+export class LlmValidationError extends Error {
   constructor(
     message: string,
     public readonly code: string,
@@ -96,10 +96,10 @@ export interface ValidationResult<T> {
  * @param errors - Zod validation errors
  * @returns Repair prompt for the LLM
  */
-function generateRepairPrompt(
-  originalResponse: string,
-  schemaDescription: string,
-  errors: string,
+function _generateRepairPrompt(
+  _originalResponse: string,
+  _schemaDescription: string,
+  _errors: string,
 ): string {
   return `Your previous response failed validation. Please fix the issues below.
 
@@ -126,11 +126,11 @@ Return the corrected JSON only:`;
 /**
  * Generate a human-readable schema description from a Zod schema
  */
-function describeSchema<T>(schema: z.ZodType<T>): string {
+function _describeSchema<T>(_schema: z.ZodType<T>): string {
   try {
     // Try to get schema shape if it's an object schema
-    if ("shape" in schema && typeof schema.shape === "object") {
-      const shape = schema.shape as Record<string, z.ZodTypeAny>;
+    if ("shape" in _schema && typeof _schema.shape === "object") {
+      const shape = _schema.shape as Record<string, z.ZodTypeAny>;
       const fields = Object.entries(shape).map(([key, value]) => {
         const typeName = value._def?.typeName || "unknown";
         const isOptional = value._def?.typeName === "ZodOptional";
@@ -138,7 +138,7 @@ function describeSchema<T>(schema: z.ZodType<T>): string {
       });
       return `Object with fields:\n${fields.join("\n")}`;
     }
-    return schema._def?.typeName || "Unknown schema";
+    return _schema._def?.typeName || "Unknown schema";
   } catch {
     return "Complex schema (unable to describe)";
   }
@@ -237,7 +237,7 @@ export async function validateLLMOutput<T>(
   const {
     maxRetries = 1,
     modelId,
-    repairSystemPrompt,
+    repairSystemPrompt: _repairSystemPrompt,
     logger: customLogger,
     repairFn,
   } = options;
@@ -261,7 +261,7 @@ export async function validateLLMOutput<T>(
       });
 
       if (attempt >= maxRetries) {
-        throw new ValidationError(
+        throw new LlmValidationError(
           `LLM output failed JSON parsing after ${maxRetries + 1} attempts`,
           "LLM_JSON_PARSE_FAILED",
           { modelId, attempts: attempt + 1 },
@@ -300,7 +300,7 @@ export async function validateLLMOutput<T>(
     });
 
     if (attempt >= maxRetries) {
-      throw new ValidationError(
+      throw new LlmValidationError(
         `LLM output failed validation after ${maxRetries + 1} attempts: ${errorMessages.join("; ")}`,
         "LLM_VALIDATION_FAILED",
         {
@@ -353,7 +353,7 @@ export async function validateLLMOutput<T>(
     }
   }
 
-  throw new ValidationError(
+  throw new LlmValidationError(
     "LLM output failed validation after all retries",
     "LLM_VALIDATION_FAILED",
     { modelId, attempts: attempt },
@@ -384,7 +384,7 @@ export function validateLLMOutputSync<T>(
     return `${e.message}${path}`;
   });
 
-  throw new ValidationError(
+  throw new LlmValidationError(
     `LLM output failed validation: ${errorMessages.join("; ")}`,
     "LLM_VALIDATION_FAILED",
     { errors: errorMessages },

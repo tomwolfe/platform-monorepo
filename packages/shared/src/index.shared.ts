@@ -209,6 +209,7 @@ export {
   safeParseJson,
   safeParseJsonSync,
   sanitizeJsonOutput,
+  JsonParseError,
 } from "./utils/json-parser";
 
 // ============================================================================
@@ -287,7 +288,7 @@ export {
   validateLLMOutput,
   validateLLMOutputSync,
   createLlmRepairFn,
-  ValidationError,
+  LlmValidationError,
   type LLMValidationOptions,
   type ValidationResult,
 } from "./llm/validation";

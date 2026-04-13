@@ -1,4 +1,5 @@
 import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
+import { getPrivacyGateway } from "@repo/shared/services/privacy-gateway";
 import type { Plan, Intent } from "./engine/types";
 import type { AuditLog } from "./types";
 
@@ -45,22 +46,42 @@ export async function createAuditLog(
   plan?: Plan,
   userLocation?: { lat: number; lng: number },
   userId: string = "anonymous",
+  options?: { skipPrivacyScrubbing?: boolean },
 ): Promise<AuditLog> {
   const id = crypto.randomUUID();
 
-  // Enforce Privacy Gateway: scrub PII before persistence
-  // @ts-ignore - getPrivacyGateway may not be available in all builds
-  const gateway =
-    typeof getPrivacyGateway === "function" ? getPrivacyGateway() : null;
-  const privacyResult = gateway
-    ? await gateway.scrubMemoryEntry(intent.rawText, intent.parameters)
-    : { scrubbedText: intent.rawText, scrubbedParameters: intent.parameters };
+  // Privacy Gateway: PII scrubbing is now OPT-OUT (not opt-in)
+  // To skip scrubbing, explicitly pass { skipPrivacyScrubbing: true }
+  let scrubbedText = intent.rawText;
+  let scrubbedParameters = intent.parameters;
+  let tokenMap: Record<string, string> = {};
+  let detectedPii: string[] = [];
+
+  if (!options?.skipPrivacyScrubbing) {
+    try {
+      const gateway = getPrivacyGateway();
+      const privacyResult = await gateway.scrubMemoryEntry(
+        intent.rawText,
+        intent.parameters,
+      );
+      scrubbedText = privacyResult.scrubbedText;
+      scrubbedParameters = privacyResult.scrubbedParameters;
+      tokenMap = privacyResult.tokenMap;
+      detectedPii = privacyResult.detectedPii;
+    } catch (error) {
+      // If privacy gateway fails, log warning but continue with original data
+      // This ensures audit logs are still created even if PII scrubbing fails
+      logger.warn("Privacy Gateway scrubbing failed, using original data", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   // Store scrubbed versions in the intent
   const scrubbedIntent = {
     ...intent,
-    rawText: privacyResult.scrubbedText,
-    parameters: privacyResult.scrubbedParameters,
+    rawText: scrubbedText,
+    parameters: scrubbedParameters,
   };
 
   // Ensure the primary intent has a hash (computed on scrubbed data)
@@ -82,11 +103,8 @@ export async function createAuditLog(
     },
     // Store token map in metadata for authorized reversal
     metadata: {
-      piiTokenMap:
-        Object.keys(privacyResult.tokenMap).length > 0
-          ? privacyResult.tokenMap
-          : undefined,
-      piiDetectedCount: privacyResult.detectedPii.length,
+      piiTokenMap: Object.keys(tokenMap).length > 0 ? tokenMap : undefined,
+      piiDetectedCount: detectedPii.length,
     },
   };
 

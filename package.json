@@ -86,6 +86,7 @@
     "@types/node": "^20.17.16",
     "@types/swagger-ui-react": "^5.18.0",
     "@upstash/redis": "^1.36.2",
+    "@vitest/coverage-v8": "4.0.18",
     "dotenv": "^16.4.7",
     "eslint": "^10.2.0",
     "husky": "^9.1.7",

@@ -9,7 +9,7 @@
 
 export {
   CheckoutError,
-  EIP712_DOMAIN,
+  EIP712_DOMAIN_STATIC,
   EIP712_TYPES,
   getEIP712Domain,
   DEADLINE_TOLERANCE_SECONDS,
@@ -24,6 +24,8 @@ export {
   verifyOnChainTransaction,
   verifyTransactionData,
   validateTransactionHash,
+  safeToHex,
+  safeToAddress,
 } from "./web3-verify";
 
 export { markReservationAsVerified } from "./reservation-update";

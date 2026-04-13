@@ -23,6 +23,18 @@ import {
 
 // ============================================================================
 // SYMMETRIC JWT HELPERS (internal system key)
+//
+// ⚠️  DEPRECATED: These HS256-based functions are legacy code.
+//     All new code should use the RS256 asymmetric JWT functions
+//     from ./asymmetric-jwt.ts instead.
+//
+//     Migration guide:
+//     - signScopedJWT → signAsymmetricJWT (with proper issuer/audience)
+//     - verifyScopedJWT → verifyAsymmetricJWT
+//     - signPayload → signInternalJWT (from asymmetric-jwt.ts)
+//     - validateInternalKey → validateRequest from @repo/shared/auth/gateway
+//
+//     These will be removed in a future major version.
 // ============================================================================
 
 function getInternalSystemKey(): string {
@@ -88,6 +100,10 @@ export interface ScopedJWTPayload {
 // SCOPED JWT FUNCTIONS
 // ============================================================================
 
+/**
+ * @deprecated Use signAsymmetricJWT from ./asymmetric-jwt.ts instead.
+ * Signs a JWT using HS256 (symmetric) — less secure than RS256 asymmetric.
+ */
 export async function signScopedJWT(
   payload: {
     permissions: ToolPermission[];
@@ -127,6 +143,10 @@ export async function signScopedJWT(
     .sign(secret);
 }
 
+/**
+ * @deprecated Use verifyAsymmetricJWT from ./asymmetric-jwt.ts instead.
+ * Verifies a JWT using HS256 (symmetric) — less secure than RS256 asymmetric.
+ */
 export async function verifyScopedJWT(
   token: string,
   expectedIssuer: string,
@@ -153,6 +173,10 @@ export async function verifyScopedJWT(
 // SYMMETRIC SIGN/VERIFY HELPERS
 // ============================================================================
 
+/**
+ * @deprecated Use signInternalJWT from ./asymmetric-jwt.ts instead.
+ * Signs a payload using HS256 (symmetric) compact JWS.
+ */
 export async function signPayload(
   payload: string,
 ): Promise<{ signature: string; timestamp: number }> {
@@ -166,6 +190,10 @@ export async function signPayload(
   return { signature: jws, timestamp };
 }
 
+/**
+ * @deprecated Use verifyInternalJWT from ./asymmetric-jwt.ts instead.
+ * Verifies a compact JWS signature using HS256 (symmetric).
+ */
 export async function verifySignature(
   payload: string,
   signature: string,
@@ -336,7 +364,9 @@ export class SecurityProvider {
   }
 
   /**
-   * validateInternalKey - Simple internal key validation
+   * @deprecated Use validateRequest from @repo/shared/auth/gateway instead.
+   * Validates an internal shared secret key for service-to-service auth.
+   * Legacy HS256-based approach — migrate to RS256 asymmetric JWT.
    */
   static validateInternalKey(key: string): boolean {
     const expectedKey = process.env.INTERNAL_SYSTEM_KEY;

@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, restaurantProducts, inventoryLevels } from "@repo/database";
 import { eq } from "@repo/database";
-import { SecurityProvider } from "@repo/auth";
+import { validateRequest } from "@repo/shared/auth/gateway";
 import { withUnifiedApiHandler, formatApiSuccess } from "@repo/shared";
 
 async function getHandler(req: NextRequest) {
-  const internalKey = req.headers.get("x-internal-key") || undefined;
-  if (!internalKey || !SecurityProvider.validateInternalKey(internalKey)) {
-    return new NextResponse("Unauthorized", { status: 401 });
+  const { error, status } = await validateRequest(req);
+  if (error) {
+    return NextResponse.json({ error }, { status });
   }
 
   const { searchParams } = new URL(req.url);

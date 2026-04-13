@@ -9,6 +9,7 @@ import {
   formatApiSuccess,
   notFoundErrorResponse,
   forbiddenErrorResponse,
+  AppConfig,
 } from "@repo/shared";
 
 export const runtime = "nodejs";
@@ -18,11 +19,21 @@ async function getHandler(req: NextRequest) {
   const slug = searchParams.get("slug");
   const id = searchParams.get("id");
   const traceId = req.headers.get("x-trace-id");
+
+  // Check for RS256 JWT auth first
+  const { context } = await validateRequest(req, { required: false });
+  const isInternalJwt = context?.isInternal === true;
+
+  // Legacy internal key fallback (during migration)
   const apiKeyHeader =
     req.headers.get("x-api-key") || req.headers.get("x-internal-key");
+  const expectedInternalKey = AppConfig.getInternalSystemKey();
   const isInternal =
-    apiKeyHeader === process.env.INTERNAL_API_KEY ||
-    apiKeyHeader === process.env.INTERNAL_SYSTEM_KEY;
+    isInternalJwt ||
+    (apiKeyHeader &&
+      expectedInternalKey &&
+      apiKeyHeader.length === expectedInternalKey.length &&
+      apiKeyHeader === expectedInternalKey);
 
   // Allow internal access by ID
   if (id && isInternal) {
@@ -49,7 +60,7 @@ async function getHandler(req: NextRequest) {
       });
     }
 
-    // If internal key is provided, return sensitive data for tool integration
+    // If internal, return sensitive data for tool integration
     if (isInternal) {
       return NextResponse.json(formatApiSuccess(restaurant, { traceId }));
     }
@@ -80,11 +91,12 @@ async function getHandler(req: NextRequest) {
     return NextResponse.json(formatApiSuccess(allRestaurants, { traceId }));
   }
 
-  const { error, status, context } = await validateRequest(req);
+  // Fall back to JWT auth context
+  const { error, status } = await validateRequest(req);
   if (error)
     return NextResponse.json(forbiddenErrorResponse(error), { status });
 
-  const restaurantId = context?.restaurantId;
+  const restaurantId = context?.resourceId;
 
   if (!restaurantId) {
     return NextResponse.json(

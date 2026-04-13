@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyBridgeToken } from "@repo/auth";
-import { SecurityProvider } from "@repo/auth";
 import {
   isTimingSafeEqual,
   AppConfig,
@@ -8,22 +7,28 @@ import {
   unauthorizedErrorResponse,
   validationErrorResponse,
   formatApiSuccess,
+  validateRequest,
 } from "@repo/shared";
 
 async function verifySessionHandler(req: NextRequest) {
   const traceId = req.headers.get("x-trace-id");
-  const internalKey = req.headers.get("x-internal-key");
-  const expectedKey = AppConfig.getInternalSystemKey();
 
-  if (
-    !internalKey ||
-    !expectedKey ||
-    !isTimingSafeEqual(internalKey, expectedKey)
-  ) {
-    return NextResponse.json(
-      unauthorizedErrorResponse("Invalid internal key"),
-      { status: 401 },
-    );
+  // Authenticate via RS256 JWT auth gateway
+  const { error, status } = await validateRequest(req);
+  if (error) {
+    // Fallback: legacy internal key check for backward compatibility during migration
+    const internalKey = req.headers.get("x-internal-key");
+    const expectedKey = AppConfig.getInternalSystemKey();
+    if (
+      !internalKey ||
+      !expectedKey ||
+      !isTimingSafeEqual(internalKey, expectedKey)
+    ) {
+      return NextResponse.json(
+        unauthorizedErrorResponse("Authentication required"),
+        { status },
+      );
+    }
   }
 
   const { token } = await req.json();

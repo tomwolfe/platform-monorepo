@@ -128,4 +128,7 @@ export async function verifyTransactionData(
 
 // Re-export validateTransactionHash for backward compatibility
 // Now uses the unified implementation from @repo/shared/web3/verifier
-export { validateTransactionHash };
+export { validateTransactionHash } from "@repo/shared/web3/verifier";
+
+// Re-export safeToHex/safeToAddress for barrel export
+export { safeToHex, safeToAddress } from "@repo/shared/web3/verifier";

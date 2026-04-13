@@ -208,7 +208,7 @@ export interface ValidationResult<T> {
 export function safeToHex(
   value: string,
   label: string,
-  strategy: "throw" = "throw",
+  strategy: "throw",
 ): `0x${string}`;
 export function safeToHex(
   value: string,
@@ -244,7 +244,7 @@ export function safeToHex(
  */
 export function safeToAddress(
   value: string | null | undefined,
-  strategy: "throw" = "throw",
+  strategy: "throw",
 ): `0x${string}`;
 export function safeToAddress(
   value: string | null | undefined,

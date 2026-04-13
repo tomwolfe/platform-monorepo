@@ -7,6 +7,9 @@ import { createBaseNextConfig } from '@repo/typescript-config/next-base.mjs';
 
 const nextConfig = createBaseNextConfig({
   output: "standalone",
+  transpilePackages: ["@repo/ui-theme", "@repo/mcp-protocol"],
+}, {
+  isWeb3App: true,
 });
 
 export default nextConfig;

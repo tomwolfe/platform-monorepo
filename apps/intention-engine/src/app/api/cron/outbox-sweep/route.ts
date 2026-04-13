@@ -20,12 +20,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import {
-  withCronAuth,
-  Logger,
-  withDistributedLock,
-  createErrorResponse,
-} from "@repo/shared";
+import { withCronAuth, Logger, withDistributedLock } from "@repo/shared";
 import { getOutboxListener } from "@repo/shared";
 
 export const runtime = "nodejs";
@@ -67,7 +62,7 @@ async function cronHandler(req: NextRequest): Promise<NextResponse> {
   const startTime = performance.now();
 
   try {
-    logger.info({ message: "Starting outbox sweep" });
+    logger.info("Starting outbox sweep");
 
     const listener = getOutboxListener();
 
@@ -83,9 +78,7 @@ async function cronHandler(req: NextRequest): Promise<NextResponse> {
         lockError.message.includes("Failed to acquire distributed lock")
       ) {
         skipped = true;
-        logger.info({
-          message: "Outbox sweep skipped — already running",
-        });
+        logger.info("Outbox sweep skipped — already running");
       } else {
         throw lockError;
       }
@@ -103,8 +96,7 @@ async function cronHandler(req: NextRequest): Promise<NextResponse> {
     const stats = listener.getStats();
     const duration = performance.now() - startTime;
 
-    logger.info({
-      message: "Outbox sweep completed",
+    logger.info("Outbox sweep completed", {
       durationMs: Math.round(duration),
       stats,
     });
@@ -135,8 +127,7 @@ async function cronHandler(req: NextRequest): Promise<NextResponse> {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    logger.error({
-      message: "Outbox sweep failed",
+    logger.error("Outbox sweep failed", {
       error: error instanceof Error ? error.message : String(error),
     });
 
@@ -145,14 +136,21 @@ async function cronHandler(req: NextRequest): Promise<NextResponse> {
       error: error instanceof Error ? error.message : String(error),
     });
 
-    return createErrorResponse(
-      error instanceof Error ? error.message : "Unknown error",
-      500,
-      "INTERNAL_ERROR",
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
     );
   }
 }
 
 // Wrap handler with cron authentication
-export const GET = withCronAuth(cronHandler);
-export const POST = withCronAuth(cronHandler);
+export const GET = withCronAuth((...args: unknown[]) => {
+  const req = args[0] as NextRequest;
+  return cronHandler(req);
+});
+export const POST = withCronAuth((...args: unknown[]) => {
+  const req = args[0] as NextRequest;
+  return cronHandler(req);
+});

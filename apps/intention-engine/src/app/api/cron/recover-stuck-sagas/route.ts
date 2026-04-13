@@ -4,7 +4,6 @@ import {
   Logger,
   getRedisClient,
   ServiceNamespace,
-  createErrorResponse,
 } from "@repo/shared";
 import { QStashService } from "@repo/shared/services/qstash";
 
@@ -92,15 +91,15 @@ async function scanSagaStateKeys(pattern: string): Promise<string[]> {
   const redis = getRedisClient(ServiceNamespace.IE);
   const keys: string[] = [];
 
-  let cursor = 0;
+  let cursor = "0";
   do {
     const result = await redis.scan(cursor, {
       match: pattern,
       count: 100,
     });
-    cursor = result[0];
+    cursor = result[0] as string;
     keys.push(...result[1]);
-  } while (cursor !== 0);
+  } while (cursor !== "0");
 
   return keys;
 }
@@ -136,8 +135,7 @@ async function checkStuckSaga(
       isStuck: isExecuting && isStale,
     };
   } catch (error) {
-    logger.warn({
-      message: "Failed to parse saga state",
+    logger.warn("Failed to parse saga state", {
       key,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -156,14 +154,15 @@ async function recoverStuckSaga(
 
   // Check if we've exceeded max recovery attempts
   if (recoveryAttempts >= MAX_RECOVERY_ATTEMPTS) {
-    logger.error({
-      message:
-        "Stuck saga exceeded max recovery attempts - manual intervention required",
-      executionId,
-      currentStep: state.currentStep,
-      lastCompletedStep: state.lastCompletedStep,
-      recoveryAttempts,
-    });
+    logger.error(
+      "Stuck saga exceeded max recovery attempts - manual intervention required",
+      {
+        executionId,
+        currentStep: state.currentStep,
+        lastCompletedStep: state.lastCompletedStep,
+        recoveryAttempts,
+      },
+    );
 
     return {
       executionId,
@@ -179,8 +178,7 @@ async function recoverStuckSaga(
     // Determine the next step to execute
     const nextStep = (state.lastCompletedStep || 0) + 1;
 
-    logger.info({
-      message: "Attempting to recover stuck saga",
+    logger.info("Attempting to recover stuck saga", {
       executionId,
       currentStep: state.currentStep,
       nextStep,
@@ -215,8 +213,7 @@ async function recoverStuckSaga(
       reason: `Triggered next step ${nextStep}`,
     };
   } catch (error) {
-    logger.error({
-      message: "Failed to recover stuck saga",
+    logger.error("Failed to recover stuck saga", {
       executionId,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -261,7 +258,7 @@ async function recoverStuckSaga(
  */
 async function postHandler(req: NextRequest) {
   try {
-    logger.info({ message: "Starting stuck saga recovery scan" });
+    logger.info("Starting stuck saga recovery scan");
 
     // Scan for saga state keys
     const keys = await scanSagaStateKeys(`${SAGA_STATE_KEY_PREFIX}:*`);
@@ -277,8 +274,7 @@ async function postHandler(req: NextRequest) {
       });
     }
 
-    logger.info({
-      message: "Scanning sagas for stuck state",
+    logger.info("Scanning sagas for stuck state", {
       totalSagas: keys.length,
     });
 
@@ -294,8 +290,7 @@ async function postHandler(req: NextRequest) {
         continue;
       }
 
-      logger.warn({
-        message: "Stuck saga detected",
+      logger.warn("Stuck saga detected", {
         executionId: sagaCheck.executionId,
         status: sagaCheck.state.status,
         lastUpdateMsAgo: Date.now() - sagaCheck.state.updatedAt,
@@ -317,8 +312,7 @@ async function postHandler(req: NextRequest) {
       }
     }
 
-    logger.info({
-      message: "Stuck saga recovery completed",
+    logger.info("Stuck saga recovery completed", {
       scannedCount: keys.length,
       recoveredCount,
       alertedCount,
@@ -350,8 +344,7 @@ async function postHandler(req: NextRequest) {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    logger.error({
-      message: "Stuck saga recovery cron failed",
+    logger.error("Stuck saga recovery cron failed", {
       error: error instanceof Error ? error.message : String(error),
     });
 
@@ -361,10 +354,12 @@ async function postHandler(req: NextRequest) {
       error: error instanceof Error ? error.message : String(error),
     });
 
-    return createErrorResponse(
-      error instanceof Error ? error.message : "Unknown error occurred",
-      500,
-      "INTERNAL_ERROR",
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error ? error.message : "Unknown error occurred",
+      },
+      { status: 500 },
     );
   }
 }
@@ -378,10 +373,12 @@ async function getHandler(req: NextRequest) {
 }
 
 // Wrap handlers with cron authentication
-export const POST = withCronAuth(async (req: NextRequest) => {
+export const POST = withCronAuth((...args: unknown[]) => {
+  const req = args[0] as NextRequest;
   return postHandler(req);
 });
 
-export const GET = withCronAuth(async (req: NextRequest) => {
+export const GET = withCronAuth((...args: unknown[]) => {
+  const req = args[0] as NextRequest;
   return getHandler(req);
 });

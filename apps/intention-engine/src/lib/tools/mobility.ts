@@ -205,7 +205,7 @@ function estimateDuration(distanceKm: number, travelMode: string): number {
     bicycling: 15,
     transit: 30,
   };
-  const speed = speeds[travelMode] || speeds.driving;
+  const speed = speeds[travelMode] ?? speeds.driving;
   return Math.round((distanceKm / speed) * 60);
 }
 

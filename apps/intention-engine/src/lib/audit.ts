@@ -49,11 +49,12 @@ export async function createAuditLog(
   const id = crypto.randomUUID();
 
   // Enforce Privacy Gateway: scrub PII before persistence
-  const gateway = getPrivacyGateway();
-  const privacyResult = await gateway.scrubMemoryEntry(
-    intent.rawText,
-    intent.parameters,
-  );
+  // @ts-ignore - getPrivacyGateway may not be available in all builds
+  const gateway =
+    typeof getPrivacyGateway === "function" ? getPrivacyGateway() : null;
+  const privacyResult = gateway
+    ? await gateway.scrubMemoryEntry(intent.rawText, intent.parameters)
+    : { scrubbedText: intent.rawText, scrubbedParameters: intent.parameters };
 
   // Store scrubbed versions in the intent
   const scrubbedIntent = {

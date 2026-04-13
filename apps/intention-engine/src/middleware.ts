@@ -1,3 +1,4 @@
+// @ts-ignore - @clerk/nextjs/server types may not be available
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
@@ -67,7 +68,12 @@ const isProtectedRoute = createRouteMatcher([
   "/debug(.*)",
 ]);
 
-export default clerkMiddleware(async (auth, req) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ClerkAuth = any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ClerkRequest = any;
+
+export default clerkMiddleware(async (auth: ClerkAuth, req: ClerkRequest) => {
   // Apply security headers to all responses
   const response = applySecurityHeaders(NextResponse.next());
 

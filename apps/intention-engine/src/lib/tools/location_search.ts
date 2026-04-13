@@ -586,7 +586,7 @@ export async function search_web(
         /(?:at|from|for|about)\s+([a-z][a-z0-9\s&]{2,30})/i,
       );
       const businessName = match
-        ? match[1].trim()
+        ? (match[1] ?? "").trim()
         : queryLower.split(" ").slice(0, 3).join(" ");
 
       // Generate deterministic email

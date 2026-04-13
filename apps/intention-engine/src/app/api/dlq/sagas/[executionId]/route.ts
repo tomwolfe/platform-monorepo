@@ -92,7 +92,9 @@ export async function GET(
       // Get saga from DLQ
       const dlqKey = `dlq:saga:${executionId}`;
       const rawSagaData = await redis?.get(dlqKey);
-      const sagaData = parseSagaData(rawSagaData);
+      const sagaData = parseSagaData(
+        typeof rawSagaData === "string" ? rawSagaData : null,
+      );
 
       if (!sagaData) {
         // Check if it's still in zombie state (not yet moved to DLQ)
@@ -199,7 +201,9 @@ async function handleResume(req: NextRequest, executionId: string) {
       // Get saga from DLQ
       const dlqKey = `dlq:saga:${executionId}`;
       const rawSagaData = await redis?.get(dlqKey);
-      const sagaData = parseSagaData(rawSagaData);
+      const sagaData = parseSagaData(
+        typeof rawSagaData === "string" ? rawSagaData : null,
+      );
 
       if (!sagaData) {
         return NextResponse.json(
@@ -319,7 +323,9 @@ async function handleCancel(req: NextRequest, executionId: string) {
       // Get saga from DLQ
       const dlqKey = `dlq:saga:${executionId}`;
       const rawSagaData = await redis?.get(dlqKey);
-      const sagaData = parseSagaData(rawSagaData);
+      const sagaData = parseSagaData(
+        typeof rawSagaData === "string" ? rawSagaData : null,
+      );
 
       if (!sagaData) {
         return NextResponse.json(

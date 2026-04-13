@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
       if (!trace) {
         return NextResponse.json(
           { error: "Trace not found", executionId: params.executionId },
-          { status: 404 }
+          { status: 404 },
         );
       }
 
@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
     const entries = await memoryClient.query({
       namespace: "*",
       type: "execution_trace",
-      limit: params.limit,
+      limit: params.limit ?? 50,
     });
 
     let traces = entries.map((entry) => entry.data as ExecutionTrace);
@@ -89,14 +89,14 @@ export async function GET(request: NextRequest) {
     // Apply phase filtering (check if any entries match the phase)
     if (params.phase) {
       traces = traces.filter((t) =>
-        t.entries.some((e) => e.phase === params.phase)
+        t.entries.some((e) => e.phase === params.phase),
       );
     }
 
     // Sort by started_at descending (most recent first)
     traces.sort(
       (a, b) =>
-        new Date(b.started_at).getTime() - new Date(a.started_at).getTime()
+        new Date(b.started_at).getTime() - new Date(a.started_at).getTime(),
     );
 
     const hasMore = traces.length >= (params.limit || 50);
@@ -112,7 +112,7 @@ export async function GET(request: NextRequest) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
       { error: "Failed to fetch traces", message: errorMessage },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -128,16 +128,16 @@ export async function POST(request: NextRequest) {
     const { trace } = body;
 
     if (!trace) {
-      return NextResponse.json(
-        { error: "Trace is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Trace is required" }, { status: 400 });
     }
 
     // In production, you would validate the trace schema here
     // For now, we trust the input (this is a debug endpoint)
 
-    console.log("[DebugTraces] Received trace:", trace.execution_id || trace.trace_id);
+    console.log(
+      "[DebugTraces] Received trace:",
+      trace.execution_id || trace.trace_id,
+    );
 
     return NextResponse.json({
       success: true,
@@ -148,7 +148,7 @@ export async function POST(request: NextRequest) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
       { error: "Failed to store trace", message: errorMessage },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

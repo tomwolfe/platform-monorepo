@@ -10,12 +10,11 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function getHandler(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  const { id } = await params;
-  const traceId = req.headers.get("x-trace-id");
+async function getHandler(req: NextRequest) {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const id = pathParts[pathParts.length - 1];
+  const traceId = req.headers.get("x-trace-id") ?? undefined;
 
   if (!id) {
     return NextResponse.json(validationErrorResponse("Missing audit ID"), {

@@ -6,6 +6,7 @@ import {
   SpanExporter,
   ReadableSpan,
 } from "@opentelemetry/sdk-trace-base";
+// @ts-ignore - @opentelemetry/exporter-trace-otlp-http may not be installed
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import {

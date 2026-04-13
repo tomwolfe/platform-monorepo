@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
   withQStashAuth,
+  withUnifiedApiHandler,
   formatError,
   formatSuccess,
   Logger,
@@ -119,6 +120,7 @@ async function heartbeatCheckHandler(
 
       const errorResponse = formatError(
         new ServiceUnavailableError(
+          "heartbeat-check",
           "Max recovery attempts exceeded - manual intervention required",
           { executionId, expectedStepIndex },
         ),
@@ -142,7 +144,20 @@ async function heartbeatCheckHandler(
   }
 }
 
-export const POST = withQStashAuth(heartbeatCheckHandler);
+export const POST = withQStashAuth(
+  withUnifiedApiHandler(
+    async (request: NextRequest) => {
+      const body = await request.json();
+      return heartbeatCheckHandler(
+        request,
+        body as { executionId: string; expectedStepIndex: number },
+      );
+    },
+    {
+      serviceName: "heartbeat-check",
+    },
+  ),
+);
 
 /**
  * GET endpoint for health check

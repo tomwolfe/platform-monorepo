@@ -64,7 +64,7 @@ const redis = getRedisClient(ServiceNamespace.IE);
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ executionId: string }> }
+  { params }: { params: Promise<{ executionId: string }> },
 ): Promise<NextResponse> {
   try {
     const { executionId } = await params;
@@ -74,7 +74,7 @@ export async function GET(
         {
           error: "Missing or invalid executionId",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -83,6 +83,15 @@ export async function GET(
 
     // Get timeline
     const timeline = await StateDiffViewer.generateTimeline(executionId);
+
+    if (!timeline) {
+      return NextResponse.json(
+        {
+          error: "Timeline not found for this execution",
+        },
+        { status: 404 },
+      );
+    }
 
     // Return result
     return NextResponse.json({
@@ -102,9 +111,12 @@ export async function GET(
 
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : "Failed to retrieve state diffs",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to retrieve state diffs",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

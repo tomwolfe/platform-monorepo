@@ -57,11 +57,14 @@ async function getHandler(req: NextRequest) {
 
   for (const event of events) {
     const startDate = await parseNaturalLanguageDate(event.start);
+    if (!startDate) {
+      continue;
+    }
     let endDate = event.end
       ? await parseNaturalLanguageDate(event.end)
       : new Date(startDate.getTime() + 60 * 60 * 1000);
 
-    if (isNaN(endDate.getTime()) || endDate <= startDate) {
+    if (!endDate || isNaN(endDate.getTime()) || endDate <= startDate) {
       endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
     }
 

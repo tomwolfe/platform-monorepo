@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 async function getHandler(req: NextRequest) {
   const userIp = req.headers.get("x-forwarded-for") || "anonymous";
-  const traceId = req.headers.get("x-trace-id");
+  const traceId = req.headers.get("x-trace-id") ?? undefined;
 
   const logs = await getUserAuditLogs(userIp, 10);
   return NextResponse.json(formatApiSuccess({ logs }, { traceId }));

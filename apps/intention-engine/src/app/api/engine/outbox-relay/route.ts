@@ -22,6 +22,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
   withQStashAuth,
+  withUnifiedApiHandler,
   getOutboxService,
   getRedisClient,
   ServiceNamespace,
@@ -99,4 +100,17 @@ async function outboxRelayHandler(
   }
 }
 
-export const POST = withQStashAuth(outboxRelayHandler);
+export const POST = withQStashAuth(
+  withUnifiedApiHandler(
+    async (request: NextRequest) => {
+      const body = await request.json();
+      return outboxRelayHandler(
+        request,
+        body as { executionId: string; timestamp?: string },
+      );
+    },
+    {
+      serviceName: "outbox-relay",
+    },
+  ),
+);

@@ -276,10 +276,14 @@ async function buildToolExecutor(
 
         // Fall back to local tools if MCP fails
         const localTool = toolRegistry.getDefinition(toolName);
-        if (!localTool) {
+        if (
+          !localTool ||
+          !("execute" in localTool) ||
+          typeof localTool.execute !== "function"
+        ) {
           return {
             success: false,
-            error: `Tool not found: ${toolName}`,
+            error: `Tool not found or not executable: ${toolName}`,
             latency_ms: Date.now() - startTime,
           };
         }
@@ -295,6 +299,7 @@ async function buildToolExecutor(
         };
         const getInjDb = (): NeonDatabase => {
           if (!_injDb) _injDb = getDb();
+          if (!_injDb) throw new Error("Database not configured");
           return _injDb;
         };
 

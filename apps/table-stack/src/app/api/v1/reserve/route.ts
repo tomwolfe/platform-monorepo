@@ -1,121 +1,29 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import {
-  IdempotencyService,
   IDEMPOTENCY_KEY_HEADER,
-  getRedisClient,
-  ServiceNamespace,
   withUnifiedApiHandler,
   formatApiError,
   formatApiSuccess,
   ReserveRequestSchema,
   validateRequest as validateZodRequest,
-  dispatchTask,
 } from "@repo/shared";
 import { validateRequest } from "@repo/shared/auth/gateway";
-import { withServerlessTimeout } from "@repo/shared/middleware/serverless-timeout";
-import { withRetry } from "@repo/shared/middleware/retry-with-backoff";
-import { reservationService } from "@tablestack/lib/reservation-service";
-import { ConflictError } from "@repo/shared/errors";
+import { reservationOrchestrator } from "@tablestack/lib/services/reservation.orchestrator.service";
+import { ConflictError, AppError } from "@repo/shared/errors";
 
 export const runtime = "nodejs";
-
-const redis = getRedisClient(ServiceNamespace.TS);
 
 /**
  * POST /api/v1/reserve - Create a Restaurant Reservation
  *
- * ## Outbox Pattern Implementation
+ * This route delegates to ReservationOrchestratorService which handles:
+ * - Idempotency checking
+ * - Shadow restaurant discovery
+ * - Reservation creation
+ * - Email and cache notification dispatch
  *
- * This route implements the **Outbox Pattern** to ensure reliable event delivery
- * when creating reservations. The outbox pattern decouples database transactions
- * from external side effects (email notifications) while maintaining consistency.
- *
- * ### How It Works
- *
- * ```mermaid
- * sequenceDiagram
- *   participant Client
- *   participant API as POST /api/v1/reserve
- *   participant DB as Database
- *   participant Outbox as Outbox Table
- *   participant Relay as Outbox Relay (background)
- *   participant Email as Email Service (Resend)
- *
- *   Client->>API: POST /api/v1/reserve
- *   API->>DB: BEGIN TRANSACTION
- *   API->>DB: INSERT reservation
- *   API->>Outbox: INSERT outbox_event (email notification)
- *   API->>DB: COMMIT
- *   API-->>Client: 200 OK (reservation created)
- *   Note over API,Email: Decoupled via after()
- *   Relay->>Outbox: Poll for new events
- *   Outbox-->>Relay: Return pending events
- *   Relay->>Email: Send email notification
- *   Relay->>Outbox: Mark event as sent
- * ```
- *
- * ### Why Use the Outbox Pattern?
- *
- * 1. **Atomicity**: The reservation and the intent to send an email are committed
- *    in a single database transaction. Either both succeed or both fail.
- *
- * 2. **Reliability**: Even if the email service is temporarily unavailable, the
- *    outbox event persists in the database and will be retried by the background
- *    relay process.
- *
- * 3. **Performance**: The API response is returned immediately after the DB commit.
- *    Email sending happens asynchronously via `after()`, avoiding blocking the response.
- *
- * ### Implementation Details
- *
- * - **`after()` Hook**: Next.js `after()` is used to schedule background work that
- *   continues after the HTTP response is sent. This is serverless-safe and ensures
- *   notifications don't block the critical path.
- *
- * - **Idempotency**: The `IdempotencyService` prevents duplicate reservations from
- *   client retries. Keys are stored in Redis with a TTL.
- *
- * - **Shadow Restaurant Discovery**: If the restaurant doesn't exist in the database,
- *   a "shadow" restaurant is automatically created and the owner is notified via email
- *   to claim it.
- *
- * - **Serverless Timeout Protection**: The route is wrapped with `withServerlessTimeout(8000)`
- *   to ensure it completes before Vercel's 10-second hard limit.
- *
- * ### Request Schema
- *
- * ```json
- * {
- *   "restaurantId": "uuid",
- *   "restaurantName": "Restaurant Name",
- *   "restaurantEmail": "owner@example.com",
- *   "tableId": "uuid",
- *   "guestName": "John Doe",
- *   "guestEmail": "john@example.com",
- *   "partySize": 4,
- *   "startTime": "2024-01-15T19:00:00Z",
- *   "metadata": { "specialRequests": "Window seat preferred" }
- * }
- * ```
- *
- * ### Response Schema
- *
- * ```json
- * {
- *   "success": true,
- *   "data": {
- *     "message": "Reservation created. Please check your email to verify.",
- *     "bookingId": "uuid"
- *   }
- * }
- * ```
- *
- * @throws 400 - Validation error or missing idempotency key
- * @throws 401 - Unauthorized (invalid session)
- * @throws 403 - Forbidden (accessing another restaurant)
- * @throws 409 - Conflict (table already booked or duplicate request)
- * @throws 500 - Internal server error
+ * @see apps/table-stack/src/lib/services/reservation.orchestrator.service.ts
  */
 async function postHandler(req: NextRequest) {
   // Auth validation
@@ -138,32 +46,10 @@ async function postHandler(req: NextRequest) {
     );
   }
 
-  const idempotencyService = new IdempotencyService(redis);
-  const isDuplicate = await idempotencyService.isDuplicate(
-    idempotencyKey,
-    "reserve_api",
-  );
-  if (isDuplicate) {
-    const status = await idempotencyService.getStatus(
-      idempotencyKey,
-      "reserve_api",
-    );
-    if (status === "processing") {
-      return NextResponse.json(
-        formatApiError(
-          new Error("Request still processing, please retry"),
-          "CONFLICT",
-        ),
-        { status: 409 },
-      );
-    }
-    return NextResponse.json(
-      formatApiSuccess({ message: "Reservation already processed" }),
-      {
-        status: 200,
-        headers: { "x-idempotency-duplicate": "true" },
-      },
-    );
+  const idempotencyCheck =
+    await reservationOrchestrator.checkIdempotency(idempotencyKey);
+  if (idempotencyCheck.isDuplicate && idempotencyCheck.cachedResponse) {
+    return idempotencyCheck.cachedResponse;
   }
 
   // Zod validation
@@ -186,116 +72,49 @@ async function postHandler(req: NextRequest) {
     metadata,
   } = validation.data;
 
-  let dbCommitted = false;
-
   try {
-    // Handle shadow restaurant discovery
-    let targetRestaurantId = context!.resourceId;
-    if (
-      context!.isInternal &&
-      !targetRestaurantId &&
-      discoveryName &&
-      discoveryEmail
-    ) {
-      const restaurant = await reservationService.findOrCreateShadowRestaurant(
-        discoveryName,
-        discoveryEmail,
-      );
-      targetRestaurantId = restaurant.id;
-    }
-
-    if (!targetRestaurantId) {
-      return NextResponse.json(
-        formatApiError(
-          new Error("Restaurant identifier missing"),
-          "VALIDATION_ERROR",
-        ),
-        { status: 400 },
-      );
-    }
-
-    if (restaurantId && restaurantId !== targetRestaurantId) {
-      return NextResponse.json(
-        formatApiError(
-          new Error("Unauthorized access to this restaurant"),
-          "FORBIDDEN",
-        ),
-        { status: 403 },
-      );
-    }
-
-    // Create reservation via service (with retry for transient failures)
-    const createReservationWithRetry = withRetry(
-      (payload: Parameters<typeof reservationService.createReservation>[0]) =>
-        reservationService.createReservation(payload),
-      { maxAttempts: 2, baseDelay: 500 },
-    );
-
-    const result = await createReservationWithRetry({
-      restaurantId: targetRestaurantId,
-      tableId,
-      combinedTableIds,
-      guestName,
-      guestEmail: guestEmail!,
-      partySize: partySize!,
-      startTime: startTime!,
-      metadata,
-    });
-    dbCommitted = true;
-
-    // Fetch restaurant details for notifications
-    const restaurant =
-      await reservationService.getRestaurant(targetRestaurantId);
-
-    // Dispatch email notification via QStash queue (reliable serverless async)
     const origin = new URL(req.url).origin;
-    await dispatchTask(
-      "send_reservation_email",
+
+    const result = await reservationOrchestrator.executeReservation(
       {
-        reservationId: result.reservation.id,
-        guestEmail: result.reservation.guestEmail,
-        guestName: result.reservation.guestName,
-        restaurantName: restaurant.name,
-        partySize: result.reservation.partySize,
-        startTime: result.reservation.startTime,
-        verificationToken: result.reservation.verificationToken,
-        isShadow: result.isShadow,
-        ownerEmail: restaurant.ownerEmail,
-        claimToken: restaurant.claimToken,
-        origin,
+        restaurantId,
+        restaurantName: discoveryName,
+        restaurantEmail: discoveryEmail,
+        tableId,
+        combinedTableIds,
+        guestName,
+        guestEmail: guestEmail!,
+        partySize: partySize!,
+        startTime: startTime!,
+        metadata,
       },
-      `email:${idempotencyKey}`,
-    );
-
-    // Mark idempotency key as processed
-    await idempotencyService.markProcessed(idempotencyKey, "reserve_api");
-
-    // Dispatch cache invalidation via QStash queue
-    await dispatchTask(
-      "invalidate_availability_cache",
       {
-        restaurantId: targetRestaurantId,
+        resourceId: context!.resourceId,
+        isInternal: context!.isInternal,
       },
-      `cache:${idempotencyKey}`,
+      idempotencyKey,
+      origin,
     );
 
-    return NextResponse.json(
-      formatApiSuccess({
-        message: result.isShadow
-          ? "Shadow reservation created. Restaurant has been notified."
-          : "Reservation created. Please check your email to verify.",
-        bookingId: result.reservation.id,
-      }),
-    );
+    return NextResponse.json(formatApiSuccess(result));
   } catch (err) {
-    // Remove idempotency key on failure to allow retries, but only if DB wasn't committed
-    if (!dbCommitted) {
-      await idempotencyService.removeKey(idempotencyKey, "reserve_api");
-    }
     if (err instanceof ConflictError) {
       return NextResponse.json(formatApiError(err, "CONFLICT"), {
         status: 409,
       });
+    }
+    if (err instanceof AppError) {
+      // Handle typed AppErrors from the error factory
+      if (err.statusCode === 400) {
+        return NextResponse.json(formatApiError(err, "VALIDATION_ERROR"), {
+          status: 400,
+        });
+      }
+      if (err.statusCode === 403) {
+        return NextResponse.json(formatApiError(err, "FORBIDDEN"), {
+          status: 403,
+        });
+      }
     }
     throw err;
   }

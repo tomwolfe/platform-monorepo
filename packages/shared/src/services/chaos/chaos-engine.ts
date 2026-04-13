@@ -17,7 +17,7 @@
  */
 
 import { EventEmitter } from "events";
-import { Logger } from "../logger";
+import { Logger } from "../../logger";
 
 // ============================================================================
 // CHAOS EXPERIMENT CONFIGURATION

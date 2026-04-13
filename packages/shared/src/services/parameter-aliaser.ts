@@ -135,10 +135,19 @@ export class ParameterAliaserService {
     aliasField: string,
     primaryField: string,
   ): Promise<ParameterAlias | null> {
+    const redis = this.config.redis;
+    if (!redis) {
+      this.logger.warn("Redis not configured, skipping mismatch recording", {
+        toolName,
+        aliasField,
+      });
+      return null;
+    }
+
     const aliasKey = this.buildAliasKey(toolName, aliasField);
 
     // Get existing alias or create new one
-    const existingData = await this.config.redis.get<string>(aliasKey);
+    const existingData = await redis.get<string>(aliasKey);
     let mismatchCount = 1;
 
     if (existingData) {
@@ -158,26 +167,19 @@ export class ParameterAliaserService {
     };
 
     // Store alias data
-    await this.config.redis.setex(
+    await redis.setex(
       aliasKey,
       7 * 24 * 60 * 60, // 7 days TTL for alias data
       JSON.stringify(alias),
     );
 
     // Add to tool index
-    await this.config.redis.sadd(
-      this.buildToolAliasIndexKey(toolName),
-      aliasField,
-    );
+    await redis.sadd(this.buildToolAliasIndexKey(toolName), aliasField);
 
     // Check if we should auto-create the alias
     if (mismatchCount >= this.config.mismatchThreshold) {
       alias.isAuto = true;
-      await this.config.redis.setex(
-        aliasKey,
-        7 * 24 * 60 * 60,
-        JSON.stringify(alias),
-      );
+      await redis.setex(aliasKey, 7 * 24 * 60 * 60, JSON.stringify(alias));
 
       // PERFECT GRADE: Write to hot-patch registry for instant availability
       await this.writeToHotPatchRegistry(
@@ -188,7 +190,7 @@ export class ParameterAliaserService {
       );
 
       // Invalidate cache to force refresh
-      await this.config.redis.del(this.buildCacheKey(toolName));
+      await redis.del(this.buildCacheKey(toolName));
 
       this.logger.info("Auto-created alias", {
         toolName,
@@ -219,9 +221,18 @@ export class ParameterAliaserService {
       return { ...cached.aliases, ...hotPatchAliases };
     }
 
+    const redis = this.config.redis;
+    if (!redis) {
+      this.logger.warn(
+        "Redis not configured, returning hot-patch aliases only",
+        { toolName },
+      );
+      return hotPatchAliases;
+    }
+
     // Check Redis cache for persisted aliases
     const cacheKey = this.buildCacheKey(toolName);
-    const cachedData = await this.config.redis.get<string>(cacheKey);
+    const cachedData = await redis.get<string>(cacheKey);
 
     let persistedAliases: Record<string, string> = {};
 
@@ -236,13 +247,13 @@ export class ParameterAliaserService {
 
     // If cache miss, build aliases from Redis
     if (Object.keys(persistedAliases).length === 0) {
-      const aliasFields = await this.config.redis.smembers(
+      const aliasFields = await redis.smembers(
         this.buildToolAliasIndexKey(toolName),
       );
 
       for (const aliasField of aliasFields) {
         const aliasKey = this.buildAliasKey(toolName, aliasField);
-        const aliasData = await this.config.redis.get<string>(aliasKey);
+        const aliasData = await redis.get<string>(aliasKey);
 
         if (aliasData) {
           const alias = JSON.parse(aliasData) as ParameterAlias;
@@ -260,7 +271,7 @@ export class ParameterAliaserService {
         expiresAt: Date.now() + this.config.cacheTtlSeconds * 1000,
       };
 
-      await this.config.redis.setex(
+      await redis.setex(
         cacheKey,
         this.config.cacheTtlSeconds,
         JSON.stringify(cacheEntry),
@@ -288,6 +299,7 @@ export class ParameterAliaserService {
   ): Promise<Record<string, unknown>> {
     const aliases = await this.getAliases(toolName);
     const result = { ...parameters };
+    const redis = this.config.redis;
 
     for (const [aliasField, primaryField] of Object.entries(aliases)) {
       if (aliasField in result && !(primaryField in result)) {
@@ -298,18 +310,16 @@ export class ParameterAliaserService {
     }
 
     // Update lastUsedAt for used aliases
+    if (!redis) return result;
+
     for (const aliasField of Object.keys(aliases)) {
       if (aliasField in parameters) {
         const aliasKey = this.buildAliasKey(toolName, aliasField);
-        const aliasData = await this.config.redis.get<string>(aliasKey);
+        const aliasData = await redis.get<string>(aliasKey);
         if (aliasData) {
           const alias = JSON.parse(aliasData) as ParameterAlias;
           alias.lastUsedAt = new Date().toISOString();
-          await this.config.redis.setex(
-            aliasKey,
-            7 * 24 * 60 * 60,
-            JSON.stringify(alias),
-          );
+          await redis.setex(aliasKey, 7 * 24 * 60 * 60, JSON.stringify(alias));
         }
       }
     }
@@ -348,7 +358,8 @@ export class ParameterAliaserService {
     primaryField: string,
     mismatchCount: number,
   ): Promise<void> {
-    if (!this.config.enableHotPatchRegistry) {
+    const redis = this.config.redis;
+    if (!redis || !this.config.enableHotPatchRegistry) {
       return;
     }
 
@@ -363,12 +374,12 @@ export class ParameterAliaserService {
 
     // Add to hot-patch registry (hash for easy updates)
     // Note: Upstash Redis uses hset with object format
-    await this.config.redis.hset(hotPatchKey, {
+    await redis.hset(hotPatchKey, {
       [aliasField]: JSON.stringify(hotPatchEntry),
     });
 
     // Set TTL on the hot-patch key (7 days)
-    await this.config.redis.expire(hotPatchKey, 7 * 24 * 60 * 60);
+    await redis.expire(hotPatchKey, 7 * 24 * 60 * 60);
 
     this.logger.info("Hot-patch registry updated", {
       toolName,
@@ -387,12 +398,13 @@ export class ParameterAliaserService {
    * @returns Hot-patch aliases (aliasField -> primaryField)
    */
   async getHotPatchAliases(toolName: string): Promise<Record<string, string>> {
-    if (!this.config.enableHotPatchRegistry) {
+    const redis = this.config.redis;
+    if (!redis || !this.config.enableHotPatchRegistry) {
       return {};
     }
 
     const hotPatchKey = this.buildHotPatchKey(toolName);
-    const hotPatchData = await this.config.redis.hgetall(hotPatchKey);
+    const hotPatchData = await redis.hgetall(hotPatchKey);
 
     if (!hotPatchData || Object.keys(hotPatchData).length === 0) {
       return {};
@@ -431,12 +443,13 @@ export class ParameterAliaserService {
     toolName: string,
     aliasField: string,
   ): Promise<void> {
-    if (!this.config.enableHotPatchRegistry) {
+    const redis = this.config.redis;
+    if (!redis || !this.config.enableHotPatchRegistry) {
       return;
     }
 
     const hotPatchKey = this.buildHotPatchKey(toolName);
-    await this.config.redis.hdel(hotPatchKey, aliasField);
+    await redis.hdel(hotPatchKey, aliasField);
 
     this.logger.info("Removed from hot-patch registry", {
       toolName,
@@ -452,12 +465,13 @@ export class ParameterAliaserService {
    * @param toolName - Tool name
    */
   async clearHotPatchRegistry(toolName: string): Promise<void> {
-    if (!this.config.enableHotPatchRegistry) {
+    const redis = this.config.redis;
+    if (!redis || !this.config.enableHotPatchRegistry) {
       return;
     }
 
     const hotPatchKey = this.buildHotPatchKey(toolName);
-    await this.config.redis.del(hotPatchKey);
+    await redis.del(hotPatchKey);
 
     this.logger.info("Cleared hot-patch registry", { toolName });
   }
@@ -470,7 +484,8 @@ export class ParameterAliaserService {
     toolsWithHotPatches: number;
     topHotPatchedTools: Array<{ toolName: string; count: number }>;
   }> {
-    if (!this.config.enableHotPatchRegistry) {
+    const redis = this.config.redis;
+    if (!redis || !this.config.enableHotPatchRegistry) {
       return {
         totalHotPatches: 0,
         toolsWithHotPatches: 0,
@@ -479,13 +494,13 @@ export class ParameterAliaserService {
     }
 
     const pattern = `${this.config.hotPatchKeyPrefix}:*`;
-    const hotPatchKeys = await this.config.redis.keys(pattern);
+    const hotPatchKeys = await redis.keys(pattern);
 
     let totalHotPatches = 0;
     const toolCounts: Array<{ toolName: string; count: number }> = [];
 
     for (const hotPatchKey of hotPatchKeys) {
-      const entries = await this.config.redis.hgetall(hotPatchKey);
+      const entries = await redis.hgetall(hotPatchKey);
       const count = entries ? Object.keys(entries).length : 0;
       totalHotPatches += count;
 
@@ -518,8 +533,11 @@ export class ParameterAliaserService {
     aliasField: string,
     approvedBy: string,
   ): Promise<ParameterAlias | null> {
+    const redis = this.config.redis;
+    if (!redis) return null;
+
     const aliasKey = this.buildAliasKey(toolName, aliasField);
-    const aliasData = await this.config.redis.get<string>(aliasKey);
+    const aliasData = await redis.get<string>(aliasKey);
 
     if (!aliasData) {
       return null;
@@ -530,14 +548,10 @@ export class ParameterAliaserService {
     alias.approvedAt = new Date().toISOString();
     alias.isAuto = false; // Mark as manually approved
 
-    await this.config.redis.setex(
-      aliasKey,
-      7 * 24 * 60 * 60,
-      JSON.stringify(alias),
-    );
+    await redis.setex(aliasKey, 7 * 24 * 60 * 60, JSON.stringify(alias));
 
     // Invalidate cache
-    await this.config.redis.del(this.buildCacheKey(toolName));
+    await redis.del(this.buildCacheKey(toolName));
     this.localCache.delete(toolName);
 
     this.logger.info("Alias approved", {
@@ -554,14 +568,17 @@ export class ParameterAliaserService {
    * Get all aliases for a tool
    */
   async getAllAliases(toolName: string): Promise<ParameterAlias[]> {
-    const aliasFields = await this.config.redis.smembers(
+    const redis = this.config.redis;
+    if (!redis) return [];
+
+    const aliasFields = await redis.smembers(
       this.buildToolAliasIndexKey(toolName),
     );
     const aliases: ParameterAlias[] = [];
 
     for (const aliasField of aliasFields) {
       const aliasKey = this.buildAliasKey(toolName, aliasField);
-      const aliasData = await this.config.redis.get<string>(aliasKey);
+      const aliasData = await redis.get<string>(aliasKey);
 
       if (aliasData) {
         const alias = JSON.parse(aliasData) as ParameterAlias;
@@ -576,15 +593,15 @@ export class ParameterAliaserService {
    * Remove an alias
    */
   async removeAlias(toolName: string, aliasField: string): Promise<boolean> {
+    const redis = this.config.redis;
+    if (!redis) return false;
+
     const aliasKey = this.buildAliasKey(toolName, aliasField);
-    const deleted = await this.config.redis.del(aliasKey);
-    await this.config.redis.srem(
-      this.buildToolAliasIndexKey(toolName),
-      aliasField,
-    );
+    const deleted = await redis.del(aliasKey);
+    await redis.srem(this.buildToolAliasIndexKey(toolName), aliasField);
 
     // Invalidate cache
-    await this.config.redis.del(this.buildCacheKey(toolName));
+    await redis.del(this.buildCacheKey(toolName));
     this.localCache.delete(toolName);
 
     return deleted > 0;
@@ -599,8 +616,18 @@ export class ParameterAliaserService {
     approvedAliases: number;
     topAliasedTools: Array<{ toolName: string; count: number }>;
   }> {
+    const redis = this.config.redis;
+    if (!redis) {
+      return {
+        totalAliases: 0,
+        autoAliases: 0,
+        approvedAliases: 0,
+        topAliasedTools: [],
+      };
+    }
+
     const pattern = `${this.config.keyPrefix}:index:*`;
-    const indexKeys = await this.config.redis.keys(pattern);
+    const indexKeys = await redis.keys(pattern);
 
     let totalAliases = 0;
     let autoAliases = 0;
@@ -608,7 +635,7 @@ export class ParameterAliaserService {
     const toolCounts: Array<{ toolName: string; count: number }> = [];
 
     for (const indexKey of indexKeys) {
-      const aliasFields = await this.config.redis.smembers(indexKey);
+      const aliasFields = await redis.smembers(indexKey);
       const toolName = indexKey.replace(`${this.config.keyPrefix}:index:`, "");
 
       let toolAutoCount = 0;
@@ -616,7 +643,7 @@ export class ParameterAliaserService {
 
       for (const aliasField of aliasFields) {
         const aliasKey = this.buildAliasKey(toolName, aliasField);
-        const aliasData = await this.config.redis.get<string>(aliasKey);
+        const aliasData = await redis.get<string>(aliasKey);
 
         if (aliasData) {
           const alias = JSON.parse(aliasData) as ParameterAlias;

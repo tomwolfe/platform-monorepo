@@ -119,9 +119,7 @@ export async function GET(req: NextRequest) {
 
   if (!queryResult.success) {
     const errorResponse = formatError(
-      new ValidationError("Invalid query parameters", {
-        errors: queryResult.error.errors,
-      }),
+      new ValidationError("Invalid query parameters", "INVALID_QUERY"),
       "VALIDATION_ERROR",
     );
     return NextResponse.json(errorResponse, { status: 400 });

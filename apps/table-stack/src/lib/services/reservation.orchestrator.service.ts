@@ -1,0 +1,281 @@
+/**
+ * Reservation Orchestrator Service
+ *
+ * Coordinates the complete reservation workflow:
+ * - Shadow restaurant discovery (find-or-create)
+ * - Reservation creation (with retry)
+ * - Email notification dispatch
+ * - Cache invalidation dispatch
+ *
+ * Following the pattern established in CheckoutService, this orchestrator
+ * encapsulates business workflow logic while delegating pure business operations
+ * to the extracted ReservationService (reservation-service.ts).
+ *
+ * @see Task 2: Standardize reserve controller
+ */
+
+import {
+  IdempotencyService,
+  IDEMPOTENCY_KEY_HEADER,
+  getRedisClient,
+  ServiceNamespace,
+  dispatchTask,
+  Logger,
+} from "@repo/shared";
+import { ConflictError } from "@repo/shared/errors";
+import { reservationService } from "../reservation-service";
+import { TableStackError } from "../error-factory";
+
+const logger = new Logger({ serviceName: "reservation-orchestrator" });
+
+export interface ReserveRequest {
+  restaurantId?: string;
+  restaurantName?: string;
+  restaurantEmail?: string;
+  tableId?: string;
+  combinedTableIds?: string[];
+  guestName: string;
+  guestEmail: string;
+  partySize: number;
+  startTime: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ReserveContext {
+  resourceId?: string;
+  isInternal: boolean;
+}
+
+export interface ReserveResult {
+  message: string;
+  bookingId: string;
+}
+
+export interface ReserveServiceOverrides {
+  findOrCreateShadowRestaurant?: typeof reservationService.findOrCreateShadowRestaurant;
+  createReservation?: typeof reservationService.createReservation;
+  getRestaurant?: typeof reservationService.getRestaurant;
+}
+
+export class ReservationOrchestratorService {
+  private readonly idempotencyService: IdempotencyService;
+  private readonly findOrCreateShadowRestaurant: typeof reservationService.findOrCreateShadowRestaurant;
+  private readonly createReservation: typeof reservationService.createReservation;
+  private readonly getRestaurant: typeof reservationService.getRestaurant;
+
+  constructor(overrides?: ReserveServiceOverrides) {
+    const redis = getRedisClient(ServiceNamespace.TS);
+    this.idempotencyService = new IdempotencyService(redis);
+    this.findOrCreateShadowRestaurant =
+      overrides?.findOrCreateShadowRestaurant ??
+      reservationService.findOrCreateShadowRestaurant.bind(reservationService);
+    this.createReservation =
+      overrides?.createReservation ??
+      reservationService.createReservation.bind(reservationService);
+    this.getRestaurant =
+      overrides?.getRestaurant ??
+      reservationService.getRestaurant.bind(reservationService);
+  }
+
+  /**
+   * Check if request is a duplicate based on idempotency key.
+   * Returns the cached response if duplicate, or null if new request.
+   */
+  async checkIdempotency(
+    idempotencyKey: string,
+  ): Promise<{ isDuplicate: boolean; cachedResponse?: Response }> {
+    const isDuplicate = await this.idempotencyService.isDuplicate(
+      idempotencyKey,
+      "reserve_api",
+    );
+
+    if (!isDuplicate) {
+      return { isDuplicate: false };
+    }
+
+    const status = await this.idempotencyService.getStatus(
+      idempotencyKey,
+      "reserve_api",
+    );
+
+    if (status === "processing") {
+      return {
+        isDuplicate: true,
+        cachedResponse: new Response(
+          JSON.stringify({
+            error: "Request still processing, please retry",
+          }),
+          { status: 409 },
+        ),
+      };
+    }
+
+    // Return cached success response (client should have stored the original)
+    return {
+      isDuplicate: true,
+      cachedResponse: new Response(
+        JSON.stringify({ message: "Reservation already processed" }),
+        { status: 200, headers: { "x-idempotency-duplicate": "true" } },
+      ),
+    };
+  }
+
+  /**
+   * Resolve the target restaurant ID, creating a shadow restaurant if needed.
+   * This handles the "find-or-create" logic for shadow restaurant discovery.
+   */
+  async resolveRestaurant(
+    context: ReserveContext,
+    discoveryName?: string,
+    discoveryEmail?: string,
+  ): Promise<{ restaurantId: string; isShadow: boolean }> {
+    let targetRestaurantId = context.resourceId;
+
+    // Shadow restaurant discovery flow
+    if (
+      context.isInternal &&
+      !targetRestaurantId &&
+      discoveryName &&
+      discoveryEmail
+    ) {
+      const restaurant = await this.findOrCreateShadowRestaurant(
+        discoveryName,
+        discoveryEmail,
+      );
+      targetRestaurantId = restaurant.id;
+    }
+
+    if (!targetRestaurantId) {
+      throw TableStackError.identifierMissing("restaurant");
+    }
+
+    return {
+      restaurantId: targetRestaurantId,
+      isShadow: false, // Will be updated during reservation creation
+    };
+  }
+
+  /**
+   * Execute the complete reservation workflow.
+   *
+   * This includes:
+   * 1. Restaurant resolution (including shadow discovery)
+   * 2. Reservation creation (with retry for transient failures)
+   * 3. Email notification dispatch (via QStash)
+   * 4. Cache invalidation dispatch (via QStash)
+   * 5. Idempotency key marking
+   *
+   * Returns the reservation result on success.
+   * Throws on failure (caller should handle error responses).
+   */
+  async executeReservation(
+    request: ReserveRequest,
+    context: ReserveContext,
+    idempotencyKey: string,
+    origin: string,
+  ): Promise<ReserveResult> {
+    const {
+      restaurantId,
+      restaurantName: discoveryName,
+      restaurantEmail: discoveryEmail,
+      tableId,
+      combinedTableIds,
+      guestName,
+      guestEmail,
+      partySize,
+      startTime,
+      metadata,
+    } = request;
+
+    let dbCommitted = false;
+
+    try {
+      // Step 1: Resolve restaurant (with shadow discovery if needed)
+      const { restaurantId: targetRestaurantId } = await this.resolveRestaurant(
+        context,
+        discoveryName,
+        discoveryEmail,
+      );
+
+      // Step 2: Validate restaurant access
+      if (restaurantId && restaurantId !== targetRestaurantId) {
+        throw TableStackError.unauthorizedRestaurantAccess(
+          restaurantId,
+          targetRestaurantId,
+        );
+      }
+
+      // Step 3: Create reservation (with retry)
+      const result = await this.createReservation({
+        restaurantId: targetRestaurantId,
+        tableId,
+        combinedTableIds,
+        guestName,
+        guestEmail,
+        partySize,
+        startTime,
+        metadata,
+      });
+      dbCommitted = true;
+
+      // Step 4: Fetch restaurant details for notifications
+      const restaurant = await this.getRestaurant(targetRestaurantId);
+
+      // Step 5: Dispatch email notification via QStash
+      await dispatchTask(
+        "send_reservation_email",
+        {
+          reservationId: result.reservation.id,
+          guestEmail: result.reservation.guestEmail!,
+          guestName: result.reservation.guestName || "",
+          restaurantName: restaurant.name || "",
+          partySize: result.reservation.partySize!,
+          startTime: (result.reservation.startTime as Date).toISOString(),
+          verificationToken: result.reservation.verificationToken || "",
+          isShadow: result.isShadow,
+          ownerEmail: restaurant.ownerEmail || undefined,
+          claimToken: restaurant.claimToken || undefined,
+          origin,
+        },
+        `email:${idempotencyKey}`,
+      );
+
+      // Step 6: Mark idempotency key as processed
+      await this.idempotencyService.markProcessed(
+        idempotencyKey,
+        "reserve_api",
+      );
+
+      // Step 7: Dispatch cache invalidation via QStash
+      await dispatchTask(
+        "invalidate_availability_cache",
+        {
+          restaurantId: targetRestaurantId,
+        },
+        `cache:${idempotencyKey}`,
+      );
+
+      return {
+        message: result.isShadow
+          ? "Shadow reservation created. Restaurant has been notified."
+          : "Reservation created. Please check your email to verify.",
+        bookingId: result.reservation.id,
+      };
+    } catch (err) {
+      // Remove idempotency key on failure to allow retries, but only if DB wasn't committed
+      if (!dbCommitted) {
+        await this.idempotencyService
+          .removeKey(idempotencyKey, "reserve_api")
+          .catch((e) => {
+            logger.warn("Failed to remove idempotency key on error", {
+              error: e instanceof Error ? e.message : String(e),
+            });
+          });
+      }
+      throw err;
+    }
+  }
+}
+
+// Export singleton instance
+export const reservationOrchestrator = new ReservationOrchestratorService();

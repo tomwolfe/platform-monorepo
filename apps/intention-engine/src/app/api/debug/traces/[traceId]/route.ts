@@ -48,15 +48,57 @@ async function getHandler(
 
   // ENHANCEMENT: Add state diffs if requested
   if (includeStateDiffs) {
-    enrichedTrace.stateDiffs = await computeStateDiffs(traceId);
+    const stateDiffs = await computeStateDiffs(traceId);
+    return NextResponse.json({ ...enrichedTrace, stateDiffs });
   }
 
   return NextResponse.json(enrichedTrace);
 }
 
-export const GET = withUnifiedApiHandler(getHandler, {
-  serviceName: "debug-traces",
-});
+export const GET = withUnifiedApiHandler(
+  async (request: NextRequest) => {
+    const url = new URL(request.url);
+    const pathParts = url.pathname.split("/");
+    const traceId = pathParts[pathParts.length - 1];
+
+    if (!traceId) {
+      return NextResponse.json(
+        { error: "Trace ID is required" },
+        { status: 400 },
+      );
+    }
+
+    const includeStateDiffs =
+      url.searchParams.get("includeStateDiffs") === "true";
+
+    const trace = await loadExecutionTrace(traceId);
+
+    if (!trace) {
+      return NextResponse.json(
+        {
+          error: "Trace not found",
+          traceId,
+          hint: "Traces may be expired or not yet persisted. Check if the execution is still in progress.",
+        },
+        { status: 404 },
+      );
+    }
+
+    // Enrich trace with computed metrics
+    const enrichedTrace = enrichTrace(trace);
+
+    // ENHANCEMENT: Add state diffs if requested
+    if (includeStateDiffs) {
+      const stateDiffs = await computeStateDiffs(traceId);
+      return NextResponse.json({ ...enrichedTrace, stateDiffs });
+    }
+
+    return NextResponse.json(enrichedTrace);
+  },
+  {
+    serviceName: "debug-traces",
+  },
+);
 
 interface TraceEntry {
   step_id?: string;
@@ -95,7 +137,9 @@ function enrichTrace(trace: Record<string, unknown>) {
   entries.forEach((entry: TraceEntry, _index: number) => {
     if (!entry.step_id) return;
 
-    const timestamp = new Date(entry.timestamp || trace.started_at).getTime();
+    const timestampStr =
+      entry.timestamp ?? (trace.started_at as string | undefined);
+    const timestamp = new Date(timestampStr || Date.now()).getTime();
 
     if (!stepMetrics.has(entry.step_id)) {
       stepMetrics.set(entry.step_id, {
@@ -166,24 +210,29 @@ function enrichTrace(trace: Record<string, unknown>) {
       tokenUsage,
       stepDetails: Object.fromEntries(stepMetrics),
     },
-    waterfall: entries.map((entry: TraceEntry, index: number) => ({
-      id: `${entry.step_id || "root"}-${index}`,
-      stepId: entry.step_id,
-      phase: entry.phase,
-      event: entry.event,
-      startTime: new Date(entry.timestamp || trace.started_at).getTime(),
-      duration: entry.latency_ms || 0,
-      status: entry.error
-        ? "error"
-        : entry.event.includes("completed")
-          ? "success"
-          : entry.event.includes("started")
-            ? "pending"
-            : "complete",
-      error: entry.error,
-      hasInput: !!entry.input,
-      hasOutput: !!entry.output,
-    })),
+    waterfall: entries.map((entry: TraceEntry, index: number) => {
+      const tsStr = entry.timestamp ?? (trace.started_at as string | undefined);
+      const startTime = new Date(tsStr || Date.now()).getTime();
+      const eventStr = entry.event ?? "";
+      return {
+        id: `${entry.step_id || "root"}-${index}`,
+        stepId: entry.step_id,
+        phase: entry.phase,
+        event: entry.event,
+        startTime,
+        duration: entry.latency_ms || 0,
+        status: entry.error
+          ? "error"
+          : eventStr.includes("completed")
+            ? "success"
+            : eventStr.includes("started")
+              ? "pending"
+              : "complete",
+        error: entry.error,
+        hasInput: !!entry.input,
+        hasOutput: !!entry.output,
+      };
+    }),
   };
 }
 
@@ -236,7 +285,11 @@ async function computeStateDiffs(traceId: string): Promise<
 
     // Build snapshots from task state transitions
     for (const transition of taskState.transitions || []) {
-      const snapshot: Record<string, unknown> = {
+      const snapshot: {
+        stepId?: string;
+        timestamp: string;
+        state: Record<string, unknown>;
+      } = {
         stepId: transition.metadata?.stepId as string | undefined,
         timestamp: transition.timestamp,
         state: {
@@ -256,7 +309,11 @@ async function computeStateDiffs(traceId: string): Promise<
 
     // If no snapshots from transitions, create from step results in context
     if (stateSnapshots.length === 0) {
-      const stepResults = Object.entries(taskState.context)
+      const stepResults: Array<{
+        stepId?: string;
+        timestamp: string;
+        state: Record<string, unknown>;
+      }> = Object.entries(taskState.context)
         .filter(([key]) => key.startsWith("step_result:"))
         .map(([key, value]) => ({
           stepId: key.replace("step_result:", ""),

@@ -222,19 +222,19 @@ function extractRestaurantMentions(text: string): string[] {
   // Pattern 1: "at Restaurant Name" or "at the Restaurant Name"
   const atPattern = /at\s+(?:the\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/g;
   for (const match of text.matchAll(atPattern)) {
-    mentions.add(match[1]);
+    if (match[1]) mentions.add(match[1]);
   }
 
   // Pattern 2: "Restaurant Name restaurant"
   const restaurantPattern = /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+restaurant/gi;
   for (const match of text.matchAll(restaurantPattern)) {
-    mentions.add(match[1]);
+    if (match[1]) mentions.add(match[1]);
   }
 
   // Pattern 3: Direct slug/ID references (e.g., "restaurant:foo-bar")
   const slugPattern = /restaurant[:\s]+([a-zA-Z0-9-_]+)/gi;
   for (const match of text.matchAll(slugPattern)) {
-    mentions.add(match[2]);
+    if (match[1]) mentions.add(match[1]);
   }
 
   // Pattern 4: Common restaurant name patterns (capitalized multi-word)
@@ -243,7 +243,10 @@ function extractRestaurantMentions(text: string): string[] {
   for (const match of text.matchAll(capitalizedPattern)) {
     const name = match[1];
     // Filter out common non-restaurant words
-    if (!["The", "A", "An", "This", "That", "These", "Those"].includes(name)) {
+    if (
+      name &&
+      !["The", "A", "An", "This", "That", "These", "Those"].includes(name)
+    ) {
       mentions.add(name);
     }
   }

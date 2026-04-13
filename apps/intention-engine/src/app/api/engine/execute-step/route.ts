@@ -80,7 +80,7 @@ async function executeStepHandler(
 
   // Wrap step execution with retry for transient failures
   const executeStepWithRetry = withRetry(
-    (execId: string, stepIndex?: number, req?: NextRequest) =>
+    (execId: string, stepIndex: number, req: NextRequest) =>
       stepExecutionService.execute(execId, stepIndex, req),
     { maxAttempts: 2, baseDelay: 1000 },
   );
@@ -88,7 +88,7 @@ async function executeStepHandler(
   try {
     const result = await executeStepWithRetry(
       executionId,
-      startStepIndex,
+      startStepIndex ?? 0,
       request,
     );
     return NextResponse.json(ExecuteStepResponseSchema.parse(result));
@@ -109,8 +109,14 @@ async function executeStepHandler(
 }
 
 export const POST = withQStashAuth(
-  withUnifiedApiHandler(executeStepHandler, {
-    serviceName: "execute-step",
-    includeStackTrace: process.env.NODE_ENV !== "production",
-  }),
+  withUnifiedApiHandler(
+    async (request: NextRequest) => {
+      const body = await request.json();
+      return executeStepHandler(request, body);
+    },
+    {
+      serviceName: "execute-step",
+      includeStackTrace: process.env.NODE_ENV !== "production",
+    },
+  ),
 );

@@ -12,8 +12,12 @@
  * - POST /api/v1/reserve: Web3 reserve
  *
  * @see Phase 1.1: Testing Infrastructure
+ * @see Task 1: Fix Integration Test Anti-Pattern
  *
- * NOTE: These tests require a real database. Run with:
+ * NOTE: These tests use DIRECT HANDLER IMPORTS to test the actual route handler code.
+ * MSW is used ONLY for external services (Ably, Resend, price oracles).
+ *
+ * Run with:
  *   docker compose up -d postgres
  *   TEST_DATABASE_URL=postgresql://apps:apps@localhost:5432/apps pnpm test
  */
@@ -38,21 +42,29 @@ import {
 } from "@repo/shared/testing";
 import { setupIntegrationMocks } from "./msw/setup";
 
+// MSW is ONLY for external services (Ably, Resend, price oracles)
+// Internal API calls go through direct handler imports
 const msw = setupIntegrationMocks();
 
-beforeAll(() => msw.start());
-afterAll(() => msw.stop());
+beforeAll(async () => {
+  msw.start();
+  // Setup test database
+  await setupTestDatabase();
+});
+
+afterAll(async () => {
+  msw.stop();
+  // Cleanup test restaurant and related data
+  try {
+    await cleanupTestDatabase();
+  } catch (error) {
+    console.warn("Test database cleanup failed:", error);
+  }
+});
+
 beforeEach(() => {
   msw.reset();
   vi.restoreAllMocks();
-});
-
-// Mock @repo/database for non-DB parts of the tests
-vi.mock("@repo/database", async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...(actual as object),
-  };
 });
 
 // Mock serverless timeout
@@ -61,25 +73,6 @@ vi.mock("@repo/shared/middleware/serverless-timeout", () => ({
     (handler: (req: Request) => Promise<Response>) => handler,
   ),
 }));
-
-// Mock @repo/shared redis client
-vi.mock("@repo/shared", async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...(actual as object),
-    getRedisClient: vi.fn(() => ({
-      get: vi.fn(() => Promise.resolve(null)),
-      set: vi.fn(() => Promise.resolve("OK")),
-      setex: vi.fn(() => Promise.resolve("OK")),
-      del: vi.fn(() => Promise.resolve(0)),
-      lpush: vi.fn(() => Promise.resolve(1)),
-      rpush: vi.fn(() => Promise.resolve(1)),
-      lrange: vi.fn(() => Promise.resolve([])),
-      expire: vi.fn(() => Promise.resolve(1)),
-      nx: vi.fn(() => Promise.resolve(true)),
-    })),
-  };
-});
 
 // Mock notifications
 vi.mock("@tablestack/lib/notifications", () => ({
@@ -103,13 +96,6 @@ vi.mock("@tablestack/lib/auth", () => ({
   ),
 }));
 
-// Mock serverless timeout (duplicate - will be merged)
-vi.mock("@repo/shared/middleware/serverless-timeout", () => ({
-  withServerlessTimeout: vi.fn(
-    (handler: (req: Request) => Promise<Response>) => handler,
-  ),
-}));
-
 // Mock redis
 vi.mock("@tablestack/lib/redis", () => ({
   redis: {
@@ -128,9 +114,6 @@ describe("API Endpoint Integration Tests", () => {
   let testRestaurant: TestRestaurantData;
 
   beforeAll(async () => {
-    // Setup test database
-    await setupTestDatabase();
-
     // Create test restaurant
     testRestaurant = await createTestRestaurant({
       id: `test-res-${Date.now()}`,
@@ -150,15 +133,6 @@ describe("API Endpoint Integration Tests", () => {
 
     // Create test tables
     await createTestTables(testRestaurant.restaurant.id, 5);
-  });
-
-  afterAll(async () => {
-    // Cleanup test restaurant and related data
-    try {
-      await cleanupTestDatabase();
-    } catch (error) {
-      console.warn("Test database cleanup failed:", error);
-    }
   });
 
   describe("POST /api/v1/checkout", () => {

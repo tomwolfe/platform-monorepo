@@ -22,6 +22,9 @@
 
 import { Redis } from "@upstash/redis";
 import { z } from "zod";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "lamport-clock" });
 
 // ============================================================================
 // SCHEMAS
@@ -61,7 +64,9 @@ export const TimestampedEventSchema = z.object({
   correlationId: z.string().uuid().optional(),
 });
 
-export type TimestampedEvent<T = any> = z.infer<typeof TimestampedEventSchema> & {
+export type TimestampedEvent<T = unknown> = z.infer<
+  typeof TimestampedEventSchema
+> & {
   payload: T;
 };
 
@@ -93,10 +98,16 @@ export class LamportClock {
       const stored = await this.redis.get<number>(this.redisKey);
       if (stored) {
         this.counter = stored;
-        console.log(`[LamportClock] Initialized counter for ${this.serviceId}: ${this.counter}`);
+        logger.info("Initialized Lamport counter", {
+          serviceId: this.serviceId,
+          counter: this.counter,
+        });
       }
     } catch (error) {
-      console.error(`[LamportClock] Failed to initialize from Redis:`, error);
+      logger.error("Failed to initialize Lamport counter from Redis", {
+        serviceId: this.serviceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -127,11 +138,15 @@ export class LamportClock {
   /**
    * Create a new timestamp for a local event
    */
-  timestamp(parentId?: string, executionId?: string, traceId?: string): LamportTimestamp {
+  timestamp(
+    parentId?: string,
+    executionId?: string,
+    traceId?: string,
+  ): LamportTimestamp {
     this.tick();
-    
+
     // Persist to Redis for durability
-    this.persist();
+    void this.persist();
 
     return {
       counter: this.counter,
@@ -148,8 +163,8 @@ export class LamportClock {
    */
   receiveTimestamp(parentTimestamp: LamportTimestamp): LamportTimestamp {
     this.receive(parentTimestamp.counter);
-    
-    this.persist();
+
+    void this.persist();
 
     return {
       counter: this.counter,
@@ -172,7 +187,10 @@ export class LamportClock {
     try {
       await this.redis.setex(this.redisKey, 86400, this.counter);
     } catch (error) {
-      console.error(`[LamportClock] Failed to persist counter:`, error);
+      logger.error("Failed to persist Lamport counter", {
+        serviceId: this.serviceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -212,8 +230,12 @@ export class LamportClock {
   /**
    * Sort events by Lamport timestamp
    */
-  static sortEvents<T extends { timestamp: LamportTimestamp }>(events: T[]): T[] {
-    return events.sort((a, b) => LamportClock.compare(a.timestamp, b.timestamp));
+  static sortEvents<T extends { timestamp: LamportTimestamp }>(
+    events: T[],
+  ): T[] {
+    return events.sort((a, b) =>
+      LamportClock.compare(a.timestamp, b.timestamp),
+    );
   }
 }
 
@@ -249,12 +271,12 @@ export class TimestampedEventBus {
       executionId?: string;
       traceId?: string;
       correlationId?: string;
-    }
+    },
   ): TimestampedEvent<T> {
     const timestamp = this.clock.timestamp(
       options?.parentId,
       options?.executionId,
-      options?.traceId
+      options?.traceId,
     );
 
     const event: TimestampedEvent<T> = {
@@ -278,7 +300,7 @@ export class TimestampedEventBus {
   /**
    * Receive an event from another service
    */
-  receive<T = any>(event: TimestampedEvent<T>): void {
+  receive<T = unknown>(event: TimestampedEvent<T>): void {
     // Update our clock based on received timestamp
     this.clock.receive(event.timestamp.counter);
 
@@ -294,15 +316,22 @@ export class TimestampedEventBus {
   /**
    * Get events ordered by Lamport timestamp
    */
-  getOrderedEvents(startTime?: LamportTimestamp, endTime?: LamportTimestamp): TimestampedEvent[] {
+  getOrderedEvents(
+    startTime?: LamportTimestamp,
+    endTime?: LamportTimestamp,
+  ): TimestampedEvent[] {
     let events = [...this.eventHistory];
 
     // Filter by time range if specified
     if (startTime) {
-      events = events.filter(e => LamportClock.compare(e.timestamp, startTime) >= 0);
+      events = events.filter(
+        (e) => LamportClock.compare(e.timestamp, startTime) >= 0,
+      );
     }
     if (endTime) {
-      events = events.filter(e => LamportClock.compare(e.timestamp, endTime) <= 0);
+      events = events.filter(
+        (e) => LamportClock.compare(e.timestamp, endTime) <= 0,
+      );
     }
 
     // Sort by Lamport timestamp
@@ -314,7 +343,7 @@ export class TimestampedEventBus {
    */
   getEventsByCorrelationId(correlationId: string): TimestampedEvent[] {
     return this.eventHistory
-      .filter(e => e.correlationId === correlationId)
+      .filter((e) => e.correlationId === correlationId)
       .sort((a, b) => LamportClock.compare(a.timestamp, b.timestamp));
   }
 
@@ -323,7 +352,7 @@ export class TimestampedEventBus {
    */
   getEventsByExecutionId(executionId: string): TimestampedEvent[] {
     return this.eventHistory
-      .filter(e => e.timestamp.executionId === executionId)
+      .filter((e) => e.timestamp.executionId === executionId)
       .sort((a, b) => LamportClock.compare(a.timestamp, b.timestamp));
   }
 
@@ -353,7 +382,11 @@ export class DistributedLamportManager {
 
   constructor(redis: Redis, localServiceId: string) {
     this.redis = redis;
-    this.localClock = new LamportClock(localServiceId, redis, `lamport:${localServiceId}`);
+    this.localClock = new LamportClock(
+      localServiceId,
+      redis,
+      `lamport:${localServiceId}`,
+    );
   }
 
   /**
@@ -375,7 +408,11 @@ export class DistributedLamportManager {
    */
   getClock(serviceId: string): LamportClock {
     if (!this.clocks.has(serviceId)) {
-      const clock = new LamportClock(serviceId, this.redis, `lamport:${serviceId}`);
+      const clock = new LamportClock(
+        serviceId,
+        this.redis,
+        `lamport:${serviceId}`,
+      );
       this.clocks.set(serviceId, clock);
     }
     return this.clocks.get(serviceId)!;
@@ -390,7 +427,7 @@ export class DistributedLamportManager {
     for (const [serviceId, clock] of this.clocks) {
       const key = `lamport:${serviceId}`;
       const counter = await this.redis.get<number>(key);
-      
+
       states.push({
         serviceId,
         counter: counter || clock.getCounter(),
@@ -415,8 +452,10 @@ export class DistributedLamportManager {
    * Get event ordering for debugging
    */
   async getEventOrdering(
-    events: Array<{ eventType: string; timestamp: LamportTimestamp }>
-  ): Promise<Array<{ eventType: string; timestamp: LamportTimestamp; order: number }>> {
+    events: Array<{ eventType: string; timestamp: LamportTimestamp }>,
+  ): Promise<
+    Array<{ eventType: string; timestamp: LamportTimestamp; order: number }>
+  > {
     const sorted = LamportClock.sortEvents(events);
     return sorted.map((event, index) => ({
       ...event,
@@ -431,16 +470,16 @@ export class DistributedLamportManager {
 
 export function createLamportClock(
   serviceId: string,
-  redis?: Redis
+  redis?: Redis,
 ): LamportClock {
   const clock = new LamportClock(serviceId, redis, `lamport:${serviceId}`);
-  clock.initialize();
+  void clock.initialize();
   return clock;
 }
 
 export function createTimestampedEventBus(
   serviceId: string,
-  redis?: Redis
+  redis?: Redis,
 ): { clock: LamportClock; eventBus: TimestampedEventBus } {
   const clock = createLamportClock(serviceId, redis);
   const eventBus = new TimestampedEventBus(clock);
@@ -449,9 +488,9 @@ export function createTimestampedEventBus(
 
 export function createDistributedLamportManager(
   redis: Redis,
-  localServiceId: string
+  localServiceId: string,
 ): DistributedLamportManager {
   const manager = new DistributedLamportManager(redis, localServiceId);
-  manager.initialize();
+  void manager.initialize();
   return manager;
 }

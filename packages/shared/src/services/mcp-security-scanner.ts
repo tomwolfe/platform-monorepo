@@ -17,6 +17,10 @@
  * @since 1.0.0
  */
 
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "mcp-security-scanner" });
+
 // ============================================================================
 // SECURITY SCAN RESULT
 // ============================================================================
@@ -391,10 +395,10 @@ export class MCPToolSecurityScanner {
         }
       } catch (error) {
         // Log invalid regex but don't fail the scan
-        console.warn(
-          `Invalid regex pattern in deniedPatterns: ${deniedPattern}`,
-          error,
-        );
+        logger.warn("Invalid regex pattern in deniedPatterns", {
+          deniedPattern,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 

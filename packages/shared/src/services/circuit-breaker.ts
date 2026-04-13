@@ -23,6 +23,9 @@ interface ErrorWithCode extends Error {
 
 import { EventEmitter } from "events";
 import { Redis } from "@upstash/redis";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "circuit-breaker" });
 
 // ============================================================================
 // CIRCUIT BREAKER STATE
@@ -234,9 +237,10 @@ export class CircuitBreaker extends EventEmitter {
     this.emit("success");
 
     if (this.config.debug) {
-      console.log(
-        `[CircuitBreaker:${this.name}] Success (consecutive: ${this.consecutiveSuccesses})`,
-      );
+      logger.info("CircuitBreaker success", {
+        name: this.name,
+        consecutiveSuccesses: this.consecutiveSuccesses,
+      });
     }
   }
 
@@ -254,9 +258,10 @@ export class CircuitBreaker extends EventEmitter {
     // Check if error should be ignored
     if (this.shouldIgnoreError(error)) {
       if (this.config.debug) {
-        console.log(
-          `[CircuitBreaker:${this.name}] Ignored error: ${error.message}`,
-        );
+        logger.info("Ignored error in CircuitBreaker", {
+          name: this.name,
+          errorMessage: error.message,
+        });
       }
       return;
     }
@@ -267,9 +272,11 @@ export class CircuitBreaker extends EventEmitter {
     this.emit("failure", error, this.failureCount);
 
     if (this.config.debug) {
-      console.log(
-        `[CircuitBreaker:${this.name}] Failure (count: ${this.failureCount}/${this.config.failureThreshold})`,
-      );
+      logger.info("CircuitBreaker failure recorded", {
+        name: this.name,
+        failureCount: this.failureCount,
+        failureThreshold: this.config.failureThreshold,
+      });
     }
 
     // Check if we should open the circuit
@@ -336,9 +343,12 @@ export class CircuitBreaker extends EventEmitter {
     this.emit("stateChange", oldState, newState, reason);
 
     if (this.config.debug) {
-      console.log(
-        `[CircuitBreaker:${this.name}] State change: ${oldState} -> ${newState} (${reason})`,
-      );
+      logger.info("CircuitBreaker state change", {
+        name: this.name,
+        fromState: oldState,
+        toState: newState,
+        reason,
+      });
     }
   }
 
@@ -701,11 +711,15 @@ export class CostCircuitBreaker {
       projectedDailyCost >
       this.config.maxCostPerUserPerDay * this.config.warningThreshold
     ) {
-      console.warn(
-        `[CostCircuitBreaker] User ${userId} approaching daily budget: ` +
-          `$${projectedDailyCost.toFixed(4)} / $${this.config.maxCostPerUserPerDay.toFixed(2)} ` +
-          `(${((projectedDailyCost / this.config.maxCostPerUserPerDay) * 100).toFixed(1)}%)`,
-      );
+      logger.warn("User approaching daily budget", {
+        userId,
+        projectedDailyCost,
+        maxDailyCost: this.config.maxCostPerUserPerDay,
+        percentUsed: (
+          (projectedDailyCost / this.config.maxCostPerUserPerDay) *
+          100
+        ).toFixed(1),
+      });
     }
 
     return {
@@ -742,10 +756,11 @@ export class CostCircuitBreaker {
     }
 
     if (this.config.debug) {
-      console.log(
-        `[CostCircuitBreaker] Tracked $${cost.toFixed(4)} for execution ${executionId}, ` +
-          `user daily: $${newDailyCost.toFixed(4)}`,
-      );
+      logger.info("Cost tracked for execution", {
+        executionId,
+        cost,
+        userDailyCost: newDailyCost,
+      });
     }
   }
 
@@ -758,10 +773,10 @@ export class CostCircuitBreaker {
 
     await this.redis.setex(blacklistKey, ttlSeconds, "true");
 
-    console.warn(
-      `[CostCircuitBreaker] User ${userId} blacklisted for ${this.config.blacklistDurationHours}h ` +
-        `due to exceeding daily budget`,
-    );
+    logger.warn("User blacklisted for exceeding daily budget", {
+      userId,
+      blacklistDurationHours: this.config.blacklistDurationHours,
+    });
 
     // Emit alert to Ably for monitoring
     try {
@@ -773,7 +788,9 @@ export class CostCircuitBreaker {
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
-      console.error("[CostCircuitBreaker] Failed to emit alert:", error);
+      logger.error("Failed to emit cost budget alert", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -827,9 +844,10 @@ export class CostCircuitBreaker {
 
     await this.redis.setex(blacklistKey, ttlSeconds, "true");
 
-    console.warn(
-      `[CostCircuitBreaker] User ${userId} manually blacklisted for ${durationHours}h`,
-    );
+    logger.warn("User manually blacklisted", {
+      userId,
+      durationHours,
+    });
   }
 
   /**
@@ -839,7 +857,7 @@ export class CostCircuitBreaker {
     const blacklistKey = this.buildUserBlacklistKey(userId);
     await this.redis.del(blacklistKey);
 
-    console.log(`[CostCircuitBreaker] Removed blacklist for user ${userId}`);
+    logger.info("Removed blacklist for user", { userId });
   }
 }
 

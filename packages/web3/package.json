@@ -13,6 +13,7 @@
     "viem": "^2.31.7"
   },
   "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
     "typescript": "^5.8.2"
   }
 }

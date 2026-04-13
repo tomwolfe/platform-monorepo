@@ -4,6 +4,7 @@
  * Re-exports all checkout modules for easy importing.
  *
  * @see Task 5: Refactor Monolithic Service Files
+ * @see Task 4: Consolidate Checkout Logic (checkout-logic.ts)
  */
 
 export {
@@ -31,3 +32,6 @@ export { notifyOwnerOfVerification } from "./notifications";
 
 export { CheckoutService, checkoutService } from "./checkout.service";
 export type { CheckoutInput, CheckoutResult } from "./checkout.service";
+
+// Unified import path (consolidated)
+export * from "./checkout-logic";

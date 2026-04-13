@@ -773,6 +773,9 @@ importers:
         specifier: ^2.31.7
         version: 2.47.5(typescript@5.9.3)(zod@3.25.76)
     devDependencies:
+      '@repo/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
       typescript:
         specifier: ^5.8.2
         version: 5.9.3

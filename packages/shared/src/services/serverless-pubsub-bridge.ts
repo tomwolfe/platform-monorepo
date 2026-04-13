@@ -27,10 +27,11 @@
  * @since 1.0.0
  */
 
-import type { Database, OutboxTable } from "../types/database";
-import { sql, eq } from "drizzle-orm";
+import type { Database } from "../types/database";
+import { sql as _sql, eq as _eq } from "drizzle-orm";
 import { outbox } from "@repo/database";
 import { QStashService } from "./qstash";
+import { Logger } from "../logger";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -65,10 +66,12 @@ const DEFAULT_CONFIG: Required<ServerlessBridgeConfig> = {
 export class ServerlessPubSubBridge {
   private config: Required<ServerlessBridgeConfig>;
   private db: Database;
+  private logger: Logger;
 
   constructor(db: Database, config: ServerlessBridgeConfig = {}) {
     this.db = db;
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.logger = new Logger({ serviceName: "serverless-pubsub-bridge" });
   }
 
   /**
@@ -118,17 +121,19 @@ export class ServerlessPubSubBridge {
         headers,
       });
 
-      console.log(
-        `[ServerlessPubSubBridge] Triggered QStash for outbox ${outboxId} ` +
-          `(execution: ${executionId}, message: ${messageId})`,
-      );
+      this.logger.info("QStash delivery triggered", {
+        outboxId,
+        executionId,
+        messageId,
+      });
 
       return messageId;
     } catch (error) {
-      console.error(
-        "[ServerlessPubSubBridge] Failed to trigger QStash:",
-        error instanceof Error ? error.message : String(error),
-      );
+      this.logger.error("Failed to trigger QStash delivery", {
+        outboxId,
+        executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }
@@ -179,16 +184,17 @@ export class ServerlessPubSubBridge {
           triggeredCount++;
         }
       } catch (error) {
-        console.error(
-          `[ServerlessPubSubBridge] Failed to notify event ${event.id}:`,
-          error instanceof Error ? error.message : String(error),
-        );
+        this.logger.error("Failed to notify pending event", {
+          eventId: event.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
-    console.log(
-      `[ServerlessPubSubBridge] Notified ${triggeredCount}/${pendingEvents.length} pending events`,
-    );
+    this.logger.info("Pending events notification completed", {
+      triggeredCount,
+      totalPending: pendingEvents.length,
+    });
 
     return triggeredCount;
   }
@@ -206,7 +212,8 @@ export class ServerlessPubSubBridge {
       WHERE status = 'pending'
     `);
     const pendingEvents = parseInt(
-      (pendingResult.rows[0] as any)?.count || "0",
+      ((pendingResult.rows[0] as Record<string, unknown>)?.count as string) ||
+        "0",
       10,
     );
 

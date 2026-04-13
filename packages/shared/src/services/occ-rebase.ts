@@ -37,6 +37,7 @@
 
 import { Redis } from "@upstash/redis";
 import { getRedisClient, ServiceNamespace } from "../redis";
+import { Logger } from "../logger";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -175,11 +176,13 @@ export class AtomicStateRebaser<T extends { version?: number }> {
   private key: string;
   private debug: boolean;
   private redis: Redis;
+  private logger: Logger;
 
   constructor(key: string, debug: boolean = false, redis?: Redis) {
     this.key = key;
     this.debug = debug;
     this.redis = redis || getRedisClient(ServiceNamespace.SHARED);
+    this.logger = new Logger({ serviceName: "occ-rebase" });
   }
 
   /**
@@ -259,10 +262,11 @@ export class AtomicStateRebaser<T extends { version?: number }> {
 
         // Conflict detected
         if (opts.debug) {
-          console.log(
-            `[AtomicStateRebaser] Conflict detected for ${this.key} ` +
-              `(expected version ${currentVersion}, got ${result.currentVersion})`,
-          );
+          this.logger.debug("Conflict detected", {
+            key: this.key,
+            expectedVersion: currentVersion,
+            actualVersion: result.currentVersion,
+          });
         }
 
         rebaseAttempts++;
@@ -285,10 +289,12 @@ export class AtomicStateRebaser<T extends { version?: number }> {
         );
 
         if (opts.debug) {
-          console.log(
-            `[AtomicStateRebaser] Backing off for ${delay.toFixed(0)}ms ` +
-              `before rebase attempt ${rebaseAttempts}/${opts.maxRetries}`,
-          );
+          this.logger.debug("Backing off before retry", {
+            key: this.key,
+            delayMs: Math.round(delay),
+            attempt: rebaseAttempts,
+            maxRetries: opts.maxRetries,
+          });
         }
 
         await this.sleep(delay);
@@ -296,7 +302,10 @@ export class AtomicStateRebaser<T extends { version?: number }> {
         lastError = error instanceof Error ? error.message : String(error);
 
         if (opts.debug) {
-          console.error(`[AtomicStateRebaser] Error during update:`, error);
+          this.logger.error("Error during update", {
+            key: this.key,
+            error: lastError,
+          });
         }
 
         rebaseAttempts++;
@@ -371,7 +380,10 @@ export class AtomicStateRebaser<T extends { version?: number }> {
         overwrittenState,
       };
     } catch (error) {
-      console.error(`[AtomicStateRebaser] CAS failed:`, error);
+      this.logger.error("CAS operation failed", {
+        key: this.key,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
@@ -447,7 +459,10 @@ export class AtomicStateRebaser<T extends { version?: number }> {
         await this.sleep(delay);
       } catch (error) {
         if (opts.debug) {
-          console.error(`[AtomicStateRebaser] Delta update failed:`, error);
+          this.logger.error("Delta update failed", {
+            key: this.key,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
 
         rebaseAttempts++;

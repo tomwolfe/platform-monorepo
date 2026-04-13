@@ -67,6 +67,29 @@ vi.mock("@repo/shared", () => ({
   releaseReplayProcessingLock: vi.fn(),
   tryAcquireReplayProcessingLock: vi.fn(),
   isReplayAllowed: vi.fn(),
+  // Constants
+  CHAIN_IDS: {
+    BASE_MAINNET: 8453,
+    BASE_SEPOLIA: 84532,
+  },
+  ERROR_CODES: {
+    VALIDATION_ERROR: "VALIDATION_ERROR",
+    NOT_FOUND: "NOT_FOUND",
+    CONFLICT: "CONFLICT",
+    ALREADY_VERIFIED: "ALREADY_VERIFIED",
+  },
+  EIP712_DOMAIN: {
+    name: "TableStack",
+    version: "1",
+  },
+  EIP712_RESERVATION_TYPES: {
+    Reservation: [
+      { name: "reservationId", type: "string" },
+      { name: "amount", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+    ],
+  },
+  DEADLINE_TOLERANCE_SECONDS: 5 * 60,
 }));
 
 // Import shared after mocks
@@ -608,6 +631,268 @@ describe("CheckoutService", () => {
         },
         `webhook:${input.txHash}`,
       );
+    });
+  });
+
+  // ========================================================================
+  // FINANCIAL SAFETY - CRITICAL PATHS
+  // ========================================================================
+
+  describe("Financial Safety - Replay Lock Timeout", () => {
+    it("should succeed even when processing exceeds lock TTL", async () => {
+      // Simulates: Lock acquired, but processing takes longer than TTL
+      // The lock auto-expires, but checkout still succeeds
+      const input = createCheckoutInput();
+      const reservation = createMockReservation();
+      getMockDb().query.restaurantReservations.findFirst.mockResolvedValue(
+        reservation,
+      );
+      vi.mocked(shared.tryAcquireReplayProcessingLock).mockResolvedValue(true);
+      vi.mocked(shared.isReplayAllowed).mockResolvedValue(true);
+
+      // Simulate slow verification that exceeds lock TTL
+      mockVerifyOnChainTransaction.mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  success: true,
+                  receipt: { confirmations: 1 },
+                }),
+              100,
+            ),
+          ),
+      );
+      mockMarkReservationAsVerified.mockResolvedValue(undefined);
+      vi.mocked(shared.dispatchTask).mockResolvedValue(undefined);
+
+      // Should still succeed - lock release in finally block is skipped on success
+      const result = await service.processCheckout(input);
+      expect(result.txHash).toBe(input.txHash);
+      expect(result.confirmations).toBe(1);
+
+      // Lock release should NOT be called on success path (confirmed = true)
+      expect(shared.releaseReplayProcessingLock).not.toHaveBeenCalled();
+    });
+
+    it("should prevent double-spend via replay guard after successful checkout", async () => {
+      // First checkout succeeds
+      const input = createCheckoutInput();
+      const reservation = createMockReservation();
+      getMockDb().query.restaurantReservations.findFirst.mockResolvedValue(
+        reservation,
+      );
+      vi.mocked(shared.tryAcquireReplayProcessingLock).mockResolvedValue(true);
+      vi.mocked(shared.isReplayAllowed).mockResolvedValue(true);
+      mockVerifyOnChainTransaction.mockResolvedValue({
+        success: true,
+        receipt: { confirmations: 1 },
+      });
+      mockMarkReservationAsVerified.mockResolvedValue(undefined);
+      vi.mocked(shared.dispatchTask).mockResolvedValue(undefined);
+
+      await service.processCheckout(input);
+
+      // Second checkout with same txHash should fail
+      vi.mocked(shared.tryAcquireReplayProcessingLock).mockClear();
+      vi.mocked(shared.isReplayAllowed).mockClear();
+      vi.mocked(shared.tryAcquireReplayProcessingLock).mockResolvedValue(true);
+      vi.mocked(shared.isReplayAllowed).mockResolvedValue(false); // Replay blocked
+      vi.mocked(shared.releaseReplayProcessingLock).mockResolvedValue(
+        undefined,
+      );
+
+      const service2 = new CheckoutService({
+        verifyOnChainTransaction: mockVerifyOnChainTransaction,
+        markReservationAsVerified: mockMarkReservationAsVerified,
+        notifyOwnerOfVerification: mockNotifyOwnerOfVerification,
+      });
+
+      await expect(service2.processCheckout(input)).rejects.toThrow(
+        CheckoutError,
+      );
+      await expect(service2.processCheckout(input)).rejects.toMatchObject({
+        message: "Payment transaction already used or blocked",
+        statusCode: 409,
+        code: "CONFLICT",
+      });
+    });
+  });
+
+  describe("Financial Safety - Partial DB Failure During Web3 Verification", () => {
+    it("should release lock when DB update fails after successful verification", async () => {
+      // Critical test: Web3 verification succeeds, but DB update fails
+      // Lock MUST be released to allow retry - otherwise funds are stuck
+      const input = createCheckoutInput();
+      const reservation = createMockReservation();
+      getMockDb().query.restaurantReservations.findFirst.mockResolvedValue(
+        reservation,
+      );
+      vi.mocked(shared.tryAcquireReplayProcessingLock).mockResolvedValue(true);
+      vi.mocked(shared.isReplayAllowed).mockResolvedValue(true);
+
+      // Web3 verification succeeds
+      mockVerifyOnChainTransaction.mockResolvedValue({
+        success: true,
+        receipt: { confirmations: 3 },
+      });
+
+      // But DB update fails
+      mockMarkReservationAsVerified.mockRejectedValue(
+        new Error("Database connection lost"),
+      );
+      vi.mocked(shared.releaseReplayProcessingLock).mockResolvedValue(
+        undefined,
+      );
+
+      await expect(service.processCheckout(input)).rejects.toThrow(
+        "Database connection lost",
+      );
+
+      // CRITICAL: Lock must be released to allow retry
+      expect(shared.releaseReplayProcessingLock).toHaveBeenCalledWith(
+        input.txHash,
+      );
+    });
+
+    it("should release lock when confirmReplayGuard fails after DB update", async () => {
+      // Even rarer: DB succeeds, but replay guard confirmation fails
+      const input = createCheckoutInput();
+      const reservation = createMockReservation();
+      getMockDb().query.restaurantReservations.findFirst.mockResolvedValue(
+        reservation,
+      );
+      vi.mocked(shared.tryAcquireReplayProcessingLock).mockResolvedValue(true);
+      vi.mocked(shared.isReplayAllowed).mockResolvedValue(true);
+      mockVerifyOnChainTransaction.mockResolvedValue({
+        success: true,
+        receipt: { confirmations: 2 },
+      });
+
+      // markReservationAsVerified internally calls confirmReplayGuard
+      // Simulate it failing
+      mockMarkReservationAsVerified.mockRejectedValue(
+        new Error("Replay guard confirmation failed"),
+      );
+      vi.mocked(shared.releaseReplayProcessingLock).mockResolvedValue(
+        undefined,
+      );
+
+      await expect(service.processCheckout(input)).rejects.toThrow(
+        "Replay guard confirmation failed",
+      );
+
+      // Lock must still be released
+      expect(shared.releaseReplayProcessingLock).toHaveBeenCalledWith(
+        input.txHash,
+      );
+    });
+
+    it("should handle cascading failures: verification + lock release both fail", async () => {
+      // Worst case: everything fails, including lock release
+      const input = createCheckoutInput();
+      const reservation = createMockReservation();
+      getMockDb().query.restaurantReservations.findFirst.mockResolvedValue(
+        reservation,
+      );
+      vi.mocked(shared.tryAcquireReplayProcessingLock).mockResolvedValue(true);
+      vi.mocked(shared.isReplayAllowed).mockResolvedValue(true);
+      mockVerifyOnChainTransaction.mockRejectedValue(
+        new Error("RPC node unreachable"),
+      );
+      vi.mocked(shared.releaseReplayProcessingLock).mockRejectedValue(
+        new Error("Redis timeout"),
+      );
+
+      // Should throw original error, not lock release error
+      await expect(service.processCheckout(input)).rejects.toThrow(
+        "RPC node unreachable",
+      );
+
+      // Attempted to release lock despite failure
+      expect(shared.releaseReplayProcessingLock).toHaveBeenCalledWith(
+        input.txHash,
+      );
+    });
+  });
+
+  describe("Financial Safety - Slippage Breaches", () => {
+    it("should throw VALIDATION_ERROR when slippage exceeds tolerance", async () => {
+      // Slippage check happens in web3-verify.ts, but we test the integration here
+      const input = createCheckoutInput({ paymentCurrency: "ETH" });
+      const reservation = createMockReservation();
+      getMockDb().query.restaurantReservations.findFirst.mockResolvedValue(
+        reservation,
+      );
+      vi.mocked(shared.tryAcquireReplayProcessingLock).mockResolvedValue(true);
+      vi.mocked(shared.isReplayAllowed).mockResolvedValue(true);
+
+      // Verification fails due to slippage
+      mockVerifyOnChainTransaction.mockRejectedValue(
+        new CheckoutError(
+          "Signed amount is outside acceptable slippage tolerance",
+          400,
+          "VALIDATION_ERROR",
+          {
+            details: {
+              signedAmount: "1000000000000000000",
+              expectedValue: "990000000000000000",
+              slippageBps: 100,
+            },
+          },
+        ),
+      );
+      vi.mocked(shared.releaseReplayProcessingLock).mockResolvedValue(
+        undefined,
+      );
+
+      await expect(service.processCheckout(input)).rejects.toThrow(
+        CheckoutError,
+      );
+      await expect(service.processCheckout(input)).rejects.toMatchObject({
+        message: "Signed amount is outside acceptable slippage tolerance",
+        statusCode: 400,
+        code: "VALIDATION_ERROR",
+      });
+
+      // Lock must be released
+      expect(shared.releaseReplayProcessingLock).toHaveBeenCalledWith(
+        input.txHash,
+      );
+    });
+
+    it("should release lock immediately when slippage breach detected", async () => {
+      // Ensure no partial state is left behind
+      const input = createCheckoutInput({ paymentCurrency: "ETH" });
+      const reservation = createMockReservation();
+      getMockDb().query.restaurantReservations.findFirst.mockResolvedValue(
+        reservation,
+      );
+      vi.mocked(shared.tryAcquireReplayProcessingLock).mockResolvedValue(true);
+      vi.mocked(shared.isReplayAllowed).mockResolvedValue(true);
+
+      mockVerifyOnChainTransaction.mockRejectedValue(
+        new CheckoutError("Slippage breach", 400, "VALIDATION_ERROR"),
+      );
+      vi.mocked(shared.releaseReplayProcessingLock).mockResolvedValue(
+        undefined,
+      );
+
+      try {
+        await service.processCheckout(input);
+      } catch {
+        // Expected
+      }
+
+      // Lock release should be called exactly once
+      expect(shared.releaseReplayProcessingLock).toHaveBeenCalledTimes(1);
+      expect(shared.releaseReplayProcessingLock).toHaveBeenCalledWith(
+        input.txHash,
+      );
+
+      // MarkReservationAsVerified should NEVER be called if verification fails
+      expect(mockMarkReservationAsVerified).not.toHaveBeenCalled();
     });
   });
 

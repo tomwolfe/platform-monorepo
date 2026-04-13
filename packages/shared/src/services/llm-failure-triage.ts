@@ -15,10 +15,13 @@
  */
 
 import { z } from "zod";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "llm-failure-triage" });
 
 // AI SDK types (dynamically imported when needed)
-type GenerateObjectFn = (options: any) => Promise<any>;
-type OpenAIProvider = (modelId: string) => any;
+type GenerateObjectFn = (options: unknown) => Promise<{ object: unknown }>;
+type OpenAIProvider = (modelId: string) => unknown;
 
 // ============================================================================
 // FAILURE REASON SCHEMA
@@ -31,27 +34,27 @@ export const FailureReasonSchema = z.enum([
   "TABLE_UNAVAILABLE",
   "TIME_SLOT_UNAVAILABLE",
   "DELIVERY_UNAVAILABLE",
-  
+
   // Capacity failures
   "KITCHEN_OVERLOADED",
   "PARTY_SIZE_TOO_LARGE",
-  
+
   // Technical failures
   "SERVICE_ERROR",
   "TIMEOUT",
   "RATE_LIMITED",
   "CONNECTION_ERROR",
-  
+
   // Business logic failures
   "PAYMENT_FAILED",
   "VALIDATION_FAILED",
   "SCHEMA_MISMATCH",
   "USER_ERROR",
-  
+
   // External dependencies
   "UPSTREAM_FLAKINESS",
   "THIRD_PARTY_ERROR",
-  
+
   // Unknown/unrecoverable
   "UNKNOWN",
   "UNRECOVERABLE",
@@ -67,13 +70,15 @@ export const TriageResultSchema = z.object({
   isRecoverable: z.boolean(),
   confidence: z.number().min(0).max(1),
   explanation: z.string(),
-  suggestedAction: z.enum([
-    "RETRY_WITH_MODIFIED_PARAMS",
-    "RETRY_WITH_BACKOFF",
-    "ESCALATE_TO_HUMAN",
-    "SKIP_STEP",
-    "TRIGGER_COMPENSATION",
-  ]).optional(),
+  suggestedAction: z
+    .enum([
+      "RETRY_WITH_MODIFIED_PARAMS",
+      "RETRY_WITH_BACKOFF",
+      "ESCALATE_TO_HUMAN",
+      "SKIP_STEP",
+      "TRIGGER_COMPENSATION",
+    ])
+    .optional(),
 });
 
 export type TriageResult = z.infer<typeof TriageResultSchema>;
@@ -98,7 +103,7 @@ export interface TriageContext {
 // ============================================================================
 
 interface TriageModelConfig {
-  model?: any;
+  model?: unknown;
   temperature: number;
   maxTokens: number;
 }
@@ -124,7 +129,9 @@ function buildTriagePrompt(context: TriageContext): string {
     context.errorCode ? `- Error Code: ${context.errorCode}` : "",
     context.errorType ? `- Error Type: ${context.errorType}` : "",
     "",
-    context.parameters ? `## Parameters\n${JSON.stringify(context.parameters, null, 2)}` : "",
+    context.parameters
+      ? `## Parameters\n${JSON.stringify(context.parameters, null, 2)}`
+      : "",
     "",
     "Categorize the failure into one of the predefined categories.",
     "Assess whether it's recoverable via retry or parameter modification.",
@@ -185,8 +192,8 @@ export class LLMFailureTriageService implements FailureTriageService {
   private generateObjectFn?: GenerateObjectFn;
   private openaiProvider?: OpenAIProvider;
 
-  constructor(options?: { 
-    enabled?: boolean; 
+  constructor(options?: {
+    enabled?: boolean;
     fallbackToHeuristics?: boolean;
     generateObjectFn?: GenerateObjectFn;
     openaiProvider?: OpenAIProvider;
@@ -216,7 +223,9 @@ export class LLMFailureTriageService implements FailureTriageService {
 
         return result.object;
       } catch (error) {
-        console.error("[LLMFailureTriage] LLM triage failed, falling back to heuristics:", error);
+        logger.error("LLM triage failed, falling back to heuristics", {
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -256,7 +265,11 @@ export class LLMFailureTriageService implements FailureTriageService {
     const { errorCode } = context;
 
     // Availability failures
-    if (errorLower.includes("full") || errorLower.includes("no availability") || errorLower.includes("fully booked")) {
+    if (
+      errorLower.includes("full") ||
+      errorLower.includes("no availability") ||
+      errorLower.includes("fully booked")
+    ) {
       return {
         category: "RESTAURANT_FULL",
         isRecoverable: true,
@@ -266,7 +279,10 @@ export class LLMFailureTriageService implements FailureTriageService {
       };
     }
 
-    if (errorLower.includes("unavailable") || errorLower.includes("not available")) {
+    if (
+      errorLower.includes("unavailable") ||
+      errorLower.includes("not available")
+    ) {
       if (errorLower.includes("delivery")) {
         return {
           category: "DELIVERY_UNAVAILABLE",
@@ -297,7 +313,11 @@ export class LLMFailureTriageService implements FailureTriageService {
     }
 
     // Capacity failures
-    if (errorLower.includes("overload") || errorLower.includes("busy") || errorLower.includes("high volume")) {
+    if (
+      errorLower.includes("overload") ||
+      errorLower.includes("busy") ||
+      errorLower.includes("high volume")
+    ) {
       return {
         category: "KITCHEN_OVERLOADED",
         isRecoverable: true,
@@ -307,7 +327,11 @@ export class LLMFailureTriageService implements FailureTriageService {
       };
     }
 
-    if (errorLower.includes("party size") || errorLower.includes("too large") || errorLower.includes("exceeds")) {
+    if (
+      errorLower.includes("party size") ||
+      errorLower.includes("too large") ||
+      errorLower.includes("exceeds")
+    ) {
       return {
         category: "PARTY_SIZE_TOO_LARGE",
         isRecoverable: false,
@@ -348,7 +372,11 @@ export class LLMFailureTriageService implements FailureTriageService {
       };
     }
 
-    if (errorLower.includes("connection") || errorLower.includes("network") || errorLower.includes("fetch")) {
+    if (
+      errorLower.includes("connection") ||
+      errorLower.includes("network") ||
+      errorLower.includes("fetch")
+    ) {
       return {
         category: "CONNECTION_ERROR",
         isRecoverable: true,
@@ -359,7 +387,11 @@ export class LLMFailureTriageService implements FailureTriageService {
     }
 
     // Business logic failures
-    if (errorLower.includes("payment") || errorLower.includes("card") || errorLower.includes("charge")) {
+    if (
+      errorLower.includes("payment") ||
+      errorLower.includes("card") ||
+      errorLower.includes("charge")
+    ) {
       return {
         category: "PAYMENT_FAILED",
         isRecoverable: true,
@@ -399,7 +431,11 @@ export class LLMFailureTriageService implements FailureTriageService {
     }
 
     // Upstream issues
-    if (errorLower.includes("upstream") || errorLower.includes("external") || errorLower.includes("third party")) {
+    if (
+      errorLower.includes("upstream") ||
+      errorLower.includes("external") ||
+      errorLower.includes("third party")
+    ) {
       return {
         category: "UPSTREAM_FLAKINESS",
         isRecoverable: true,

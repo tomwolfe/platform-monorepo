@@ -42,6 +42,7 @@ import { z } from "zod";
 import { Redis } from "@upstash/redis";
 import { getRedisClient, ServiceNamespace } from "../redis";
 import { SchemaAnalyzer, type SchemaDiff } from "./semantic-versioning";
+import { Logger } from "../logger";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -168,9 +169,11 @@ const DEFAULT_CONFIG: Omit<Required<ContractTesterConfig>, "redis"> & {
 
 export class ContractTester {
   private config: Required<ContractTesterConfig>;
+  private logger: Logger;
 
   constructor(config: ContractTesterConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.logger = new Logger({ serviceName: "contract-testing" });
   }
 
   // ========================================================================
@@ -229,9 +232,10 @@ export class ContractTester {
     }
 
     if (this.config.debug) {
-      console.log(
-        `[ContractTester] Recorded trace ${trace.traceId} for ${trace.toolName}`,
-      );
+      this.logger.debug("Recorded execution trace", {
+        traceId: trace.traceId,
+        toolName: trace.toolName,
+      });
     }
   }
 
@@ -254,18 +258,19 @@ export class ContractTester {
     // Fetch all traces in parallel
     const tracePromises = traceIds.map(async (traceId) => {
       const traceKey = this.buildTraceKey(toolName, traceId);
-      const data = await this.config.redis.get<any>(traceKey);
+      const data = await this.config.redis.get<string>(traceKey);
 
       if (!data) return null;
 
       try {
-        return typeof data === "string" ? JSON.parse(data) : data;
+        return JSON.parse(data);
       } catch (error) {
         // CRITICAL: Include toolName and traceId for debugging malformed traces
-        console.warn(
-          `[ContractTester] Failed to parse trace for tool=${toolName}, traceId=${traceId}:`,
-          error instanceof Error ? error.message : String(error),
-        );
+        this.logger.warn("Failed to parse trace data", {
+          toolName,
+          traceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
         return null;
       }
     });
@@ -327,8 +332,21 @@ export class ContractTester {
     const totalTraces = traces.length;
     const requiredParams: string[] = [];
     const optionalParams: string[] = [];
-    const types: Record<string, any> = {};
-    const constraints: Record<string, any> = {};
+    const types: Record<
+      string,
+      {
+        observedTypes: string[];
+        mostCommonType: string;
+        sampleValues: unknown[];
+      }
+    > = {};
+    const constraints: Record<
+      string,
+      {
+        type: "range" | "enum" | "pattern" | "length";
+        value: unknown;
+      }
+    > = {};
 
     for (const [param, usage] of parameterUsage.entries()) {
       const presenceRate = usage.count / totalTraces;
@@ -380,10 +398,12 @@ export class ContractTester {
     );
 
     if (this.config.debug) {
-      console.log(
-        `[ContractTester] Generated contract for ${toolName} ` +
-          `(${requiredParams.length} required, ${optionalParams.length} optional params)`,
-      );
+      this.logger.debug("Generated contract", {
+        toolName,
+        requiredParams: requiredParams.length,
+        optionalParams: optionalParams.length,
+        traceCount: traces.length,
+      });
     }
 
     return contract;
@@ -394,14 +414,17 @@ export class ContractTester {
    */
   async getContract(toolName: string): Promise<ToolContract | null> {
     const contractKey = this.buildContractKey(toolName);
-    const data = await this.config.redis.get<any>(contractKey);
+    const data = await this.config.redis.get<string>(contractKey);
 
     if (!data) return null;
 
     try {
-      return typeof data === "string" ? JSON.parse(data) : data;
+      return JSON.parse(data);
     } catch (error) {
-      console.error(`[ContractTester] Failed to parse contract:`, error);
+      this.logger.error("Failed to parse contract data", {
+        toolName,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }
@@ -426,10 +449,10 @@ export class ContractTester {
     const minSuccessRate = options.minSuccessRate ?? this.config.minSuccessRate;
 
     if (this.config.debug) {
-      console.log(
-        `[ContractTester] Testing schema change for ${toolName} ` +
-          `(min success rate: ${(minSuccessRate * 100).toFixed(0)}%)`,
-      );
+      this.logger.debug("Testing schema change", {
+        toolName,
+        minSuccessRate: (minSuccessRate * 100).toFixed(0),
+      });
     }
 
     // Get historical traces
@@ -511,11 +534,12 @@ export class ContractTester {
     );
 
     if (this.config.debug) {
-      console.log(
-        `[ContractTester] Schema change test: ` +
-          `${(successRate * 100).toFixed(1)}% success rate ` +
-          `(${failingTraces.length}/${traces.length} failing)`,
-      );
+      this.logger.debug("Schema change test result", {
+        toolName,
+        successRate: (successRate * 100).toFixed(1),
+        failingTraces: failingTraces.length,
+        totalTraces: traces.length,
+      });
     }
 
     return {
@@ -691,10 +715,10 @@ export class ContractTester {
       throw new Error(errorMessage);
     }
 
-    console.log(
-      `[CDC] ✅ Schema change passed for ${result.toolName} ` +
-        `(${(result.successRate * 100).toFixed(1)}% compatibility)`,
-    );
+    this.logger.info("Schema change passed CI check", {
+      toolName: result.toolName,
+      successRate: result.successRate,
+    });
   }
 
   // ========================================================================
@@ -719,7 +743,7 @@ export class ContractTester {
     }
 
     if (this.config.debug && deleted > 0) {
-      console.log(`[ContractTester] Cleaned up ${deleted} expired traces`);
+      this.logger.debug("Cleaned up expired traces", { deleted });
     }
 
     return deleted;

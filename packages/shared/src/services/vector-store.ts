@@ -15,6 +15,9 @@
 
 import { z } from "zod";
 import { Redis } from "@upstash/redis";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "vector-store" });
 
 // ============================================================================
 // SCHEMAS
@@ -184,16 +187,21 @@ export class UpstashVectorStore implements VectorStore {
       if (!existingIndexes.includes(this.fullIndexName)) {
         // Create new index
         await this.createIndex();
-        console.log(`[UpstashVector] Created index: ${this.fullIndexName}`);
+        logger.info("Created Upstash Vector index", {
+          indexName: this.fullIndexName,
+        });
       } else {
-        console.log(
-          `[UpstashVector] Using existing index: ${this.fullIndexName}`,
-        );
+        logger.info("Using existing Upstash Vector index", {
+          indexName: this.fullIndexName,
+        });
       }
 
       this.initialized = true;
     } catch (error) {
-      console.error("[UpstashVector] Failed to initialize:", error);
+      logger.error("Failed to initialize Upstash Vector", {
+        indexName: this.fullIndexName,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
@@ -274,9 +282,11 @@ export class UpstashVectorStore implements VectorStore {
       throw new Error(`Failed to add vector: ${response.statusText}`);
     }
 
-    console.log(
-      `[UpstashVector] Added vector ${id} for user ${entry.userId} (index: ${this.fullIndexName})`,
-    );
+    logger.info("Added vector to Upstash", {
+      id,
+      userId: entry.userId,
+      indexName: this.fullIndexName,
+    });
     return id;
   }
 
@@ -323,7 +333,7 @@ export class UpstashVectorStore implements VectorStore {
       throw new Error(`Failed to add vectors: ${response.statusText}`);
     }
 
-    console.log(`[UpstashVector] Added ${vectors.length} vectors`);
+    logger.info("Added vectors to Upstash", { count: vectors.length });
     return ids;
   }
 
@@ -374,13 +384,22 @@ export class UpstashVectorStore implements VectorStore {
     const data = await response.json();
 
     return (data.results || [])
-      .filter((result: any) => result.score >= query.minScore)
-      .map((result: any, index: number) => ({
-        id: result.id,
-        score: result.score,
-        metadata: result.metadata,
-        rank: index + 1,
-      }));
+      .filter((result: { score: number }) => result.score >= query.minScore)
+      .map(
+        (
+          result: {
+            id: string;
+            score: number;
+            metadata: Record<string, unknown>;
+          },
+          index: number,
+        ) => ({
+          id: result.id,
+          score: result.score,
+          metadata: result.metadata,
+          rank: index + 1,
+        }),
+      );
   }
 
   /**
@@ -474,7 +493,10 @@ export class UpstashVectorStore implements VectorStore {
         uniqueRestaurants: info.uniqueRestaurants || 0,
       };
     } catch (error) {
-      console.error("[UpstashVector] Failed to get stats:", error);
+      logger.error("Failed to get Upstash Vector stats", {
+        indexName: this.fullIndexName,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return {
         totalVectors: 0,
         uniqueUsers: 0,
@@ -501,7 +523,7 @@ export class UpstashVectorStore implements VectorStore {
       throw new Error(`Failed to reset index: ${response.statusText}`);
     }
 
-    console.log(`[UpstashVector] Reset index: ${this.indexName}`);
+    logger.info("Reset Upstash Vector index", { indexName: this.indexName });
   }
 
   /**
@@ -544,9 +566,9 @@ export class RedisVectorStore implements VectorStore {
 
   async initialize(): Promise<void> {
     // No initialization needed for Redis implementation
-    console.log(
-      `[RedisVectorStore] Using legacy brute-force search for index: ${this.indexName}`,
-    );
+    logger.info("Using Redis brute-force search", {
+      indexName: this.indexName,
+    });
   }
 
   async addVector(entry: Omit<VectorEntry, "id">): Promise<string> {
@@ -568,9 +590,7 @@ export class RedisVectorStore implements VectorStore {
       score: new Date(entry.timestamp).getTime(),
     });
 
-    console.log(
-      `[RedisVectorStore] Added vector ${id} for user ${entry.userId}`,
-    );
+    logger.info("Added vector to Redis", { id, userId: entry.userId });
     return id;
   }
 
@@ -594,10 +614,11 @@ export class RedisVectorStore implements VectorStore {
     // Limit candidates to prevent timeout
     const MAX_CANDIDATES = 500;
     if (candidateIds.length > MAX_CANDIDATES) {
-      console.warn(
-        `[RedisVectorStore] Candidate set (${candidateIds.length}) exceeds limit. ` +
-          `Consider migrating to Upstash Vector for production scale.`,
-      );
+      logger.warn("Redis candidate set exceeds limit", {
+        candidateCount: candidateIds.length,
+        limit: MAX_CANDIDATES,
+        suggestion: "Consider migrating to Upstash Vector for production scale",
+      });
       candidateIds = candidateIds.slice(0, MAX_CANDIDATES);
     }
 
@@ -610,13 +631,12 @@ export class RedisVectorStore implements VectorStore {
 
     for (const entryId of candidateIds) {
       const key = this.buildKey(entryId);
-      const entryData = await this.redis.get<any>(key);
+      const entryData = await this.redis.get<string>(key);
 
       if (!entryData) continue;
 
       try {
-        const entry: VectorEntry =
-          typeof entryData === "string" ? JSON.parse(entryData) : entryData;
+        const entry: VectorEntry = JSON.parse(entryData);
 
         // Apply filters
         if (query.intentType && entry.intentType !== query.intentType) continue;
@@ -648,10 +668,10 @@ export class RedisVectorStore implements VectorStore {
           });
         }
       } catch (error) {
-        console.warn(
-          `[RedisVectorStore] Failed to parse entry ${entryId}:`,
-          error,
-        );
+        logger.warn("Failed to parse Redis vector entry", {
+          entryId,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -666,13 +686,12 @@ export class RedisVectorStore implements VectorStore {
 
   async deleteVector(id: string): Promise<boolean> {
     const key = this.buildKey(id);
-    const entryData = await this.redis.get<any>(key);
+    const entryData = await this.redis.get<string>(key);
 
     if (!entryData) return false;
 
     try {
-      const entry: VectorEntry =
-        typeof entryData === "string" ? JSON.parse(entryData) : entryData;
+      const entry: VectorEntry = JSON.parse(entryData);
 
       // Remove from user index
       const userIndexKey = `${this.indexName}:user:${entry.userId}`;
@@ -682,7 +701,10 @@ export class RedisVectorStore implements VectorStore {
       await this.redis.del(key);
       return true;
     } catch (error) {
-      console.error(`[RedisVectorStore] Failed to delete vector ${id}:`, error);
+      logger.error("Failed to delete vector from Redis", {
+        id: id,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -747,7 +769,7 @@ export class RedisVectorStore implements VectorStore {
       await this.redis.del(key);
     }
 
-    console.log(`[RedisVectorStore] Reset index: ${this.indexName}`);
+    logger.info("Reset Redis vector index", { indexName: this.indexName });
   }
 
   private buildKey(entryId: string): string {
@@ -835,10 +857,10 @@ export function createVectorStore(options: VectorStoreOptions): VectorStore {
 
   // Use Upstash Vector if configured
   if (options.useUpstashVector && options.upstashVectorToken) {
-    console.log(
-      `[VectorStore] Using Upstash Vector (production mode) ` +
-        `${indexConfig.indexPrefix ? `with prefix "${indexConfig.indexPrefix}"` : ""}`,
-    );
+    logger.info("Using Upstash Vector", {
+      mode: "production",
+      ...(indexConfig.indexPrefix && { prefix: indexConfig.indexPrefix }),
+    });
     return new UpstashVectorStore({
       ...indexConfig,
       upstashToken: options.upstashVectorToken,
@@ -848,13 +870,11 @@ export function createVectorStore(options: VectorStoreOptions): VectorStore {
 
   // Fallback to Redis brute-force
   if (options.redis) {
-    console.log(
-      "[VectorStore] Using Redis Vector Store (development/legacy mode)",
-    );
-    console.warn(
-      "[VectorStore] WARNING: Brute-force similarity search is O(N). " +
-        "For production scale (>10k vectors), migrate to Upstash Vector.",
-    );
+    logger.info("Using Redis Vector Store", { mode: "development/legacy" });
+    logger.warn("Redis brute-force search is O(N)", {
+      suggestion:
+        "For production scale (>10k vectors), migrate to Upstash Vector",
+    });
     return new RedisVectorStore({
       ...indexConfig,
       redis: options.redis,

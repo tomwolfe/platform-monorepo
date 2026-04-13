@@ -249,10 +249,10 @@ export class OrderedEventBuffer {
     // Event is duplicate or old - ignore
     else {
       if (this.config.debug) {
-        console.log(
-          `[OrderedEventBuffer] Ignoring old event seq=${sequenceId} ` +
-            `(expected=${this.expectedSequenceId})`,
-        );
+        this.logger.debug("Ignoring old event", {
+          sequenceId,
+          expectedSequenceId: this.expectedSequenceId,
+        });
       }
     }
   }

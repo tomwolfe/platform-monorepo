@@ -4,12 +4,16 @@
  * Global test configuration, mocks, and setup for table-stack tests.
  *
  * @see Phase 1.1: Testing Infrastructure
+ * @see Task 5: Clean Up vitest-setup.ts - Moved global mocks to __mocks__ directory
  */
 
 import { vi, beforeEach, afterEach, afterAll } from "vitest";
 
 // ============================================================================
 // MOCKS - MUST BE HOISTED BEFORE IMPORTS
+//
+// These mocks now delegate to centralized mock factories in __mocks__/
+// to reduce duplication and improve maintainability.
 // ============================================================================
 
 /**
@@ -90,43 +94,42 @@ vi.mock("@opentelemetry/api", () => ({
 }));
 
 /**
- * Mock tablestack internal modules
+ * Mock @repo/database for integration tests
+ * FIX: Properly mock Drizzle's transaction pattern
+ * Delegates to centralized mock in __mocks__/@repo/database.ts
  */
-vi.mock("@tablestack/lib/auth", () => ({
-  validateRequest: vi.fn(() =>
-    Promise.resolve({
-      context: { restaurantId: "test-restaurant", isInternal: true },
-    }),
-  ),
-}));
+vi.mock("@repo/database", async () => {
+  const { createMockDatabase } = await import("./__mocks__/@repo/database");
+  return createMockDatabase();
+});
 
-vi.mock("@tablestack/lib/notifications", () => ({
-  NotifyService: {
-    broadcast: vi.fn(() => Promise.resolve()),
-    notifyExternalDelivery: vi.fn(() => Promise.resolve()),
-    notifyRejection: vi.fn(() => Promise.resolve()),
-    sendEmail: vi.fn(() => Promise.resolve()),
-  },
-}));
+/**
+ * Mock @repo/shared redis client and utilities
+ * Delegates to centralized mock in __mocks__/@repo/shared.ts
+ */
+vi.mock("@repo/shared", async () => {
+  const { createMockShared } = await import("./__mocks__/@repo/shared");
+  return createMockShared();
+});
 
-vi.mock("@tablestack/lib/redis", () => ({
-  redis: {
-    get: vi.fn(() => Promise.resolve(null)),
-    set: vi.fn(() => Promise.resolve("OK")),
-    setex: vi.fn(() => Promise.resolve("OK")),
-    del: vi.fn(() => Promise.resolve(0)),
-    lpush: vi.fn(() => Promise.resolve(1)),
-    rpush: vi.fn(() => Promise.resolve(1)),
-    lrange: vi.fn(() => Promise.resolve([])),
-    expire: vi.fn(() => Promise.resolve(1)),
-  },
-}));
+/**
+ * Mock tablestack internal modules
+ * Delegates to centralized mock in __mocks__/@tablestack/lib.ts
+ */
+vi.mock("@tablestack/lib/notifications", async () => {
+  const { MockNotifyService } = await import("./__mocks__/@tablestack/lib");
+  return { NotifyService: MockNotifyService };
+});
 
-vi.mock("@repo/shared/middleware/serverless-timeout", () => ({
-  withServerlessTimeout: vi.fn(
-    (handler: (req: Request) => Promise<Response>) => handler,
-  ),
-}));
+vi.mock("@tablestack/lib/auth", async () => {
+  const { MockAuth } = await import("./__mocks__/@tablestack/lib");
+  return MockAuth;
+});
+
+vi.mock("@tablestack/lib/redis", async () => {
+  const { MockRedis } = await import("./__mocks__/@tablestack/lib");
+  return MockRedis;
+});
 
 /**
  * Mock Next.js server modules
@@ -161,158 +164,13 @@ vi.mock("next/server", async (importActual) => {
 });
 
 /**
- * Mock @tablestack/lib/auth for integration tests
- */
-vi.mock("@tablestack/lib/auth", () => ({
-  validateRequest: vi.fn(() =>
-    Promise.resolve({
-      context: { restaurantId: "test-restaurant", isInternal: true },
-    }),
-  ),
-}));
-
-/**
- * Mock @repo/shared/middleware/serverless-timeout to avoid next/server import issues
+ * Mock serverless timeout
  */
 vi.mock("@repo/shared/middleware/serverless-timeout", () => ({
   withServerlessTimeout: vi.fn(
     (handler: (req: Request) => Promise<Response>) => handler,
   ),
 }));
-
-/**
- * Mock @tablestack/lib/notifications for integration tests
- */
-vi.mock("@tablestack/lib/notifications", () => ({
-  NotifyService: {
-    broadcast: vi.fn(() => Promise.resolve()),
-    notifyExternalDelivery: vi.fn(() => Promise.resolve()),
-    notifyRejection: vi.fn(() => Promise.resolve()),
-    sendEmail: vi.fn(() => Promise.resolve()),
-  },
-}));
-
-/**
- * Mock @tablestack/lib/redis for integration tests
- */
-vi.mock("@tablestack/lib/redis", () => ({
-  redis: {
-    get: vi.fn(() => Promise.resolve(null)),
-    set: vi.fn(() => Promise.resolve("OK")),
-    setex: vi.fn(() => Promise.resolve("OK")),
-    del: vi.fn(() => Promise.resolve(0)),
-    lpush: vi.fn(() => Promise.resolve(1)),
-    rpush: vi.fn(() => Promise.resolve(1)),
-    lrange: vi.fn(() => Promise.resolve([])),
-    expire: vi.fn(() => Promise.resolve(1)),
-  },
-}));
-
-/**
- * Mock @repo/database for integration tests
- * FIX: Properly mock Drizzle's transaction pattern
- */
-vi.mock("@repo/database", async () => {
-  const actual = await vi.importActual("@repo/database");
-
-  // Create mock query objects
-  const mockRestaurantsQuery = {
-    findFirst: vi.fn(),
-    findMany: vi.fn(),
-  };
-
-  const mockRestaurantReservationsQuery = {
-    findFirst: vi.fn(),
-    findMany: vi.fn(),
-  };
-
-  const mockRestaurantTablesQuery = {
-    findFirst: vi.fn(),
-    findMany: vi.fn(),
-  };
-
-  const mockGuestProfilesQuery = {
-    findFirst: vi.fn(),
-    findMany: vi.fn(),
-  };
-
-  // Create mock transaction executor
-  const createMockTransaction = () => ({
-    execute: vi.fn().mockResolvedValue([]),
-    query: {
-      restaurants: mockRestaurantsQuery,
-      restaurantReservations: mockRestaurantReservationsQuery,
-      restaurantTables: mockRestaurantTablesQuery,
-      guestProfiles: mockGuestProfilesQuery,
-    },
-    insert: vi.fn().mockImplementation((_table: unknown) => ({
-      values: vi.fn().mockReturnThis(),
-      returning: vi.fn().mockResolvedValue([]),
-    })),
-    update: vi.fn().mockImplementation((_table: unknown) => ({
-      set: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      returning: vi.fn().mockResolvedValue([]),
-    })),
-    delete: vi.fn().mockImplementation((_table: unknown) => ({
-      where: vi.fn().mockReturnThis(),
-      returning: vi.fn().mockResolvedValue([]),
-    })),
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    limit: vi.fn().mockReturnThis(),
-    orderBy: vi.fn().mockReturnThis(),
-  });
-
-  // Type for mock transaction
-  type MockTransaction = ReturnType<typeof createMockTransaction>;
-
-  return {
-    ...(actual as Record<string, unknown>),
-    getDb: vi.fn(() => ({
-      query: {
-        restaurants: mockRestaurantsQuery,
-        restaurantReservations: mockRestaurantReservationsQuery,
-        restaurantTables: mockRestaurantTablesQuery,
-        guestProfiles: mockGuestProfilesQuery,
-      },
-      insert: vi.fn().mockImplementation((_table: unknown) => ({
-        values: vi.fn().mockReturnThis(),
-        returning: vi.fn().mockResolvedValue([]),
-      })),
-      update: vi.fn().mockImplementation((_table: unknown) => ({
-        set: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        returning: vi.fn().mockResolvedValue([]),
-      })),
-      delete: vi.fn().mockImplementation((_table: unknown) => ({
-        where: vi.fn().mockReturnThis(),
-        returning: vi.fn().mockResolvedValue([]),
-      })),
-      select: vi.fn().mockReturnThis(),
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      transaction: vi.fn(
-        async (fn: (tx: MockTransaction) => Promise<unknown>) => {
-          // Properly call the function with a mock transaction object
-          return await fn(createMockTransaction());
-        },
-      ),
-    })),
-    restaurants: {
-      apiKey: "apiKey",
-      id: "id",
-    },
-    restaurantReservations: {
-      verificationToken: "verificationToken",
-      id: "id",
-    },
-    eq: vi.fn(),
-  };
-});
 
 // ============================================================================
 // IMPORTS (after mocks)

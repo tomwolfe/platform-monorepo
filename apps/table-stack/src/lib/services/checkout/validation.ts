@@ -12,7 +12,14 @@ import {
   usdToCryptoBigInt,
   isWithinSlippage,
 } from "@repo/shared/utils/crypto-price";
-import { AppConfig } from "@repo/shared";
+import {
+  AppConfig,
+  EIP712_DOMAIN,
+  EIP712_RESERVATION_TYPES,
+  DEADLINE_TOLERANCE_SECONDS,
+  CHAIN_IDS,
+  ERROR_CODES,
+} from "@repo/shared";
 
 // ============================================================================
 // EIP-712 DOMAIN & TYPES
@@ -28,8 +35,7 @@ import { AppConfig } from "@repo/shared";
 export function getEIP712Domain(chainId?: number) {
   const resolvedChainId = chainId ?? getTargetChainId();
   return {
-    name: "TableStack",
-    version: "1",
+    ...EIP712_DOMAIN,
     chainId: resolvedChainId,
   } as const;
 }
@@ -43,28 +49,30 @@ function getTargetChainId(): number {
     return parseInt(envChainId, 10);
   }
   // Default to Base mainnet in production, Sepolia in development
-  return process.env.NODE_ENV === "production" ? 8453 : 84532;
+  return process.env.NODE_ENV === "production"
+    ? CHAIN_IDS.BASE_MAINNET
+    : CHAIN_IDS.BASE_SEPOLIA;
 }
 
 /**
  * Static EIP-712 domain for backward compatibility.
  * @deprecated Use getEIP712Domain() for dynamic chainId support.
  */
-export const EIP712_DOMAIN = {
-  name: "TableStack",
-  version: "1",
-  chainId: 8453, // Base mainnet (use getEIP712Domain() for dynamic chainId)
+export const EIP712_DOMAIN_STATIC = {
+  name: EIP712_DOMAIN.name,
+  version: EIP712_DOMAIN.version,
+  chainId: CHAIN_IDS.BASE_MAINNET, // Base mainnet (use getEIP712Domain() for dynamic chainId)
 } as const;
 
-export const EIP712_TYPES = {
-  Reservation: [
-    { name: "reservationId", type: "string" },
-    { name: "amount", type: "uint256" },
-    { name: "deadline", type: "uint256" },
-  ],
-} as const;
+/**
+ * Re-export EIP-712 types for backward compatibility.
+ */
+export const EIP712_TYPES = EIP712_RESERVATION_TYPES;
 
-export const DEADLINE_TOLERANCE_SECONDS = 5 * 60;
+/**
+ * Re-export deadline tolerance for backward compatibility.
+ */
+export { DEADLINE_TOLERANCE_SECONDS };
 
 // ============================================================================
 // CHECKOUT ERROR
@@ -94,12 +102,17 @@ export function validateDeadline(deadline: number | undefined): void {
 
   const now = Math.floor(Date.now() / 1000);
   if (now > deadline + DEADLINE_TOLERANCE_SECONDS) {
-    throw new CheckoutError("Signature has expired", 400, "VALIDATION_ERROR", {
-      details: {
-        deadline: new Date(deadline * 1000).toISOString(),
-        currentTime: new Date(now * 1000).toISOString(),
+    throw new CheckoutError(
+      "Signature has expired",
+      400,
+      ERROR_CODES.VALIDATION_ERROR,
+      {
+        details: {
+          deadline: new Date(deadline * 1000).toISOString(),
+          currentTime: new Date(now * 1000).toISOString(),
+        },
       },
-    });
+    );
   }
 }
 
@@ -107,12 +120,12 @@ export function validateDeadline(deadline: number | undefined): void {
  * Validate chain ID (must be Base mainnet)
  */
 export function validateChainId(chainId: number | undefined): void {
-  if (chainId && chainId !== 8453) {
+  if (chainId && chainId !== CHAIN_IDS.BASE_MAINNET) {
     throw new CheckoutError(
-      "Invalid chain ID. Must be Base (8453)",
+      `Invalid chain ID. Must be Base (${CHAIN_IDS.BASE_MAINNET})`,
       400,
-      "VALIDATION_ERROR",
-      { details: { received: chainId, expected: 8453 } },
+      ERROR_CODES.VALIDATION_ERROR,
+      { details: { received: chainId, expected: CHAIN_IDS.BASE_MAINNET } },
     );
   }
 }
@@ -127,7 +140,7 @@ export function validatePaymentMode(reservation: {
     throw new CheckoutError(
       "Restaurant wallet address not configured - cannot accept P2P payment",
       400,
-      "VALIDATION_ERROR",
+      ERROR_CODES.VALIDATION_ERROR,
     );
   }
 
@@ -135,7 +148,7 @@ export function validatePaymentMode(reservation: {
     throw new CheckoutError(
       "Escrow contract address not configured - cannot process escrow payment",
       400,
-      "VALIDATION_ERROR",
+      ERROR_CODES.VALIDATION_ERROR,
     );
   }
 
@@ -143,7 +156,7 @@ export function validatePaymentMode(reservation: {
     throw new CheckoutError(
       "Web3 payments are disabled. Please use traditional payment methods.",
       400,
-      "VALIDATION_ERROR",
+      ERROR_CODES.VALIDATION_ERROR,
     );
   }
 }
@@ -185,7 +198,7 @@ export async function verifySignature(
     throw new CheckoutError(
       "EIP-712 signature is required",
       400,
-      "VALIDATION_ERROR",
+      ERROR_CODES.VALIDATION_ERROR,
     );
   }
 
@@ -220,9 +233,9 @@ export async function verifySignature(
       address: walletAddress as Address,
       signature: signature as Hex,
       domain: {
-        name: EIP712_DOMAIN.name,
-        version: EIP712_DOMAIN.version,
-        chainId: EIP712_DOMAIN.chainId,
+        name: EIP712_DOMAIN_STATIC.name,
+        version: EIP712_DOMAIN_STATIC.version,
+        chainId: EIP712_DOMAIN_STATIC.chainId,
       },
       types: EIP712_TYPES,
       primaryType: "Reservation",
@@ -237,7 +250,7 @@ export async function verifySignature(
       throw new CheckoutError(
         "Invalid EIP-712 signature",
         400,
-        "VALIDATION_ERROR",
+        ERROR_CODES.VALIDATION_ERROR,
       );
     }
 
@@ -256,7 +269,7 @@ export async function verifySignature(
         throw new CheckoutError(
           "Signed amount is outside acceptable slippage tolerance. Please sign a new checkout with the current price.",
           400,
-          "VALIDATION_ERROR",
+          ERROR_CODES.VALIDATION_ERROR,
           {
             details: {
               signedAmount,
@@ -272,7 +285,7 @@ export async function verifySignature(
     throw new CheckoutError(
       "Signature verification failed",
       400,
-      "VALIDATION_ERROR",
+      ERROR_CODES.VALIDATION_ERROR,
       {
         details: {
           error: err instanceof Error ? err.message : "Unknown error",

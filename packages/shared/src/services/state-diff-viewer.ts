@@ -34,6 +34,10 @@
  * @since 1.0.0
  */
 
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "state-diff-viewer" });
+
 // ============================================================================
 // TYPE DEFINITIONS
 // ============================================================================
@@ -193,10 +197,11 @@ export class StateDiffViewer {
       });
     }
 
-    console.log(
-      `[StateDiffViewer] Captured snapshot ${snapshotId}` +
-        (metadata?.label ? ` (${metadata.label})` : ""),
-    );
+    logger.debug({
+      message: "Captured state snapshot",
+      snapshotId,
+      label: metadata?.label,
+    });
 
     return snapshot;
   }

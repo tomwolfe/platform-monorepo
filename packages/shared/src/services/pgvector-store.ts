@@ -53,6 +53,7 @@ import {
   cosineSimilarity,
   type SemanticMemory,
 } from "@repo/database";
+import { Logger } from "../logger";
 
 // Type-safe column references for use in queries
 const columns = {
@@ -79,6 +80,7 @@ export interface PGVectorStoreConfig {
 export class PGVectorStore implements VectorStore {
   private config: Required<PGVectorStoreConfig>;
   private db: Database;
+  private logger: Logger;
 
   constructor(db: Database, config: PGVectorStoreConfig = {}) {
     this.db = db;
@@ -87,6 +89,7 @@ export class PGVectorStore implements VectorStore {
       defaultMinSimilarity: config.defaultMinSimilarity || 0.5,
       defaultLimit: config.defaultLimit || 10,
     };
+    this.logger = new Logger({ serviceName: "pgvector-store" });
   }
 
   // ========================================================================
@@ -146,10 +149,11 @@ export class PGVectorStore implements VectorStore {
       })
       .returning();
 
-    console.log(
-      `[PGVectorStore] Added vector ${id} for user ${entry.userId} ` +
-        `(${entry.intentType})`,
-    );
+    this.logger.debug("Added vector entry", {
+      id,
+      userId: entry.userId,
+      intentType: entry.intentType,
+    });
 
     return id;
   }
@@ -278,7 +282,7 @@ export class PGVectorStore implements VectorStore {
       .where(eq(columns.id, id));
 
     const deleted = result.rowCount || 0;
-    console.log(`[PGVectorStore] Deleted vector ${id} (${deleted} rows)`);
+    this.logger.debug("Deleted vector", { id, deleted });
     return deleted > 0;
   }
 
@@ -291,9 +295,7 @@ export class PGVectorStore implements VectorStore {
       .where(eq(columns.userId, userId));
 
     const deleted = result.rowCount || 0;
-    console.log(
-      `[PGVectorStore] Deleted ${deleted} vectors for user ${userId}`,
-    );
+    this.logger.debug("Deleted vectors for user", { userId, deleted });
     return deleted;
   }
 
@@ -312,9 +314,7 @@ export class PGVectorStore implements VectorStore {
       .where(eq(columns.id, id));
 
     const updated = result.rowCount || 0;
-    console.log(
-      `[PGVectorStore] Updated metadata for vector ${id} (${updated} rows)`,
-    );
+    this.logger.debug("Updated vector metadata", { id, updated });
     return updated > 0;
   }
 
@@ -411,9 +411,11 @@ export class PGVectorStore implements VectorStore {
 
         await tx.insert(semanticMemories).values(values);
 
-        console.log(
-          `[PGVectorStore] Batch inserted ${batch.length} vectors (${i + batch.length}/${entries.length})`,
-        );
+        this.logger.debug("Batch inserted vectors", {
+          batchSize: batch.length,
+          totalInserted: i + batch.length,
+          totalEntries: entries.length,
+        });
       }
     });
 
@@ -426,7 +428,7 @@ export class PGVectorStore implements VectorStore {
   async clearAll(): Promise<number> {
     const result = await this.db.delete(semanticMemories);
     const deleted = result.rowCount || 0;
-    console.log(`[PGVectorStore] Cleared all vectors (${deleted} rows)`);
+    this.logger.debug("Cleared all vectors", { deleted });
     return deleted;
   }
 }

@@ -24,6 +24,7 @@ import {
   AllToolsMap,
   getTypedToolEntry,
 } from "@repo/mcp-protocol";
+import { Logger } from "../logger";
 
 // ============================================================================
 // SCHEMAS
@@ -122,11 +123,13 @@ export class SchemaVersioningService {
   private config: Required<SchemaVersioningConfig>;
   private currentRegistryVersion: string;
   private checkpointIndexKey: string; // Sorted set for checkpoint tracking
+  private logger: Logger;
 
   constructor(config: SchemaVersioningConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.currentRegistryVersion = this.getRegistryVersion();
     this.checkpointIndexKey = `${this.config.indexPrefix}:__checkpoint_index__`;
+    this.logger = new Logger({ serviceName: "schema-versioning" });
   }
 
   /**
@@ -186,7 +189,7 @@ export class SchemaVersioningService {
   ): Promise<ToolVersionRecord | null> {
     const tool = getTypedToolEntry(toolName as keyof AllToolsMap);
     if (!tool) {
-      console.warn(`[SchemaVersioning] Unknown tool: ${toolName}`);
+      this.logger.warn("Unknown tool", { toolName });
       return null;
     }
 
@@ -219,9 +222,11 @@ export class SchemaVersioningService {
     // Keep only last 10 versions in history
     await this.config.redis.zremrangebyrank(historyKey, 0, -11);
 
-    console.log(
-      `[SchemaVersioning] Captured version for ${toolName}: ${schemaHash} (${this.currentRegistryVersion})`,
-    );
+    this.logger.debug("Captured version", {
+      toolName,
+      schemaHash,
+      registryVersion: this.currentRegistryVersion,
+    });
 
     return versionRecord;
   }
@@ -231,19 +236,17 @@ export class SchemaVersioningService {
    */
   async getCurrentVersion(toolName: string): Promise<ToolVersionRecord | null> {
     const versionKey = this.buildVersionKey(toolName);
-    const versionData = await this.config.redis.get<any>(versionKey);
+    const versionData = await this.config.redis.get<string>(versionKey);
 
     if (!versionData) return null;
 
     try {
-      return typeof versionData === "string"
-        ? JSON.parse(versionData)
-        : versionData;
+      return JSON.parse(versionData) as ToolVersionRecord;
     } catch (error) {
-      console.error(
-        `[SchemaVersioning] Failed to parse version for ${toolName}:`,
-        error,
-      );
+      this.logger.error("Failed to parse version", {
+        toolName,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }
@@ -267,10 +270,10 @@ export class SchemaVersioningService {
         try {
           return typeof data === "string" ? JSON.parse(data) : data;
         } catch (error) {
-          console.warn(
-            `[SchemaVersioning] Failed to parse history entry:`,
-            error,
-          );
+          this.logger.warn("Failed to parse history entry", {
+            toolName,
+            error: error instanceof Error ? error.message : String(error),
+          });
           return null;
         }
       })
@@ -322,16 +325,17 @@ export class SchemaVersioningService {
         score: Date.now(),
       });
     } catch (err) {
-      console.warn(
-        "[SchemaVersioning] Failed to update checkpoint index:",
-        err,
-      );
+      this.logger.warn("Failed to update checkpoint index", {
+        executionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
-    console.log(
-      `[SchemaVersioning] Captured checkpoint metadata for ${executionId} ` +
-        `with ${Object.keys(toolVersions).length} tools (orchestrator: ${metadata.orchestratorGitSha})`,
-    );
+    this.logger.debug("Captured checkpoint metadata", {
+      executionId,
+      toolCount: Object.keys(toolVersions).length,
+      orchestratorGitSha: metadata.orchestratorGitSha,
+    });
 
     return metadata;
   }
@@ -343,17 +347,17 @@ export class SchemaVersioningService {
     executionId: string,
   ): Promise<SchemaVersioningMetadata | null> {
     const checkpointKey = this.buildCheckpointKey(executionId);
-    const metadata = await this.config.redis.get<any>(checkpointKey);
+    const metadata = await this.config.redis.get<string>(checkpointKey);
 
     if (!metadata) return null;
 
     try {
-      return typeof metadata === "string" ? JSON.parse(metadata) : metadata;
+      return JSON.parse(metadata) as SchemaVersioningMetadata;
     } catch (error) {
-      console.error(
-        `[SchemaVersioning] Failed to parse checkpoint metadata:`,
-        error,
-      );
+      this.logger.error("Failed to parse checkpoint metadata", {
+        executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }
@@ -478,8 +482,8 @@ export class SchemaVersioningService {
    */
   private async assessDriftSeverity(
     toolName: string,
-    oldVersion: ToolVersionRecord,
-    newVersion: ToolVersionRecord,
+    _oldVersion: ToolVersionRecord,
+    _newVersion: ToolVersionRecord,
   ): Promise<"minor" | "major" | "breaking"> {
     const tool = getTypedToolEntry(toolName as keyof AllToolsMap);
     if (!tool) return "breaking";
@@ -526,7 +530,7 @@ export class SchemaVersioningService {
   async generateParameterMapping(
     toolName: string,
     oldCheckpointVersion: ToolVersionRecord,
-    newCurrentVersion: ToolVersionRecord,
+    _newCurrentVersion: ToolVersionRecord,
   ): Promise<ParameterMapping | null> {
     const tool = getTypedToolEntry(toolName as keyof AllToolsMap);
     if (!tool) return null;
@@ -663,9 +667,7 @@ export class SchemaVersioningService {
       }
     }
 
-    console.log(
-      `[SchemaVersioning] Cleaned up ${deletedCount} expired checkpoints`,
-    );
+    this.logger.info("Cleaned up expired checkpoints", { deletedCount });
     return deletedCount;
   }
 }

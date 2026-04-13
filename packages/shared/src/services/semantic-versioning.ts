@@ -44,6 +44,9 @@
 import { z } from "zod";
 import { Redis } from "@upstash/redis";
 import { getRedisClient, ServiceNamespace } from "../redis";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "semantic-versioning" });
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -258,7 +261,10 @@ export const SchemaAnalyzer = {
    */
   extractShape(schema: z.ZodSchema): Record<string, z.ZodType> {
     if ("shape" in schema) {
-      return (schema as z.ZodObject<any>).shape as Record<string, z.ZodType>;
+      return (schema as z.ZodObject<z.ZodRawShape>).shape as Record<
+        string,
+        z.ZodType
+      >;
     }
     return {};
   },
@@ -441,10 +447,11 @@ export class SemanticVersioningService {
     this.adapterCache.set(cacheKey, adapter);
 
     if (this.config.debug) {
-      console.log(
-        `[SemanticVersioning] Registered adapter: ${adapter.toolName} ` +
-          `${adapter.fromVersion} -> ${adapter.toVersion}`,
-      );
+      logger.info("Registered adapter", {
+        toolName: adapter.toolName,
+        fromVersion: adapter.fromVersion,
+        toVersion: adapter.toVersion,
+      });
     }
   }
 
@@ -466,20 +473,21 @@ export class SemanticVersioningService {
 
     // Check Redis
     const key = this.buildAdapterKey(toolName, fromVersion, toVersion);
-    const data = await this.config.redis.get<any>(key);
+    const data = await this.config.redis.get<string>(key);
 
     if (!data) return null;
 
     try {
-      const adapter: RegisteredAdapter =
-        typeof data === "string" ? JSON.parse(data) : data;
+      const adapter: RegisteredAdapter = JSON.parse(data);
 
       // Cache it
       this.adapterCache.set(cacheKey, adapter);
 
       return adapter.adapter;
     } catch (error) {
-      console.error(`[SemanticVersioning] Failed to parse adapter:`, error);
+      logger.error("Failed to parse adapter from Redis", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }

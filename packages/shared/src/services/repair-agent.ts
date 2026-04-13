@@ -45,6 +45,9 @@ import { z } from "zod";
 import { createSchemaVersioningService } from "./schema-versioning";
 import { createShadowDryRunService } from "./shadow-dry-run";
 import { createSemanticVersioningService } from "./semantic-versioning";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "repair-agent" });
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -64,7 +67,7 @@ export interface ZombieSaga {
   stepStates: Array<{
     step_id: string;
     status: string;
-    error?: any;
+    error?: unknown;
     tool_name?: string;
     parameters?: Record<string, unknown>;
   }>;
@@ -252,19 +255,23 @@ export class RepairAgent {
 
     try {
       if (this.config.debug) {
-        console.log(
-          `[RepairAgent] Analyzing zombie saga ${zombie.executionId}`,
-        );
+        logger.debug({
+          message: "Analyzing zombie saga",
+          executionId: zombie.executionId,
+        });
       }
 
       // Step 1: Analyze failure
       const analysis = await this.analyzeFailure(zombie);
 
       if (this.config.debug) {
-        console.log(
-          `[RepairAgent] Analysis complete: ${analysis.failureType} ` +
-            `(confidence: ${analysis.confidence.toFixed(2)}, canRepair: ${analysis.canAutoRepair})`,
-        );
+        logger.debug({
+          message: "Analysis complete",
+          executionId: zombie.executionId,
+          failureType: analysis.failureType,
+          confidence: analysis.confidence,
+          canAutoRepair: analysis.canAutoRepair,
+        });
       }
 
       // Step 2: Check if auto-repair is possible
@@ -275,10 +282,12 @@ export class RepairAgent {
       // Step 3: Check confidence threshold
       if (analysis.confidence < this.config.minConfidenceThreshold) {
         if (this.config.debug) {
-          console.log(
-            `[RepairAgent] Confidence ${analysis.confidence.toFixed(2)} ` +
-              `below threshold ${this.config.minConfidenceThreshold}`,
-          );
+          logger.debug({
+            message: "Confidence below threshold",
+            executionId: zombie.executionId,
+            confidence: analysis.confidence,
+            threshold: this.config.minConfidenceThreshold,
+          });
         }
         return await this.escalateToHuman(zombie, analysis);
       }
@@ -311,10 +320,11 @@ export class RepairAgent {
         return await this.applyFixAndResume(zombie, analysis);
       }
     } catch (error) {
-      console.error(
-        `[RepairAgent] Repair failed for ${zombie.executionId}:`,
-        error,
-      );
+      logger.error({
+        message: "Repair failed for zombie saga",
+        executionId: zombie.executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return {
         success: false,
         action: "ESCALATED",
@@ -496,7 +506,11 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
         warnings: [],
       };
     } catch (error) {
-      console.error(`[RepairAgent] Shadow dry-run failed:`, error);
+      logger.error({
+        message: "Shadow dry-run failed",
+        executionId: zombie.executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return {
         passed: false,
         divergencePercentage: 100,
@@ -510,14 +524,16 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
   /**
    * Capture state snapshot for dry-run
    */
-  private async captureStateSnapshot(zombie: ZombieSaga): Promise<any> {
+  private async captureStateSnapshot(zombie: ZombieSaga): Promise<unknown> {
     const key = `intentionengine:task:${zombie.executionId}`;
-    const data = await this.config.redis.get<any>(key);
+    const data = await this.config.redis.get<string>(key);
 
     if (!data) return null;
 
-    const taskState = typeof data === "string" ? JSON.parse(data) : data;
-    return taskState.context?.execution_state || null;
+    const taskState = JSON.parse(data) as Record<string, unknown>;
+    return (
+      (taskState.context as Record<string, unknown>)?.execution_state || null
+    );
   }
 
   /**
@@ -596,10 +612,12 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
         undefined,
       );
 
-      console.log(
-        `[RepairAgent] Auto-repaired zombie saga ${zombie.executionId} ` +
-          `(${analysis.failureType}, confidence: ${analysis.confidence.toFixed(2)})`,
-      );
+      logger.info({
+        message: "Auto-repaired zombie saga",
+        executionId: zombie.executionId,
+        failureType: analysis.failureType,
+        confidence: analysis.confidence,
+      });
 
       return {
         success: true,
@@ -615,7 +633,11 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
           : undefined,
       };
     } catch (error) {
-      console.error(`[RepairAgent] Failed to apply fix:`, error);
+      logger.error({
+        message: "Failed to apply fix",
+        executionId: zombie.executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return await this.escalateToHuman(
         zombie,
         analysis,
@@ -679,10 +701,12 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
         undefined,
       );
 
-      console.warn(
-        `[RepairAgent] Escalated zombie saga ${zombie.executionId} to human: ` +
-          `${additionalReason || analysis.rootCause}`,
-      );
+      logger.warn({
+        message: "Escalated zombie saga to human",
+        executionId: zombie.executionId,
+        reason: additionalReason || analysis.rootCause,
+        failureType: analysis.failureType,
+      });
 
       return {
         success: false,
@@ -692,7 +716,11 @@ Diagnose the root cause of this saga failure and suggest a repair strategy.
         escalationReason: additionalReason || analysis.rootCause,
       };
     } catch (error) {
-      console.error(`[RepairAgent] Failed to escalate:`, error);
+      logger.error({
+        message: "Failed to escalate",
+        executionId: zombie.executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return {
         success: false,
         action: "ESCALATED",

@@ -552,17 +552,21 @@ export class MonitoringServiceClass {
       },
     });
 
-    // Also log to console
-    const emoji = {
-      [AlertLevel.INFO]: "ℹ️",
-      [AlertLevel.WARNING]: "⚠️",
-      [AlertLevel.ERROR]: "❌",
-      [AlertLevel.CRITICAL]: "🚨",
-    }[alert.level];
+    // Also log to console via structured logger
+    const levelMap: Record<AlertLevel, "info" | "warn" | "error"> = {
+      [AlertLevel.INFO]: "info",
+      [AlertLevel.WARNING]: "warn",
+      [AlertLevel.ERROR]: "error",
+      [AlertLevel.CRITICAL]: "error",
+    };
 
-    console.log(
-      `${emoji} [ALERT] ${alert.name}: ${alert.message} (value: ${alert.metricValue}, threshold: ${alert.threshold})`,
-    );
+    this.logger[levelMap[alert.level] || "info"]("Alert triggered", {
+      alertName: alert.name,
+      message: alert.message,
+      metricValue: alert.metricValue,
+      threshold: alert.threshold,
+      level: alert.level,
+    });
   }
 
   /**

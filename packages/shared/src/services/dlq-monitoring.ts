@@ -17,8 +17,15 @@
  */
 
 import { Redis } from "@upstash/redis";
+import { Logger } from "../logger";
 import { RealtimeService } from "../realtime";
-import { createRepairAgent, type ZombieSaga as RepairZombieSaga, type RepairResult } from "./repair-agent";
+import {
+  createRepairAgent,
+  type ZombieSaga as RepairZombieSaga,
+  type RepairResult,
+} from "./repair-agent";
+
+const logger = new Logger({ serviceName: "dlq-monitoring" });
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -35,7 +42,7 @@ export interface ZombieSaga {
   stepStates: Array<{
     step_id: string;
     status: string;
-    error?: any;
+    error?: unknown;
   }>;
   compensationsRegistered?: Array<{
     stepId: string;
@@ -125,7 +132,7 @@ export class DLQMonitoringService {
 
   /**
    * Scan for zombie sagas
-   * 
+   *
    * A saga is considered "zombie" if:
    * - Status is EXECUTING, AWAITING_CONFIRMATION, or COMPENSATING
    * - No activity for > minInactiveDurationMs
@@ -151,23 +158,34 @@ export class DLQMonitoringService {
       // Check each task for zombie status
       for (const key of keys) {
         try {
-          const taskData = await this.redis.get<any>(key);
-          if (!taskData || !taskData.context) continue;
+          const taskData = await this.redis.get<string>(key);
+          if (!taskData) continue;
+
+          const parsedData = JSON.parse(taskData);
+          if (!parsedData.context) continue;
 
           const executionId = key.replace("task:", "");
-          const context = taskData.context;
+          const context = parsedData.context;
           const executionState = context.execution_state;
 
           if (!executionState) continue;
 
           const status = executionState.status;
-          const isTerminalStatus = ["COMPLETED", "FAILED", "TIMEOUT", "CANCELLED"].includes(status);
+          const isTerminalStatus = [
+            "COMPLETED",
+            "FAILED",
+            "TIMEOUT",
+            "CANCELLED",
+          ].includes(status);
 
           // Skip terminal states
           if (isTerminalStatus) continue;
 
           // Check last activity
-          const lastActivityAt = context.last_checkpoint_at || executionState.updated_at || executionState.created_at;
+          const lastActivityAt =
+            context.last_checkpoint_at ||
+            executionState.updated_at ||
+            executionState.created_at;
           if (!lastActivityAt) continue;
 
           const lastActivityTime = new Date(lastActivityAt).getTime();
@@ -177,21 +195,32 @@ export class DLQMonitoringService {
           if (inactiveDuration >= this.config.minInactiveDurationMs) {
             // This is a zombie saga
             const stepStates = executionState.step_states || [];
-            const completedSteps = stepStates.filter((s: any) => s.status === "completed").length;
-            const failedSteps = stepStates.filter((s: any) => s.status === "failed").length;
+            const completedSteps = stepStates.filter(
+              (s: { status: string }) => s.status === "completed",
+            ).length;
+            const failedSteps = stepStates.filter(
+              (s: { status: string }) => s.status === "failed",
+            ).length;
             const totalSteps = executionState.plan?.steps?.length || 0;
 
             // Check if there are incomplete steps
-            const hasIncompleteSteps = completedSteps + failedSteps < totalSteps;
+            const hasIncompleteSteps =
+              completedSteps + failedSteps < totalSteps;
 
-            if (hasIncompleteSteps || status === "COMPENSATING" || context.compensationStatus === "PARTIALLY_COMPENSATED") {
+            if (
+              hasIncompleteSteps ||
+              status === "COMPENSATING" ||
+              context.compensationStatus === "PARTIALLY_COMPENSATED"
+            ) {
               // Get recovery attempts
               const dlqKey = this.buildDLQKey(executionId);
-              const dlqData = await this.redis.get<any>(dlqKey);
-              const recoveryAttempts = dlqData?.recoveryAttempts || 0;
+              const dlqData = await this.redis.get<string>(dlqKey);
+              const recoveryAttempts = dlqData
+                ? JSON.parse(dlqData).recoveryAttempts || 0
+                : 0;
 
               // Determine if human intervention is required
-              const requiresHumanIntervention = 
+              const requiresHumanIntervention =
                 recoveryAttempts >= this.config.maxRecoveryAttempts ||
                 context.requiresHumanIntervention === true ||
                 context.compensationStatus === "PARTIALLY_COMPENSATED";
@@ -204,11 +233,17 @@ export class DLQMonitoringService {
                 status,
                 lastActivityAt,
                 inactiveDurationMs: inactiveDuration,
-                stepStates: stepStates.map((s: any) => ({
-                  step_id: s.step_id,
-                  status: s.status,
-                  error: s.error,
-                })),
+                stepStates: stepStates.map(
+                  (s: {
+                    step_id: string;
+                    status: string;
+                    error?: unknown;
+                  }) => ({
+                    step_id: s.step_id,
+                    status: s.status,
+                    error: s.error,
+                  }),
+                ),
                 compensationsRegistered: context.compensations_registered,
                 requiresHumanIntervention,
                 recoveryAttempts,
@@ -216,7 +251,10 @@ export class DLQMonitoringService {
             }
           }
         } catch (error) {
-          console.error(`[DLQ] Failed to check task ${key}:`, error);
+          logger.error("Failed to check task for zombie status", {
+            taskKey: key,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
       }
 
@@ -249,7 +287,12 @@ export class DLQMonitoringService {
    */
   async recoverZombieSaga(zombie: ZombieSaga): Promise<{
     success: boolean;
-    action: "AUTO_REPAIRED" | "RESUMED" | "COMPENSATION_RETRIED" | "ESCALATED" | "SKIPPED";
+    action:
+      | "AUTO_REPAIRED"
+      | "RESUMED"
+      | "COMPENSATION_RETRIED"
+      | "ESCALATED"
+      | "SKIPPED";
     message?: string;
     repairResult?: RepairResult;
   }> {
@@ -265,10 +308,11 @@ export class DLQMonitoringService {
       }
 
       // SELF-HEALING: Use Repair Agent for failed sagas
-      if (zombie.stepStates.some(s => s.status === "failed")) {
-        console.log(
-          `[DLQ] Invoking Repair Agent for failed saga ${zombie.executionId}`
-        );
+      if (zombie.stepStates.some((s) => s.status === "failed")) {
+        logger.info("Invoking Repair Agent for failed saga", {
+          executionId: zombie.executionId,
+          workflowId: zombie.workflowId,
+        });
 
         const repairAgent = createRepairAgent({
           redis: this.redis,
@@ -289,18 +333,19 @@ export class DLQMonitoringService {
           compensationsRegistered: zombie.compensationsRegistered,
           requiresHumanIntervention: zombie.requiresHumanIntervention,
           recoveryAttempts: zombie.recoveryAttempts,
-          failureContext: zombie.stepStates.find(s => s.status === "failed")?.error,
+          failureContext: zombie.stepStates.find((s) => s.status === "failed")
+            ?.error,
         };
 
         // Attempt repair
         const repairResult = await repairAgent.analyzeAndRepair(repairZombie);
 
         if (repairResult.success && repairResult.action === "AUTO_REPAIRED") {
-          console.log(
-            `[DLQ] ✅ Auto-repaired saga ${zombie.executionId} ` +
-            `(${repairResult.repairAnalysis?.failureType}, ` +
-            `confidence: ${(repairResult.repairAnalysis?.confidence || 0).toFixed(2)})`
-          );
+          logger.info("Auto-repaired saga via Repair Agent", {
+            executionId: zombie.executionId,
+            failureType: repairResult.repairAnalysis?.failureType,
+            confidence: repairResult.repairAnalysis?.confidence ?? 0,
+          });
 
           return {
             success: true,
@@ -312,14 +357,15 @@ export class DLQMonitoringService {
 
         // Repair failed or was escalated
         if (repairResult.action === "ESCALATED") {
-          console.log(
-            `[DLQ] ⚠️ Repair Agent escalated saga ${zombie.executionId}: ` +
-            repairResult.escalationReason
-          );
+          logger.warn("Repair Agent escalated saga to human intervention", {
+            executionId: zombie.executionId,
+            escalationReason: repairResult.escalationReason,
+          });
 
           await this.escalateToHuman(
             zombie,
-            repairResult.escalationReason || "Repair Agent could not safely fix"
+            repairResult.escalationReason ||
+              "Repair Agent could not safely fix",
           );
 
           return {
@@ -331,9 +377,11 @@ export class DLQMonitoringService {
         }
 
         // Repair attempted but didn't auto-repair (e.g., dry-run failed)
-        console.log(
-          `[DLQ] ⚠️ Repair Agent couldn't auto-repair ${zombie.executionId}, ` +
-          `falling back to standard recovery`
+        logger.warn(
+          "Repair Agent could not auto-repair, falling back to standard recovery",
+          {
+            executionId: zombie.executionId,
+          },
         );
       }
 
@@ -357,7 +405,10 @@ export class DLQMonitoringService {
       });
 
       // Determine recovery strategy for non-failed sagas
-      if (zombie.status === "COMPENSATING" || zombie.stepStates.some(s => s.status === "failed")) {
+      if (
+        zombie.status === "COMPENSATING" ||
+        zombie.stepStates.some((s) => s.status === "failed")
+      ) {
         // Retry compensation
         return await this.retryCompensation(zombie);
       } else {
@@ -365,8 +416,14 @@ export class DLQMonitoringService {
         return await this.resumeExecution(zombie);
       }
     } catch (error) {
-      console.error(`[DLQ] Recovery failed for ${zombie.executionId}:`, error);
-      await this.escalateToHuman(zombie, error instanceof Error ? error.message : String(error));
+      logger.error("Recovery failed for zombie saga", {
+        executionId: zombie.executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await this.escalateToHuman(
+        zombie,
+        error instanceof Error ? error.message : String(error),
+      );
       return {
         success: false,
         action: "ESCALATED",
@@ -383,7 +440,11 @@ export class DLQMonitoringService {
     action: "RESUMED";
     message?: string;
   }> {
-    console.log(`[DLQ] Attempting to resume zombie saga ${zombie.executionId}`);
+    logger.info("Attempting to resume zombie saga", {
+      executionId: zombie.executionId,
+      workflowId: zombie.workflowId,
+      status: zombie.status,
+    });
 
     try {
       // Publish WORKFLOW_RESUME event to trigger continuation
@@ -397,10 +458,13 @@ export class DLQMonitoringService {
           recoveryAttempt: zombie.recoveryAttempts + 1,
           timestamp: new Date().toISOString(),
         },
-        undefined
+        undefined,
       );
 
-      console.log(`[DLQ] Resumed zombie saga ${zombie.executionId} (attempt ${zombie.recoveryAttempts + 1})`);
+      logger.info("Resumed zombie saga", {
+        executionId: zombie.executionId,
+        recoveryAttempt: zombie.recoveryAttempts + 1,
+      });
 
       return {
         success: true,
@@ -420,11 +484,20 @@ export class DLQMonitoringService {
     action: "COMPENSATION_RETRIED" | "ESCALATED";
     message?: string;
   }> {
-    console.log(`[DLQ] Retrying compensation for zombie saga ${zombie.executionId}`);
+    logger.info("Retrying compensation for zombie saga", {
+      executionId: zombie.executionId,
+      workflowId: zombie.workflowId,
+    });
 
-    if (!zombie.compensationsRegistered || zombie.compensationsRegistered.length === 0) {
+    if (
+      !zombie.compensationsRegistered ||
+      zombie.compensationsRegistered.length === 0
+    ) {
       // No compensations to retry - escalate
-      await this.escalateToHuman(zombie, "No compensations registered but saga has failed steps");
+      await this.escalateToHuman(
+        zombie,
+        "No compensations registered but saga has failed steps",
+      );
       return {
         success: false,
         action: "ESCALATED",
@@ -442,10 +515,13 @@ export class DLQMonitoringService {
         recoveryAttempt: zombie.recoveryAttempts + 1,
         timestamp: new Date().toISOString(),
       },
-      undefined
+      undefined,
     );
 
-    console.log(`[DLQ] Retried compensation for zombie saga ${zombie.executionId}`);
+    logger.info("Retried compensation for zombie saga", {
+      executionId: zombie.executionId,
+      recoveryAttempt: zombie.recoveryAttempts + 1,
+    });
 
     return {
       success: true,
@@ -457,14 +533,21 @@ export class DLQMonitoringService {
   /**
    * Escalate zombie saga to human intervention
    */
-  private async escalateToHuman(zombie: ZombieSaga, additionalError?: string): Promise<void> {
-    console.warn(
-      `[DLQ] Escalating zombie saga ${zombie.executionId} to human intervention`
-    );
+  private async escalateToHuman(
+    zombie: ZombieSaga,
+    additionalError?: string,
+  ): Promise<void> {
+    logger.warn("Escalating zombie saga to human intervention", {
+      executionId: zombie.executionId,
+      workflowId: zombie.workflowId,
+      status: zombie.status,
+      recoveryAttempts: zombie.recoveryAttempts,
+      inactiveDurationMs: zombie.inactiveDurationMs,
+    });
 
     try {
       // Publish to system alerts
-      await RealtimeService.publish('system:alerts', 'zombie_saga_escalated', {
+      await RealtimeService.publish("system:alerts", "zombie_saga_escalated", {
         executionId: zombie.executionId,
         workflowId: zombie.workflowId,
         intentId: zombie.intentId,
@@ -476,7 +559,7 @@ export class DLQMonitoringService {
         stepStates: zombie.stepStates,
         compensationsRegistered: zombie.compensationsRegistered,
         error: additionalError,
-        severity: 'CRITICAL',
+        severity: "CRITICAL",
         requiresAction: true,
         timestamp: new Date().toISOString(),
       });
@@ -494,10 +577,13 @@ export class DLQMonitoringService {
           error: additionalError,
           timestamp: new Date().toISOString(),
         },
-        undefined
+        undefined,
       );
     } catch (error) {
-      console.error(`[DLQ] Failed to escalate zombie saga ${zombie.executionId}:`, error);
+      logger.error("Failed to escalate zombie saga", {
+        executionId: zombie.executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -509,7 +595,7 @@ export class DLQMonitoringService {
    * This should be called periodically (e.g., every 5 minutes) via cron
    */
   async runReconciliation(): Promise<ReconciliationResult> {
-    console.log(`[DLQ] Starting reconciliation cycle...`);
+    logger.info("Starting reconciliation cycle");
     const startTime = Date.now();
 
     const zombieSagas = await this.scanForZombieSagas();
@@ -525,7 +611,10 @@ export class DLQMonitoringService {
         if (result.action === "AUTO_REPAIRED") {
           autoRepaired++;
           autoRecovered++; // Count as recovered
-        } else if (result.action === "RESUMED" || result.action === "COMPENSATION_RETRIED") {
+        } else if (
+          result.action === "RESUMED" ||
+          result.action === "COMPENSATION_RETRIED"
+        ) {
           autoRecovered++;
         } else if (result.action === "ESCALATED") {
           escalatedToHuman++;
@@ -540,13 +629,13 @@ export class DLQMonitoringService {
     }
 
     const duration = Date.now() - startTime;
-    console.log(
-      `[DLQ] Reconciliation complete in ${duration}ms: ` +
-      `${zombieSagas.length} zombie sagas detected, ` +
-      `${autoRepaired} auto-repaired by Repair Agent, ` +
-      `${autoRecovered - autoRepaired} auto-recovered (standard), ` +
-      `${escalatedToHuman} escalated to human`
-    );
+    logger.info("Reconciliation complete", {
+      durationMs: duration,
+      zombieSagasDetected: zombieSagas.length,
+      autoRepairedByRepairAgent: autoRepaired,
+      autoRecoveredStandard: autoRecovered - autoRepaired,
+      escalatedToHuman,
+    });
 
     return {
       scanned: zombieSagas.length,
@@ -562,11 +651,13 @@ export class DLQMonitoringService {
    */
   async getStats(): Promise<DLQStats> {
     const zombieSagas = await this.scanForZombieSagas();
-    
+
     const stats: DLQStats = {
       totalZombieSagas: zombieSagas.length,
       autoRecovered: 0,
-      manualInterventionRequired: zombieSagas.filter(z => z.requiresHumanIntervention).length,
+      manualInterventionRequired: zombieSagas.filter(
+        (z) => z.requiresHumanIntervention,
+      ).length,
       avgInactiveDurationMs: 0,
       oldestZombieAgeMs: 0,
       byStatus: {},
@@ -574,13 +665,17 @@ export class DLQMonitoringService {
 
     if (zombieSagas.length > 0) {
       stats.avgInactiveDurationMs = Math.round(
-        zombieSagas.reduce((sum, z) => sum + z.inactiveDurationMs, 0) / zombieSagas.length
+        zombieSagas.reduce((sum, z) => sum + z.inactiveDurationMs, 0) /
+          zombieSagas.length,
       );
-      stats.oldestZombieAgeMs = Math.max(...zombieSagas.map(z => z.inactiveDurationMs));
+      stats.oldestZombieAgeMs = Math.max(
+        ...zombieSagas.map((z) => z.inactiveDurationMs),
+      );
 
       // Group by status
       for (const zombie of zombieSagas) {
-        stats.byStatus[zombie.status] = (stats.byStatus[zombie.status] || 0) + 1;
+        stats.byStatus[zombie.status] =
+          (stats.byStatus[zombie.status] || 0) + 1;
       }
     }
 
@@ -599,7 +694,7 @@ export class DLQMonitoringService {
   /**
    * Get DLQ entry for an execution
    */
-  async getDLQEntry(executionId: string): Promise<any> {
+  async getDLQEntry(executionId: string): Promise<unknown> {
     const dlqKey = this.buildDLQKey(executionId);
     return await this.redis.get(dlqKey);
   }
@@ -608,13 +703,17 @@ export class DLQMonitoringService {
    * Clear old DLQ entries (older than 7 days)
    */
   async cleanupOldEntries(): Promise<number> {
-    const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const indexKey = this.buildDLQIndexKey();
-    
+
     // Remove old entries from sorted set
-    const removed = await this.redis.zremrangebyscore(indexKey, 0, sevenDaysAgo);
-    
-    console.log(`[DLQ] Cleaned up ${removed} old DLQ entries`);
+    const removed = await this.redis.zremrangebyscore(
+      indexKey,
+      0,
+      sevenDaysAgo,
+    );
+
+    logger.info("Cleaned up old DLQ entries", { removedCount: removed || 0 });
     return removed || 0;
   }
 
@@ -642,7 +741,7 @@ export class DLQMonitoringService {
 
 export function createDLQMonitoringService(
   redis: Redis,
-  config?: Partial<DLQConfig>
+  config?: Partial<DLQConfig>,
 ): DLQMonitoringService {
   return new DLQMonitoringService(redis, config);
 }

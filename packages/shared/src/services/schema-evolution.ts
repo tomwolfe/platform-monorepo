@@ -13,9 +13,10 @@
  * 4. After PR merge, alias is no longer needed (schema now accepts both)
  */
 
-import { Redis } from '@upstash/redis';
-import { z } from 'zod';
-import { createContractTester } from './contract-testing';
+import { Redis } from "@upstash/redis";
+import { z } from "zod";
+import { createContractTester } from "./contract-testing";
+import { Logger } from "../logger";
 
 // ============================================================================
 // COMPATIBILITY TYPES FOR MIGRATION-GENERATOR
@@ -24,25 +25,42 @@ import { createContractTester } from './contract-testing';
 
 export const ProposedSchemaChangeSchema = z.object({
   id: z.string(),
-  changeType: z.enum(['ADD_COLUMN', 'REMOVE_COLUMN', 'MODIFY_COLUMN', 'ADD_INDEX', 'REMOVE_INDEX']),
+  changeType: z.enum([
+    "ADD_COLUMN",
+    "REMOVE_COLUMN",
+    "MODIFY_COLUMN",
+    "ADD_INDEX",
+    "REMOVE_INDEX",
+  ]),
   tableName: z.string(),
   columnName: z.string().optional(),
   columnType: z.string().optional(),
   indexName: z.string().optional(),
   indexColumns: z.string().optional(),
   createdAt: z.string(),
-  status: z.enum(['pending', 'approved', 'rejected', 'applied']),
+  status: z.enum(["pending", "approved", "rejected", "applied"]),
   metadata: z.record(z.unknown()).optional(),
   toolName: z.string().optional(),
   intentType: z.string().optional(),
-  proposedFields: z.array(z.object({
-    name: z.string(),
-    type: z.enum(['string', 'number', 'boolean', 'object', 'array', 'datetime']),
-    required: z.boolean(),
-    description: z.string().optional(),
-    defaultValue: z.unknown().optional(),
-    validation: z.record(z.unknown()).optional(),
-  })).optional(),
+  proposedFields: z
+    .array(
+      z.object({
+        name: z.string(),
+        type: z.enum([
+          "string",
+          "number",
+          "boolean",
+          "object",
+          "array",
+          "datetime",
+        ]),
+        required: z.boolean(),
+        description: z.string().optional(),
+        defaultValue: z.unknown().optional(),
+        validation: z.record(z.unknown()).optional(),
+      }),
+    )
+    .optional(),
   deprecatedFields: z.array(z.string()).optional(),
   reason: z.string().optional(),
 });
@@ -94,18 +112,20 @@ export interface SchemaEvolutionConfig {
 
 const DEFAULT_CONFIG: SchemaEvolutionConfig = {
   autoPrThreshold: 100,
-  githubRepo: process.env.GITHUB_REPO || 'apps/apps',
-  branchPrefix: 'schema-evolution/',
-  autoCreatePrs: process.env.AUTO_CREATE_SCHEMA_PRS === 'true',
+  githubRepo: process.env.GITHUB_REPO || "apps/apps",
+  branchPrefix: "schema-evolution/",
+  autoCreatePrs: process.env.AUTO_CREATE_SCHEMA_PRS === "true",
 };
 
 export class SchemaEvolutionService {
   private redis: Redis;
   private config: SchemaEvolutionConfig;
+  private logger: Logger;
 
   constructor(redis: Redis, config?: Partial<SchemaEvolutionConfig>) {
     this.redis = redis;
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.logger = new Logger({ serviceName: "schema-evolution" });
   }
 
   /**
@@ -115,14 +135,16 @@ export class SchemaEvolutionService {
    * @param event - The mismatch event details
    * @returns The recorded event ID
    */
-  async recordMismatch(event: Omit<MismatchEvent, 'id' | 'processed'>): Promise<string> {
+  async recordMismatch(
+    event: Omit<MismatchEvent, "id" | "processed">,
+  ): Promise<string> {
     // FEATURE FLAG: Check if schema evolution is enabled
-    const { getFeatureFlags } = await import('../feature-flags');
+    const { getFeatureFlags } = await import("../feature-flags");
     const flags = getFeatureFlags();
-    
+
     if (!flags.ENABLE_SCHEMA_EVOLUTION) {
       // Feature disabled - skip recording
-      return 'disabled';
+      return "disabled";
     }
 
     const eventId = `mismatch:${Date.now()}:${crypto.randomUUID().substring(0, 8)}`;
@@ -138,10 +160,14 @@ export class SchemaEvolutionService {
     try {
       // Store the mismatch event
       const eventKey = `schema:mismatch:${eventId}`;
-      await this.redis.setex(eventKey, 86400 * 30, JSON.stringify(mismatchEvent)); // 30 day TTL
+      await this.redis.setex(
+        eventKey,
+        86400 * 30,
+        JSON.stringify(mismatchEvent),
+      ); // 30 day TTL
 
       // Add to unprocessed queue
-      await this.redis.zadd('schema:mismatches:unprocessed', {
+      await this.redis.zadd("schema:mismatches:unprocessed", {
         member: eventId,
         score: Date.now(),
       });
@@ -149,10 +175,15 @@ export class SchemaEvolutionService {
       // Analyze and track alias patterns
       await this.trackAliasPatterns(event);
 
-      console.log(`[SchemaEvolution] Recorded mismatch ${eventId} for ${event.toolName}`);
+      this.logger.debug("Recorded mismatch", {
+        eventId,
+        toolName: event.toolName,
+      });
       return eventId;
     } catch (error) {
-      console.error('[SchemaEvolution] Failed to record mismatch:', error);
+      this.logger.error("Failed to record mismatch", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
@@ -161,11 +192,16 @@ export class SchemaEvolutionService {
    * Track alias patterns from mismatch events
    * Identifies when LLM consistently uses different field names than schema expects
    */
-  private async trackAliasPatterns(event: Omit<MismatchEvent, 'id' | 'processed'>): Promise<void> {
+  private async trackAliasPatterns(
+    event: Omit<MismatchEvent, "id" | "processed">,
+  ): Promise<void> {
     // Analyze unexpected fields - these might be aliases
     for (const unexpectedField of event.unexpectedFields) {
       // Try to find a matching canonical field
-      const canonicalMatch = this.findCanonicalMatch(unexpectedField, event.expectedFields);
+      const canonicalMatch = this.findCanonicalMatch(
+        unexpectedField,
+        event.expectedFields,
+      );
 
       if (canonicalMatch) {
         await this.recordAliasUsage({
@@ -173,7 +209,10 @@ export class SchemaEvolutionService {
           canonicalField: canonicalMatch,
           toolName: event.toolName,
           intentType: event.intentType,
-          exampleValues: this.extractExampleValues(event.llmParameters, unexpectedField),
+          exampleValues: this.extractExampleValues(
+            event.llmParameters,
+            unexpectedField,
+          ),
         });
       }
     }
@@ -183,7 +222,10 @@ export class SchemaEvolutionService {
    * Find a potential canonical field match for an unexpected field
    * Uses simple heuristics: substring match, case conversion, common synonyms
    */
-  private findCanonicalMatch(unexpected: string, expected: string[]): string | null {
+  private findCanonicalMatch(
+    unexpected: string,
+    expected: string[],
+  ): string | null {
     const normalizedUnexpected = unexpected.toLowerCase();
 
     for (const expectedField of expected) {
@@ -195,16 +237,23 @@ export class SchemaEvolutionService {
       }
 
       // Substring match
-      if (normalizedUnexpected.includes(normalizedExpected) || normalizedExpected.includes(normalizedUnexpected)) {
+      if (
+        normalizedUnexpected.includes(normalizedExpected) ||
+        normalizedExpected.includes(normalizedUnexpected)
+      ) {
         return expectedField;
       }
 
       // Snake case vs camelCase conversion
-      const snakeToCamel = (s: string) => s.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
-      const camelToSnake = (s: string) => s.replace(/([A-Z])/g, '_$1').toLowerCase();
+      const snakeToCamel = (s: string) =>
+        s.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+      const camelToSnake = (s: string) =>
+        s.replace(/([A-Z])/g, "_$1").toLowerCase();
 
-      if (snakeToCamel(normalizedUnexpected) === normalizedExpected ||
-          camelToSnake(normalizedUnexpected) === normalizedExpected) {
+      if (
+        snakeToCamel(normalizedUnexpected) === normalizedExpected ||
+        camelToSnake(normalizedUnexpected) === normalizedExpected
+      ) {
         return expectedField;
       }
     }
@@ -215,12 +264,15 @@ export class SchemaEvolutionService {
   /**
    * Extract example values for an alias field
    */
-  private extractExampleValues(params: Record<string, unknown>, field: string): string[] {
+  private extractExampleValues(
+    params: Record<string, unknown>,
+    field: string,
+  ): string[] {
     const value = params[field];
     if (value === undefined) return [];
 
     const examples: string[] = [];
-    const strValue = typeof value === 'string' ? value : JSON.stringify(value);
+    const strValue = typeof value === "string" ? value : JSON.stringify(value);
 
     if (strValue.length < 100) {
       examples.push(strValue);
@@ -254,7 +306,10 @@ export class SchemaEvolutionService {
 
         if (data.exampleValues) {
           record.metadata.exampleValues = [
-            ...new Set([...record.metadata.exampleValues, ...data.exampleValues]),
+            ...new Set([
+              ...record.metadata.exampleValues,
+              ...data.exampleValues,
+            ]),
           ].slice(0, 10); // Keep max 10 examples
         }
       } else {
@@ -283,17 +338,21 @@ export class SchemaEvolutionService {
       }
 
       // Add to alias usage index
-      await this.redis.zadd('schema:aliases:by_usage', {
+      await this.redis.zadd("schema:aliases:by_usage", {
         member: aliasKey,
         score: record.usageCount,
       });
 
-      console.log(
-        `[SchemaEvolution] Recorded alias usage: ${data.alias} -> ${data.canonicalField} ` +
-        `(${record.usageCount}/${this.config.autoPrThreshold})`
-      );
+      this.logger.debug("Recorded alias usage", {
+        alias: data.alias,
+        canonicalField: data.canonicalField,
+        usageCount: record.usageCount,
+        threshold: this.config.autoPrThreshold,
+      });
     } catch (error) {
-      console.error('[SchemaEvolution] Failed to record alias usage:', error);
+      this.logger.error("Failed to record alias usage", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -314,19 +373,20 @@ export class SchemaEvolutionService {
     }
 
     try {
-      console.log(
-        `[SchemaEvolution] AUTO-PR TRIGGERED: ${record.alias} -> ${record.canonicalField} ` +
-        `used ${record.usageCount} times`
-      );
+      this.logger.info("Auto-PR triggered", {
+        alias: record.alias,
+        canonicalField: record.canonicalField,
+        usageCount: record.usageCount,
+      });
 
       // PERFECT GRADE: Run CDC testing before generating PR
-      console.log(
-        `[SchemaEvolution] Running CDC compatibility test for ${record.toolName}...`
-      );
+      this.logger.info("Running CDC compatibility test", {
+        toolName: record.toolName,
+      });
 
-      const cdcTester = createContractTester({
+      const _cdcTester = createContractTester({
         redis: this.redis,
-        minSuccessRate: 0.90, // 90% compatibility required
+        minSuccessRate: 0.9, // 90% compatibility required
         debug: true,
       });
 
@@ -344,23 +404,25 @@ export class SchemaEvolutionService {
       const cdcPassed = await this.runAliasCdcTest(record);
 
       if (!cdcPassed) {
-        console.warn(
-          `[SchemaEvolution] ⚠️ CDC test failed for ${record.alias} -> ${record.canonicalField}, ` +
-          `blocking PR generation`
-        );
+        this.logger.warn("CDC test failed, blocking PR generation", {
+          alias: record.alias,
+          canonicalField: record.canonicalField,
+          toolName: record.toolName,
+        });
 
         // Store failed CDC test result
         await this.storeFailedCdcTest(record, {
-          reason: 'Alias pattern inconsistent with historical traces',
+          reason: "Alias pattern inconsistent with historical traces",
           timestamp: new Date().toISOString(),
         });
 
         return; // Block PR generation
       }
 
-      console.log(
-        `[SchemaEvolution] ✅ CDC test passed for ${record.alias} -> ${record.canonicalField}`
-      );
+      this.logger.info("CDC test passed", {
+        alias: record.alias,
+        canonicalField: record.canonicalField,
+      });
 
       // Generate PR content
       const prContent = this.generatePrContent(record);
@@ -370,16 +432,23 @@ export class SchemaEvolutionService {
       await this.storePrDraft(record, prContent);
 
       // Mark PR as triggered (with CDC validation)
-      await this.redis.setex(prTriggeredKey, 86400 * 365, JSON.stringify({
-        status: 'triggered',
-        cdcValidated: true,
-        triggeredAt: new Date().toISOString(),
-      }));
+      await this.redis.setex(
+        prTriggeredKey,
+        86400 * 365,
+        JSON.stringify({
+          status: "triggered",
+          cdcValidated: true,
+          triggeredAt: new Date().toISOString(),
+        }),
+      );
 
       // Emit event for external PR automation
       await this.emitPrCreationEvent(record, prContent);
     } catch (error) {
-      console.error('[SchemaEvolution] Failed to trigger auto-PR:', error);
+      this.logger.error("Failed to trigger auto-PR", {
+        recordId: record.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -400,10 +469,9 @@ export class SchemaEvolutionService {
 
       if (!traceIds || traceIds.length === 0) {
         // No historical traces - allow PR (no data to validate against)
-        console.log(
-          `[SchemaEvolution] No historical traces for ${record.toolName}, ` +
-          `allowing PR without CDC validation`
-        );
+        this.logger.debug("No historical traces found, allowing PR", {
+          toolName: record.toolName,
+        });
         return true;
       }
 
@@ -411,12 +479,13 @@ export class SchemaEvolutionService {
       let tracesWithAlias = 0;
       let totalTraces = 0;
 
-      for (const traceId of traceIds.slice(0, 100)) { // Sample first 100 for performance
+      for (const traceId of traceIds.slice(0, 100)) {
+        // Sample first 100 for performance
         const traceKey = `cdc:trace:${record.toolName}:${traceId}`;
-        const traceData = await this.redis.get<any>(traceKey);
+        const traceData = await this.redis.get<string>(traceKey);
 
         if (traceData) {
-          const trace = typeof traceData === 'string' ? JSON.parse(traceData) : traceData;
+          const trace = JSON.parse(traceData) as Record<string, unknown>;
           totalTraces++;
 
           // Check if alias field exists in input parameters
@@ -427,20 +496,26 @@ export class SchemaEvolutionService {
       }
 
       // Calculate consistency rate
-      const consistencyRate = totalTraces > 0 ? tracesWithAlias / totalTraces : 0;
+      const consistencyRate =
+        totalTraces > 0 ? tracesWithAlias / totalTraces : 0;
 
       // Require >50% consistency to auto-generate PR
       // (The alias should appear in majority of traces if it's a real pattern)
       const passed = consistencyRate >= 0.5;
 
-      console.log(
-        `[SchemaEvolution] CDC alias test: ${tracesWithAlias}/${totalTraces} ` +
-        `traces contain alias ${record.alias} (${(consistencyRate * 100).toFixed(1)}%)`
-      );
+      this.logger.debug("CDC alias test result", {
+        tracesWithAlias,
+        totalTraces,
+        alias: record.alias,
+        consistencyRate: (consistencyRate * 100).toFixed(1),
+        passed,
+      });
 
       return passed;
     } catch (error) {
-      console.error('[SchemaEvolution] CDC alias test failed:', error);
+      this.logger.error("CDC alias test failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false; // Fail closed on error
     }
   }
@@ -450,17 +525,21 @@ export class SchemaEvolutionService {
    */
   private async storeFailedCdcTest(
     record: AliasUsageRecord,
-    result: { reason: string; timestamp: string }
+    result: { reason: string; timestamp: string },
   ): Promise<void> {
     const failedTestKey = `schema:cdc:failed:${record.id}`;
-    await this.redis.setex(failedTestKey, 86400 * 30, JSON.stringify({
-      record,
-      result,
-      createdAt: new Date().toISOString(),
-    }));
+    await this.redis.setex(
+      failedTestKey,
+      86400 * 30,
+      JSON.stringify({
+        record,
+        result,
+        createdAt: new Date().toISOString(),
+      }),
+    );
 
     // Add to failed tests index
-    await this.redis.zadd('schema:cdc:failed', {
+    await this.redis.zadd("schema:cdc:failed", {
       member: record.id,
       score: Date.now(),
     });
@@ -492,7 +571,7 @@ This PR was auto-generated by the Schema Evolution Service after detecting that 
 - **Last Seen**: ${record.lastSeen}
 
 ### Example Values
-${record.metadata.exampleValues.map(v => `- \`${v}\``).join('\n')}
+${record.metadata.exampleValues.map((v) => `- \`${v}\``).join("\n")}
 
 ### Changes
 This PR adds the alias to the PARAMETER_ALIASES registry in \`packages/mcp-protocol/src/index.ts\`.
@@ -503,7 +582,7 @@ This PR adds the alias to the PARAMETER_ALIASES registry in \`packages/mcp-proto
 
     const schemaChanges = [
       {
-        file: 'packages/mcp-protocol/src/index.ts',
+        file: "packages/mcp-protocol/src/index.ts",
         change: `Add to PARAMETER_ALIASES: "${record.alias}": "${record.canonicalField}",`,
       },
     ];
@@ -514,17 +593,29 @@ This PR adds the alias to the PARAMETER_ALIASES registry in \`packages/mcp-proto
   /**
    * Store PR draft for manual review
    */
-  private async storePrDraft(record: AliasUsageRecord, prContent: any): Promise<void> {
+  private async storePrDraft(
+    record: AliasUsageRecord,
+    prContent: {
+      title: string;
+      branch: string;
+      description: string;
+      schemaChanges: Array<{ file: string; change: string }>;
+    },
+  ): Promise<void> {
     const draftKey = `schema:pr:draft:${record.id}`;
-    await this.redis.setex(draftKey, 86400 * 30, JSON.stringify({
-      record,
-      prContent,
-      createdAt: new Date().toISOString(),
-      status: 'pending_review',
-    }));
+    await this.redis.setex(
+      draftKey,
+      86400 * 30,
+      JSON.stringify({
+        record,
+        prContent,
+        createdAt: new Date().toISOString(),
+        status: "pending_review",
+      }),
+    );
 
     // Add to PR drafts index
-    await this.redis.zadd('schema:pr:drafts', {
+    await this.redis.zadd("schema:pr:drafts", {
       member: record.id,
       score: Date.now(),
     });
@@ -533,23 +624,39 @@ This PR adds the alias to the PARAMETER_ALIASES registry in \`packages/mcp-proto
   /**
    * Emit event for external PR automation (e.g., GitHub Actions)
    */
-  private async emitPrCreationEvent(record: AliasUsageRecord, prContent: any): Promise<void> {
+  private async emitPrCreationEvent(
+    record: AliasUsageRecord,
+    prContent: {
+      title: string;
+      branch: string;
+      description: string;
+      schemaChanges: Array<{ file: string; change: string }>;
+    },
+  ): Promise<void> {
     const eventKey = `schema:events:pr-requested:${record.id}`;
-    await this.redis.setex(eventKey, 86400 * 7, JSON.stringify({
-      type: 'PR_REQUESTED',
-      record,
-      prContent,
-      timestamp: new Date().toISOString(),
-    }));
+    await this.redis.setex(
+      eventKey,
+      86400 * 7,
+      JSON.stringify({
+        type: "PR_REQUESTED",
+        record,
+        prContent,
+        timestamp: new Date().toISOString(),
+      }),
+    );
 
     // In production, this would trigger a GitHub webhook or queue message
-    console.log('[SchemaEvolution] PR creation event emitted');
+    this.logger.info("PR creation event emitted");
   }
 
   /**
    * Get alias usage statistics
    */
-  async getAliasUsage(alias: string, toolName: string, canonicalField: string): Promise<AliasUsageRecord | null> {
+  async getAliasUsage(
+    alias: string,
+    toolName: string,
+    canonicalField: string,
+  ): Promise<AliasUsageRecord | null> {
     const aliasKey = `schema:alias:${toolName}:${alias}:${canonicalField}`;
     const data = await this.redis.get<string>(aliasKey);
     return data ? JSON.parse(data) : null;
@@ -559,9 +666,14 @@ This PR adds the alias to the PARAMETER_ALIASES registry in \`packages/mcp-proto
    * Get top aliases by usage count
    */
   async getTopAliases(limit: number = 10): Promise<AliasUsageRecord[]> {
-    const aliasKeys = await this.redis.zrange('schema:aliases:by_usage', 0, limit - 1, {
-      rev: true, // Highest score first
-    });
+    const aliasKeys = await this.redis.zrange(
+      "schema:aliases:by_usage",
+      0,
+      limit - 1,
+      {
+        rev: true, // Highest score first
+      },
+    );
 
     const aliases: AliasUsageRecord[] = [];
     for (const key of aliasKeys) {
@@ -578,7 +690,11 @@ This PR adds the alias to the PARAMETER_ALIASES registry in \`packages/mcp-proto
    * Get unprocessed mismatch events
    */
   async getUnprocessedMismatches(limit: number = 50): Promise<MismatchEvent[]> {
-    const eventIds = await this.redis.zrange('schema:mismatches:unprocessed', 0, limit - 1);
+    const eventIds = await this.redis.zrange(
+      "schema:mismatches:unprocessed",
+      0,
+      limit - 1,
+    );
 
     const events: MismatchEvent[] = [];
     for (const eventId of eventIds) {
@@ -604,27 +720,44 @@ This PR adds the alias to the PARAMETER_ALIASES registry in \`packages/mcp-proto
       await this.redis.setex(eventKey, 86400 * 30, JSON.stringify(event));
 
       // Remove from unprocessed queue
-      await this.redis.zrem('schema:mismatches:unprocessed', eventId);
+      await this.redis.zrem("schema:mismatches:unprocessed", eventId);
     }
   }
 
   /**
    * Get pending PR drafts
    */
-  async getPendingPrDrafts(): Promise<Array<{
-    id: string;
-    record: AliasUsageRecord;
-    prContent: any;
-    createdAt: string;
-  }>> {
-    const draftIds = await this.redis.zrange('schema:pr:drafts', 0, -1);
+  async getPendingPrDrafts(): Promise<
+    Array<{
+      id: string;
+      record: AliasUsageRecord;
+      prContent: {
+        title: string;
+        branch: string;
+        description: string;
+        schemaChanges: Array<{ file: string; change: string }>;
+      };
+      createdAt: string;
+    }>
+  > {
+    const draftIds = await this.redis.zrange("schema:pr:drafts", 0, -1);
 
-    const drafts: any[] = [];
+    const drafts: Array<{
+      id: string;
+      record: AliasUsageRecord;
+      prContent: {
+        title: string;
+        branch: string;
+        description: string;
+        schemaChanges: Array<{ file: string; change: string }>;
+      };
+      createdAt: string;
+    }> = [];
     for (const draftId of draftIds) {
       const data = await this.redis.get<string>(`schema:pr:draft:${draftId}`);
       if (data) {
         const draft = JSON.parse(data);
-        if (draft.status === 'pending_review') {
+        if (draft.status === "pending_review") {
           drafts.push(draft);
         }
       }
@@ -639,9 +772,11 @@ This PR adds the alias to the PARAMETER_ALIASES registry in \`packages/mcp-proto
  */
 let schemaEvolutionServiceInstance: SchemaEvolutionService | null = null;
 
-export function getSchemaEvolutionService(redis?: Redis): SchemaEvolutionService {
+export function getSchemaEvolutionService(
+  redis?: Redis,
+): SchemaEvolutionService {
   if (!schemaEvolutionServiceInstance) {
-    const { getRedisClient, ServiceNamespace } = require('../redis');
+    const { getRedisClient, ServiceNamespace } = require("../redis");
     const redisClient = redis || getRedisClient(ServiceNamespace.SHARED);
     schemaEvolutionServiceInstance = new SchemaEvolutionService(redisClient);
   }
@@ -653,8 +788,10 @@ export function getSchemaEvolutionService(redis?: Redis): SchemaEvolutionService
  * @param config - Optional configuration overrides
  * @returns A new SchemaEvolutionService instance
  */
-export function createSchemaEvolutionService(config?: Partial<SchemaEvolutionConfig>): SchemaEvolutionService {
-  const { getRedisClient, ServiceNamespace } = require('../redis');
+export function createSchemaEvolutionService(
+  config?: Partial<SchemaEvolutionConfig>,
+): SchemaEvolutionService {
+  const { getRedisClient, ServiceNamespace } = require("../redis");
   const redis = getRedisClient(ServiceNamespace.SHARED);
   return new SchemaEvolutionService(redis, config);
 }

@@ -47,8 +47,11 @@
 import { Redis } from "@upstash/redis";
 import { getRedisClient, ServiceNamespace } from "../redis";
 import type { ExecutionState } from "../types/execution";
-import { z } from "zod";
+import { z as _z } from "zod";
 import { createWasmSandbox, WasmSandbox } from "./sandbox/wasm-sandbox";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "shadow-dry-run" });
 
 // ============================================================================
 // SCHEMA-TO-MOCK UTILITY
@@ -68,18 +71,20 @@ function generateMockFromSchema(
 
   // Handle Zod schema converted to JSON schema format
   if ("type" in schema) {
-    const jsonSchema = schema as any;
+    const jsonSchema = schema as Record<string, unknown>;
     return generateMockFromJsonSchema(jsonSchema);
   }
 
   // Handle plain object schema
   if (typeof schema === "object" && schema !== null) {
     const mock: Record<string, unknown> = {};
-    const properties = (schema as any).properties;
+    const properties = (schema as Record<string, unknown>).properties;
 
     if (properties && typeof properties === "object") {
       for (const [key, propSchema] of Object.entries(properties)) {
-        mock[key] = generateMockFromJsonSchema(propSchema as any);
+        mock[key] = generateMockFromJsonSchema(
+          propSchema as Record<string, unknown>,
+        );
       }
     }
 
@@ -92,7 +97,7 @@ function generateMockFromSchema(
 /**
  * Generate mock value from JSON schema type
  */
-function generateMockFromJsonSchema(schema: any): unknown {
+function generateMockFromJsonSchema(schema: Record<string, unknown>): unknown {
   if (!schema || typeof schema !== "object") {
     return "simulated_value";
   }
@@ -169,7 +174,7 @@ function getToolReturnSchema(
     }
 
     return undefined;
-  } catch (error) {
+  } catch {
     // Registry not available or tool not found
     return undefined;
   }
@@ -323,10 +328,11 @@ export class ShadowDryRunService {
       JSON.stringify(snapshot),
     );
 
-    console.log(
-      `[ShadowDryRun] Captured snapshot for ${executionId} ` +
-        `(git: ${orchestratorGitSha}, tools: ${Object.keys(toolVersions).length})`,
-    );
+    logger.info("Captured state snapshot for dry-run", {
+      executionId,
+      orchestratorGitSha,
+      toolCount: Object.keys(toolVersions).length,
+    });
 
     return snapshot;
   }
@@ -335,19 +341,19 @@ export class ShadowDryRunService {
    * Get a captured snapshot
    */
   async getSnapshot(executionId: string): Promise<ShadowStateSnapshot | null> {
-    const data = await this.config.redis.get<any>(
+    const data = await this.config.redis.get<string>(
       this.buildSnapshotKey(executionId),
     );
 
     if (!data) return null;
 
     try {
-      return typeof data === "string" ? JSON.parse(data) : data;
+      return JSON.parse(data) as ShadowStateSnapshot;
     } catch (error) {
-      console.error(
-        `[ShadowDryRun] Failed to parse snapshot for ${executionId}:`,
-        error instanceof Error ? error.message : String(error),
-      );
+      logger.error("Failed to parse state snapshot", {
+        executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }
@@ -369,11 +375,11 @@ export class ShadowDryRunService {
     const startTime = new Date().toISOString();
     const divergentSteps: DryRunResult["divergentSteps"] = [];
 
-    console.log(
-      `[ShadowDryRun] Starting dry-run for ${request.executionId} ` +
-        `(checkpoint: ${request.checkpointMetadata.orchestratorGitSha} -> ` +
-        `current: ${request.currentMetadata.orchestratorGitSha})`,
-    );
+    logger.info("Starting shadow dry-run", {
+      executionId: request.executionId,
+      checkpointGitSha: request.checkpointMetadata.orchestratorGitSha,
+      currentGitSha: request.currentMetadata.orchestratorGitSha,
+    });
 
     try {
       // Simulate execution of each pending step
@@ -446,17 +452,19 @@ export class ShadowDryRunService {
         JSON.stringify(result),
       );
 
-      console.log(
-        `[ShadowDryRun] Dry-run complete for ${request.executionId}: ` +
-          `${recommendation} (${divergencePercentage.toFixed(1)}% divergence)`,
-      );
+      logger.info("Shadow dry-run complete", {
+        executionId: request.executionId,
+        recommendation,
+        divergencePercentage,
+        divergentStepCount: divergentSteps.length,
+      });
 
       return result;
     } catch (error) {
-      console.error(
-        `[ShadowDryRun] Dry-run failed for ${request.executionId}:`,
-        error instanceof Error ? error.message : String(error),
-      );
+      logger.error("Shadow dry-run failed", {
+        executionId: request.executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
 
       return {
         success: false,
@@ -498,14 +506,17 @@ export class ShadowDryRunService {
         state: {
           status: stateSnapshot.status,
           step_states: stateSnapshot.step_states,
-          budget: (stateSnapshot as any).budget,
-          token_usage: (stateSnapshot as any).token_usage,
+          budget: (stateSnapshot as ExecutionState & { budget?: unknown })
+            .budget,
+          token_usage: (
+            stateSnapshot as ExecutionState & { token_usage?: unknown }
+          ).token_usage,
         },
         // Provide read-only data access
         __readData: {
           completedSteps: stateSnapshot.step_states
             .filter((s) => s.status === "completed")
-            .map((s) => (s as any).result),
+            .map((s) => (s as { result?: unknown }).result),
         },
       };
 
@@ -521,11 +532,11 @@ export class ShadowDryRunService {
 
       return result.output;
     } catch (error) {
-      console.warn(
-        `[ShadowDryRun] WASM sandbox execution failed for ${step.tool_name}, ` +
-          `falling back to heuristic simulation:`,
-        error instanceof Error ? error.message : String(error),
-      );
+      logger.warn("WASM sandbox execution failed, using heuristic fallback", {
+        toolName: step.tool_name,
+        stepId: step.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
 
       // Fallback to heuristic simulation if WASM fails
       return this.heuristicSimulation(step, stateSnapshot);
@@ -540,7 +551,7 @@ export class ShadowDryRunService {
    */
   private generateSandboxedExecutionCode(step: PlanStep): string {
     const toolType = step.tool_name.toLowerCase();
-    const params = step.parameters;
+    const _params = step.parameters;
 
     // Booking/Reservation simulation
     if (toolType.includes("book") || toolType.includes("reserve")) {
@@ -689,7 +700,7 @@ export class ShadowDryRunService {
    */
   private heuristicSimulation(
     step: PlanStep,
-    stateSnapshot: ExecutionState,
+    _stateSnapshot: ExecutionState,
   ): unknown {
     // PHASE 3: Schema-driven mock generation (PRIMARY PATH)
     // Try to get the tool's return schema from the registry
@@ -790,7 +801,7 @@ export class ShadowDryRunService {
    * In production, this would analyze historical execution data
    * or use the step's original expected output from the plan
    */
-  private getExpectedOutcome(step: PlanStep): unknown {
+  private getExpectedOutcome(_step: PlanStep): unknown {
     // For now, return a generic expected outcome
     // In production, this would come from:
     // 1. Historical execution data
@@ -865,19 +876,19 @@ export class ShadowDryRunService {
    * Get dry-run result
    */
   async getResult(executionId: string): Promise<DryRunResult | null> {
-    const data = await this.config.redis.get<any>(
+    const data = await this.config.redis.get<string>(
       this.buildResultKey(executionId),
     );
 
     if (!data) return null;
 
     try {
-      return typeof data === "string" ? JSON.parse(data) : data;
+      return JSON.parse(data) as DryRunResult;
     } catch (error) {
-      console.error(
-        `[ShadowDryRun] Failed to parse result for ${executionId}:`,
-        error instanceof Error ? error.message : String(error),
-      );
+      logger.error("Failed to parse dry-run result", {
+        executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }
@@ -891,7 +902,7 @@ export class ShadowDryRunService {
       this.config.redis.del(this.buildResultKey(executionId)),
     ]);
 
-    console.log(`[ShadowDryRun] Cleared data for ${executionId}`);
+    logger.info("Cleared shadow dry-run data", { executionId });
   }
 }
 

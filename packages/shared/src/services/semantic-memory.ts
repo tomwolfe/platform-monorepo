@@ -16,6 +16,7 @@
 
 import { z } from "zod";
 import { Redis } from "@upstash/redis";
+import { Logger } from "../logger";
 import {
   createVectorStore,
   type VectorStore,
@@ -23,7 +24,12 @@ import {
   type VectorSearchResult,
   type VectorSearchQuery,
 } from "./vector-store";
-import { getPrivacyGateway, type PrivacyGatewayConfig } from "./privacy-gateway";
+import {
+  getPrivacyGateway,
+  type PrivacyGatewayConfig,
+} from "./privacy-gateway";
+
+const logger = new Logger({ serviceName: "semantic-memory" });
 
 // ============================================================================
 // SCHEMAS
@@ -76,10 +82,12 @@ export const SemanticSearchQuerySchema = z.object({
   restaurantId: z.string().uuid().optional(),
   limit: z.number().int().positive().max(100).default(5),
   minSimilarity: z.number().min(0).max(1).default(0.5),
-  timeRange: z.object({
-    after: z.string().datetime().optional(),
-    before: z.string().datetime().optional(),
-  }).optional(),
+  timeRange: z
+    .object({
+      after: z.string().datetime().optional(),
+      before: z.string().datetime().optional(),
+    })
+    .optional(),
   includeFailed: z.boolean().default(false),
 });
 
@@ -118,7 +126,9 @@ export class HuggingFaceEmbeddingService implements EmbeddingService {
 
   constructor(apiKey: string, modelUrl?: string) {
     this.apiKey = apiKey;
-    this.modelUrl = modelUrl || "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2";
+    this.modelUrl =
+      modelUrl ||
+      "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2";
   }
 
   async generateEmbedding(text: string): Promise<number[]> {
@@ -126,7 +136,7 @@ export class HuggingFaceEmbeddingService implements EmbeddingService {
       const response = await fetch(this.modelUrl, {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${this.apiKey}`,
+          Authorization: `Bearer ${this.apiKey}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ inputs: text }),
@@ -137,17 +147,19 @@ export class HuggingFaceEmbeddingService implements EmbeddingService {
       }
 
       const result = await response.json();
-      
+
       // Handle different response formats
       const embedding = Array.isArray(result) ? result[0] : result.embedding;
-      
+
       if (!Array.isArray(embedding)) {
         throw new Error("Invalid embedding format from API");
       }
 
       return embedding as number[];
     } catch (error) {
-      console.error("[EmbeddingService] Failed to generate embedding:", error);
+      logger.error("Failed to generate embedding", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       // Fallback: return zero vector (will have low similarity to everything)
       return new Array(384).fill(0);
     }
@@ -161,13 +173,13 @@ export class HuggingFaceEmbeddingService implements EmbeddingService {
     for (let i = 0; i < texts.length; i += batchSize) {
       const batch = texts.slice(i, i + batchSize);
       const batchResults = await Promise.all(
-        batch.map(text => this.generateEmbedding(text))
+        batch.map((text) => this.generateEmbedding(text)),
       );
       results.push(...batchResults);
-      
+
       // Small delay between batches
       if (i + batchSize < texts.length) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
 
@@ -231,12 +243,12 @@ export class MockEmbeddingService implements EmbeddingService {
   }
 
   async generateEmbeddings(texts: string[]): Promise<number[][]> {
-    return Promise.all(texts.map(text => this.generateEmbedding(text)));
+    return Promise.all(texts.map((text) => this.generateEmbedding(text)));
   }
 
   cosineSimilarity(a: number[], b: number[]): number {
     if (a.length !== b.length) return 0;
-    
+
     let dotProduct = 0;
     let normA = 0;
     let normB = 0;
@@ -281,7 +293,7 @@ export class SemanticVectorStore {
     this.indexName = config.indexName || "semantic_memory";
     this.ttlSeconds = config.ttlSeconds;
     this.enablePiiScrubbing = config.enablePiiScrubbing ?? true;
-    
+
     if (this.enablePiiScrubbing) {
       this.privacyGateway = getPrivacyGateway();
     }
@@ -300,7 +312,9 @@ export class SemanticVectorStore {
    *
    * ENHANCEMENT: Now tracks the underlying vectorId for proper deletion
    */
-  async addEntry(entry: Omit<SemanticMemoryEntry, "embedding">): Promise<SemanticMemoryEntry> {
+  async addEntry(
+    entry: Omit<SemanticMemoryEntry, "embedding">,
+  ): Promise<SemanticMemoryEntry> {
     // PII SCRUBBING - Privacy Gateway integration
     let scrubbedEntry = entry;
     let privacyMetadata: Record<string, unknown> = { ...entry.metadata };
@@ -308,7 +322,7 @@ export class SemanticVectorStore {
     if (this.enablePiiScrubbing && this.privacyGateway) {
       const scrubbingResult = await this.privacyGateway.scrubMemoryEntry(
         entry.rawText,
-        entry.parameters
+        entry.parameters,
       );
 
       scrubbedEntry = {
@@ -321,19 +335,22 @@ export class SemanticVectorStore {
       privacyMetadata = {
         ...privacyMetadata,
         piiScrubbed: true,
-        piiEntitiesDetected: scrubbingResult.detectedPii.map((p: { type: string }) => p.type),
+        piiEntitiesDetected: scrubbingResult.detectedPii.map(
+          (p: { type: string }) => p.type,
+        ),
         piiCount: scrubbingResult.detectedPii.length,
       };
 
-      console.log(
-        `[PrivacyGateway] Scrubbed ${scrubbingResult.detectedPii.length} PII entities ` +
-        `from memory entry ${entry.id}`
-      );
+      logger.info("Scrubbed PII entities from memory entry", {
+        piiCount: scrubbingResult.detectedPii.length,
+        entryId: entry.id,
+      });
     }
 
     // Generate embedding from scrubbed text
     const textForEmbedding = this.buildEmbeddingText(scrubbedEntry);
-    const embedding = await this.embeddingService.generateEmbedding(textForEmbedding);
+    const embedding =
+      await this.embeddingService.generateEmbedding(textForEmbedding);
 
     const completeEntry: SemanticMemoryEntry = {
       ...scrubbedEntry,
@@ -360,16 +377,18 @@ export class SemanticVectorStore {
     // ENHANCEMENT: Store the vectorId for proper deletion
     completeEntry.vectorId = vectorId;
 
-    console.log(
-      `[VectorStore] Added scrubbed entry ${completeEntry.id} for user ${completeEntry.userId} ` +
-      `(vectorId: ${vectorId}, using ${this.vectorStore.constructor.name})`
-    );
+    logger.info("Added scrubbed entry to vector store", {
+      entryId: completeEntry.id,
+      userId: completeEntry.userId,
+      vectorId,
+      storeType: this.vectorStore.constructor.name,
+    });
     return completeEntry;
   }
 
   /**
    * Search for similar memories
-   * 
+   *
    * PERFORMANCE:
    * - Upstash Vector: O(log N) indexed search
    * - Redis fallback: O(N) brute-force (limited to 500 candidates)
@@ -379,16 +398,18 @@ export class SemanticVectorStore {
 
     // Generate embedding if not provided
     if (!queryEmbedding) {
-      queryEmbedding = await this.embeddingService.generateEmbedding(query.query);
+      queryEmbedding = await this.embeddingService.generateEmbedding(
+        query.query,
+      );
     }
 
     // Build filter
     const filter: Record<string, unknown> = {};
-    
+
     if (query.intentType) {
       filter.intentType = query.intentType;
     }
-    
+
     if (query.restaurantId) {
       filter.restaurantId = query.restaurantId;
     }
@@ -406,11 +427,12 @@ export class SemanticVectorStore {
     return vectorResults.map((result, index) => ({
       entry: {
         id: crypto.randomUUID(), // Vector store doesn't return full entry
-        userId: result.metadata.userId as string || "unknown",
-        intentType: result.metadata.intentType as string || "unknown",
-        rawText: result.metadata.rawText as string || "",
+        userId: (result.metadata.userId as string) || "unknown",
+        intentType: (result.metadata.intentType as string) || "unknown",
+        rawText: (result.metadata.rawText as string) || "",
         embedding: [], // Not returned from vector store
-        timestamp: result.metadata.timestamp as string || new Date().toISOString(),
+        timestamp:
+          (result.metadata.timestamp as string) || new Date().toISOString(),
         outcome: result.metadata.outcome as SemanticMemoryEntry["outcome"],
         restaurantId: result.metadata.restaurantId as string | undefined,
         restaurantName: result.metadata.restaurantName as string | undefined,
@@ -426,10 +448,13 @@ export class SemanticVectorStore {
    * Note: This is a legacy method - vector stores don't support time-based ordering
    * Use search with userId filter instead
    */
-  async getRecentMemories(userId: string, limit: number = 10): Promise<SemanticMemoryEntry[]> {
+  async getRecentMemories(
+    userId: string,
+    limit: number = 10,
+  ): Promise<SemanticMemoryEntry[]> {
     // Use a dummy vector to get recent entries (not ideal, but maintains API compatibility)
     const dummyVector = new Array(384).fill(0);
-    
+
     const results = await this.vectorStore.search({
       queryVector: dummyVector,
       userId,
@@ -437,13 +462,14 @@ export class SemanticVectorStore {
       minScore: 0,
     });
 
-    return results.map(result => ({
+    return results.map((result) => ({
       id: crypto.randomUUID(),
-      userId: result.metadata.userId as string || userId,
-      intentType: result.metadata.intentType as string || "unknown",
-      rawText: result.metadata.rawText as string || "",
+      userId: (result.metadata.userId as string) || userId,
+      intentType: (result.metadata.intentType as string) || "unknown",
+      rawText: (result.metadata.rawText as string) || "",
       embedding: [],
-      timestamp: result.metadata.timestamp as string || new Date().toISOString(),
+      timestamp:
+        (result.metadata.timestamp as string) || new Date().toISOString(),
       outcome: result.metadata.outcome as SemanticMemoryEntry["outcome"],
       restaurantId: result.metadata.restaurantId as string | undefined,
       restaurantName: result.metadata.restaurantName as string | undefined,
@@ -453,13 +479,15 @@ export class SemanticVectorStore {
 
   /**
    * Delete a memory entry
-   * 
+   *
    * ENHANCEMENT: Now properly deletes vectors by tracking vectorId
    * - If vectorId is available, deletes directly from vector store
    * - Falls back to user-based deletion if vectorId is missing
    */
   async deleteEntry(entryId: string): Promise<boolean> {
-    console.warn("[VectorStore] deleteEntry requires vectorId for proper deletion");
+    logger.warn("deleteEntry requires vectorId for proper deletion", {
+      entryId,
+    });
     // Note: This is a limitation - we need to track vectorId in the entry
     // For now, fall back to deleting by searching for the entry first
     // In production, you should maintain an entry ID -> vector ID mapping
@@ -467,25 +495,38 @@ export class SemanticVectorStore {
       // Try to find the entry by searching recent memories
       // This is inefficient but maintains backward compatibility
       const recentMemories = await this.getRecentMemories("unknown", 100);
-      const entry = recentMemories.find(m => m.id === entryId || m.metadata?.entryId === entryId);
-      
+      const entry = recentMemories.find(
+        (m) => m.id === entryId || m.metadata?.entryId === entryId,
+      );
+
       if (entry?.vectorId) {
         // Delete using the tracked vectorId
         const deleted = await this.vectorStore.deleteVector(entry.vectorId);
-        console.log(`[VectorStore] Deleted entry ${entryId} (vectorId: ${entry.vectorId})`);
+        logger.info("Deleted entry by vectorId", {
+          entryId,
+          vectorId: entry.vectorId,
+        });
         return deleted;
       }
-      
+
       // Fallback: delete by user ID (less precise)
       if (entry?.userId) {
-        const deletedCount = await this.vectorStore.deleteByUserId(entry.userId);
-        console.log(`[VectorStore] Deleted ${deletedCount} entries for user ${entry.userId}`);
+        const deletedCount = await this.vectorStore.deleteByUserId(
+          entry.userId,
+        );
+        logger.info("Deleted entries by userId", {
+          userId: entry.userId,
+          deletedCount,
+        });
         return deletedCount > 0;
       }
-      
+
       return false;
     } catch (error) {
-      console.error("[VectorStore] Failed to delete entry:", error);
+      logger.error("Failed to delete entry", {
+        entryId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -511,7 +552,8 @@ export class SemanticVectorStore {
       totalEntries: stats.totalVectors,
       uniqueUsers: stats.uniqueUsers,
       uniqueRestaurants: stats.uniqueRestaurants,
-      avgEntriesPerUser: stats.uniqueUsers > 0 ? stats.totalVectors / stats.uniqueUsers : 0,
+      avgEntriesPerUser:
+        stats.uniqueUsers > 0 ? stats.totalVectors / stats.uniqueUsers : 0,
     };
   }
 
@@ -519,11 +561,10 @@ export class SemanticVectorStore {
    * Build text for embedding generation
    * Combines all relevant fields for rich semantic representation
    */
-  private buildEmbeddingText(entry: Omit<SemanticMemoryEntry, "embedding">): string {
-    const parts: string[] = [
-      entry.rawText,
-      entry.intentType,
-    ];
+  private buildEmbeddingText(
+    entry: Omit<SemanticMemoryEntry, "embedding">,
+  ): string {
+    const parts: string[] = [entry.rawText, entry.intentType];
 
     if (entry.parameters) {
       const paramText = Object.entries(entry.parameters)
@@ -567,14 +608,17 @@ export function createSemanticVectorStore(options?: {
 
   if (options?.useMockEmbeddings || !apiKey) {
     embeddingService = new MockEmbeddingService(384);
-    console.log("[VectorStore] Using mock embedding service (set HUGGINGFACE_API_KEY for real embeddings)");
+    logger.info("Using mock embedding service", {
+      note: "set HUGGINGFACE_API_KEY for real embeddings",
+    });
   } else {
     embeddingService = new HuggingFaceEmbeddingService(apiKey, modelUrl);
-    console.log("[VectorStore] Using Hugging Face embedding service");
+    logger.info("Using Hugging Face embedding service");
   }
 
   // Determine vector store backend
-  const useUpstashVector = options?.useUpstashVector ?? !!process.env.UPSTASH_VECTOR_TOKEN;
+  const useUpstashVector =
+    options?.useUpstashVector ?? !!process.env.UPSTASH_VECTOR_TOKEN;
   const upstashToken = process.env.UPSTASH_VECTOR_TOKEN;
   const upstashUrl = process.env.UPSTASH_VECTOR_URL;
   const indexPrefix = process.env.UPSTASH_VECTOR_INDEX_PREFIX;
@@ -596,8 +640,13 @@ export function createSemanticVectorStore(options?: {
       },
     });
     // Log the full index name for observability
-    const fullIndexName = indexPrefix ? `${indexPrefix}_semantic_memory` : "semantic_memory";
-    console.log(`[VectorStore] Using Upstash Vector (production mode) with index: ${fullIndexName}`);
+    const fullIndexName = indexPrefix
+      ? `${indexPrefix}_semantic_memory`
+      : "semantic_memory";
+    logger.info("Using Upstash Vector", {
+      mode: "production",
+      index: fullIndexName,
+    });
   } else {
     // Fallback to Redis (development)
     const redis = options?.redis || getRedisClient(ServiceNamespace.SHARED);
@@ -610,7 +659,7 @@ export function createSemanticVectorStore(options?: {
         metric: "cosine",
       },
     });
-    console.log("[VectorStore] Using Redis Vector Store (development mode)");
+    logger.info("Using Redis Vector Store", { mode: "development" });
   }
 
   return new SemanticVectorStore({

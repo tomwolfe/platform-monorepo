@@ -18,6 +18,9 @@ import { z } from "zod";
 import { CommunicationSchema } from "@repo/mcp-protocol";
 import { AppConfig } from "../config";
 import { AppError } from "../errors";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "communication-provider" });
 
 // ============================================================================
 // TYPES
@@ -133,9 +136,7 @@ export class ResendEmailProvider implements ICommunicationProvider {
         ...(metadata && { headers: metadata as Record<string, string> }),
       });
 
-      console.log(
-        `[Resend] Email sent to ${recipient}, messageId: ${result.id}`,
-      );
+      logger.info("Email sent via Resend", { recipient, messageId: result.id });
 
       return {
         status: "sent",
@@ -147,10 +148,10 @@ export class ResendEmailProvider implements ICommunicationProvider {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      console.error(
-        `[Resend] Failed to send email to ${recipient}:`,
-        errorMessage,
-      );
+      logger.error("Failed to send email via Resend", {
+        recipient,
+        error: errorMessage,
+      });
 
       return {
         status: "failed",
@@ -227,9 +228,7 @@ export class TwilioSmsProvider implements ICommunicationProvider {
         to: recipient,
       });
 
-      console.log(
-        `[Twilio] SMS sent to ${recipient}, messageId: ${result.sid}`,
-      );
+      logger.info("SMS sent via Twilio", { recipient, messageId: result.sid });
 
       return {
         status: "sent",
@@ -241,10 +240,10 @@ export class TwilioSmsProvider implements ICommunicationProvider {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      console.error(
-        `[Twilio] Failed to send SMS to ${recipient}:`,
-        errorMessage,
-      );
+      logger.error("Failed to send SMS via Twilio", {
+        recipient,
+        error: errorMessage,
+      });
 
       return {
         status: "failed",
@@ -276,9 +275,11 @@ export class MockCommunicationProvider implements ICommunicationProvider {
   async send(params: CommunicationRequest): Promise<CommunicationResult> {
     const { recipient, channel, message } = params;
 
-    console.log(
-      `[MockCommunication] Sending ${channel} to ${recipient}: ${message.substring(0, 50)}...`,
-    );
+    logger.info("Mock communication sent", {
+      channel,
+      recipient,
+      messagePreview: message.substring(0, 50),
+    });
 
     // Simulate API delay
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -323,9 +324,7 @@ export function getCommunicationProvider(
           `Push notification channel is not implemented in production`,
         );
       }
-      console.warn(
-        `[CommProvider] Push channel not yet implemented, using mock provider`,
-      );
+      logger.warn("Push channel not yet implemented, using mock provider");
       return new MockCommunicationProvider();
     case "webhook":
       if (AppConfig.isProduction()) {
@@ -334,9 +333,7 @@ export function getCommunicationProvider(
           `Webhook notification channel is not implemented in production`,
         );
       }
-      console.warn(
-        `[CommProvider] Webhook channel not yet implemented, using mock provider`,
-      );
+      logger.warn("Webhook channel not yet implemented, using mock provider");
       return new MockCommunicationProvider();
     default:
       throw new Error(`Unknown communication channel: ${channel}`);

@@ -22,6 +22,7 @@ import {
   releaseReplayProcessingLock,
   tryAcquireReplayProcessingLock,
   isReplayAllowed,
+  ERROR_CODES,
 } from "@repo/shared";
 import { CheckoutError } from "./validation";
 import { verifyOnChainTransaction as defaultVerifyOnChainTransaction } from "./web3-verify";
@@ -98,7 +99,7 @@ export class CheckoutService {
       throw new CheckoutError(
         "Payment transaction is currently being processed",
         409,
-        "CONFLICT",
+        ERROR_CODES.CONFLICT,
       );
     }
 
@@ -113,7 +114,7 @@ export class CheckoutService {
       throw new CheckoutError(
         "Payment transaction already used or blocked",
         409,
-        "CONFLICT",
+        ERROR_CODES.CONFLICT,
       );
     }
 
@@ -136,7 +137,7 @@ export class CheckoutService {
         throw new CheckoutError(
           "Waiting for more confirmations",
           400,
-          "VALIDATION_ERROR",
+          ERROR_CODES.VALIDATION_ERROR,
           { details: { confirmations } },
         );
       }
@@ -179,14 +180,18 @@ export class CheckoutService {
     });
 
     if (!reservation) {
-      throw new CheckoutError("Reservation not found", 404, "NOT_FOUND");
+      throw new CheckoutError(
+        "Reservation not found",
+        404,
+        ERROR_CODES.NOT_FOUND,
+      );
     }
 
     if (reservation.isVerified) {
       throw new CheckoutError(
         "Reservation already verified",
         200,
-        "ALREADY_VERIFIED",
+        ERROR_CODES.ALREADY_VERIFIED,
       );
     }
 
@@ -195,7 +200,7 @@ export class CheckoutService {
       throw new CheckoutError(
         "Restaurant wallet address not configured",
         400,
-        "VALIDATION_ERROR",
+        ERROR_CODES.VALIDATION_ERROR,
       );
     }
 
@@ -203,7 +208,7 @@ export class CheckoutService {
       throw new CheckoutError(
         "Escrow contract address not configured",
         400,
-        "VALIDATION_ERROR",
+        ERROR_CODES.VALIDATION_ERROR,
       );
     }
 
@@ -211,7 +216,7 @@ export class CheckoutService {
       throw new CheckoutError(
         "Web3 payments are disabled",
         400,
-        "VALIDATION_ERROR",
+        ERROR_CODES.VALIDATION_ERROR,
       );
     }
 

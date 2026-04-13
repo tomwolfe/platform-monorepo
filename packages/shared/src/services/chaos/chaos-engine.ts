@@ -16,7 +16,8 @@
  * @since 1.0.0
  */
 
-import { EventEmitter } from 'events';
+import { EventEmitter } from "events";
+import { Logger } from "../logger";
 
 // ============================================================================
 // CHAOS EXPERIMENT CONFIGURATION
@@ -44,13 +45,13 @@ export interface ChaosExperimentConfig {
 }
 
 export type FailureType =
-  | 'LATENCY_INJECTION'
-  | 'ERROR_INJECTION'
-  | 'RESOURCE_EXHAUSTION'
-  | 'NETWORK_PARTITION'
-  | 'DEPENDENCY_FAILURE'
-  | 'STATE_CORRUPTION'
-  | 'CIRCUIT_BREAKER_TRIP';
+  | "LATENCY_INJECTION"
+  | "ERROR_INJECTION"
+  | "RESOURCE_EXHAUSTION"
+  | "NETWORK_PARTITION"
+  | "DEPENDENCY_FAILURE"
+  | "STATE_CORRUPTION"
+  | "CIRCUIT_BREAKER_TRIP";
 
 export interface FailureParameters {
   // Latency injection
@@ -72,10 +73,10 @@ export interface FailureParameters {
 
   // Dependency failure
   dependencyName?: string;
-  failureMode?: 'timeout' | 'error' | 'empty_response';
+  failureMode?: "timeout" | "error" | "empty_response";
 
   // State corruption
-  corruptionPattern?: 'random_bits' | 'truncate' | 'duplicate';
+  corruptionPattern?: "random_bits" | "truncate" | "duplicate";
 }
 
 export interface SteadyStateHypothesis {
@@ -84,7 +85,7 @@ export interface SteadyStateHypothesis {
   /** Metric to monitor */
   metric: string;
   /** Expected condition */
-  condition: 'equals' | 'less_than' | 'greater_than' | 'within_range';
+  condition: "equals" | "less_than" | "greater_than" | "within_range";
   /** Expected value or range */
   expectedValue: number | [number, number];
   /** Tolerance (for equals) */
@@ -93,7 +94,7 @@ export interface SteadyStateHypothesis {
 
 export interface RollbackAction {
   /** Action type */
-  type: 'stop_injection' | 'restart_service' | 'restore_state' | 'scale_up';
+  type: "stop_injection" | "restart_service" | "restore_state" | "scale_up";
   /** Target service */
   target?: string;
   /** Action parameters */
@@ -104,7 +105,11 @@ export interface SafetyCheck {
   /** Check name */
   name: string;
   /** Check type */
-  type: 'service_healthy' | 'traffic_low' | 'business_hours' | 'manual_approval';
+  type:
+    | "service_healthy"
+    | "traffic_low"
+    | "business_hours"
+    | "manual_approval";
   /** Check parameters */
   parameters?: Record<string, unknown>;
 }
@@ -155,7 +160,12 @@ export interface MetricDataPoint {
 
 export interface ChaosEvent {
   timestamp: number;
-  type: 'injection_start' | 'injection_stop' | 'hypothesis_check' | 'rollback' | 'error';
+  type:
+    | "injection_start"
+    | "injection_stop"
+    | "hypothesis_check"
+    | "rollback"
+    | "error";
   message: string;
   data?: unknown;
 }
@@ -179,6 +189,7 @@ export class ChaosEngine extends EventEmitter {
     defaultDurationMs: number;
     enableMetrics: boolean;
   };
+  private logger: Logger;
 
   constructor(config?: {
     maxConcurrentExperiments?: number;
@@ -192,23 +203,30 @@ export class ChaosEngine extends EventEmitter {
       enableMetrics: true,
       ...config,
     };
+    this.logger = new Logger({ serviceName: "chaos-engine" });
   }
 
   /**
    * Start a chaos experiment
    */
-  async startExperiment(config: ChaosExperimentConfig): Promise<ChaosExperimentResult> {
+  async startExperiment(
+    config: ChaosExperimentConfig,
+  ): Promise<ChaosExperimentResult> {
     const experimentId = this.generateExperimentId();
-    
+
     // Check concurrent experiment limit
     if (this.activeExperiments.size >= this.config.maxConcurrentExperiments) {
-      throw new Error(`Maximum concurrent experiments (${this.config.maxConcurrentExperiments}) reached`);
+      throw new Error(
+        `Maximum concurrent experiments (${this.config.maxConcurrentExperiments}) reached`,
+      );
     }
 
     // Run safety checks
     const safetyCheckResults = await this.runSafetyChecks(config.safetyChecks);
     if (!safetyCheckResults.allPassed) {
-      throw new Error(`Safety checks failed: ${safetyCheckResults.failedChecks.map(c => c.name).join(', ')}`);
+      throw new Error(
+        `Safety checks failed: ${safetyCheckResults.failedChecks.map((c) => c.name).join(", ")}`,
+      );
     }
 
     // Create experiment result tracker
@@ -229,7 +247,7 @@ export class ChaosEngine extends EventEmitter {
     // Add start event
     result.events.push({
       timestamp: Date.now(),
-      type: 'injection_start',
+      type: "injection_start",
       message: `Starting experiment: ${config.name}`,
       data: { target: config.target, failureType: config.failureType },
     });
@@ -238,7 +256,7 @@ export class ChaosEngine extends EventEmitter {
     this.activeExperiments.set(experimentId, config);
     this.experimentResults.set(experimentId, result);
 
-    this.emit('experiment_start', { experimentId, config });
+    this.emit("experiment_start", { experimentId, config });
 
     try {
       // Start failure injection
@@ -250,7 +268,7 @@ export class ChaosEngine extends EventEmitter {
         const hypothesisResults = await this.checkHypotheses(config.hypotheses);
         result.hypothesisResults = hypothesisResults;
 
-        const allPassed = hypothesisResults.every(h => h.passed);
+        const allPassed = hypothesisResults.every((h) => h.passed);
         if (!allPassed) {
           // Trigger rollback
           await this.triggerRollback(config, result);
@@ -260,8 +278,8 @@ export class ChaosEngine extends EventEmitter {
 
         result.events.push({
           timestamp: Date.now(),
-          type: 'hypothesis_check',
-          message: `Hypothesis check: ${allPassed ? 'PASSED' : 'FAILED'}`,
+          type: "hypothesis_check",
+          message: `Hypothesis check: ${allPassed ? "PASSED" : "FAILED"}`,
           data: { results: hypothesisResults },
         });
       }, 5000); // Check every 5 seconds
@@ -277,20 +295,22 @@ export class ChaosEngine extends EventEmitter {
       this.failureInjections.delete(experimentId);
 
       // Final hypothesis check
-      const finalHypothesisResults = await this.checkHypotheses(config.hypotheses);
+      const finalHypothesisResults = await this.checkHypotheses(
+        config.hypotheses,
+      );
       result.hypothesisResults = finalHypothesisResults;
 
       // Add stop event
       result.events.push({
         timestamp: Date.now(),
-        type: 'injection_stop',
+        type: "injection_stop",
         message: `Stopping experiment: ${config.name}`,
       });
 
       // Calculate results
       result.endedAt = Date.now();
       result.durationMs = result.endedAt - result.startedAt;
-      result.success = finalHypothesisResults.every(h => h.passed);
+      result.success = finalHypothesisResults.every((h) => h.passed);
 
       // Generate lessons learned
       result.lessonsLearned = this.generateLessonsLearned(config, result);
@@ -299,15 +319,15 @@ export class ChaosEngine extends EventEmitter {
       this.activeExperiments.delete(experimentId);
       this.experimentResults.set(experimentId, result);
 
-      this.emit('experiment_complete', { experimentId, result });
+      this.emit("experiment_complete", { experimentId, result });
 
       return result;
     } catch (error) {
       // Handle experiment error
       result.events.push({
         timestamp: Date.now(),
-        type: 'error',
-        message: `Experiment error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        type: "error",
+        message: `Experiment error: ${error instanceof Error ? error.message : "Unknown error"}`,
       });
 
       result.success = false;
@@ -320,7 +340,7 @@ export class ChaosEngine extends EventEmitter {
       this.activeExperiments.delete(experimentId);
       this.experimentResults.set(experimentId, result);
 
-      this.emit('experiment_error', { experimentId, error });
+      this.emit("experiment_error", { experimentId, error });
 
       throw error;
     }
@@ -329,7 +349,9 @@ export class ChaosEngine extends EventEmitter {
   /**
    * Start failure injection
    */
-  private async startFailureInjection(config: ChaosExperimentConfig): Promise<FailureInjection> {
+  private async startFailureInjection(
+    config: ChaosExperimentConfig,
+  ): Promise<FailureInjection> {
     const injection: FailureInjection = {
       id: this.generateExperimentId(),
       type: config.failureType,
@@ -340,70 +362,76 @@ export class ChaosEngine extends EventEmitter {
 
     // Apply failure based on type
     switch (config.failureType) {
-      case 'LATENCY_INJECTION':
+      case "LATENCY_INJECTION":
         await this.injectLatency(config.target, config.parameters);
         break;
-      case 'ERROR_INJECTION':
+      case "ERROR_INJECTION":
         await this.injectErrors(config.target, config.parameters);
         break;
-      case 'RESOURCE_EXHAUSTION':
+      case "RESOURCE_EXHAUSTION":
         await this.exhaustResources(config.target, config.parameters);
         break;
-      case 'NETWORK_PARTITION':
+      case "NETWORK_PARTITION":
         await this.createNetworkPartition(config.parameters);
         break;
-      case 'DEPENDENCY_FAILURE':
+      case "DEPENDENCY_FAILURE":
         await this.failDependency(config.parameters);
         break;
-      case 'STATE_CORRUPTION':
+      case "STATE_CORRUPTION":
         await this.corruptState(config.target, config.parameters);
         break;
-      case 'CIRCUIT_BREAKER_TRIP':
+      case "CIRCUIT_BREAKER_TRIP":
         await this.tripCircuitBreaker(config.target);
         break;
     }
 
-    this.emit('injection_start', injection);
+    this.emit("injection_start", injection);
     return injection;
   }
 
   /**
    * Stop failure injection
    */
-  private async stopFailureInjection(injection: FailureInjection): Promise<void> {
+  private async stopFailureInjection(
+    injection: FailureInjection,
+  ): Promise<void> {
     injection.active = false;
     injection.endTime = Date.now();
 
     // Remove failure injection
-    this.emit('injection_stop', injection);
+    this.emit("injection_stop", injection);
   }
 
   /**
    * Check hypotheses
    */
-  private async checkHypotheses(hypotheses: SteadyStateHypothesis[]): Promise<HypothesisResult[]> {
+  private async checkHypotheses(
+    hypotheses: SteadyStateHypothesis[],
+  ): Promise<HypothesisResult[]> {
     const results: HypothesisResult[] = [];
 
     for (const hypothesis of hypotheses) {
       const actualValue = await this.measureMetric(hypothesis.metric);
-      
+
       let passed = false;
-      let message = '';
+      let message = "";
 
       switch (hypothesis.condition) {
-        case 'equals':
-          passed = Math.abs(actualValue - (hypothesis.expectedValue as number)) <= (hypothesis.tolerance || 0);
+        case "equals":
+          passed =
+            Math.abs(actualValue - (hypothesis.expectedValue as number)) <=
+            (hypothesis.tolerance || 0);
           message = `Expected ${hypothesis.expectedValue} ± ${hypothesis.tolerance || 0}, got ${actualValue}`;
           break;
-        case 'less_than':
+        case "less_than":
           passed = actualValue < (hypothesis.expectedValue as number);
           message = `Expected < ${hypothesis.expectedValue}, got ${actualValue}`;
           break;
-        case 'greater_than':
+        case "greater_than":
           passed = actualValue > (hypothesis.expectedValue as number);
           message = `Expected > ${hypothesis.expectedValue}, got ${actualValue}`;
           break;
-        case 'within_range':
+        case "within_range":
           const [min, max] = hypothesis.expectedValue as [number, number];
           passed = actualValue >= min && actualValue <= max;
           message = `Expected [${min}, ${max}], got ${actualValue}`;
@@ -432,27 +460,29 @@ export class ChaosEngine extends EventEmitter {
 
     for (const check of checks) {
       let passed = false;
-      let reason = '';
+      let reason = "";
 
       switch (check.type) {
-        case 'service_healthy':
-          passed = await this.isServiceHealthy(check.parameters?.target as string);
-          reason = passed ? 'Service is healthy' : 'Service is unhealthy';
+        case "service_healthy":
+          passed = await this.isServiceHealthy(
+            check.parameters?.target as string,
+          );
+          reason = passed ? "Service is healthy" : "Service is unhealthy";
           break;
-        case 'traffic_low':
+        case "traffic_low":
           const traffic = await this.getCurrentTraffic();
-          passed = traffic < (check.parameters?.maxTraffic as number || 1000);
-          reason = passed ? 'Traffic is low' : 'Traffic is too high';
+          passed = traffic < ((check.parameters?.maxTraffic as number) || 1000);
+          reason = passed ? "Traffic is low" : "Traffic is too high";
           break;
-        case 'business_hours':
+        case "business_hours":
           const hour = new Date().getHours();
           passed = hour < 6 || hour > 22; // Only run outside business hours
-          reason = passed ? 'Outside business hours' : 'During business hours';
+          reason = passed ? "Outside business hours" : "During business hours";
           break;
-        case 'manual_approval':
+        case "manual_approval":
           // In production, this would wait for manual approval
           passed = true; // Auto-approve for testing
-          reason = 'Auto-approved';
+          reason = "Auto-approved";
           break;
       }
 
@@ -472,7 +502,7 @@ export class ChaosEngine extends EventEmitter {
    */
   private async triggerRollback(
     config: ChaosExperimentConfig,
-    result: ChaosExperimentResult
+    result: ChaosExperimentResult,
   ): Promise<void> {
     result.rollbackTriggered = true;
     const rollbackResults: RollbackResult[] = [];
@@ -483,13 +513,13 @@ export class ChaosEngine extends EventEmitter {
         rollbackResults.push({
           action,
           success: true,
-          message: 'Rollback successful',
+          message: "Rollback successful",
         });
       } catch (error) {
         rollbackResults.push({
           action,
           success: false,
-          message: error instanceof Error ? error.message : 'Rollback failed',
+          message: error instanceof Error ? error.message : "Rollback failed",
         });
       }
     }
@@ -498,8 +528,8 @@ export class ChaosEngine extends EventEmitter {
 
     result.events.push({
       timestamp: Date.now(),
-      type: 'rollback',
-      message: 'Rollback triggered due to hypothesis failure',
+      type: "rollback",
+      message: "Rollback triggered due to hypothesis failure",
       data: { results: rollbackResults },
     });
   }
@@ -507,7 +537,9 @@ export class ChaosEngine extends EventEmitter {
   /**
    * Emergency rollback
    */
-  private async emergencyRollback(config: ChaosExperimentConfig): Promise<void> {
+  private async emergencyRollback(
+    config: ChaosExperimentConfig,
+  ): Promise<void> {
     // Stop all injections immediately
     for (const injection of this.failureInjections.values()) {
       await this.stopFailureInjection(injection);
@@ -518,7 +550,9 @@ export class ChaosEngine extends EventEmitter {
       try {
         await this.executeRollbackAction(action);
       } catch (error) {
-        console.error('[ChaosEngine] Emergency rollback failed:', error);
+        this.logger.error("Emergency rollback failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }
@@ -527,37 +561,72 @@ export class ChaosEngine extends EventEmitter {
   // FAILURE INJECTION IMPLEMENTATIONS
   // ========================================================================
 
-  private async injectLatency(target: string, params: FailureParameters): Promise<void> {
-    // In production, this would inject latency into the target service
-    console.log(`[ChaosEngine] Injecting ${params.latencyMs}ms latency into ${target}`);
+  private async injectLatency(
+    target: string,
+    params: FailureParameters,
+  ): Promise<void> {
+    this.logger.info("Injecting latency", {
+      target,
+      latencyMs: params.latencyMs,
+    });
   }
 
-  private async injectErrors(target: string, params: FailureParameters): Promise<void> {
-    console.log(`[ChaosEngine] Injecting ${params.errorCode} errors into ${target} at ${(params.errorRate || 0) * 100}% rate`);
+  private async injectErrors(
+    target: string,
+    params: FailureParameters,
+  ): Promise<void> {
+    this.logger.info("Injecting errors", {
+      target,
+      errorCode: params.errorCode,
+      errorRate: params.errorRate || 0,
+    });
   }
 
-  private async exhaustResources(target: string, params: FailureParameters): Promise<void> {
-    console.log(`[ChaosEngine] Exhausting resources on ${target}: memory=${params.memoryLimitMb}MB, cpu=${params.cpuLimitPercent}%`);
+  private async exhaustResources(
+    target: string,
+    params: FailureParameters,
+  ): Promise<void> {
+    this.logger.info("Exhausting resources", {
+      target,
+      memoryLimitMb: params.memoryLimitMb,
+      cpuLimitPercent: params.cpuLimitPercent,
+    });
   }
 
-  private async createNetworkPartition(params: FailureParameters): Promise<void> {
-    console.log(`[ChaosEngine] Creating network partition, isolated services: ${params.isolatedServices?.join(', ')}`);
+  private async createNetworkPartition(
+    params: FailureParameters,
+  ): Promise<void> {
+    this.logger.info("Creating network partition", {
+      isolatedServices: params.isolatedServices,
+    });
   }
 
   private async failDependency(params: FailureParameters): Promise<void> {
-    console.log(`[ChaosEngine] Failing dependency ${params.dependencyName} with mode: ${params.failureMode}`);
+    this.logger.info("Failing dependency", {
+      dependencyName: params.dependencyName,
+      failureMode: params.failureMode,
+    });
   }
 
-  private async corruptState(target: string, params: FailureParameters): Promise<void> {
-    console.log(`[ChaosEngine] Corrupting state on ${target} with pattern: ${params.corruptionPattern}`);
+  private async corruptState(
+    target: string,
+    params: FailureParameters,
+  ): Promise<void> {
+    this.logger.info("Corrupting state", {
+      target,
+      corruptionPattern: params.corruptionPattern,
+    });
   }
 
   private async tripCircuitBreaker(target: string): Promise<void> {
-    console.log(`[ChaosEngine] Tripping circuit breaker for ${target}`);
+    this.logger.info("Tripping circuit breaker", { target });
   }
 
   private async executeRollbackAction(action: RollbackAction): Promise<void> {
-    console.log(`[ChaosEngine] Executing rollback action: ${action.type} on ${action.target}`);
+    this.logger.info("Executing rollback action", {
+      type: action.type,
+      target: action.target,
+    });
   }
 
   private async measureMetric(metric: string): Promise<number> {
@@ -573,21 +642,30 @@ export class ChaosEngine extends EventEmitter {
     return Math.random() * 1000;
   }
 
-  private generateLessonsLearned(config: ChaosExperimentConfig, result: ChaosExperimentResult): string[] {
+  private generateLessonsLearned(
+    config: ChaosExperimentConfig,
+    result: ChaosExperimentResult,
+  ): string[] {
     const lessons: string[] = [];
 
     if (result.success) {
-      lessons.push(`System handled ${config.failureType} injection successfully`);
+      lessons.push(
+        `System handled ${config.failureType} injection successfully`,
+      );
     } else {
       lessons.push(`System failed to handle ${config.failureType} injection`);
-      const failedHypotheses = result.hypothesisResults.filter(h => !h.passed);
+      const failedHypotheses = result.hypothesisResults.filter(
+        (h) => !h.passed,
+      );
       for (const h of failedHypotheses) {
         lessons.push(`Hypothesis "${h.hypothesis.name}" failed: ${h.message}`);
       }
     }
 
     if (result.rollbackTriggered) {
-      lessons.push('Rollback was triggered - verify rollback procedures are effective');
+      lessons.push(
+        "Rollback was triggered - verify rollback procedures are effective",
+      );
     }
 
     return lessons;
@@ -598,7 +676,7 @@ export class ChaosEngine extends EventEmitter {
   }
 
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   // ========================================================================
@@ -649,6 +727,8 @@ interface FailureInjection {
 // FACTORY
 // ============================================================================
 
-export function createChaosEngine(config?: ConstructorParameters<typeof ChaosEngine>[0]): ChaosEngine {
+export function createChaosEngine(
+  config?: ConstructorParameters<typeof ChaosEngine>[0],
+): ChaosEngine {
   return new ChaosEngine(config);
 }

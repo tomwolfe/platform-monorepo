@@ -20,6 +20,7 @@ import { Redis } from "@upstash/redis";
 import { getRedisClient, ServiceNamespace } from "../redis";
 import { QStashService } from "./qstash";
 import { z } from "zod";
+import { Logger } from "../logger";
 
 // ============================================================================
 // SCHEMAS
@@ -82,9 +83,11 @@ const DEFAULT_CONFIG: Required<HeartbeatConfig> = {
 
 export class HeartbeatService {
   private config: Required<HeartbeatConfig>;
+  private logger: Logger;
 
   constructor(config: HeartbeatConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.logger = new Logger({ serviceName: "heartbeat-service" });
   }
 
   // ========================================================================
@@ -169,15 +172,18 @@ export class HeartbeatService {
         },
       });
 
-      console.log(
-        `[HeartbeatService] Scheduled heartbeat check for ${executionId} ` +
-          `in ${this.config.heartbeatDelaySeconds}s (step ${nextStepIndex})`,
-      );
+      this.logger.info("Scheduled heartbeat check", {
+        executionId,
+        delaySeconds: this.config.heartbeatDelaySeconds,
+        stepIndex: nextStepIndex,
+        traceId: options?.traceId,
+      });
     } catch (error) {
-      console.error(
-        `[HeartbeatService] Failed to schedule QStash webhook:`,
-        error,
-      );
+      this.logger.error("Failed to schedule QStash webhook", {
+        executionId,
+        error: error instanceof Error ? error.message : String(error),
+        traceId: options?.traceId,
+      });
       // Continue anyway - heartbeat is still tracked in Redis
     }
 
@@ -195,7 +201,7 @@ export class HeartbeatService {
     await this.config.redis.del(key);
     await this.config.redis.zrem(this.buildActiveHeartbeatsKey(), executionId);
 
-    console.log(`[HeartbeatService] Cancelled heartbeat for ${executionId}`);
+    this.logger.info("Cancelled heartbeat", { executionId });
   }
 
   /**
@@ -214,7 +220,7 @@ export class HeartbeatService {
     const existing = await this.getHeartbeat(executionId);
 
     if (!existing) {
-      console.warn(`[HeartbeatService] Heartbeat not found for ${executionId}`);
+      this.logger.warn("Heartbeat not found", { executionId });
       return;
     }
 
@@ -232,23 +238,26 @@ export class HeartbeatService {
    */
   async getHeartbeat(executionId: string): Promise<HeartbeatRecord | null> {
     const key = this.buildHeartbeatKey(executionId);
-    const data = await this.config.redis.get<any>(key);
+    const data = await this.config.redis.get<string>(key);
 
     if (!data) return null;
 
     try {
-      const parsed = typeof data === "string" ? JSON.parse(data) : data;
+      const parsed = JSON.parse(data);
       const result = HeartbeatRecordSchema.safeParse(parsed);
       if (!result.success) {
-        console.error(
-          `[HeartbeatService] Corrupted heartbeat record for ${executionId}:`,
-          result.error.errors.map((e) => e.message).join(", "),
-        );
+        this.logger.error("Corrupted heartbeat record", {
+          executionId,
+          errors: result.error.errors.map((e) => e.message).join(", "),
+        });
         return null;
       }
       return result.data;
     } catch (error) {
-      console.error(`[HeartbeatService] Failed to parse heartbeat:`, error);
+      this.logger.error("Failed to parse heartbeat", {
+        executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }
@@ -283,19 +292,21 @@ export class HeartbeatService {
 
     // Get current saga state from Redis
     const stateKey = `saga:state:${executionId}`;
-    const stateData = await this.config.redis.get<any>(stateKey);
+    const stateData = await this.config.redis.get<string>(stateKey);
 
     let currentStepIndex = 0;
 
     if (stateData) {
       // Parse state to find highest completed step
       try {
-        const state =
-          typeof stateData === "string" ? JSON.parse(stateData) : stateData;
+        const state = JSON.parse(stateData);
         // Extract current step index from state
         currentStepIndex = state.nextStepIndex || 0;
       } catch (error) {
-        console.error(`[HeartbeatService] Failed to parse saga state:`, error);
+        this.logger.error("Failed to parse saga state", {
+          executionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -368,13 +379,18 @@ export class HeartbeatService {
         stepIndex,
       });
 
-      console.log(
-        `[HeartbeatService] Executed recovery for ${executionId} - resuming at step ${stepIndex}`,
-      );
+      this.logger.info("Executed recovery", {
+        executionId,
+        stepIndex,
+      });
 
       return { success: true };
     } catch (error) {
-      console.error(`[HeartbeatService] Recovery execution failed:`, error);
+      this.logger.error("Recovery execution failed", {
+        executionId,
+        stepIndex,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
@@ -397,10 +413,13 @@ export class HeartbeatService {
       lastKnownState?: string;
     },
   ): Promise<void> {
-    console.error(
-      `[HeartbeatService] ESCALATION: Saga ${executionId} stuck after ${context.recoveryAttempts} recovery attempts. ` +
-        `Last known state: step ${context.currentStepIndex}, expected: step ${context.expectedStepIndex}`,
-    );
+    this.logger.error("Saga escalation required", {
+      executionId,
+      currentStepIndex: context.currentStepIndex,
+      expectedStepIndex: context.expectedStepIndex,
+      recoveryAttempts: context.recoveryAttempts,
+      escalationReason: `Stuck after ${context.recoveryAttempts} recovery attempts`,
+    });
 
     // In production, send alert via:
     // - Email (Resend)
@@ -430,14 +449,12 @@ export class HeartbeatService {
         `,
       });
 
-      console.log(
-        `[HeartbeatService] Escalation email sent for ${executionId}`,
-      );
+      this.logger.info("Escalation email sent", { executionId });
     } catch (error) {
-      console.error(
-        `[HeartbeatService] Failed to send escalation email:`,
-        error,
-      );
+      this.logger.error("Failed to send escalation email", {
+        executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -507,9 +524,7 @@ export class HeartbeatService {
       }
     }
 
-    console.log(
-      `[HeartbeatService] Cleaned up ${deletedCount} expired heartbeats`,
-    );
+    this.logger.info("Cleaned up expired heartbeats", { deletedCount });
     return deletedCount;
   }
 }

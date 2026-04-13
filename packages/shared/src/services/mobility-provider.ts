@@ -17,6 +17,7 @@
 
 import { z } from "zod";
 import { MobilityRequestSchema, UnifiedLocation } from "@repo/mcp-protocol";
+import { Logger } from "../logger";
 
 // ============================================================================
 // TYPES
@@ -122,6 +123,11 @@ export class MockMobilityProvider implements IMobilityProvider {
     "Casey",
   ];
   private readonly vehiclePrefixes = ["ABC", "XYZ", "DEF", "GHI", "JKL", "MNO"];
+  private logger: Logger;
+
+  constructor() {
+    this.logger = new Logger({ serviceName: "mobility-provider" });
+  }
 
   getProviderName(): string {
     return "MockMobility";
@@ -168,9 +174,11 @@ export class MockMobilityProvider implements IMobilityProvider {
     const normalizedPickup = this.normalizeLocation(pickup_location);
     const normalizedDestination = this.normalizeLocation(destination_location);
 
-    console.log(
-      `[MockMobility] Ride request: ${service} from ${normalizedPickup} to ${normalizedDestination}`,
-    );
+    this.logger.info("Ride requested", {
+      service,
+      pickup: normalizedPickup,
+      destination: normalizedDestination,
+    });
 
     // Simulate API delay
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -191,7 +199,7 @@ export class MockMobilityProvider implements IMobilityProvider {
     const rideId =
       params.ride_id || `ride_${Math.random().toString(36).substring(2, 9)}`;
 
-    console.log(`[MockMobility] Cancelling ride: ${rideId}`);
+    this.logger.info("Ride cancelled", { rideId });
 
     // Simulate API delay
     await new Promise((resolve) => setTimeout(resolve, 100));

@@ -30,6 +30,7 @@
 
 import { Redis } from "@upstash/redis";
 import { getRedisClient, ServiceNamespace } from "../redis";
+import { Logger } from "../logger";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -93,9 +94,11 @@ const DEFAULT_CONFIG: Omit<Required<ParameterAliaserConfig>, "redis"> & {
 export class ParameterAliaserService {
   private config: Required<ParameterAliaserConfig>;
   private localCache: Map<string, AliasCacheEntry> = new Map();
+  private logger: Logger;
 
   constructor(config: ParameterAliaserConfig) {
     this.config = { ...DEFAULT_CONFIG, redis: config.redis };
+    this.logger = new Logger({ serviceName: "parameter-aliaser" });
   }
 
   // ========================================================================
@@ -135,14 +138,11 @@ export class ParameterAliaserService {
     const aliasKey = this.buildAliasKey(toolName, aliasField);
 
     // Get existing alias or create new one
-    const existingData = await this.config.redis.get<any>(aliasKey);
+    const existingData = await this.config.redis.get<string>(aliasKey);
     let mismatchCount = 1;
 
     if (existingData) {
-      const existing =
-        typeof existingData === "string"
-          ? JSON.parse(existingData)
-          : existingData;
+      const existing = JSON.parse(existingData) as ParameterAlias;
       mismatchCount = (existing.mismatchCount || 0) + 1;
     }
 
@@ -152,9 +152,7 @@ export class ParameterAliaserService {
       toolName,
       mismatchCount,
       createdAt: existingData
-        ? typeof existingData === "string"
-          ? JSON.parse(existingData).createdAt
-          : existingData.createdAt
+        ? JSON.parse(existingData).createdAt
         : new Date().toISOString(),
       isAuto: false,
     };
@@ -192,10 +190,12 @@ export class ParameterAliaserService {
       // Invalidate cache to force refresh
       await this.config.redis.del(this.buildCacheKey(toolName));
 
-      console.log(
-        `[ParameterAliaser] Auto-created alias for ${toolName}: ${aliasField} -> ${primaryField} ` +
-          `(mismatch count: ${mismatchCount})`,
-      );
+      this.logger.info("Auto-created alias", {
+        toolName,
+        aliasField,
+        primaryField,
+        mismatchCount,
+      });
 
       return alias;
     }
@@ -221,13 +221,12 @@ export class ParameterAliaserService {
 
     // Check Redis cache for persisted aliases
     const cacheKey = this.buildCacheKey(toolName);
-    const cachedData = await this.config.redis.get<any>(cacheKey);
+    const cachedData = await this.config.redis.get<string>(cacheKey);
 
     let persistedAliases: Record<string, string> = {};
 
     if (cachedData) {
-      const cacheEntry =
-        typeof cachedData === "string" ? JSON.parse(cachedData) : cachedData;
+      const cacheEntry = JSON.parse(cachedData) as AliasCacheEntry;
       if (cacheEntry.expiresAt > Date.now()) {
         // Populate local cache
         this.localCache.set(toolName, cacheEntry);
@@ -243,11 +242,10 @@ export class ParameterAliaserService {
 
       for (const aliasField of aliasFields) {
         const aliasKey = this.buildAliasKey(toolName, aliasField);
-        const aliasData = await this.config.redis.get<any>(aliasKey);
+        const aliasData = await this.config.redis.get<string>(aliasKey);
 
         if (aliasData) {
-          const alias =
-            typeof aliasData === "string" ? JSON.parse(aliasData) : aliasData;
+          const alias = JSON.parse(aliasData) as ParameterAlias;
           // Only include auto-created or approved aliases
           if (alias.isAuto || alias.approvedBy) {
             persistedAliases[alias.aliasField] = alias.primaryField;
@@ -303,10 +301,9 @@ export class ParameterAliaserService {
     for (const aliasField of Object.keys(aliases)) {
       if (aliasField in parameters) {
         const aliasKey = this.buildAliasKey(toolName, aliasField);
-        const aliasData = await this.config.redis.get<any>(aliasKey);
+        const aliasData = await this.config.redis.get<string>(aliasKey);
         if (aliasData) {
-          const alias =
-            typeof aliasData === "string" ? JSON.parse(aliasData) : aliasData;
+          const alias = JSON.parse(aliasData) as ParameterAlias;
           alias.lastUsedAt = new Date().toISOString();
           await this.config.redis.setex(
             aliasKey,
@@ -373,10 +370,11 @@ export class ParameterAliaserService {
     // Set TTL on the hot-patch key (7 days)
     await this.config.redis.expire(hotPatchKey, 7 * 24 * 60 * 60);
 
-    console.log(
-      `[ParameterAliaser] Hot-patch registry updated for ${toolName}: ` +
-        `${aliasField} -> ${primaryField}`,
-    );
+    this.logger.info("Hot-patch registry updated", {
+      toolName,
+      aliasField,
+      primaryField,
+    });
   }
 
   /**
@@ -410,10 +408,11 @@ export class ParameterAliaserService {
           aliases[aliasField] = entry.primaryField;
         }
       } catch (error) {
-        console.warn(
-          `[ParameterAliaser] Failed to parse hot-patch entry for ${toolName}:${aliasField}:`,
-          error instanceof Error ? error.message : String(error),
-        );
+        this.logger.warn("Failed to parse hot-patch entry", {
+          toolName,
+          aliasField,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -439,9 +438,10 @@ export class ParameterAliaserService {
     const hotPatchKey = this.buildHotPatchKey(toolName);
     await this.config.redis.hdel(hotPatchKey, aliasField);
 
-    console.log(
-      `[ParameterAliaser] Removed from hot-patch registry: ${toolName}:${aliasField}`,
-    );
+    this.logger.info("Removed from hot-patch registry", {
+      toolName,
+      aliasField,
+    });
   }
 
   /**
@@ -459,9 +459,7 @@ export class ParameterAliaserService {
     const hotPatchKey = this.buildHotPatchKey(toolName);
     await this.config.redis.del(hotPatchKey);
 
-    console.log(
-      `[ParameterAliaser] Cleared hot-patch registry for ${toolName}`,
-    );
+    this.logger.info("Cleared hot-patch registry", { toolName });
   }
 
   /**
@@ -521,14 +519,13 @@ export class ParameterAliaserService {
     approvedBy: string,
   ): Promise<ParameterAlias | null> {
     const aliasKey = this.buildAliasKey(toolName, aliasField);
-    const aliasData = await this.config.redis.get<any>(aliasKey);
+    const aliasData = await this.config.redis.get<string>(aliasKey);
 
     if (!aliasData) {
       return null;
     }
 
-    const alias =
-      typeof aliasData === "string" ? JSON.parse(aliasData) : aliasData;
+    const alias = JSON.parse(aliasData) as ParameterAlias;
     alias.approvedBy = approvedBy;
     alias.approvedAt = new Date().toISOString();
     alias.isAuto = false; // Mark as manually approved
@@ -543,9 +540,12 @@ export class ParameterAliaserService {
     await this.config.redis.del(this.buildCacheKey(toolName));
     this.localCache.delete(toolName);
 
-    console.log(
-      `[ParameterAliaser] Alias approved: ${toolName}:${aliasField} -> ${alias.primaryField} by ${approvedBy}`,
-    );
+    this.logger.info("Alias approved", {
+      toolName,
+      aliasField,
+      primaryField: alias.primaryField,
+      approvedBy,
+    });
 
     return alias;
   }
@@ -561,11 +561,10 @@ export class ParameterAliaserService {
 
     for (const aliasField of aliasFields) {
       const aliasKey = this.buildAliasKey(toolName, aliasField);
-      const aliasData = await this.config.redis.get<any>(aliasKey);
+      const aliasData = await this.config.redis.get<string>(aliasKey);
 
       if (aliasData) {
-        const alias =
-          typeof aliasData === "string" ? JSON.parse(aliasData) : aliasData;
+        const alias = JSON.parse(aliasData) as ParameterAlias;
         aliases.push(alias);
       }
     }
@@ -617,11 +616,10 @@ export class ParameterAliaserService {
 
       for (const aliasField of aliasFields) {
         const aliasKey = this.buildAliasKey(toolName, aliasField);
-        const aliasData = await this.config.redis.get<any>(aliasKey);
+        const aliasData = await this.config.redis.get<string>(aliasKey);
 
         if (aliasData) {
-          const alias =
-            typeof aliasData === "string" ? JSON.parse(aliasData) : aliasData;
+          const alias = JSON.parse(aliasData) as ParameterAlias;
           totalAliases++;
 
           if (alias.isAuto) {

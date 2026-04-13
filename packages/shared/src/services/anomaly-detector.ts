@@ -22,8 +22,9 @@
  * @since 1.0.0
  */
 
-import { Redis } from '@upstash/redis';
-import { getRedisClient, ServiceNamespace } from '../redis';
+import { Redis } from "@upstash/redis";
+import { getRedisClient, ServiceNamespace } from "../redis";
+import { Logger } from "../logger";
 
 // ============================================================================
 // ANOMALY DETECTION CONFIGURATION
@@ -73,17 +74,17 @@ export interface AnomalyDetectionResult {
   /** Expected request rate */
   expectedRate: number;
   /** Recommended action */
-  recommendedAction: 'allow' | 'challenge' | 'throttle' | 'block';
+  recommendedAction: "allow" | "challenge" | "throttle" | "block";
   /** Explanation */
   explanation: string;
 }
 
 export type AnomalyType =
-  | 'SUDDEN_SPIKE'
-  | 'GRADUAL_INCREASE'
-  | 'UNUSUAL_TIMING'
-  | 'PATTERN_DEVIATION'
-  | 'BEHAVIORAL_ANOMALY';
+  | "SUDDEN_SPIKE"
+  | "GRADUAL_INCREASE"
+  | "UNUSUAL_TIMING"
+  | "PATTERN_DEVIATION"
+  | "BEHAVIORAL_ANOMALY";
 
 // ============================================================================
 // USER BEHAVIOR PROFILE
@@ -118,12 +119,14 @@ export interface UserBehaviorProfile {
 export class AnomalyDetector {
   private config: AnomalyDetectionConfig;
   private redis: Redis;
-  private keyPrefix = 'anomaly:';
-  private profileIndexKey = 'anomaly:__profile_index__'; // Sorted set for profile lookups
+  private logger: Logger;
+  private keyPrefix = "anomaly:";
+  private profileIndexKey = "anomaly:__profile_index__"; // Sorted set for profile lookups
 
   constructor(config: Partial<AnomalyDetectionConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.redis = config.redis ?? getRedisClient(ServiceNamespace.SHARED);
+    this.logger = new Logger({ serviceName: "anomaly-detector" });
   }
 
   /**
@@ -145,7 +148,8 @@ export class AnomalyDetector {
    */
   private async getProfile(userId: string): Promise<UserBehaviorProfile> {
     const profileKey = this.getProfileKey(userId);
-    const profileData = await this.redis.get<Record<string, unknown>>(profileKey);
+    const profileData =
+      await this.redis.get<Record<string, unknown>>(profileKey);
 
     if (profileData) {
       return {
@@ -187,7 +191,9 @@ export class AnomalyDetector {
         member: profile.userId,
       });
     } catch (err) {
-      console.warn('[AnomalyDetector] Failed to update profile index:', err);
+      this.logger.warn("Failed to update profile index", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -202,26 +208,39 @@ export class AnomalyDetector {
   /**
    * Add rate sample to Redis sorted set
    */
-  private async addRateSample(userId: string, timestamp: number): Promise<void> {
+  private async addRateSample(
+    userId: string,
+    timestamp: number,
+  ): Promise<void> {
     const samplesKey = this.getSamplesKey(userId);
     // Use sorted set with timestamp as score, unique member to prevent collision
     const uniqueMember = `${timestamp}:${crypto.randomUUID()}`;
-    await this.redis.zadd(samplesKey, { score: timestamp, member: uniqueMember });
+    await this.redis.zadd(samplesKey, {
+      score: timestamp,
+      member: uniqueMember,
+    });
     // Cleanup old samples (keep only recent window)
-    const cutoff = timestamp - this.config.rateWindowMs * this.config.movingAverageWindow;
+    const cutoff =
+      timestamp - this.config.rateWindowMs * this.config.movingAverageWindow;
     await this.redis.zremrangebyscore(samplesKey, 0, cutoff);
   }
 
   /**
    * Get recent rate samples from Redis
    */
-  private async getRateSamples(userId: string, limit = 1000): Promise<number[]> {
+  private async getRateSamples(
+    userId: string,
+    limit = 1000,
+  ): Promise<number[]> {
     const samplesKey = this.getSamplesKey(userId);
     const now = Date.now();
-    const cutoff = now - this.config.rateWindowMs * this.config.movingAverageWindow;
+    const cutoff =
+      now - this.config.rateWindowMs * this.config.movingAverageWindow;
     // Get recent samples from sorted set
-    const results = await this.redis.zrangebyscore(samplesKey, cutoff, now, { limit });
-    return results.map((s) => parseInt((s as string).split(':')[0], 10));
+    const results = await this.redis.zrangebyscore(samplesKey, cutoff, now, {
+      limit,
+    });
+    return results.map((s) => parseInt((s as string).split(":")[0], 10));
   }
 
   /**
@@ -257,7 +276,7 @@ export class AnomalyDetector {
       endpoint?: string;
       ipAddress?: string;
       userAgent?: string;
-    }
+    },
   ): Promise<AnomalyDetectionResult> {
     const profile = await this.getProfile(userId);
     const now = Date.now();
@@ -268,7 +287,13 @@ export class AnomalyDetector {
     await this.addRateSample(userId, now);
 
     // Update profile with current request
-    await this.updateProfile(profile, now, currentHour, currentDay, metadata?.requestSize);
+    await this.updateProfile(
+      profile,
+      now,
+      currentHour,
+      currentDay,
+      metadata?.requestSize,
+    );
 
     // Check if we have enough samples
     if (profile.rateSamples.length < this.config.minSamples) {
@@ -279,8 +304,8 @@ export class AnomalyDetector {
         zScore: 0,
         currentRate: 0,
         expectedRate: profile.meanRate,
-        recommendedAction: 'allow',
-        explanation: 'Insufficient data for anomaly detection',
+        recommendedAction: "allow",
+        explanation: "Insufficient data for anomaly detection",
       };
     }
 
@@ -288,19 +313,37 @@ export class AnomalyDetector {
     const currentRate = await this.calculateCurrentRate(userId);
 
     // Calculate z-score
-    const zScore = this.calculateZScore(currentRate, profile.meanRate, profile.stdDevRate);
+    const zScore = this.calculateZScore(
+      currentRate,
+      profile.meanRate,
+      profile.stdDevRate,
+    );
 
     // Detect anomaly type
-    const anomalyType = this.detectAnomalyType(zScore, profile, currentHour, currentDay);
+    const anomalyType = this.detectAnomalyType(
+      zScore,
+      profile,
+      currentHour,
+      currentDay,
+    );
 
     // Calculate confidence
     const confidence = this.calculateConfidence(zScore, anomalyType);
 
     // Determine recommended action
-    const recommendedAction = this.getRecommendedAction(confidence, anomalyType, profile.riskScore);
+    const recommendedAction = this.getRecommendedAction(
+      confidence,
+      anomalyType,
+      profile.riskScore,
+    );
 
     // Generate explanation
-    const explanation = this.generateExplanation(zScore, currentRate, profile, anomalyType);
+    const explanation = this.generateExplanation(
+      zScore,
+      currentRate,
+      profile,
+      anomalyType,
+    );
 
     // Update risk score
     if (anomalyType) {
@@ -314,9 +357,9 @@ export class AnomalyDetector {
     // Save updated profile
     await this.saveProfile(profile);
 
-    // Emit event if anomalous (via console log since we removed EventEmitter)
+    // Emit event if anomalous (via structured logging)
     if (anomalyType && this.config.debug) {
-      console.log('[AnomalyDetector] Anomaly detected:', {
+      this.logger.info("Anomaly detected", {
         userId,
         anomalyType,
         confidence,
@@ -326,7 +369,12 @@ export class AnomalyDetector {
     }
 
     if (this.config.debug) {
-      console.log(`[AnomalyDetector] User ${userId}: zScore=${zScore.toFixed(2)}, rate=${currentRate}, anomaly=${anomalyType || 'none'}`);
+      this.logger.debug("User analysis result", {
+        userId,
+        zScore,
+        currentRate,
+        anomalyType: anomalyType || "none",
+      });
     }
 
     return {
@@ -349,7 +397,7 @@ export class AnomalyDetector {
     timestamp: number,
     hour: number,
     day: number,
-    requestSize?: number
+    requestSize?: number,
   ): Promise<void> {
     // Add rate sample to Redis
     await this.addRateSample(profile.userId, timestamp);
@@ -370,14 +418,17 @@ export class AnomalyDetector {
     // Update request size average
     if (requestSize !== undefined) {
       const n = profile.avgRequestSize > 0 ? 2 : 1;
-      profile.avgRequestSize = (profile.avgRequestSize * (n - 1) + requestSize) / n;
+      profile.avgRequestSize =
+        (profile.avgRequestSize * (n - 1) + requestSize) / n;
     }
 
     // Update statistics
     this.updateStatistics(profile);
 
     // Update EMA
-    const currentRate = this.calculateCurrentRateFromSamples(profile.rateSamples);
+    const currentRate = this.calculateCurrentRateFromSamples(
+      profile.rateSamples,
+    );
     profile.exponentialMovingAvg =
       this.config.emaDecay * currentRate +
       (1 - this.config.emaDecay) * profile.exponentialMovingAvg;
@@ -394,7 +445,8 @@ export class AnomalyDetector {
     // Calculate rates between samples
     const rates: number[] = [];
     for (let i = 1; i < profile.rateSamples.length; i++) {
-      const timeDiff = (profile.rateSamples[i] - profile.rateSamples[i - 1]) / 1000; // seconds
+      const timeDiff =
+        (profile.rateSamples[i] - profile.rateSamples[i - 1]) / 1000; // seconds
       if (timeDiff > 0) {
         rates.push(60 / timeDiff); // requests per minute
       }
@@ -407,7 +459,8 @@ export class AnomalyDetector {
     profile.meanRate = mean;
 
     // Calculate standard deviation
-    const variance = rates.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / rates.length;
+    const variance =
+      rates.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / rates.length;
     profile.stdDevRate = Math.sqrt(variance);
   }
 
@@ -426,11 +479,14 @@ export class AnomalyDetector {
     if (samples.length < 2) return 0;
 
     const now = Date.now();
-    const recentSamples = samples.filter(t => now - t < this.config.rateWindowMs);
-    
+    const recentSamples = samples.filter(
+      (t) => now - t < this.config.rateWindowMs,
+    );
+
     if (recentSamples.length < 2) return 0;
 
-    const timeSpanMinutes = (recentSamples[recentSamples.length - 1] - recentSamples[0]) / 60000;
+    const timeSpanMinutes =
+      (recentSamples[recentSamples.length - 1] - recentSamples[0]) / 60000;
     if (timeSpanMinutes <= 0) return 0;
 
     return recentSamples.length / timeSpanMinutes;
@@ -439,7 +495,11 @@ export class AnomalyDetector {
   /**
    * Calculate z-score
    */
-  private calculateZScore(currentRate: number, mean: number, stdDev: number): number {
+  private calculateZScore(
+    currentRate: number,
+    mean: number,
+    stdDev: number,
+  ): number {
     if (stdDev === 0) return 0;
     return (currentRate - mean) / stdDev;
   }
@@ -451,36 +511,46 @@ export class AnomalyDetector {
     zScore: number,
     profile: UserBehaviorProfile,
     currentHour: number,
-    currentDay: number
+    currentDay: number,
   ): AnomalyType | null {
     // Check for sudden spike
     if (zScore > this.config.zScoreThreshold) {
-      return 'SUDDEN_SPIKE';
+      return "SUDDEN_SPIKE";
     }
 
     // Check for gradual increase (EMA significantly above mean)
-    const emaDeviation = (profile.exponentialMovingAvg - profile.meanRate) / profile.meanRate;
-    if (emaDeviation > 0.5 && profile.exponentialMovingAvg > profile.meanRate * 1.5) {
-      return 'GRADUAL_INCREASE';
+    const emaDeviation =
+      (profile.exponentialMovingAvg - profile.meanRate) / profile.meanRate;
+    if (
+      emaDeviation > 0.5 &&
+      profile.exponentialMovingAvg > profile.meanRate * 1.5
+    ) {
+      return "GRADUAL_INCREASE";
     }
 
     // Check for unusual timing
-    if (!profile.typicalHours.includes(currentHour) && profile.typicalHours.length > 0) {
+    if (
+      !profile.typicalHours.includes(currentHour) &&
+      profile.typicalHours.length > 0
+    ) {
       if (zScore > this.config.zScoreThreshold * 0.7) {
-        return 'UNUSUAL_TIMING';
+        return "UNUSUAL_TIMING";
       }
     }
 
     // Check for pattern deviation
-    if (!profile.typicalDays.includes(currentDay) && profile.typicalDays.length > 0) {
+    if (
+      !profile.typicalDays.includes(currentDay) &&
+      profile.typicalDays.length > 0
+    ) {
       if (zScore > this.config.zScoreThreshold * 0.7) {
-        return 'PATTERN_DEVIATION';
+        return "PATTERN_DEVIATION";
       }
     }
 
     // Check for behavioral anomaly (high risk score + elevated rate)
     if (profile.riskScore > 50 && zScore > this.config.zScoreThreshold * 0.5) {
-      return 'BEHAVIORAL_ANOMALY';
+      return "BEHAVIORAL_ANOMALY";
     }
 
     return null;
@@ -489,14 +559,17 @@ export class AnomalyDetector {
   /**
    * Calculate confidence score
    */
-  private calculateConfidence(zScore: number, anomalyType: AnomalyType | null): number {
+  private calculateConfidence(
+    zScore: number,
+    anomalyType: AnomalyType | null,
+  ): number {
     if (!anomalyType) return 0;
 
     // Base confidence from z-score
     let confidence = Math.min(1, zScore / (this.config.zScoreThreshold * 2));
 
     // Boost confidence for certain anomaly types
-    if (anomalyType === 'SUDDEN_SPIKE') {
+    if (anomalyType === "SUDDEN_SPIKE") {
       confidence = Math.min(1, confidence + 0.2);
     }
 
@@ -509,27 +582,27 @@ export class AnomalyDetector {
   private getRecommendedAction(
     confidence: number,
     anomalyType: AnomalyType | null,
-    riskScore: number
-  ): 'allow' | 'challenge' | 'throttle' | 'block' {
-    if (!anomalyType) return 'allow';
+    riskScore: number,
+  ): "allow" | "challenge" | "throttle" | "block" {
+    if (!anomalyType) return "allow";
 
     // High confidence + high risk = block
     if (confidence > 0.8 && riskScore > 70) {
-      return 'block';
+      return "block";
     }
 
     // Medium-high confidence = throttle
     if (confidence > 0.6) {
-      return 'throttle';
+      return "throttle";
     }
 
     // Medium confidence = challenge
     if (confidence > 0.4) {
-      return 'challenge';
+      return "challenge";
     }
 
     // Low confidence = allow but monitor
-    return 'allow';
+    return "allow";
   }
 
   /**
@@ -539,17 +612,17 @@ export class AnomalyDetector {
     zScore: number,
     currentRate: number,
     profile: UserBehaviorProfile,
-    anomalyType: AnomalyType | null
+    anomalyType: AnomalyType | null,
   ): string {
     if (!anomalyType) {
-      return 'Request rate within normal parameters';
+      return "Request rate within normal parameters";
     }
 
     const explanations: Record<AnomalyType, string> = {
       SUDDEN_SPIKE: `Sudden spike detected: ${currentRate.toFixed(1)} req/min vs expected ${profile.meanRate.toFixed(1)} req/min (z-score: ${zScore.toFixed(2)})`,
       GRADUAL_INCREASE: `Gradual increase in request rate detected over time`,
-      UNUSUAL_TIMING: `Request at unusual hour (user typically active at hours: ${profile.typicalHours.sort((a, b) => a - b).join(', ')})`,
-      PATTERN_DEVIATION: `Request on unusual day (user typically active on days: ${profile.typicalDays.map(d => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d]).join(', ')})`,
+      UNUSUAL_TIMING: `Request at unusual hour (user typically active at hours: ${profile.typicalHours.sort((a, b) => a - b).join(", ")})`,
+      PATTERN_DEVIATION: `Request on unusual day (user typically active on days: ${profile.typicalDays.map((d) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]).join(", ")})`,
       BEHAVIORAL_ANOMALY: `Behavioral anomaly: elevated rate combined with high risk score (${profile.riskScore})`,
     };
 
@@ -595,13 +668,17 @@ export class AnomalyDetector {
    * Cleanup old profiles
    */
   async cleanupOldProfiles(maxAgeDays: number = 30): Promise<number> {
-    const cutoff = Date.now() - (maxAgeDays * 24 * 60 * 60 * 1000);
+    const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
     const profileIds = await this.getProfileIds(1000);
     let cleaned = 0;
 
     for (const userId of profileIds) {
       const profile = await this.getProfile(userId);
-      if (profile && profile.lastUpdated < cutoff && profile.anomalyCount === 0) {
+      if (
+        profile &&
+        profile.lastUpdated < cutoff &&
+        profile.anomalyCount === 0
+      ) {
         await this.redis.del(this.getProfileKey(userId));
         // Also delete associated samples
         const samplesKey = this.getSamplesKey(userId);
@@ -649,6 +726,8 @@ export class AnomalyDetector {
 // FACTORY
 // ============================================================================
 
-export function createAnomalyDetector(config?: Partial<AnomalyDetectionConfig>): AnomalyDetector {
+export function createAnomalyDetector(
+  config?: Partial<AnomalyDetectionConfig>,
+): AnomalyDetector {
   return new AnomalyDetector(config);
 }

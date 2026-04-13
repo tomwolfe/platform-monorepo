@@ -13,7 +13,7 @@ import {
   isValidTxHash,
   verifyTransaction,
 } from "@repo/shared/utils/web3-verification";
-import { AppConfig } from "@repo/shared";
+import { AppConfig, ERROR_CODES } from "@repo/shared";
 import { CheckoutError } from "./validation";
 import { rollbackReplayGuard } from "@repo/shared/middleware/web3-replay-guard";
 import { Logger } from "@repo/shared";
@@ -28,12 +28,12 @@ const logger = new Logger({ serviceName: "checkout-web3-verify" });
  * Safely coerce a string to a 0x-prefixed hex string.
  * Throws a controlled CheckoutError if the format is invalid.
  */
-function safeToHex(value: string, label: string): `0x${string}` {
+export function safeToHex(value: string, label: string): `0x${string}` {
   if (!isHex(value)) {
     throw new CheckoutError(
       `Invalid hex format for ${label}: expected 0x-prefixed string`,
       400,
-      "VALIDATION_ERROR",
+      ERROR_CODES.VALIDATION_ERROR,
       { details: { label, value } },
     );
   }
@@ -44,12 +44,12 @@ function safeToHex(value: string, label: string): `0x${string}` {
  * Safely coerce a string to an Ethereum address.
  * Throws a controlled CheckoutError if the format is invalid.
  */
-function safeToAddress(value: string | null | undefined): `0x${string}` {
+export function safeToAddress(value: string | null | undefined): `0x${string}` {
   if (!value || !isAddress(value)) {
     throw new CheckoutError(
       `Invalid Ethereum address format`,
       400,
-      "VALIDATION_ERROR",
+      ERROR_CODES.VALIDATION_ERROR,
       { details: { value } },
     );
   }
@@ -107,7 +107,7 @@ export async function verifyOnChainTransaction(
     throw new CheckoutError(
       result.error || "Transaction verification failed",
       400,
-      "VALIDATION_ERROR",
+      ERROR_CODES.VALIDATION_ERROR,
     );
   }
 
@@ -136,7 +136,7 @@ export async function verifyTransactionData(
         throw new CheckoutError(
           "Transaction data mismatch. Reservation ID not found in transaction data.",
           400,
-          "VALIDATION_ERROR",
+          ERROR_CODES.VALIDATION_ERROR,
           {
             details: {
               expected: targetReservationId,
@@ -160,7 +160,7 @@ export function validateTransactionHash(txHash: string): void {
     throw new CheckoutError(
       "Invalid transaction hash format",
       400,
-      "VALIDATION_ERROR",
+      ERROR_CODES.VALIDATION_ERROR,
     );
   }
 }

@@ -22,6 +22,9 @@
  */
 
 import { z } from "zod";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "privacy-gateway" });
 
 // ============================================================================
 // PII TYPES AND PATTERNS
@@ -270,10 +273,10 @@ export class PrivacyGatewayService {
         scrubbedText.substring(pii.endIndex);
     }
 
-    console.log(
-      `[PrivacyGateway] Scrubbed ${detectedPii.length} PII entities: ` +
-        detectedPii.map((p) => `${p.type}(${p.token})`).join(", "),
-    );
+    logger.info("PII entities scrubbed", {
+      scrubbedCount: detectedPii.length,
+      piiTypes: detectedPii.map((p) => p.type),
+    });
 
     return {
       scrubbedText,
@@ -319,8 +322,8 @@ export class PrivacyGatewayService {
           "CRITICAL: Privacy Gateway encryption requested but no encryptionKey provided. Refusing to store unencrypted PII.",
         );
       }
-      console.warn(
-        "[PrivacyGateway] Encryption requested but no key provided. Using base64 fallback for development ONLY.",
+      logger.warn(
+        "Encryption requested but no key provided, using base64 fallback (development ONLY)",
       );
       return {
         ciphertext: btoa(value),
@@ -365,7 +368,9 @@ export class PrivacyGatewayService {
         tag: this.uint8ArrayToBase64(tag),
       };
     } catch (error) {
-      console.error("[PrivacyGateway] Encryption failed:", error);
+      logger.error("PrivacyGateway encryption failed", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
       throw new Error(
         `Encryption failed: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -401,9 +406,12 @@ export class PrivacyGatewayService {
       } else {
         // Key rotation: need to fetch the old key from secrets manager
         // For now, use current key (will fail if key actually rotated)
-        console.warn(
-          `[PrivacyGateway] Decrypting with different keyId: ${token.keyId}. ` +
-            "Ensure old key is still available.",
+        logger.warn(
+          "Decrypting with different keyId, ensure old key is available",
+          {
+            tokenKeyId: token.keyId,
+            currentKeyId: this.config.keyId,
+          },
         );
         cryptoKey = await this.getOrCreateCryptoKey(this.config.encryptionKey);
       }
@@ -431,7 +439,9 @@ export class PrivacyGatewayService {
       const decoder = new TextDecoder();
       return decoder.decode(decrypted);
     } catch (error) {
-      console.error("[PrivacyGateway] Decryption failed:", error);
+      logger.error("PrivacyGateway decryption failed", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
       throw new Error(
         `Decryption failed: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -475,7 +485,9 @@ export class PrivacyGatewayService {
 
       return cryptoKey;
     } catch (error) {
-      console.error("[PrivacyGateway] Failed to import encryption key:", error);
+      logger.error("Failed to import encryption key", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
       throw new Error(
         `Key import failed: ${error instanceof Error ? error.message : String(error)}`,
       );

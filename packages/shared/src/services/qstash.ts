@@ -20,6 +20,9 @@
 
 import { Client } from "@upstash/qstash";
 import { signAsymmetricJWT } from "@repo/auth";
+import { Logger } from "../logger";
+
+const logger = new Logger({ serviceName: "qstash-service" });
 
 // ============================================================================
 // CONFIGURATION
@@ -114,21 +117,18 @@ export class QStashService {
         token,
         retry: this.config.retry,
       });
-      console.log(
-        "[QStashService] Initialized with retry config:",
-        this.config.retry,
-      );
+      logger.info("QStashService initialized", {
+        retryConfig: this.config.retry,
+      });
     } else {
       // PRODUCTION HARDENING: Clear error message for missing QStash
       if (process.env.NODE_ENV === "production") {
-        console.error(
-          "[QStashService] CRITICAL: QStash not configured in production. " +
-            "Set QSTASH_TOKEN or UPSTASH_QSTASH_TOKEN environment variable. " +
-            "Saga execution will fail without QStash.",
+        logger.error(
+          "CRITICAL: QStash not configured in production. Set QSTASH_TOKEN or UPSTASH_QSTASH_TOKEN environment variable. Saga execution will fail without QStash.",
         );
       } else {
-        console.warn(
-          "[QStashService] QStash not configured - will fallback to fetch(self) for development",
+        logger.warn(
+          "QStash not configured - will fallback to fetch(self) for development",
         );
       }
     }
@@ -173,9 +173,7 @@ export class QStashService {
       // Quick ping by getting topics (lightweight operation)
       await client.topics;
 
-      console.log(
-        "[QStashService] Preflight check passed - QStash is reachable",
-      );
+      logger.info("QStash preflight check passed - QStash is reachable");
       return { configured: true, canConnect: true };
     } catch (error) {
       const errorMsg = `QStash connectivity test failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -184,7 +182,7 @@ export class QStashService {
         throw new Error(`[QStashService] ${errorMsg}`);
       }
 
-      console.warn("[QStashService] Preflight check warning:", errorMsg);
+      logger.warn("QStash preflight check warning", { error: errorMsg });
       return { configured: true, canConnect: false, error: errorMsg };
     }
   }
@@ -260,9 +258,10 @@ export class QStashService {
         );
       }
       // Development only: allow fallback to fetch
-      console.warn(
-        "[QStashService] QStash not configured, using fallback fetch (dev only)",
-      );
+      logger.warn("QStash not configured, using fallback fetch (dev only)", {
+        executionId: options.executionId,
+        stepIndex: options.stepIndex,
+      });
       await this.fallbackFetch(options);
       return null;
     }
@@ -311,15 +310,22 @@ export class QStashService {
 
       const messageId = "messageId" in result ? result.messageId : undefined;
 
-      console.log(
-        `[QStashService] Triggered next step for execution ${options.executionId} (step ${options.stepIndex})${messageId ? ` [message: ${messageId}]` : ""}${options.traceId ? ` [trace: ${options.traceId}]` : ""}`,
-      );
+      logger.info("Triggered next step", {
+        executionId: options.executionId,
+        stepIndex: options.stepIndex,
+        messageId,
+        traceId: options.traceId,
+      });
 
       return messageId || null;
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      console.error("[QStashService] Failed to trigger next step:", error);
+      logger.error("Failed to trigger next step", {
+        error: errorMessage,
+        executionId: options.executionId,
+        stepIndex: options.stepIndex,
+      });
 
       // Throw structured async boundary error for DLQ routing
       const boundaryError = retryableError(
@@ -404,9 +410,10 @@ export class QStashService {
     const client = this.getClient();
 
     if (!client || !this.config?.enabled) {
-      console.warn(
-        "[QStashService] QStash not configured, cannot schedule delayed execution",
-      );
+      logger.warn("QStash not configured, cannot schedule delayed execution", {
+        executionId: options.executionId,
+        stepIndex: options.stepIndex,
+      });
       return null;
     }
 
@@ -445,15 +452,23 @@ export class QStashService {
 
       const messageId = "messageId" in result ? result.messageId : undefined;
 
-      console.log(
-        `[QStashService] Scheduled step for execution ${options.executionId} (step ${options.stepIndex}) with delay ${options.delay}${messageId ? ` [message: ${messageId}]` : ""}`,
-      );
+      logger.info("Scheduled step with delay", {
+        executionId: options.executionId,
+        stepIndex: options.stepIndex,
+        delay: options.delay,
+        messageId,
+      });
 
       return messageId || null;
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      console.error("[QStashService] Failed to schedule step:", error);
+      logger.error("Failed to schedule step", {
+        error: errorMessage,
+        executionId: options.executionId,
+        stepIndex: options.stepIndex,
+        delay: options.delay,
+      });
 
       // Throw structured async boundary error for DLQ routing
       throw retryableError(
@@ -506,8 +521,12 @@ export class QStashService {
         );
       }
       // Development: fallback to sequential execution
-      console.warn(
-        "[QStashService] QStash not configured, falling back to sequential execution (dev only)",
+      logger.warn(
+        "QStash not configured, falling back to sequential execution (dev only)",
+        {
+          executionId: options.executionId,
+          stepIndices: options.stepIndices,
+        },
       );
       for (const stepIndex of options.stepIndices) {
         await this.fallbackFetch({ ...options, stepIndex });
@@ -564,23 +583,30 @@ export class QStashService {
           messageIds.push(messageId);
         }
 
-        console.log(
-          `[QStashService] Parallel trigger for execution ${options.executionId} ` +
-            `(step ${stepIndex}) [message: ${messageId || "none"}]`,
-        );
+        logger.debug("Parallel step triggered", {
+          executionId: options.executionId,
+          stepIndex,
+          messageId,
+        });
       });
 
       await Promise.all(publishPromises);
 
-      console.log(
-        `[QStashService] Triggered ${messageIds.length} parallel steps for execution ${options.executionId}`,
-      );
+      logger.info("Triggered parallel steps", {
+        executionId: options.executionId,
+        stepCount: messageIds.length,
+        messageIds,
+      });
 
       return messageIds;
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      console.error("[QStashService] Failed to trigger parallel steps:", error);
+      logger.error("Failed to trigger parallel steps", {
+        error: errorMessage,
+        executionId: options.executionId,
+        stepIndices: options.stepIndices,
+      });
 
       // Throw structured async boundary error for DLQ routing
       const boundaryError = retryableError(
@@ -620,9 +646,11 @@ export class QStashService {
     const client = this.getClient();
 
     if (!client || !this.config?.enabled) {
-      console.warn(
-        "[QStashService] QStash not configured, cannot schedule execution",
-      );
+      logger.warn("QStash not configured, cannot schedule execution", {
+        executionId: options.executionId,
+        stepIndex: options.stepIndex,
+        scheduledTime: time,
+      });
       return null;
     }
 
@@ -666,15 +694,23 @@ export class QStashService {
 
       const messageId = "messageId" in result ? result.messageId : undefined;
 
-      console.log(
-        `[QStashService] Scheduled step for execution ${options.executionId} (step ${options.stepIndex}) at ${time}${messageId ? ` [message: ${messageId}]` : ""}`,
-      );
+      logger.info("Scheduled step at time", {
+        executionId: options.executionId,
+        stepIndex: options.stepIndex,
+        scheduledTime: time,
+        messageId,
+      });
 
       return messageId || null;
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      console.error("[QStashService] Failed to schedule step at:", error);
+      logger.error("Failed to schedule step at", {
+        error: errorMessage,
+        executionId: options.executionId,
+        stepIndex: options.stepIndex,
+        scheduledTime: time,
+      });
 
       // Throw structured async boundary error for DLQ routing
       throw retryableError(
@@ -720,9 +756,9 @@ export class QStashService {
         );
       }
       // Development only: allow fallback to fetch
-      console.warn(
-        "[QStashService] QStash not configured, using fallback fetch (dev only)",
-      );
+      logger.warn("QStash not configured, using fallback fetch (dev only)", {
+        url: options.url,
+      });
       await this.fallbackPublish(options);
       return null;
     }
@@ -741,15 +777,19 @@ export class QStashService {
       });
 
       const messageId = "messageId" in result ? result.messageId : undefined;
-      console.log(
-        `[QStashService] Published message to ${options.url}${messageId ? ` [message: ${messageId}]` : ""}`,
-      );
+      logger.info("Published message to URL", {
+        url: options.url,
+        messageId,
+      });
 
       return messageId || null;
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      console.error("[QStashService] Failed to publish message:", error);
+      logger.error("Failed to publish message", {
+        error: errorMessage,
+        url: options.url,
+      });
 
       // Throw structured async boundary error for DLQ routing
       const boundaryError = retryableError(
@@ -801,21 +841,27 @@ export class QStashService {
         })
           .then((response) => {
             if (!response.ok) {
-              console.error(
-                `[FallbackPublish] Failed to call URL: ${response.status} ${response.statusText}`,
-              );
+              logger.error("FallbackPublish failed", {
+                url: options.url,
+                status: response.status,
+                statusText: response.statusText,
+              });
             } else {
-              console.log(`[FallbackPublish] URL called successfully`);
+              logger.info("FallbackPublish succeeded", { url: options.url });
             }
           })
           .catch((error) => {
-            console.error(`[FallbackPublish] Error calling URL:`, error);
+            logger.error("FallbackPublish error", {
+              error: error instanceof Error ? error.message : String(error),
+              url: options.url,
+            });
           }),
       );
-    } catch (_error) {
+    } catch {
       // Fallback to setTimeout if after() is not available (non-Next.js environment)
-      console.warn(
-        "[FallbackPublish] after() not available, using setTimeout (dev only)",
+      logger.warn(
+        "FallbackPublish after() not available, using setTimeout (dev only)",
+        { url: options.url },
       );
       setTimeout(async () => {
         try {
@@ -832,14 +878,19 @@ export class QStashService {
           });
 
           if (!response.ok) {
-            console.error(
-              `[FallbackPublish] Failed to call URL: ${response.status} ${response.statusText}`,
-            );
+            logger.error("FallbackPublish failed", {
+              url: options.url,
+              status: response.status,
+              statusText: response.statusText,
+            });
           } else {
-            console.log(`[FallbackPublish] URL called successfully`);
+            logger.info("FallbackPublish succeeded", { url: options.url });
           }
         } catch (error) {
-          console.error(`[FallbackPublish] Error calling URL:`, error);
+          logger.error("FallbackPublish error", {
+            error: error instanceof Error ? error.message : String(error),
+            url: options.url,
+          });
         }
       }, 200);
     }
@@ -897,23 +948,40 @@ export class QStashService {
         })
           .then((response) => {
             if (!response.ok) {
-              console.error(
-                `[FallbackFetch] Failed to trigger next step: ${response.status} ${response.statusText}`,
-              );
+              logger.error("FallbackFetch failed", {
+                url,
+                executionId: options.executionId,
+                stepIndex: options.stepIndex,
+                status: response.status,
+                statusText: response.statusText,
+                traceId: options.traceId,
+              });
             } else {
-              console.log(
-                `[FallbackFetch] Next step triggered successfully${options.traceId ? ` [trace: ${options.traceId}]` : ""}`,
-              );
+              logger.info("FallbackFetch succeeded", {
+                url,
+                executionId: options.executionId,
+                stepIndex: options.stepIndex,
+                traceId: options.traceId,
+              });
             }
           })
           .catch((error) => {
-            console.error(`[FallbackFetch] Error triggering next step:`, error);
+            logger.error("FallbackFetch error", {
+              error: error instanceof Error ? error.message : String(error),
+              url,
+              executionId: options.executionId,
+              stepIndex: options.stepIndex,
+            });
           });
       });
-    } catch (_error) {
+    } catch {
       // Fallback to setTimeout if after() is not available (non-Next.js environment)
-      console.warn(
-        "[FallbackFetch] after() not available, using setTimeout (dev only)",
+      logger.warn(
+        "FallbackFetch after() not available, using setTimeout (dev only)",
+        {
+          executionId: options.executionId,
+          stepIndex: options.stepIndex,
+        },
       );
       setTimeout(async () => {
         try {
@@ -954,16 +1022,29 @@ export class QStashService {
           });
 
           if (!response.ok) {
-            console.error(
-              `[FallbackFetch] Failed to trigger next step: ${response.status} ${response.statusText}`,
-            );
+            logger.error("FallbackFetch failed", {
+              url,
+              executionId: options.executionId,
+              stepIndex: options.stepIndex,
+              status: response.status,
+              statusText: response.statusText,
+              traceId: options.traceId,
+            });
           } else {
-            console.log(
-              `[FallbackFetch] Next step triggered successfully${options.traceId ? ` [trace: ${options.traceId}]` : ""}`,
-            );
+            logger.info("FallbackFetch succeeded", {
+              url,
+              executionId: options.executionId,
+              stepIndex: options.stepIndex,
+              traceId: options.traceId,
+            });
           }
         } catch (error) {
-          console.error(`[FallbackFetch] Error triggering next step:`, error);
+          logger.error("FallbackFetch error", {
+            error: error instanceof Error ? error.message : String(error),
+            url,
+            executionId: options.executionId,
+            stepIndex: options.stepIndex,
+          });
         }
       }, 200); // 200ms delay to allow response to complete
     }

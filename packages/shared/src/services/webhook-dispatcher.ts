@@ -544,7 +544,12 @@ export function withInternalWebhookAuth<T>(
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      console.error("[withInternalWebhookAuth] Error:", error);
+      const webhookAuthLogger = new Logger({
+        serviceName: "internal-webhook-auth",
+      });
+      webhookAuthLogger.error("withInternalWebhookAuth handler error", {
+        errorMessage,
+      });
 
       // Return structured error response
       return NextResponse.json(

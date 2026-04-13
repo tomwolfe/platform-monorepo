@@ -7,9 +7,14 @@
  * @see Task 3: Decompose God Orchestrators
  */
 
-import { OrchestrationStep, OrchestrationContext } from "./step-registry-types";
+import {
+  OrchestrationStep,
+  OrchestrationContext,
+} from "../step-registry-types";
 import { parseIntent, ParseResult } from "@/lib/engine/intent";
 import { createTracer } from "@/lib/engine/tracing";
+import { setIntent } from "@/lib/engine/state-machine";
+import { saveExecutionState } from "@/lib/engine/memory";
 
 export class ParseIntentStep implements OrchestrationStep {
   name = "parse_intent";
@@ -33,9 +38,17 @@ export class ParseIntentStep implements OrchestrationStep {
       },
     );
 
+    // Update state with intent and persist
+    let state = context.state;
+    if (state) {
+      state = setIntent(state, parseResult.intent);
+      await saveExecutionState(state);
+    }
+
     return {
       ...context,
       intent: parseResult.intent,
+      state,
       correlations: {
         ...context.correlations,
         parseLatencyMs: parseResult.latency_ms,

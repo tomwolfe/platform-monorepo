@@ -7,10 +7,15 @@
  * @see Task 3: Decompose God Orchestrators
  */
 
-import { OrchestrationStep, OrchestrationContext } from "./step-registry-types";
+import {
+  OrchestrationStep,
+  OrchestrationContext,
+} from "../step-registry-types";
 import { generatePlan, PlannerResult } from "@/lib/engine/planner";
 import { getRegistryManager } from "@/lib/engine/registry";
 import { createTracer } from "@/lib/engine/tracing";
+import { setPlan } from "@/lib/engine/state-machine";
+import { saveExecutionState } from "@/lib/engine/memory";
 
 export class GeneratePlanStep implements OrchestrationStep {
   name = "generate_plan";
@@ -46,9 +51,17 @@ export class GeneratePlanStep implements OrchestrationStep {
       },
     );
 
+    // Update state with plan and persist
+    let state = context.state;
+    if (state) {
+      state = setPlan(state, planResult.plan);
+      await saveExecutionState(state);
+    }
+
     return {
       ...context,
       plan: planResult.plan,
+      state,
       correlations: {
         ...context.correlations,
         planLatencyMs: planResult.latency_ms,

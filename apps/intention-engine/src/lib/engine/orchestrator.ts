@@ -2,13 +2,13 @@
  * Execution Orchestrator
  *
  * Central orchestration service for intention parsing, planning, and execution triggering.
- * Extracted from the Next.js route handler to improve testability and separation of concerns.
+ * Refactored to use step-based composition via executeStepSequence.
+ *
+ * @see orchestrator/steps/ for individual step implementations
  */
 
 import { randomUUID } from "crypto";
 import { withNervousSystemTracing } from "@repo/shared/tracing";
-import { QStashService } from "@repo/shared";
-import { AppConfig } from "@repo/shared";
 import { startTrace } from "@/lib/observability";
 import { saveUserInteractionContext } from "@/lib/context-persistence";
 import {
@@ -19,25 +19,22 @@ import {
   ExecutionTrace,
   ExecutionResult,
 } from "@/lib/engine/types";
-import {
-  parseIntent,
-  ParseResult,
-  validateIntentConfidence,
-} from "@/lib/engine/intent";
-import { generatePlan, PlannerResult } from "@/lib/engine/planner";
-import { getRegistryManager } from "@/lib/engine/registry";
-import {
-  createInitialState,
-  transitionState,
-  setIntent,
-  setPlan,
-} from "@/lib/engine/state-machine";
-import { saveExecutionState, loadExecutionState } from "@/lib/engine/memory";
 import { createTracer } from "@/lib/engine/tracing";
-import { verifyPlan, DEFAULT_SAFETY_POLICY } from "@/lib/engine/verifier";
-
-// Internal system key for QStash-triggered requests - uses strict getter
-const INTERNAL_SYSTEM_KEY = AppConfig.getInternalSystemKey();
+import { loadExecutionState } from "@/lib/engine/memory";
+import {
+  executeStepSequence,
+  getStepRegistry,
+} from "./orchestrator/step-registry";
+import {
+  ExecutionRecord,
+  StepStatus,
+} from "./orchestrator/step-registry-types";
+import { ParseIntentStep } from "./orchestrator/steps/parse-intent-step";
+import { ValidateIntentStep } from "./orchestrator/steps/validate-intent-step";
+import { GeneratePlanStep } from "./orchestrator/steps/generate-plan-step";
+import { VerifyPlanStep } from "./orchestrator/steps/verify-plan-step";
+import { TriggerExecutionStep } from "./orchestrator/steps/trigger-execution-step";
+import { InitializeStateStep } from "./orchestrator/steps/initialize-state-step";
 
 export interface OrchestrationContext {
   execution_id?: string;
@@ -71,7 +68,71 @@ export interface OrchestrationResult {
 }
 
 /**
+ * Build the step sequence for orchestration
+ */
+function buildStepSequence(options: OrchestrationOptions) {
+  const registry = getStepRegistry();
+  registry.clear();
+
+  // Register all steps
+  registry.register(new InitializeStateStep());
+  registry.register(new ParseIntentStep());
+  registry.register(new ValidateIntentStep());
+  registry.register(new GeneratePlanStep());
+  registry.register(new VerifyPlanStep());
+  registry.register(new TriggerExecutionStep());
+
+  // Define execution order
+  registry.defineSequence([
+    "initialize_state",
+    "parse_intent",
+    "validate_intent",
+    "generate_plan",
+    "verify_plan",
+    "trigger_execution",
+  ]);
+
+  return registry.getSequence();
+}
+
+/**
+ * Build the result object from context and execution metadata
+ */
+function buildResult(
+  executionId: string,
+  startTime: number,
+  context: import("./step-registry-types").OrchestrationContext,
+  executionLog: ExecutionRecord[],
+  status: ExecutionStatus,
+  success: boolean,
+  error?: { code: string; message: string },
+): OrchestrationResult {
+  // Calculate total tokens from execution log
+  const totalTokens = 0; // TODO: aggregate from correlations when available
+
+  return {
+    success,
+    execution_id: executionId,
+    status,
+    intent: context.intent,
+    plan: context.plan,
+    error,
+    trace: context.trace || { entries: [], total_token_usage: { totalTokens } },
+    metadata: {
+      duration_ms: Math.round(performance.now() - startTime),
+      total_tokens: totalTokens,
+      step_count: executionLog.length,
+      trace_id: executionId,
+      total_ms: Math.round(performance.now() - startTime),
+    },
+  };
+}
+
+/**
  * Orchestrates the full intention parsing, planning, and execution triggering flow.
+ *
+ * Uses step-based composition via executeStepSequence for better testability,
+ * rollback support, and separation of concerns.
  *
  * @param input - User's natural language input
  * @param context - Execution context (execution_id, user_context)
@@ -90,85 +151,63 @@ export async function orchestrateExecution(
     async ({ correlationId }) => {
       const span = startTrace("orchestration", correlationId);
 
-      // Initialize Registry and Discovery
-      const registryManager = getRegistryManager();
-      await registryManager.discoverRemoteTools();
-
-      // Initialize tracer
-      const tracer = createTracer(executionId);
-      tracer.addSystemEntry("execution_started", {
-        input: input.slice(0, 100),
-      });
-
       try {
-        // Step 1: Create initial state
-        let state = createInitialState(executionId);
-        tracer.addStateTransitionEntry("none", "RECEIVED", true);
+        // Build step sequence
+        const steps = buildStepSequence(options);
 
-        // Persist initial state
-        await saveExecutionState(state);
+        // Build initial context for step execution
+        const stepContext = {
+          input,
+          executionId,
+          userContext: context.user_context,
+          skipPlanning: options.skip_planning,
+          requireConfirmation: options.require_confirmation,
+          startTime,
+        };
 
-        // Step 2: Parse intent
-        tracer.addSystemEntry("parsing_intent");
-        const parseResult: ParseResult = await parseIntent(input, {
-          execution_id: executionId,
-          user_context: context.user_context,
+        // Execute steps in sequence
+        const {
+          context: finalContext,
+          executionLog,
+          success,
+        } = await executeStepSequence(steps, stepContext, (record) => {
+          // Optional: hook for per-step completion callbacks
+          // e.g., persist step results, update metrics, etc.
         });
 
-        // Add intent trace entry
-        tracer.addIntentEntry(
-          input,
-          parseResult.intent,
-          parseResult.latency_ms,
-          parseResult.intent.metadata.model_id || "unknown",
-          {
-            prompt: parseResult.token_usage.prompt_tokens,
-            completion: parseResult.token_usage.completion_tokens,
-          },
-        );
+        // Handle post-sequence logic
+        if (!success) {
+          // Determine failure reason from execution log
+          const failedRecord = executionLog.find(
+            (r) => r.status === StepStatus.FAILED,
+          );
+          const error = failedRecord?.error;
+          const errorCode =
+            error && "code" in error
+              ? String((error as any).code)
+              : "ORCHESTRATION_ERROR";
+          const errorMessage = error?.message || "Step execution failed";
 
-        // Update state with intent
-        state = setIntent(state, parseResult.intent);
-        await saveExecutionState(state);
-
-        // Validate intent confidence and type
-        const validation = validateIntentConfidence(parseResult.intent);
-
-        if (!validation.valid) {
-          tracer.addSystemEntry("intent_rejected", {
-            reason: validation.reason,
-          });
-
-          const traceResult = tracer.finalize();
+          const result = buildResult(
+            executionId,
+            startTime,
+            finalContext,
+            executionLog,
+            "REJECTED",
+            false,
+            { code: errorCode, message: errorMessage },
+          );
           span.end();
-
-          return {
-            success: false,
-            execution_id: executionId,
-            status: "REJECTED",
-            intent: parseResult.intent,
-            error: {
-              code: "INTENT_VALIDATION_FAILED",
-              message: validation.reason || "Intent validation failed",
-            },
-            trace: traceResult.trace,
-            metadata: {
-              duration_ms: Math.round(performance.now() - startTime),
-              total_tokens: traceResult.totalTokenUsage.totalTokens,
-              trace_id: executionId,
-              total_ms: Math.round(performance.now() - startTime),
-            },
-          };
+          return result;
         }
 
-        // Save interaction context for conversational continuity (Objective 5)
-        // Extract user ID from context if available
+        // Save interaction context for conversational continuity
         const userId = context.user_context?.userId as string | undefined;
-        if (userId) {
+        if (userId && finalContext.intent) {
           await saveUserInteractionContext(userId, {
-            intentType: parseResult.intent.type,
-            rawText: parseResult.intent.rawText,
-            parameters: parseResult.intent.parameters as Record<
+            intentType: finalContext.intent.type,
+            rawText: finalContext.intent.rawText,
+            parameters: finalContext.intent.parameters as Record<
               string,
               unknown
             >,
@@ -177,171 +216,29 @@ export async function orchestrateExecution(
           });
         }
 
-        // Check if intent requires clarification
-        if (parseResult.intent.requires_clarification) {
-          tracer.addSystemEntry("clarification_required", {
-            prompt: parseResult.intent.clarification_prompt,
-          });
+        // Check if plan was generated (planning may have been skipped)
+        const hasPlan = !!finalContext.plan;
 
-          const traceResult = tracer.finalize();
-          span.end();
-
-          return {
-            success: false,
-            execution_id: executionId,
-            status: "REJECTED",
-            intent: parseResult.intent,
-            error: {
-              code: "CLARIFICATION_REQUIRED",
-              message:
-                parseResult.intent.clarification_prompt ||
-                "Additional information needed",
-            },
-            trace: traceResult.trace,
-            metadata: {
-              duration_ms: Math.round(performance.now() - startTime),
-              total_tokens: traceResult.totalTokenUsage.totalTokens,
-              trace_id: executionId,
-              total_ms: Math.round(performance.now() - startTime),
-            },
-          };
-        }
-
-        // Step 3: Generate plan (unless skipped)
-        let plan: Plan | undefined;
-        if (!options.skip_planning) {
-          tracer.addSystemEntry("generating_plan");
-          const planResult: PlannerResult = await generatePlan(
-            parseResult.intent,
-            {
-              execution_id: executionId,
-              available_tools: registryManager.listAllTools(),
-            },
-          );
-
-          // Add planning trace entry
-          tracer.addPlanningEntry(
-            { intent_type: parseResult.intent.type },
-            {
-              plan_id: planResult.plan.id,
-              steps: planResult.plan.steps.length,
-            },
-            planResult.latency_ms,
-            planResult.trace_entry.model_id || "unknown",
-            {
-              prompt: planResult.token_usage.prompt_tokens,
-              completion: planResult.token_usage.completion_tokens,
-            },
-          );
-
-          plan = planResult.plan;
-
-          // Step 3.5: Deterministic Verification Gate
-          const verification = verifyPlan(plan, DEFAULT_SAFETY_POLICY);
-          if (!verification.valid) {
-            tracer.addSystemEntry("plan_rejected", {
-              reason: verification.reason,
-              violation: verification.violation,
-            });
-
-            // Transition state to REJECTED
-            state = transitionState(state, "REJECTED");
-            await saveExecutionState(state);
-
-            const traceResult = tracer.finalize();
-            span.end();
-
-            return {
-              success: false,
-              execution_id: executionId,
-              status: "REJECTED",
-              intent: parseResult.intent,
-              plan,
-              error: {
-                code: verification.violation || "PLAN_VALIDATION_FAILED",
-                message: verification.reason || "Plan verification failed",
-              },
-              trace: traceResult.trace,
-              metadata: {
-                duration_ms: Math.round(performance.now() - startTime),
-                total_tokens: traceResult.totalTokenUsage.totalTokens,
-                trace_id: executionId,
-                total_ms: Math.round(performance.now() - startTime),
-              },
-            };
-          }
-
-          state = setPlan(state, plan);
-          await saveExecutionState(state);
-        }
-
-        // Step 4: TRIGGER ASYNC EXECUTION VIA QSTASH (Vercel Hobby Pattern)
-        // Instead of executing synchronously, we trigger Step 0 via QStash and return immediately
-        if (plan) {
-          tracer.addSystemEntry("triggering_async_execution", {
-            step_count: plan.steps.length,
-          });
-
-          // Trigger the FIRST step via QStash
-          // This starts the recursive self-trigger chain
-          // CRITICAL: Pass trace context for distributed tracing
-          await QStashService.triggerNextStep({
-            executionId,
-            stepIndex: 0,
-            internalKey: INTERNAL_SYSTEM_KEY,
-            traceId: executionId, // Use executionId as initial traceId
-            correlationId: executionId,
-          });
-
-          // Finalize trace
-          const traceResult = tracer.finalize();
-          span.end();
-
-          // Return immediately - execution will happen asynchronously
-          return {
-            success: true,
-            execution_id: executionId,
-            status: "STARTED",
-            intent: parseResult.intent,
-            plan,
-            trace: traceResult.trace,
-            metadata: {
-              duration_ms: Math.round(performance.now() - startTime),
-              total_tokens: traceResult.totalTokenUsage.totalTokens,
-              step_count: plan.steps.length,
-              trace_id: executionId,
-              total_ms: Math.round(performance.now() - startTime),
-            },
-          };
-        } else {
-          // No plan to execute (planning skipped or no plan generated)
-          const traceResult = tracer.finalize();
-          span.end();
-
-          return {
-            success: true,
-            execution_id: executionId,
-            status: "PLANNED",
-            intent: parseResult.intent,
-            plan,
-            trace: traceResult.trace,
-            metadata: {
-              duration_ms: Math.round(performance.now() - startTime),
-              total_tokens: traceResult.totalTokenUsage.totalTokens,
-              trace_id: executionId,
-              total_ms: Math.round(performance.now() - startTime),
-            },
-          };
-        }
+        const result = buildResult(
+          executionId,
+          startTime,
+          finalContext,
+          executionLog,
+          hasPlan ? "STARTED" : "PLANNED",
+          true,
+        );
+        span.end();
+        return result;
       } catch (error) {
-        // Handle orchestration errors
+        // Handle orchestration-level errors (outside step sequence)
         const errorMessage =
           error instanceof Error ? error.message : String(error);
         const errorCode =
           error && typeof error === "object" && "code" in error
-            ? String(error.code)
+            ? String((error as any).code)
             : "ORCHESTRATION_ERROR";
 
+        const tracer = createTracer(executionId);
         tracer.addErrorEntry("system", errorCode, errorMessage);
         const traceResult = tracer.finalize();
         span.end();

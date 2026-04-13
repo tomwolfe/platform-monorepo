@@ -1,14 +1,6 @@
-import {
-  ToolDefinition as EngineToolDefinition,
-  ToolParameter,
-} from "../lib/engine/types";
+import { ToolParameter } from "../lib/engine/types";
 import { ToolDefinition as RegistryToolDefinition } from "../lib/tools/types";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  CallToolResult,
-} from "@modelcontextprotocol/sdk/types.js";
-import * as zod from "zod";
+import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { AllToolsMap, ToolInput, validateToolParams } from "@repo/mcp-protocol";
 import { mapJsonSchemaToZod } from "../lib/engine/schema-utils";
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
@@ -88,7 +80,8 @@ export class McpAdapter {
       }
 
       if (param.default_value !== undefined) {
-        schema.default = param.default_value as any;
+        // JSONSchema7 'default' accepts any valid JSON value
+        schema.default = param.default_value as JSONSchema7["default"];
       }
 
       return schema;

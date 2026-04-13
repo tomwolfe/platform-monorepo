@@ -24,6 +24,7 @@ export default defineConfig({
     timeout: 30000,
     reporters: ["verbose"],
     setupFiles: [
+      "./packages/auth/src/__tests__/vitest-setup.ts",
       "./apps/open-delivery/src/test/setup.ts",
       "./apps/table-stack/src/test/vitest-setup.ts",
       "./apps/intention-engine/src/test/vitest-setup.ts",

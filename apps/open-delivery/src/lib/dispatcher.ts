@@ -2,7 +2,11 @@
  * OpenDeliver Dispatcher Service
  *
  * Real-time driver matching and order assignment.
- * Replaces mock Math.random() driver simulation with actual driver pool management.
+ *
+ * Architecture:
+ * - Orchestration layer ONLY (DB calls, Redis, Ably notifications)
+ * - Business logic (scoring, vehicle calculation, bounding box)
+ *   delegated to pure functions in driver-scorer.ts
  *
  * Features:
  * - Queries active drivers from Postgres by trust score and availability
@@ -24,25 +28,20 @@ import {
 import { getRedisClient, ServiceNamespace, Logger } from "@repo/shared";
 const redis = getRedisClient(ServiceNamespace.OD);
 import { RealtimeService } from "@repo/shared";
-import { geocode, calculateHaversineDistance } from "@repo/shared/utils/geo";
+import { geocode } from "@repo/shared/utils/geo";
 import { randomUUID } from "crypto";
+import {
+  getRequiredVehicleType,
+  calculateDriverScore,
+  calculateBoundingBox,
+  type Driver,
+  type OrderItem,
+} from "./driver-scorer";
 
 const logger = new Logger({ serviceName: "open-delivery" });
 
-export interface Driver {
-  id: string;
-  clerkId: string;
-  fullName: string;
-  email: string;
-  phone?: string;
-  trustScore: number;
-  isActive: boolean;
-  vehicleType?: "bike" | "car" | "van" | "truck";
-  currentLat?: number;
-  currentLng?: number;
-  acceptedOrders?: number;
-  completedOrders?: number;
-}
+// Re-export types for backward compatibility
+export type { Driver, OrderItem } from "./driver-scorer";
 
 export interface OrderIntent {
   orderId: string;
@@ -50,7 +49,7 @@ export interface OrderIntent {
   pickupAddress: string;
   deliveryAddress: string;
   customerId: string;
-  items: Array<{ name: string; quantity: number; weight?: number }>;
+  items: OrderItem[];
   priority: "standard" | "express" | "urgent";
   // CRYPTO PAYMENT SUPPORT - priceDetails now uses strings for token amounts
   priceDetails?: {
@@ -74,70 +73,6 @@ export interface MatchResult {
   estimatedPickup?: string;
   estimatedDelivery?: string;
   error?: string;
-}
-
-/**
- * Calculate required vehicle type based on order items
- */
-function getRequiredVehicleType(
-  items: OrderIntent["items"],
-): "bike" | "car" | "van" | "truck" {
-  const totalWeight = items.reduce(
-    (sum, item) => sum + (item.weight || 0.5),
-    0,
-  );
-
-  if (totalWeight > 50) return "truck";
-  if (totalWeight > 20) return "van";
-  if (totalWeight > 5) return "car";
-  return "bike";
-}
-
-/**
- * Calculate driver score for ranking
- * Higher score = better match
- */
-function calculateDriverScore(
-  driver: Driver,
-  requiredVehicle: string,
-  pickupLat: number,
-  pickupLng: number,
-): number {
-  let score = 0;
-
-  // Trust score weight (0-100)
-  score += driver.trustScore * 0.4;
-
-  // Vehicle compatibility (0-25)
-  if (driver.vehicleType === requiredVehicle) {
-    score += 25;
-  } else if (
-    (requiredVehicle === "bike" &&
-      ["car", "van"].includes(driver.vehicleType || "")) ||
-    (requiredVehicle === "car" && ["van"].includes(driver.vehicleType || ""))
-  ) {
-    score += 15; // Can upgrade vehicle
-  }
-
-  // Acceptance rate (0-25)
-  if (driver.acceptedOrders && driver.completedOrders) {
-    const acceptanceRate = driver.completedOrders / driver.acceptedOrders;
-    score += acceptanceRate * 25;
-  }
-
-  // Proximity bonus (0-10) - Using Haversine formula for accurate GPS distance
-  if (driver.currentLat && driver.currentLng) {
-    const distanceKm = calculateHaversineDistance(
-      driver.currentLat,
-      driver.currentLng,
-      pickupLat,
-      pickupLng,
-    );
-    // Closer drivers get higher score (max 10 points for < 1km)
-    score += Math.max(0, 10 - distanceKm * 2);
-  }
-
-  return score;
 }
 
 /**
@@ -195,20 +130,10 @@ export async function findAvailableDrivers(
   }
 
   // BOUNDING BOX OPTIMIZATION: Filter drivers by proximity BEFORE fetching
-  // This ensures the 20 drivers we fetch are actually local to the restaurant
-  // 1 degree of latitude ≈ 111 km, 1 degree of longitude ≈ 111 km * cos(lat)
+  // Uses pure function from driver-scorer.ts
   const searchRadiusKm = 50; // Search within 50km radius
-  const latDiff = searchRadiusKm / 111;
-  const lngDiff =
-    searchRadiusKm /
-    (111 * Math.max(0.01, Math.cos((pickupLat! * Math.PI) / 180)));
-
-  // Clamp bounding box values to valid global coordinate ranges to prevent SQL silent failures
-  const minLat = Math.max(-90, pickupLat! - latDiff);
-  const maxLat = Math.min(90, pickupLat! + latDiff);
-  // Note: true dateline wrapping requires OR logic in SQL; clamping is the quick fix for continental deliveries
-  const minLng = Math.max(-180, pickupLng! - lngDiff);
-  const maxLng = Math.min(180, pickupLng! + lngDiff);
+  const bbox = calculateBoundingBox(pickupLat!, pickupLng!, searchRadiusKm);
+  const { minLat, maxLat, minLng, maxLng } = bbox;
 
   // Query active drivers from Postgres using Drizzle ORM with bounding box filter
   const drivers = await database

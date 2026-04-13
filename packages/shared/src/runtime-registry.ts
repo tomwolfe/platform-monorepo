@@ -7,8 +7,7 @@
  * @see Phase 2.2: Kill Duplicate Registries
  */
 
-import { z } from "zod";
-import { ToolDefinition } from "@repo/shared";
+import { ToolDefinition } from "./types/tool";
 import { SERVICES } from "./services";
 import { Logger } from "./logger";
 

@@ -543,6 +543,16 @@ function parseExpiresInInternal(expiresIn: string): number {
   }
 }
 
+/**
+ * Sign internal JWT using RS256 (asymmetric)
+ *
+ * Migrated from HS256 to RS256 for Zero-Trust security.
+ * Uses INTENTION_ENGINE_PRIVATE_KEY for signing.
+ *
+ * @param payload - Token payload
+ * @param options - JWT options
+ * @returns Signed JWT
+ */
 export async function signInternalJWT(
   payload: Record<string, unknown> = {},
   options: {
@@ -552,37 +562,51 @@ export async function signInternalJWT(
     subject?: string;
   },
 ): Promise<string> {
-  const secret = getSecret();
+  const { signAsymmetricJWT } = await import("./asymmetric-jwt");
   const { issuer, audience, expiresIn = "5m", subject } = options;
+
   const jwtPayload: Record<string, unknown> = {
     ...payload,
     iss: issuer,
     aud: audience,
   };
   if (subject) jwtPayload.sub = subject;
-  return new SignJWT(jwtPayload)
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime(expiresIn)
-    .sign(secret);
+
+  return signAsymmetricJWT(jwtPayload, {
+    issuer,
+    audience,
+    expiresIn,
+  });
 }
 
+/**
+ * Verify internal JWT using RS256 (asymmetric)
+ *
+ * Migrated from HS256 to RS256 for Zero-Trust security.
+ * Uses service-specific public keys for verification.
+ *
+ * @param token - JWT to verify
+ * @param expectedIssuer - Expected issuer (signing service)
+ * @param expectedAudience - Expected audience (this service)
+ * @returns Decoded payload or null if invalid
+ */
 export async function verifyInternalJWT(
   token: string,
   expectedIssuer: string,
   expectedAudience: string,
 ): Promise<Record<string, unknown> | null> {
-  const secret = getSecret();
+  const { verifyAsymmetricJWT } = await import("./asymmetric-jwt");
+
   try {
-    const { payload } = await jwtVerify(token, secret, {
-      issuer: expectedIssuer,
-      audience: expectedAudience,
-      algorithms: ["HS256"],
-    });
-    return payload as Record<string, unknown>;
+    const payload = await verifyAsymmetricJWT(
+      token,
+      expectedIssuer,
+      expectedAudience,
+    );
+    return (payload as Record<string, unknown>) || null;
   } catch (error) {
     console.warn(
-      `[Auth] JWT verification failed:`,
+      `[Auth] RS256 JWT verification failed:`,
       error instanceof Error ? error.message : error,
     );
     return null;

@@ -1,4 +1,3 @@
-import { NextRequest, NextResponse } from "next/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOLS } from "@repo/mcp-protocol";
 import { getDb, restaurants, restaurantReservations, eq } from "@repo/database";
@@ -80,7 +79,10 @@ server.tool(
       duration,
     );
 
-    const suggestedSlots: any[] = [];
+    const suggestedSlots: Array<{
+      time: string;
+      availableTables: unknown[];
+    }> = [];
     if (availableTables.length === 0) {
       const offsets = [-30, 30, -60, 60];
       for (const offset of offsets) {

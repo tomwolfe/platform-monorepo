@@ -7,7 +7,6 @@ import { mapJsonSchemaToZod } from "../../lib/engine/schema-utils";
 import { mcpConfig } from "../../lib/mcp-config";
 import {
   PARAMETER_ALIASES as shared_aliases,
-  ToolInput,
   ToolOutput,
 } from "@repo/mcp-protocol";
 import {
@@ -370,7 +369,7 @@ export class MCPClient {
     maxAttempts: number = 3,
     baseDelay: number = 1000,
   ): Promise<T> {
-    let lastError: any;
+    let lastError: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const attemptController = new AbortController();
       try {
@@ -406,7 +405,8 @@ export class MCPClient {
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
-    throw lastError;
+    // Re-throw the last error (guaranteed to be set if we reach here)
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
   /**

@@ -1,5 +1,3 @@
-import { SignJWT, jwtVerify } from "jose";
-
 // Export asymmetric JWT functions for Zero-Trust authentication
 export {
   generateServiceKeyPair,
@@ -42,59 +40,46 @@ export {
 } from "./security-provider";
 
 /**
- * Get internal system key with production safety check
- */
-function getInternalSystemKey(): string {
-  const key = process.env.INTERNAL_SYSTEM_KEY;
-  if (!key) {
-    throw new Error(
-      "CRITICAL: INTERNAL_SYSTEM_KEY is not configured. " +
-        "This is a required security credential for service-to-service authentication. " +
-        "Set a strong, random value in your environment variables.",
-    );
-  }
-  return key;
-}
-
-function getSecret(): Uint8Array {
-  return new TextEncoder().encode(getInternalSystemKey());
-}
-
-// ============================================================================
-// INTERNAL JWT FUNCTIONS (symmetric, service-to-service)
-// Already exported above from security-provider
-// ============================================================================
-
-/**
- * signInternalToken - Unified signing for internal tokens
+ * signInternalToken - Sign internal service token using RS256
+ *
+ * Migrated from HS256 to RS256 for Zero-Trust security.
+ * Uses INTENTION_ENGINE_PRIVATE_KEY for signing.
  */
 export async function signInternalToken(
   payload: Record<string, unknown> = {},
   expires: string = "1h",
 ): Promise<string> {
-  const secret = getSecret();
-  return new SignJWT(payload)
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime(expires)
-    .sign(secret);
+  const { signAsymmetricJWT } = await import("./asymmetric-jwt");
+
+  return signAsymmetricJWT(payload, {
+    issuer: "internal-service",
+    audience: "internal-service",
+    expiresIn: expires,
+  });
 }
 
 /**
- * verifyInternalToken - Verify an internal token without checking issuer/audience
+ * verifyInternalToken - Verify internal service token using RS256
+ *
+ * Migrated from HS256 to RS256 for Zero-Trust security.
+ * Uses service-specific public keys for verification.
  */
 export async function verifyInternalToken(
   token: string,
 ): Promise<Record<string, unknown> | null> {
-  const secret = getSecret();
+  const { verifyAsymmetricJWT } = await import("./asymmetric-jwt");
+
   try {
-    const { payload } = await jwtVerify(token, secret, {
-      algorithms: ["HS256"],
-    });
-    return payload as Record<string, unknown>;
+    // Try verifying with generic internal service issuer/audience
+    const payload = await verifyAsymmetricJWT(
+      token,
+      "internal-service",
+      "internal-service",
+    );
+    return (payload as Record<string, unknown>) || null;
   } catch (error) {
     console.warn(
-      `[Auth] Internal token verification failed:`,
+      `[Auth] RS256 internal token verification failed:`,
       error instanceof Error ? error.message : error,
     );
     return null;
@@ -115,22 +100,19 @@ export const verifyBridgeToken = verifyInternalToken;
 
 /**
  * validateUnifiedAuth - Shared logic for validating both Clerk and internal service tokens.
+ *
+ * Migrated from HS256 internal key to RS256 JWT verification.
  */
 export async function validateUnifiedAuth(
   req: Request,
   options: {
-    internalKey?: string | null;
     serviceToken?: string | null;
-    clerkAuth?: any;
+    clerkAuth?: unknown;
   },
 ) {
-  const { internalKey, serviceToken, clerkAuth } = options;
-  const { SecurityProvider } = await import("./security-provider");
+  const { serviceToken, clerkAuth } = options;
 
-  if (internalKey && SecurityProvider.validateInternalKey(internalKey)) {
-    return { type: "internal", authorized: true };
-  }
-
+  // RS256 service token verification (Zero-Trust)
   if (serviceToken) {
     const { verifyServiceToken } = await import("./security-provider");
     const payload = await verifyServiceToken(serviceToken);
@@ -139,8 +121,13 @@ export async function validateUnifiedAuth(
     }
   }
 
-  if (clerkAuth && clerkAuth.userId) {
-    return { type: "user", authorized: true, userId: clerkAuth.userId };
+  // Clerk user authentication
+  if (clerkAuth && (clerkAuth as Record<string, unknown>).userId) {
+    return {
+      type: "user",
+      authorized: true,
+      userId: (clerkAuth as Record<string, unknown>).userId,
+    };
   }
 
   return { type: "none", authorized: false };

@@ -106,7 +106,21 @@ function extractTraceId(request: Request): string {
 /**
  * Create response with trace ID included
  */
-function createResponse(data: any, traceId: string, isError = false) {
+interface McpResponseContent {
+  type: "text";
+  text: string;
+}
+
+interface McpResponse {
+  content: McpResponseContent[];
+  isError: boolean;
+}
+
+function createResponse(
+  data: Record<string, unknown>,
+  traceId: string,
+  isError = false,
+): McpResponse {
   return {
     content: [
       {

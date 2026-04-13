@@ -2,7 +2,7 @@
  * Shared Testing Utilities
  *
  * Centralized testing infrastructure for the platform monorepo.
- * Provides MSW handlers, database utilities, and test factories.
+ * Provides MSW handlers, database utilities, test factories, and mock objects.
  *
  * @package @repo/shared
  * @since 1.0.0
@@ -48,3 +48,13 @@ export {
   testId,
   type RetryOptions,
 } from "./integration-utils";
+
+// Mock Object Factories
+export {
+  createMockRedisClient,
+  createMockGetRedisClientFactory,
+  type MockRedisClient,
+  type MockRedisOptions,
+} from "./mocks/redis";
+
+export { createMockLogger, type MockLogger } from "./mocks/logger";

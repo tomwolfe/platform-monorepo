@@ -14,12 +14,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import {
-  WorkflowMachine,
-  WorkflowStatus,
-  WorkflowResult,
-} from "../workflow-machine";
-import type { Plan, PlanStep, ExecutionState, ToolExecutor } from "../types";
+import { WorkflowMachine, WorkflowResult } from "../workflow-machine";
+import type { Plan, ExecutionState, ToolExecutor } from "../types";
 
 // Mock dependencies
 vi.mock("../memory", () => ({
@@ -177,7 +173,7 @@ describe("Workflow Machine - Failure Recovery", () => {
       };
 
       const mockToolExecutor: ToolExecutor = {
-        execute: async (toolName, _params, _timeoutMs, _signal) => {
+        execute: async (_toolName, _params, _timeoutMs, _signal) => {
           throw new Error("Database connection failed");
         },
       };
@@ -346,7 +342,7 @@ describe("Workflow Machine - Failure Recovery", () => {
 
       try {
         await machine.executeWithExecutor(mockToolExecutor);
-      } catch (error) {
+      } catch {
         // Expected: workflow throws after compensation exhausts
       }
 
@@ -548,7 +544,7 @@ describe("Workflow Machine - Failure Recovery", () => {
 
       try {
         await machine.executeWithExecutor(mockToolExecutor);
-      } catch (error) {
+      } catch {
         // Workflow may throw if step 2 fails and compensation is attempted
       }
 
@@ -715,7 +711,7 @@ describe("Workflow Machine - Failure Recovery", () => {
 
       try {
         await machine.executeWithExecutor(mockToolExecutor);
-      } catch (error) {
+      } catch {
         // Workflow may throw if step 4 fails
       }
 
@@ -732,6 +728,381 @@ describe("Workflow Machine - Failure Recovery", () => {
         toolCalls.includes("cancel_email") ||
         toolCalls.includes("revert_inventory");
       expect(hasCompensations).toBe(true);
+    });
+  });
+
+  describe("Failure during Checkpoint", () => {
+    it("should handle Redis failure during state checkpoint save", async () => {
+      // Mock saveExecutionState to fail
+      const { saveExecutionState } = await import("../memory");
+      vi.mocked(saveExecutionState).mockRejectedValueOnce(
+        new Error("Redis connection failed"),
+      );
+
+      const plan: Plan = {
+        id: "plan-checkpoint-fail",
+        intent_id: "intent-checkpoint-fail",
+        steps: [
+          {
+            id: "step-1",
+            step_number: 0,
+            tool_name: "create_reservation",
+            parameters: { restaurant_id: "rest-1", party_size: 4 },
+            dependencies: [],
+            description: "Create reservation",
+            requires_confirmation: false,
+            timeout_ms: 5000,
+          },
+        ],
+        summary: "Test plan for checkpoint failure",
+        created_at: new Date().toISOString(),
+      };
+
+      const mockToolExecutor: ToolExecutor = {
+        execute: async (
+          _toolName: string,
+          _parameters: Record<string, unknown>,
+        ) => {
+          return {
+            success: true,
+            output: { reservation_id: "res-1" },
+            latency_ms: 100,
+          };
+        },
+      };
+
+      machine.setPlan(plan);
+
+      // Should not throw - checkpoint failures should be logged but not crash the workflow
+      const result = await machine.executeWithExecutor(mockToolExecutor);
+
+      expect(result.success).toBe(true);
+      expect(result.state.status).toBe("COMPLETED");
+
+      // Verify save was attempted
+      expect(saveExecutionState).toHaveBeenCalled();
+    });
+
+    it("should continue execution even if checkpoint save fails mid-segment", async () => {
+      // Mock save to fail intermittently
+      const { saveExecutionState } = await import("../memory");
+      let saveCallCount = 0;
+      vi.mocked(saveExecutionState).mockImplementation(async () => {
+        saveCallCount++;
+        if (saveCallCount === 2) {
+          throw new Error("Timeout during checkpoint");
+        }
+        return undefined;
+      });
+
+      const plan: Plan = {
+        id: "plan-checkpoint-mid-fail",
+        intent_id: "intent-checkpoint-mid-fail",
+        steps: [
+          {
+            id: "step-1",
+            step_number: 0,
+            tool_name: "create_reservation",
+            parameters: { restaurant_id: "rest-1" },
+            dependencies: [],
+            description: "Step 1",
+            requires_confirmation: false,
+            timeout_ms: 5000,
+          },
+          {
+            id: "step-2",
+            step_number: 1,
+            tool_name: "send_confirmation",
+            parameters: { reservation_id: "res-1" },
+            dependencies: ["step-1"],
+            description: "Step 2",
+            requires_confirmation: false,
+            timeout_ms: 5000,
+          },
+        ],
+        summary: "Test plan for mid-segment checkpoint failure",
+        created_at: new Date().toISOString(),
+      };
+
+      const mockToolExecutor: ToolExecutor = {
+        execute: async (
+          _toolName: string,
+          _parameters: Record<string, unknown>,
+        ) => {
+          return {
+            success: true,
+            output: { success: true },
+            latency_ms: 50,
+          };
+        },
+      };
+
+      machine.setPlan(plan);
+
+      // Should complete successfully despite checkpoint failure
+      const result = await machine.executeWithExecutor(mockToolExecutor);
+
+      expect(result.success).toBe(true);
+      expect(result.completedSteps).toBe(2);
+    });
+
+    it("should handle checkpoint load failure during resume", async () => {
+      // Mock loadExecutionState to fail
+      const { loadExecutionState } = await import("../memory");
+      vi.mocked(loadExecutionState).mockRejectedValueOnce(
+        new Error("Failed to load state from Redis"),
+      );
+
+      const plan: Plan = {
+        id: "plan-load-fail",
+        intent_id: "intent-load-fail",
+        steps: [
+          {
+            id: "step-1",
+            step_number: 0,
+            tool_name: "create_reservation",
+            parameters: { restaurant_id: "rest-1" },
+            dependencies: [],
+            description: "Step 1",
+            requires_confirmation: false,
+            timeout_ms: 5000,
+          },
+        ],
+        summary: "Test plan for load failure",
+        created_at: new Date().toISOString(),
+      };
+
+      const mockToolExecutor: ToolExecutor = {
+        execute: async (
+          _toolName: string,
+          _parameters: Record<string, unknown>,
+        ) => {
+          return {
+            success: true,
+            output: { success: true },
+            latency_ms: 50,
+          };
+        },
+      };
+
+      machine.setPlan(plan);
+
+      // Workflow should start from beginning if load fails
+      const result = await machine.executeWithExecutor(mockToolExecutor);
+
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe("Compensation Step Failure - Extended Scenarios", () => {
+    it("should track all compensation failures in workflow result", async () => {
+      const compensationCalls: string[] = [];
+
+      const plan: Plan = {
+        id: "plan-comp-fail-track",
+        intent_id: "intent-comp-fail-track",
+        steps: [
+          {
+            id: "step-1",
+            step_number: 0,
+            tool_name: "create_reservation",
+            parameters: { restaurant_id: "rest-1" },
+            dependencies: [],
+            description: "Step 1",
+            requires_confirmation: false,
+            timeout_ms: 5000,
+            compensation: "cancel_reservation",
+          },
+          {
+            id: "step-2",
+            step_number: 1,
+            tool_name: "process_payment",
+            parameters: { amount: 100 },
+            dependencies: ["step-1"],
+            description: "Step 2",
+            requires_confirmation: false,
+            timeout_ms: 5000,
+            compensation: "refund_payment",
+          },
+        ],
+        summary: "Test plan for compensation failure tracking",
+        created_at: new Date().toISOString(),
+      };
+
+      const mockToolExecutor: ToolExecutor = {
+        execute: async (
+          toolName: string,
+          _parameters: Record<string, unknown>,
+        ) => {
+          // Step 1 succeeds
+          if (toolName === "create_reservation") {
+            return {
+              success: true,
+              output: { reservation_id: "res-1" },
+              latency_ms: 50,
+            };
+          }
+          // Step 2 fails
+          if (toolName === "process_payment") {
+            return {
+              success: false,
+              error: "Payment gateway timeout",
+              latency_ms: 5000,
+              compensation: {
+                toolName: "refund_payment",
+                parameters: { amount: 100 },
+              },
+            };
+          }
+          // Compensation for step 1 succeeds
+          if (toolName === "cancel_reservation") {
+            compensationCalls.push("cancel_reservation");
+            return { success: true, output: {}, latency_ms: 50 };
+          }
+          // Compensation for step 2 fails
+          if (toolName === "refund_payment") {
+            compensationCalls.push("refund_payment");
+            return {
+              success: false,
+              error: "Refund failed",
+              latency_ms: 100,
+            };
+          }
+          return { success: true, output: {}, latency_ms: 50 };
+        },
+      };
+
+      machine.setPlan(plan);
+
+      let result: WorkflowResult | undefined;
+      let error: Error | undefined;
+
+      try {
+        result = await machine.executeWithExecutor(mockToolExecutor);
+      } catch (err) {
+        error = err instanceof Error ? err : new Error(String(err));
+      }
+
+      // Either workflow completes with partial success or throws
+      if (result) {
+        expect(result.wasCompensated).toBe(true);
+        expect(result.failedSteps).toBeGreaterThan(0);
+      } else {
+        expect(error).toBeDefined();
+      }
+
+      // Verify compensations were attempted
+      expect(compensationCalls).toContain("cancel_reservation");
+      expect(compensationCalls).toContain("refund_payment");
+    });
+
+    it("should handle timeout during compensation execution", async () => {
+      const plan: Plan = {
+        id: "plan-comp-timeout",
+        intent_id: "intent-comp-timeout",
+        steps: [
+          {
+            id: "step-1",
+            step_number: 0,
+            tool_name: "create_reservation",
+            parameters: { restaurant_id: "rest-1" },
+            dependencies: [],
+            description: "Step 1",
+            requires_confirmation: false,
+            timeout_ms: 5000,
+            compensation: "cancel_reservation",
+          },
+        ],
+        summary: "Test plan for compensation timeout",
+        created_at: new Date().toISOString(),
+      };
+
+      const _mockToolExecutor: ToolExecutor = {
+        execute: async (
+          toolName: string,
+          _parameters: Record<string, unknown>,
+          timeoutMs?: number,
+        ) => {
+          // Step succeeds
+          if (toolName === "create_reservation") {
+            return {
+              success: true,
+              output: { reservation_id: "res-1" },
+              latency_ms: 50,
+            };
+          }
+          // Compensation times out
+          if (toolName === "cancel_reservation") {
+            await new Promise((resolve) =>
+              setTimeout(resolve, timeoutMs || 5000),
+            );
+            return {
+              success: false,
+              error: "Operation timed out",
+              latency_ms: timeoutMs || 5000,
+            };
+          }
+          return { success: true, output: {}, latency_ms: 50 };
+        },
+      };
+
+      machine.setPlan(plan);
+
+      // Force step to fail after compensation is registered
+      machine["toolExecutor"] = {
+        execute: async (
+          toolName: string,
+          _parameters: Record<string, unknown>,
+          _timeoutMs?: number,
+        ) => {
+          if (toolName === "create_reservation") {
+            return {
+              success: true,
+              output: { reservation_id: "res-1" },
+              latency_ms: 50,
+            };
+          }
+          // Simulate step 2 failure
+          if (toolName === "process_payment") {
+            return {
+              success: false,
+              error: "Payment failed",
+              latency_ms: 100,
+            };
+          }
+          // Compensation times out
+          if (toolName === "cancel_reservation") {
+            return {
+              success: false,
+              error: "Timeout",
+              latency_ms: 5000,
+            };
+          }
+          return { success: true, output: {}, latency_ms: 50 };
+        },
+      } as ToolExecutor;
+
+      // Add a second step that will fail
+      plan.steps.push({
+        id: "step-2",
+        step_number: 1,
+        tool_name: "process_payment",
+        parameters: { amount: 100 },
+        dependencies: ["step-1"],
+        description: "Step 2",
+        requires_confirmation: false,
+        timeout_ms: 5000,
+      });
+
+      let error: Error | undefined;
+      try {
+        await machine.executeWithExecutor(machine["toolExecutor"]);
+      } catch (err) {
+        error = err instanceof Error ? err : new Error(String(err));
+      }
+
+      // Workflow may throw due to compensation timeout
+      expect(error).toBeDefined();
     });
   });
 });

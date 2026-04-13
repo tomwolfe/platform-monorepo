@@ -23,7 +23,35 @@
 // ============================================================================
 // ERROR CLASSES (Full exports including async boundary errors)
 // ============================================================================
-export * from "./errors";
+// Converted from export * to named exports for Next.js 15 tree-shaking compatibility
+export {
+  ErrorCode,
+  ERROR_STATUS_MAP,
+  AppError,
+  ValidationError,
+  MissingFieldError,
+  InvalidFormatError,
+  UnauthorizedError,
+  InvalidTokenError,
+  TokenExpiredError,
+  ForbiddenError,
+  InsufficientPermissionsError,
+  NotFoundError,
+  ConflictError,
+  AlreadyExistsError,
+  ResourceUnavailableError,
+  RateLimitedError,
+  ExecutionFailedError,
+  TimeoutError,
+  ServiceUnavailableError,
+  DatabaseError,
+  ExternalServiceError,
+  SagaCompensationFailedError,
+  StateTransitionInvalidError,
+  BusinessRuleViolationError,
+  ClarificationRequiredError,
+  type ErrorCode,
+} from "./errors";
 export {
   ApiError,
   type ApiErrorOptions,
@@ -78,7 +106,32 @@ export {
 // ============================================================================
 // TRACING (Full tracing with AsyncLocalStorage)
 // ============================================================================
-export * from "./tracing";
+// Converted from export * to named exports for Next.js 15 tree-shaking compatibility
+export {
+  CORRELATION_ID_HEADER,
+  TRACE_ID_HEADER,
+  IDEMPOTENCY_KEY_HEADER,
+  EXECUTION_ID_HEADER,
+  ExecutionTraceEntrySchema,
+  ExecutionTraceSchema,
+  tracingStorage,
+  getCorrelationId,
+  getTraceId,
+  withNervousSystemTracing,
+  injectTracingHeaders,
+  TraceEmitter,
+  InMemoryTraceEmitter,
+  RedisTraceEmitter,
+  createTraceEntry,
+  createStepCompletedEntry,
+  createStepFailedEntry,
+  createErrorEntry,
+  setGlobalTraceEmitter,
+  getGlobalTraceEmitter,
+  emitTrace,
+  type ExecutionTraceEntry,
+  type ExecutionTrace,
+} from "./tracing";
 // NOTE: Removed `export * from "./tracing-types"` to avoid star export conflicts
 // with ./tracing for: CORRELATION_ID_HEADER, TRACE_ID_HEADER, IDEMPOTENCY_KEY_HEADER,
 // EXECUTION_ID_HEADER, ExecutionTraceEntrySchema, ExecutionTraceSchema, emitTrace,

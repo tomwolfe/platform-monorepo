@@ -3,8 +3,10 @@
  *
  * Single entry point for all API route authentication.
  * Checks auth methods in order of precedence:
- * 1. `Authorization: Bearer <JWT>` (asymmetric/scoped JWT → Zero-Trust)
- * 2. `x-internal-key` (service-to-service shared secret)
+ * 1. `Authorization: Bearer <JWT>` (RS256 asymmetric JWT → Zero-Trust)
+ *
+ * Note: Legacy `x-internal-key` (HS256 shared secret) has been removed.
+ * All service-to-service calls must now use RS256 signed JWTs.
  *
  * Usage:
  * ```typescript
@@ -25,11 +27,7 @@
  */
 
 import type { NextRequest } from "next/server";
-import { Logger } from "../logger";
-import { AppConfig } from "../config";
 import { SecurityProvider } from "@repo/auth";
-
-const logger = new Logger({ serviceName: "auth-gateway" });
 
 // ============================================================================
 // AUTH CONTEXT
@@ -44,7 +42,7 @@ export interface AuthGatewayContext {
   /** Whether this is an internal service-to-service call */
   isInternal: boolean;
   /** Auth method used */
-  authMethod: "bearer_jwt" | "internal_key" | "none";
+  authMethod: "bearer_jwt" | "none";
   /** Scoped permissions (if JWT has tool-level permissions) */
   scopedPermissions?: Record<string, unknown>;
   /** Raw JWT payload (if available) */
@@ -70,8 +68,9 @@ export interface AuthGatewayResult {
  * Validate request authentication using unified auth gateway.
  *
  * Checks auth methods in order of precedence:
- * 1. `Authorization: Bearer <JWT>` - Asymmetric JWT (preferred, Zero-Trust)
- * 2. `x-internal-key` - Service-to-service shared secret
+ * 1. `Authorization: Bearer <JWT>` - RS256 Asymmetric JWT (Zero-Trust)
+ *
+ * Note: Legacy `x-internal-key` authentication has been removed.
  *
  * @param req - Next.js request object
  * @param options - Gateway configuration options
@@ -95,7 +94,7 @@ export async function validateRequest(
     /** Require authentication (default: true) */
     required?: boolean;
     /** Allowed auth methods (default: all) */
-    allowedMethods?: Array<"bearer_jwt" | "internal_key">;
+    allowedMethods?: Array<"bearer_jwt">;
   } = {},
 ): Promise<AuthGatewayResult> {
   const { required = true, allowedMethods } = options;
@@ -116,10 +115,7 @@ export async function validateRequest(
   }
 
   // Try each auth method in order of precedence
-  const methods = allowedMethods || [
-    "bearer_jwt" as const,
-    "internal_key" as const,
-  ];
+  const methods = allowedMethods || ["bearer_jwt" as const];
 
   for (const method of methods) {
     const result = await tryAuthMethod(req, method, traceId);
@@ -140,15 +136,12 @@ export async function validateRequest(
  */
 async function tryAuthMethod(
   req: NextRequest,
-  method: "bearer_jwt" | "internal_key",
+  method: "bearer_jwt",
   traceId?: string,
 ): Promise<AuthGatewayResult | null> {
   switch (method) {
     case "bearer_jwt": {
       return await tryBearerJwt(req, traceId);
-    }
-    case "internal_key": {
-      return await tryInternalKey(req, traceId);
     }
   }
 }
@@ -185,7 +178,7 @@ async function tryBearerJwt(
         },
       };
     }
-  } catch (_error) {
+  } catch {
     // Asymmetric verification failed - try scoped JWT
     try {
       const payload = await SecurityProvider.verifyScopedJWT(token);
@@ -211,46 +204,4 @@ async function tryBearerJwt(
   }
 
   return null;
-}
-
-/**
- * Try internal key authentication (service-to-service)
- */
-async function tryInternalKey(
-  req: NextRequest,
-  traceId?: string,
-): Promise<AuthGatewayResult | null> {
-  const internalKey = req.headers.get("x-internal-key");
-  if (!internalKey) {
-    return null;
-  }
-
-  try {
-    const expectedKey = AppConfig.getInternalSystemKey();
-    // Use timing-safe comparison to prevent timing attacks
-    const isValid =
-      internalKey.length === expectedKey.length && internalKey === expectedKey;
-
-    if (isValid) {
-      return {
-        context: {
-          resourceId: undefined,
-          isInternal: true,
-          authMethod: "internal_key",
-          traceId,
-        },
-      };
-    }
-  } catch (_error) {
-    // Internal system key not configured
-    logger.warn({
-      message: "Internal system key not configured",
-      traceId,
-    });
-  }
-
-  return {
-    error: "Invalid internal key",
-    status: 401,
-  };
 }

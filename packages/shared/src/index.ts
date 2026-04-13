@@ -459,12 +459,11 @@ export type {
 // Web3 utils
 export * from "./utils/crypto";
 export {
-  formatApiError as formatApiError2,
+  // NOTE: formatApiError is already exported above (line 64)
   createApiError,
   formatApiSuccess,
   EngineErrorCodes,
   type EngineErrorCode,
-  type FormatApiErrorOptions,
   isErrorResponse,
   isSuccessResponse,
   type ServerActionResponse,

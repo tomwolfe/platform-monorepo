@@ -25,6 +25,7 @@
 import { Redis } from "@upstash/redis";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Logger } from "../logger";
+import { REDIS_KEY_PREFIXES } from "../constants";
 
 const logger = new Logger({ serviceName: "rate-limiter" });
 
@@ -62,31 +63,31 @@ export const DEFAULT_LIMITS: EndpointRateLimitConfig = {
     maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "60"),
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000"),
     burstAllowance: 10,
-    keyPrefix: "ratelimit:chat:",
+    keyPrefix: REDIS_KEY_PREFIXES.RATELIMIT_CHAT,
   },
   execute: {
     maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "30"),
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000"),
     burstAllowance: 5,
-    keyPrefix: "ratelimit:execute:",
+    keyPrefix: REDIS_KEY_PREFIXES.RATELIMIT_EXECUTE,
   },
   webhook: {
     maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "100"),
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000"),
     burstAllowance: 20,
-    keyPrefix: "ratelimit:webhook:",
+    keyPrefix: REDIS_KEY_PREFIXES.RATELIMIT_WEBHOOK,
   },
   api: {
     maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "100"),
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000"),
     burstAllowance: 20,
-    keyPrefix: "ratelimit:api:",
+    keyPrefix: REDIS_KEY_PREFIXES.RATELIMIT_API,
   },
   cache: {
     maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "200"),
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000"),
     burstAllowance: 50,
-    keyPrefix: "ratelimit:cache:",
+    keyPrefix: REDIS_KEY_PREFIXES.RATELIMIT_CACHE,
   },
 };
 

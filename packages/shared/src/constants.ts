@@ -124,3 +124,104 @@ export const SERVICE_NAMES = {
   LOCK_SERVICE: "lock-service",
   NONCE_TRACKER: "nonce-tracker",
 } as const;
+
+// ============================================================================
+// REDIS KEY PREFIXES
+// ============================================================================
+
+/**
+ * Centralized Redis key prefixes for all services.
+ * Prevents key collisions and ensures consistent naming across the platform.
+ *
+ * Usage:
+ * ```ts
+ * const key = `${REDIS_KEY_PREFIXES.IDEMPOTENCY}:${routeName}:${key}`;
+ * ```
+ */
+export const REDIS_KEY_PREFIXES = {
+  // Idempotency
+  IDEMPOTENCY: "idempotency",
+  DISPATCH_IDEMPOTENCY: "dispatch:idempotency",
+
+  // Workflow / Saga state
+  WORKFLOW_STATE: "workflow:state",
+  WORKFLOW_STEPS: "workflow:steps",
+  WORKFLOW: "workflow",
+  SAGA_STATE: "saga:state",
+  SAGA_COMPLETION: "saga:completion",
+  SAGA: "saga",
+
+  // Dead Letter Queue
+  DLQ_SAGA: "dlq:saga",
+  DLQ_INDEX: "dlq:index",
+  DLQ_TASK: "task",
+
+  // Nonce / Locks
+  NONCE: "nonce",
+  LOCK_NONCE_INIT: "lock:nonce_init",
+
+  // Rate limiting
+  RATELIMIT_CHAT: "ratelimit:chat:",
+  RATELIMIT_EXECUTE: "ratelimit:execute:",
+  RATELIMIT_WEBHOOK: "ratelimit:webhook:",
+  RATELIMIT_API: "ratelimit:api:",
+  RATELIMIT_CACHE: "ratelimit:cache:",
+  RATELIMIT_VERIFY: "ratelimit:verify:",
+  RATELIMIT_ABLY_AUTH: "ratelimit:ably-auth:",
+  RATELIMIT_ABLY_AUTH_GENERAL: "ratelimit:ably-auth-general:",
+
+  // Cache
+  CACHE: "cache",
+  CACHE_TAG: "cache:tag",
+  LLM_CACHE: "llm:cache:",
+
+  // Webhooks
+  WEBHOOK: "webhook",
+
+  // Availability
+  AVAILABILITY: "availability",
+
+  // Dispatch
+  DISPATCH_PENDING: "dispatch:pending",
+
+  // Fulfillment
+  FULFILLMENT: "fulfillment",
+
+  // Monitoring
+  MONITORING_METRICS: "monitoring:metrics:",
+  MONITORING_ALERTS: "monitoring:alerts:",
+
+  // Schema versioning
+  SCHEMA_VERSIONING: "schema_versioning",
+
+  // Parameter aliaser
+  PARAM_ALIAS: "param_alias",
+  PARAM_HOTPATCH: "param_hotpatch",
+
+  // Intention engine
+  INTENTION_EXECUTION: "intention:execution",
+
+  // Email notification tracking
+  EMAIL: "email",
+} as const;
+
+// ============================================================================
+// ABLY CHANNEL NAMES
+// ============================================================================
+
+/**
+ * Centralized Ably channel names for real-time event publishing/subscribing.
+ *
+ * Usage:
+ * ```ts
+ * const channel = ably.channels.get(ABLY_CHANNELS.NERVOUS_SYSTEM_UPDATES);
+ * ```
+ */
+export const ABLY_CHANNELS = {
+  /** Main nervous system event channel (publish + subscribe) */
+  NERVOUS_SYSTEM_UPDATES: "nervous-system:updates",
+  /** Delivery-specific updates */
+  NERVOUS_SYSTEM_DELIVERY_UPDATES: "nervous-system:delivery-updates",
+  /** Per-restaurant dashboard channel template (use with restaurantId) */
+  RESTAURANT_TEMPLATE: "restaurant:", // usage: `${ABLY_CHANNELS.RESTAURANT_TEMPLATE}${id}`
+} as const;

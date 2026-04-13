@@ -1,4 +1,5 @@
 import { Redis } from "@upstash/redis";
+import { REDIS_KEY_PREFIXES } from "./constants";
 
 export interface IdempotencyServiceConfig {
   /** Salt hash with userId to prevent cross-user blocking */
@@ -94,10 +95,14 @@ export class IdempotencyService {
       causalComponents.lamportTs = this.lamportTimestamp || 0;
     }
 
-    // Add sorted parameters
-    causalComponents.params = Object.entries(parameters)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => [key, this.normalizeValue(value)]);
+    // Add sorted parameters as a proper object (not tuples)
+    const sortedParamsObj: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(parameters).sort(([a], [b]) =>
+      a.localeCompare(b),
+    )) {
+      sortedParamsObj[key] = this.normalizeValue(value);
+    }
+    causalComponents.params = sortedParamsObj;
 
     // CRITICAL: Enforce strict alphabetical sorting of top-level keys
     // to guarantee deterministic hash output regardless of insertion order.
@@ -147,9 +152,14 @@ export class IdempotencyService {
       return value.map((v) => this.normalizeValue(v));
     }
     if (typeof value === "object") {
-      return Object.entries(value as object)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => [k, this.normalizeValue(v)]);
+      // Return a properly sorted object (not tuples) for deterministic JSON
+      const sortedObj: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value as object).sort(([a], [b]) =>
+        a.localeCompare(b),
+      )) {
+        sortedObj[k] = this.normalizeValue(v);
+      }
+      return sortedObj;
     }
     return value;
   }
@@ -206,8 +216,8 @@ export class IdempotencyService {
       : null;
     // SEC-03: Namespace idempotency keys with route context
     const fullKey = paramsHash
-      ? `idempotency:${effectiveRouteName}:${key}:${paramsHash}`
-      : `idempotency:${effectiveRouteName}:${key}`;
+      ? `${REDIS_KEY_PREFIXES.IDEMPOTENCY}:${effectiveRouteName}:${key}:${paramsHash}`
+      : `${REDIS_KEY_PREFIXES.IDEMPOTENCY}:${effectiveRouteName}:${key}`;
 
     const set = await this.redis.set(fullKey, "processing", {
       nx: true,
@@ -240,8 +250,8 @@ export class IdempotencyService {
       ? await this.generateParamsHash(toolName, parameters, effectiveUserId)
       : null;
     const fullKey = paramsHash
-      ? `idempotency:${effectiveRouteName}:${key}:${paramsHash}`
-      : `idempotency:${effectiveRouteName}:${key}`;
+      ? `${REDIS_KEY_PREFIXES.IDEMPOTENCY}:${effectiveRouteName}:${key}:${paramsHash}`
+      : `${REDIS_KEY_PREFIXES.IDEMPOTENCY}:${effectiveRouteName}:${key}`;
 
     await this.redis.set(fullKey, "processed", {
       ex: this.defaultTtlSeconds,
@@ -272,8 +282,8 @@ export class IdempotencyService {
       ? await this.generateParamsHash(toolName, parameters, effectiveUserId)
       : null;
     const fullKey = paramsHash
-      ? `idempotency:${effectiveRouteName}:${key}:${paramsHash}`
-      : `idempotency:${effectiveRouteName}:${key}`;
+      ? `${REDIS_KEY_PREFIXES.IDEMPOTENCY}:${effectiveRouteName}:${key}:${paramsHash}`
+      : `${REDIS_KEY_PREFIXES.IDEMPOTENCY}:${effectiveRouteName}:${key}`;
 
     await this.redis.del(fullKey);
   }
@@ -296,8 +306,8 @@ export class IdempotencyService {
       ? await this.generateParamsHash(toolName, parameters, effectiveUserId)
       : null;
     const fullKey = paramsHash
-      ? `idempotency:${effectiveRouteName}:${key}:${paramsHash}`
-      : `idempotency:${effectiveRouteName}:${key}`;
+      ? `${REDIS_KEY_PREFIXES.IDEMPOTENCY}:${effectiveRouteName}:${key}:${paramsHash}`
+      : `${REDIS_KEY_PREFIXES.IDEMPOTENCY}:${effectiveRouteName}:${key}`;
 
     return (await this.redis.get(fullKey)) as "processing" | "processed" | null;
   }
@@ -320,8 +330,8 @@ export class IdempotencyService {
       : null;
     // SEC-03: Namespace idempotency keys with route context
     return paramsHash
-      ? `idempotency:${effectiveRouteName}:${key}:${paramsHash}`
-      : `idempotency:${effectiveRouteName}:${key}`;
+      ? `${REDIS_KEY_PREFIXES.IDEMPOTENCY}:${effectiveRouteName}:${key}:${paramsHash}`
+      : `${REDIS_KEY_PREFIXES.IDEMPOTENCY}:${effectiveRouteName}:${key}`;
   }
 
   /**

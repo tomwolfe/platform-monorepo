@@ -24,48 +24,22 @@ import {
 import { base, polygon, mainnet } from "viem/chains";
 import type { PublicClient } from "viem";
 import { Logger } from "../logger";
+import { getChainConfig, type SupportedChainId } from "../config/web3-chains";
 
 const logger = new Logger({ serviceName: "web3-verifier" });
 
 // ============================================================================
-// RPC URL CONFIGURATION
+// RPC URL CONFIGURATION (Delegated to shared chain config)
 // ============================================================================
 
-const RPC_URLS = {
-  base: (() => {
-    const primary = process.env.BASE_RPC_URL;
-    if (!primary && process.env.NODE_ENV === "production") {
-      logger.error("BASE_RPC_URL is required in production");
-    }
-    return [
-      primary || "https://mainnet.base.org",
-      "https://base.llamarpc.com",
-      "https://base.publicnode.com",
-    ];
-  })(),
-  polygon: (() => {
-    const primary = process.env.POLYGON_RPC_URL;
-    if (!primary && process.env.NODE_ENV === "production") {
-      logger.error("POLYGON_RPC_URL is required in production");
-    }
-    return [
-      primary || "https://polygon-rpc.com",
-      "https://polygon.llamarpc.com",
-      "https://polygon.publicnode.com",
-    ];
-  })(),
-  ethereum: (() => {
-    const primary = process.env.ETHEREUM_RPC_URL;
-    if (!primary && process.env.NODE_ENV === "production") {
-      logger.error("ETHEREUM_RPC_URL is required in production");
-    }
-    return [
-      primary || "https://eth-mainnet.g.alchemy.com/v2/demo",
-      "https://eth.llamarpc.com",
-      "https://ethereum.publicnode.com",
-    ];
-  })(),
-};
+/**
+ * Get RPC URLs for a chain from the shared configuration.
+ * This delegates to web3-chains.ts to avoid duplication.
+ */
+function getRpcUrlsForChain(chainId: SupportedChainId): string[] {
+  const config = getChainConfig(chainId);
+  return config.getServerRpcUrls();
+}
 
 // ============================================================================
 // WEB3 PROVIDER (Singleton with Retry Logic)
@@ -99,25 +73,13 @@ export class Web3Provider {
   /**
    * Create a new public client with fallback RPC URLs.
    */
-  private static createClient(chainId: number): PublicClient {
-    if (chainId === polygon.id) {
-      return createPublicClient({
-        chain: polygon,
-        transport: fallback(RPC_URLS.polygon.map((url) => http(url))),
-      }) as PublicClient;
-    }
+  private static createClient(chainId: SupportedChainId): PublicClient {
+    const chainConfig = getChainConfig(chainId);
+    const rpcUrls = getRpcUrlsForChain(chainId);
 
-    if (chainId === mainnet.id) {
-      return createPublicClient({
-        chain: mainnet,
-        transport: fallback(RPC_URLS.ethereum.map((url) => http(url))),
-      }) as PublicClient;
-    }
-
-    // Default to Base
     return createPublicClient({
-      chain: base,
-      transport: fallback(RPC_URLS.base.map((url) => http(url))),
+      chain: chainConfig.chain,
+      transport: fallback(rpcUrls.map((url) => http(url))),
     }) as PublicClient;
   }
 

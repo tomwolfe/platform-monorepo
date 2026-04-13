@@ -32,48 +32,13 @@ import { ERC20_ABI } from "./erc20-abi";
 import { ESCROW_ABI } from "./escrow-abi";
 import { getDb, processed_crypto_transactions, eq } from "@repo/database";
 import { Logger } from "../logger";
+import { getChainConfig, type SupportedChainId } from "../config/web3-chains";
 
 const logger = new Logger({ serviceName: "web3-verification" });
 
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
-
-const RPC_URLS = {
-  base: (() => {
-    const primary = process.env.BASE_RPC_URL;
-    if (!primary && process.env.NODE_ENV === "production") {
-      logger.error("BASE_RPC_URL is required in production");
-    }
-    return [
-      primary || "https://mainnet.base.org",
-      "https://base.llamarpc.com",
-      "https://base.publicnode.com",
-    ];
-  })(),
-  polygon: (() => {
-    const primary = process.env.POLYGON_RPC_URL;
-    if (!primary && process.env.NODE_ENV === "production") {
-      logger.error("POLYGON_RPC_URL is required in production");
-    }
-    return [
-      primary || "https://polygon-rpc.com",
-      "https://polygon.llamarpc.com",
-      "https://polygon.publicnode.com",
-    ];
-  })(),
-  ethereum: (() => {
-    const primary = process.env.ETHEREUM_RPC_URL;
-    if (!primary && process.env.NODE_ENV === "production") {
-      logger.error("ETHEREUM_RPC_URL is required in production");
-    }
-    return [
-      primary || "https://eth-mainnet.g.alchemy.com/v2/demo",
-      "https://eth.llamarpc.com",
-      "https://ethereum.publicnode.com",
-    ];
-  })(),
-};
 
 // Non-custodial escrow contract address (for Open-Delivery P2P payments)
 const ESCROW_CONTRACT_ADDRESS = (process.env
@@ -103,26 +68,13 @@ export const TOKEN_DECIMALS: Record<string, number> = {
  * Uses viem's fallback transport for automatic failover between RPC providers
  */
 export function getPublicClient(chainId?: number) {
-  const chain = chainId || base.id;
+  const chainIdNum: SupportedChainId = (chainId || base.id) as SupportedChainId;
+  const chainConfig = getChainConfig(chainIdNum);
+  const rpcUrls = chainConfig.getServerRpcUrls();
 
-  if (chain === polygon.id) {
-    return createPublicClient({
-      chain: polygon,
-      transport: fallback(RPC_URLS.polygon.map((url) => http(url))),
-    }) as PublicClient;
-  }
-
-  if (chain === mainnet.id) {
-    return createPublicClient({
-      chain: mainnet,
-      transport: fallback(RPC_URLS.ethereum.map((url) => http(url))),
-    }) as PublicClient;
-  }
-
-  // Default to Base
   return createPublicClient({
-    chain: base,
-    transport: fallback(RPC_URLS.base.map((url) => http(url))),
+    chain: chainConfig.chain,
+    transport: fallback(rpcUrls.map((url) => http(url))),
   }) as PublicClient;
 }
 

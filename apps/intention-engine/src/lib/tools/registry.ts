@@ -26,6 +26,7 @@ import {
 } from "@repo/mcp-protocol";
 import { SERVICES, Logger } from "@repo/shared";
 import zodToJsonSchema from "zod-to-json-schema";
+import { fetchWithTracing } from "../fetch";
 
 const logger = new Logger({ serviceName: "intention-engine-tool-registry" });
 
@@ -334,7 +335,9 @@ export async function discoverDynamicTools() {
 
   for (const endpoint of serviceEndpoints) {
     try {
-      const res = await fetch(endpoint);
+      // Use a deterministic execution ID for tracing this discovery operation
+      const execId = `discover-tools:${endpoint}`;
+      const res = await fetchWithTracing(endpoint, {}, execId);
       if (!res.ok) continue;
       const data = await res.json();
       const capabilities = AppCapabilitiesSchema.parse(data);

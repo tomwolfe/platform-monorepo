@@ -165,6 +165,37 @@ services:
       - observability
 
   # ─────────────────────────────────────────────────────────────
+  # Anvil (Local Ethereum EVM Emulator)
+  # Provides deterministic blockchain testing environment
+  # Pre-funded with test accounts for Web3 checkout flow testing
+  # Requires: Foundry (curl -L https://foundry.paradigm.xyz | bash && foundryup)
+  # ─────────────────────────────────────────────────────────────
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    container_name: apps-anvil
+    restart: unless-stopped
+    command: >
+      anvil
+      --host 0.0.0.0
+      --port 8545
+      --chain-id 31337
+      --mnemonic "test test test test test test test test test test test junk"
+      --accounts 10
+      --balance 10000
+      --block-time 1
+    ports:
+      - "8545:8545"
+    networks:
+      - apps-network
+    profiles:
+      - web3-testing
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -X POST http://localhost:8545 -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' | grep -q 'result'"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # ─────────────────────────────────────────────────────────────
   # Grafana (Visualization Dashboard)
   # ─────────────────────────────────────────────────────────────
   grafana:

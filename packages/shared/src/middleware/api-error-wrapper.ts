@@ -38,6 +38,11 @@ import { Logger } from "../logger";
 import { isNextRedirectError } from "../utils/next-errors";
 import { getErrorMetadata, type ErrorCategory } from "../errors/http-codes";
 import { tracingStorage, TRACE_ID_HEADER } from "../tracing";
+import {
+  type RouteGuardsConfig,
+  createRouteGuards,
+  executeRouteGuards,
+} from "./route-guards";
 
 // ============================================================================
 // TYPES
@@ -62,6 +67,8 @@ export interface UnifiedApiHandlerOptions {
   logger?: Logger;
   /** Additional context to attach to error logs */
   errorContext?: Record<string, unknown>;
+  /** Route boundary guards (idempotency, HMAC, etc.) */
+  guards?: RouteGuardsConfig;
 }
 
 // ============================================================================
@@ -113,12 +120,24 @@ export function withUnifiedApiHandler(
     includeStackTrace = process.env.NODE_ENV !== "production",
     logger: customLogger,
     errorContext = {},
+    guards: guardsConfig,
   } = options;
 
   const logger = customLogger || new Logger({ serviceName });
 
+  // Create route guards if configured
+  const guards = guardsConfig ? createRouteGuards(guardsConfig) : [];
+
   return async (req: NextRequest): Promise<NextResponse<unknown>> => {
     try {
+      // Execute route guards in sequence (idempotency, HMAC, etc.)
+      const guardResponse = await executeRouteGuards(guards, req);
+      if (guardResponse) {
+        // A guard short-circuited (e.g., idempotency conflict, invalid signature)
+        return guardResponse;
+      }
+
+      // All guards passed, execute main handler
       return await handler(req);
     } catch (err) {
       // Re-throw Next.js special errors to preserve navigation
@@ -153,7 +172,7 @@ export function withUnifiedApiHandler(
       // Format as standardized API error response
       const errorResponse = formatApiError(
         appError,
-        appError.code as any,
+        appError.code as unknown as never,
         undefined,
         {
           includeStack: includeStackTrace,
@@ -180,7 +199,7 @@ export function withUnifiedApiHandler(
  */
 export function toUnifiedError(
   error: unknown,
-  defaultCode = "INTERNAL_ERROR",
+  _defaultCode = "INTERNAL_ERROR",
 ): {
   code: string;
   message: string;
@@ -190,7 +209,7 @@ export function toUnifiedError(
   details?: unknown;
 } {
   const appError = toAppError(error);
-  const metadata = getErrorMetadata(appError.code as any);
+  const metadata = getErrorMetadata(appError.code as unknown as never);
 
   return {
     code: appError.code,

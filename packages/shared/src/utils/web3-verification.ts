@@ -16,23 +16,23 @@
  */
 
 import {
-  createPublicClient,
-  http,
-  fallback,
   type Hash,
   type Address,
-  type PublicClient,
   parseEventLogs,
   hexToString,
   verifyMessage,
   type Hex,
 } from "viem";
-import { base, polygon, mainnet } from "viem/chains";
 import { ERC20_ABI } from "./erc20-abi";
 import { ESCROW_ABI } from "./escrow-abi";
 import { getDb, processed_crypto_transactions, eq } from "@repo/database";
 import { Logger } from "../logger";
-import { getChainConfig, type SupportedChainId } from "../config/web3-chains";
+import {
+  getChainConfig,
+  getChainKey,
+  type SupportedChainId,
+} from "../config/web3-chains";
+import { getPublicClient as getWeb3PublicClient } from "@repo/web3";
 
 const logger = new Logger({ serviceName: "web3-verification" });
 
@@ -66,16 +66,12 @@ export const TOKEN_DECIMALS: Record<string, number> = {
 /**
  * Get public client for a specific chain with fallback RPC URLs
  * Uses viem's fallback transport for automatic failover between RPC providers
+ * Delegates to @repo/web3 for unified client strategy
  */
 export function getPublicClient(chainId?: number) {
-  const chainIdNum: SupportedChainId = (chainId || base.id) as SupportedChainId;
-  const chainConfig = getChainConfig(chainIdNum);
-  const rpcUrls = chainConfig.getServerRpcUrls();
-
-  return createPublicClient({
-    chain: chainConfig.chain,
-    transport: fallback(rpcUrls.map((url) => http(url))),
-  }) as PublicClient;
+  const chainIdNum = chainId || 8453; // Default to Base
+  const chainKey = getChainKey(chainIdNum);
+  return getWeb3PublicClient(chainKey);
 }
 
 // ============================================================================

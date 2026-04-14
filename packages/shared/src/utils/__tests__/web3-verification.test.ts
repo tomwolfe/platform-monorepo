@@ -30,6 +30,17 @@ vi.mock("viem", async () => {
     getTransactionReceipt: vi.fn(),
     getTransaction: vi.fn(),
     getBlockNumber: vi.fn(),
+    waitForTransactionReceipt: vi.fn(),
+    extend: vi.fn((extension) => {
+      // Return a client with the extended methods
+      const baseClient = {
+        getTransactionReceipt: vi.fn(),
+        getTransaction: vi.fn(),
+        getBlockNumber: vi.fn(),
+        waitForTransactionReceipt: vi.fn(),
+      };
+      return { ...baseClient, ...extension };
+    }),
   }));
 
   return {
@@ -104,8 +115,7 @@ vi.mock("@repo/database", () => ({
   eq: vi.fn((col, val) => ({ column: col, value: val })),
 }));
 
-// Import mocked modules
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 
 import {
   verifyTransaction,
@@ -131,10 +141,10 @@ import {
 import { createPublicClient, parseEventLogs, verifyMessage } from "viem";
 
 const _mockGetDb = getDb as unknown;
-const _mockCreatePublicClient = createPublicClient as unknown;
-const _mockParseEventLogs = parseEventLogs as unknown;
-const _mockVerifyMessage = verifyMessage as unknown;
-const _mockInsert = mockDbInsert;
+const mockCreatePublicClient = createPublicClient as ReturnType<typeof vi.fn>;
+const mockParseEventLogs = parseEventLogs as ReturnType<typeof vi.fn>;
+const mockVerifyMessage = verifyMessage as ReturnType<typeof vi.fn>;
+const mockInsert = mockDbInsert;
 
 // Store reference to last created mock client for configuration
 let lastMockClient: unknown = null;
@@ -143,11 +153,26 @@ let mockClientCreated = false;
 // Setup createPublicClient to store reference to created client
 mockCreatePublicClient.mockImplementation(() => {
   if (!mockClientCreated) {
-    lastMockClient = {
-      getTransactionReceipt: vi.fn(),
-      getTransaction: vi.fn(),
-      getBlockNumber: vi.fn(),
+    const mockGetTransactionReceipt = vi.fn();
+    const mockGetTransaction = vi.fn();
+    const mockGetBlockNumber = vi.fn();
+    const mockWaitForTransactionReceipt = vi.fn();
+
+    const baseClient = {
+      getTransactionReceipt: mockGetTransactionReceipt,
+      getTransaction: mockGetTransaction,
+      getBlockNumber: mockGetBlockNumber,
+      waitForTransactionReceipt: mockWaitForTransactionReceipt,
+      extend: vi.fn((extension) => {
+        // Return the same client with extended methods
+        return {
+          ...baseClient,
+          ...extension,
+        };
+      }),
     };
+
+    lastMockClient = baseClient;
     mockClientCreated = true;
   }
   return lastMockClient;
@@ -252,11 +277,26 @@ describe("Web3 Verification", () => {
     // Re-setup the mock client factory after clearing mocks
     mockCreatePublicClient.mockImplementation(() => {
       if (!mockClientCreated) {
-        lastMockClient = {
-          getTransactionReceipt: vi.fn(),
-          getTransaction: vi.fn(),
-          getBlockNumber: vi.fn(),
+        const mockGetTransactionReceipt = vi.fn();
+        const mockGetTransaction = vi.fn();
+        const mockGetBlockNumber = vi.fn();
+        const mockWaitForTransactionReceipt = vi.fn();
+
+        const baseClient = {
+          getTransactionReceipt: mockGetTransactionReceipt,
+          getTransaction: mockGetTransaction,
+          getBlockNumber: mockGetBlockNumber,
+          waitForTransactionReceipt: mockWaitForTransactionReceipt,
+          extend: vi.fn((extension) => {
+            // Return the same client with extended methods
+            return {
+              ...baseClient,
+              ...extension,
+            };
+          }),
         };
+
+        lastMockClient = baseClient;
         mockClientCreated = true;
       }
       return lastMockClient;
@@ -485,10 +525,13 @@ describe("Web3 Verification", () => {
         orderId: "order-123",
         signature: "0xsignature" as Hex,
         walletAddress: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1" as Address,
+        expectedRecipient:
+          "0x0000000000000000000000000000000000000000" as Address,
         paymentCurrency: "USDC",
       });
 
       expect(result.success).toBe(true);
+      expect(result.error).toBeUndefined();
       expect(result.receipt?.value).toBe(BigInt("10000000"));
       expect(mockParseEventLogs).toHaveBeenCalled();
     });

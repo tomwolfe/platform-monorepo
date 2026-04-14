@@ -608,6 +608,9 @@ importers:
       '@repo/mcp-protocol':
         specifier: workspace:*
         version: link:../mcp-protocol
+      '@repo/web3':
+        specifier: workspace:*
+        version: link:../web3
       '@sentry/node':
         specifier: ^8.0.0
         version: 8.55.0

@@ -98,6 +98,7 @@
     "@octokit/rest": "^21.0.0",
     "@repo/auth": "workspace:*",
     "@repo/mcp-protocol": "workspace:*",
+    "@repo/web3": "workspace:*",
     "@t3-oss/env-nextjs": "^0.11.1",
     "@upstash/qstash": "^2.1.0",
     "@upstash/ratelimit": "^2.0.0",

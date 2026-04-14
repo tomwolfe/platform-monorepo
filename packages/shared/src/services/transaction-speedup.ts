@@ -22,13 +22,7 @@
  * customer's own wallet. This service handles backend-initiated transactions.
  */
 
-import {
-  createPublicClient,
-  http,
-  type Hash,
-  type TransactionRequest,
-  parseGwei,
-} from "viem";
+import { type Hash, type TransactionRequest, parseGwei } from "viem";
 import {
   getDb,
   processed_crypto_transactions,
@@ -41,6 +35,7 @@ import {
 import { Logger } from "../logger";
 import { getEscrowResolverWalletClient } from "../utils/wallet-provider";
 import { getChainConfig, DEFAULT_CHAIN_ID } from "../config/web3-chains";
+import { getPublicClient } from "@repo/web3";
 
 const logger = new Logger({ serviceName: "transaction-speedup" });
 
@@ -121,13 +116,7 @@ class GasPriceOracleService implements GasPriceOracle {
    * Get public client for current chain
    */
   private getPublicClient() {
-    const chainConfig = getChainConfig(this.chainId);
-    const rpcUrls = chainConfig.getServerRpcUrls();
-
-    return createPublicClient({
-      chain: chainConfig.chain,
-      transport: http(rpcUrls[0]),
-    });
+    return getPublicClient(this.chainId);
   }
 }
 
@@ -398,11 +387,7 @@ export class TransactionSpeedUpService {
    * Get public client for blockchain interaction
    */
   private getPublicClient() {
-    const chainConfig = getChainConfig(DEFAULT_CHAIN_ID);
-    return createPublicClient({
-      chain: chainConfig.chain,
-      transport: http(chainConfig.getServerRpcUrls()[0]),
-    });
+    return getPublicClient(DEFAULT_CHAIN_ID);
   }
 
   /**

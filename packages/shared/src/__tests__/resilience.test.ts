@@ -77,7 +77,7 @@ describe("CircuitBreaker", () => {
           await circuitBreaker.execute(async () => {
             throw new Error("Service unavailable");
           });
-        } catch (error) {
+        } catch (_error) {
           // Expected
         }
       }
@@ -93,7 +93,7 @@ describe("CircuitBreaker", () => {
           await circuitBreaker.execute(async () => {
             throw new Error("Service unavailable");
           });
-        } catch (error) {
+        } catch (_error) {
           // Expected
         }
       }
@@ -122,7 +122,7 @@ describe("CircuitBreaker", () => {
           await circuitBreaker.execute(async () => {
             throw new Error("Service unavailable");
           });
-        } catch (error) {
+        } catch (_error) {
           // Expected
         }
       }
@@ -150,7 +150,7 @@ describe("CircuitBreaker", () => {
           await circuitBreaker.execute(async () => {
             throw new Error("Service unavailable");
           });
-        } catch (error) {
+        } catch (_error) {
           // Expected
         }
       }
@@ -168,7 +168,7 @@ describe("CircuitBreaker", () => {
         await circuitBreaker.execute(async () => {
           throw new Error("Still failing");
         });
-      } catch (error) {
+      } catch (_error) {
         // Expected
       }
 
@@ -190,7 +190,7 @@ describe("CircuitBreaker", () => {
           await circuitBreaker.execute(async () => {
             throw new Error("Service unavailable");
           });
-        } catch (error) {
+        } catch (_error) {
           // Expected
         }
       }
@@ -247,7 +247,7 @@ describe("CircuitBreaker", () => {
             error.code = "CLIENT_ERROR";
             throw error;
           });
-        } catch (error) {
+        } catch (_error) {
           // Expected
         }
       }
@@ -302,7 +302,8 @@ describe("IdempotencyService", () => {
   describe("isDuplicate", () => {
     it("should return false when redis.set succeeds (new key)", async () => {
       const mockSet = vi.fn().mockResolvedValue("OK");
-      const service = new IdempotencyService(createMockRedis({ set: mockSet }));
+      const mockRedis = createMockRedis({ set: mockSet });
+      const service = new IdempotencyService(mockRedis);
 
       const result = await service.isDuplicate("key1", "action1");
 
@@ -310,7 +311,7 @@ describe("IdempotencyService", () => {
       // Key format is idempotency:{routeName}:{key} (routeName defaults to "unknown")
       // Value is "processing" (two-phase commit pattern)
       // Uses processingTtlSeconds (default 30s) not defaultTtlSeconds
-      expect(mockRedis.set).toHaveBeenCalledWith(
+      expect(mockSet).toHaveBeenCalledWith(
         expect.stringContaining("idempotency:unknown:key1"),
         "processing",
         { nx: true, ex: 30 },
@@ -328,20 +329,17 @@ describe("IdempotencyService", () => {
 
     it("should use custom TTL from config", async () => {
       const mockSet = vi.fn().mockResolvedValue("OK");
-      const service = new IdempotencyService(
-        createMockRedis({ set: mockSet }),
-        {
-          processingTtlSeconds: 3600,
-        },
-      );
+      const mockRedis = createMockRedis({ set: mockSet });
+      const service = new IdempotencyService(mockRedis, {
+        processingTtlSeconds: 3600,
+      });
 
       await service.isDuplicate("key1", "action1");
 
-      expect(mockRedis.set).toHaveBeenCalledWith(
-        expect.any(String),
-        "processing",
-        { nx: true, ex: 3600 },
-      );
+      expect(mockSet).toHaveBeenCalledWith(expect.any(String), "processing", {
+        nx: true,
+        ex: 3600,
+      });
     });
   });
 

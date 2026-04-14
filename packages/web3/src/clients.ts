@@ -39,6 +39,22 @@ import {
   type SupportedChainId,
 } from "./config";
 
+// OpenTelemetry tracing support (optional - won't break if @opentelemetry/api is not installed)
+let trace: any = null;
+let context: any = null;
+let SpanKind: any = null;
+let SpanStatusCode: any = null;
+
+try {
+  const otel = require("@opentelemetry/api");
+  trace = otel.trace;
+  context = otel.context;
+  SpanKind = otel.SpanKind;
+  SpanStatusCode = otel.SpanStatusCode;
+} catch {
+  // OpenTelemetry not installed - tracing will be disabled
+}
+
 // ============================================================================
 // SERVERLESS TIMEOUT CONFIGURATION
 // ============================================================================
@@ -100,6 +116,108 @@ export function getPublicClient(chainName: SupportedChainId = "base") {
   });
 
   return wrapClientWithServerlessTimeout(baseClient);
+}
+
+/**
+ * Get a traced public client with OpenTelemetry span wrapping
+ *
+ * @param chainName - Chain name (defaults to "base")
+ * @param serviceName - Service name for span attribution
+ * @returns Viem public client with tracing and serverless timeout wrappers
+ *
+ * @example
+ * ```typescript
+ * const client = getTracedPublicClient("base", "payout-cron");
+ * const receipt = await client.waitForTransactionReceipt({ hash });
+ * ```
+ */
+export function getTracedPublicClient(
+  chainName: SupportedChainId = "base",
+  serviceName: string = "web3-client",
+) {
+  const client = getPublicClient(chainName);
+
+  // If OpenTelemetry is not available, return the client without tracing
+  if (!trace || !context) {
+    return client;
+  }
+
+  const tracer = trace.getTracer("web3-public-client");
+
+  /**
+   * Wrap a client method with an OpenTelemetry span
+   */
+  function wrapWithSpan<TArgs extends unknown[], TResult>(
+    methodName: string,
+    fn: (...args: TArgs) => Promise<TResult>,
+  ): (...args: TArgs) => Promise<TResult> {
+    return async (...args: TArgs): Promise<TResult> => {
+      return tracer.startActiveSpan(
+        `${serviceName}.${methodName}`,
+        {
+          kind: SpanKind.CLIENT,
+          attributes: {
+            "rpc.method": methodName,
+            "rpc.service": serviceName,
+            "rpc.system": "web3",
+          },
+        },
+        context.active(),
+        async (span) => {
+          try {
+            const result = await fn(...args);
+
+            // Add tx hash to span if available in args or result
+            const txHash = (args[0] as any)?.hash;
+            if (txHash) {
+              span.setAttribute("web3.transaction.hash", txHash);
+            }
+
+            span.setStatus({ code: SpanStatusCode.OK });
+            return result;
+          } catch (error) {
+            span.recordException(
+              error instanceof Error ? error : new Error(String(error)),
+            );
+            span.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          } finally {
+            span.end();
+          }
+        },
+      );
+    };
+  }
+
+  return client.extend({
+    waitForTransactionReceipt: {
+      fn: wrapWithSpan(
+        "waitForTransactionReceipt",
+        client.waitForTransactionReceipt.bind(client),
+      ),
+    },
+    getTransactionReceipt: {
+      fn: wrapWithSpan(
+        "getTransactionReceipt",
+        client.getTransactionReceipt.bind(client),
+      ),
+    },
+    getBlockNumber: {
+      fn: wrapWithSpan("getBlockNumber", client.getBlockNumber.bind(client)),
+    },
+    getBalance: {
+      fn: wrapWithSpan("getBalance", client.getBalance.bind(client)),
+    },
+    getTransactionCount: {
+      fn: wrapWithSpan(
+        "getTransactionCount",
+        client.getTransactionCount.bind(client),
+      ),
+    },
+  }) as PublicClient<HttpTransport, typeof chainConfig.chain>;
 }
 
 /**

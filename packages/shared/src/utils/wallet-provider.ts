@@ -18,7 +18,6 @@
 
 import {
   createWalletClient,
-  createPublicClient,
   http,
   fallback,
   type Address,
@@ -37,17 +36,14 @@ import {
   releaseNonce,
   reconcileExpiredLeases,
 } from "./nonce-tracker";
-export {
-  createTracedPublicClient,
-  getCurrentTraceId,
-  logWithTraceContext,
-} from "./web3-tracer";
+export { getCurrentTraceId, logWithTraceContext } from "./web3-tracer";
 import {
   getChainConfig,
   isSupportedChain,
   SUPPORTED_CHAIN_IDS,
   DEFAULT_CHAIN_ID,
 } from "../config/web3-chains";
+import { getPublicClient as getWeb3PublicClient } from "@repo/web3";
 
 // ============================================================================
 // TYPES
@@ -119,6 +115,7 @@ export async function getEscrowResolverWalletClient(
 
 /**
  * Get a public client for blockchain reads
+ * Delegates to @repo/web3 for unified client strategy
  *
  * @param chainId - The chain ID to connect to (defaults to Base)
  * @returns PublicClient for reading blockchain state
@@ -138,14 +135,7 @@ export async function getPublicClient(
     );
   }
 
-  const chainConfig = getChainConfig(chainId);
-
-  const publicClient = createPublicClient({
-    chain: chainConfig.chain,
-    transport: fallback(chainConfig.getServerRpcUrls().map((url) => http(url))),
-  });
-
-  return publicClient;
+  return getWeb3PublicClient(chainId);
 }
 
 /**

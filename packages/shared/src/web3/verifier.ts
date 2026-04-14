@@ -12,34 +12,13 @@
  * @see T1: Unify Web3 Logic - Audit Roadmap
  */
 
-import {
-  isHex,
-  isAddress,
-  type Address,
-  type Hash,
-  createPublicClient,
-  http,
-  fallback,
-} from "viem";
-import { base, polygon, mainnet } from "viem/chains";
+import { isHex, isAddress, type Address, type Hash } from "viem";
 import type { PublicClient } from "viem";
 import { Logger } from "../logger";
-import { getChainConfig, type SupportedChainId } from "../config/web3-chains";
+import { type SupportedChainId } from "../config/web3-chains";
+import { getPublicClient } from "@repo/web3";
 
 const logger = new Logger({ serviceName: "web3-verifier" });
-
-// ============================================================================
-// RPC URL CONFIGURATION (Delegated to shared chain config)
-// ============================================================================
-
-/**
- * Get RPC URLs for a chain from the shared configuration.
- * This delegates to web3-chains.ts to avoid duplication.
- */
-function getRpcUrlsForChain(chainId: SupportedChainId): string[] {
-  const config = getChainConfig(chainId);
-  return config.getServerRpcUrls();
-}
 
 // ============================================================================
 // WEB3 PROVIDER (Singleton with Retry Logic)
@@ -72,15 +51,10 @@ export class Web3Provider {
 
   /**
    * Create a new public client with fallback RPC URLs.
+   * Delegates to @repo/web3 for unified client strategy
    */
   private static createClient(chainId: SupportedChainId): PublicClient {
-    const chainConfig = getChainConfig(chainId);
-    const rpcUrls = getRpcUrlsForChain(chainId);
-
-    return createPublicClient({
-      chain: chainConfig.chain,
-      transport: fallback(rpcUrls.map((url) => http(url))),
-    }) as PublicClient;
+    return getPublicClient(chainId) as PublicClient;
   }
 
   /**

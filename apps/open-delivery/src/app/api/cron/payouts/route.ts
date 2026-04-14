@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getDb,
   orders,
-  orderItems,
+  // orderItems,
   restaurants,
   drivers,
   eq,
@@ -20,11 +20,12 @@ import { withServerlessTimeout } from "@repo/shared/middleware/serverless-timeou
 import {
   getEscrowResolverWalletClient,
   getPublicClient,
-  getEscrowResolverAddress,
+  // getEscrowResolverAddress,
   getDynamicGasPrice,
-  nonceManager,
+  // nonceManager,
 } from "@repo/shared/utils/wallet-provider";
 import { usdToCryptoBigInt } from "@repo/shared/utils/crypto-price";
+import type { Address } from "viem";
 
 const logger = new Logger({ serviceName: "payout-cron" });
 
@@ -255,39 +256,6 @@ async function getCronHandler(req: NextRequest) {
     const startTime = Date.now();
     const VERCEL_TIMEOUT_THRESHOLD = 8000; // Exit at 8 seconds to avoid 10s hard timeout
 
-    const MAX_RETRIES = 3;
-    const BASE_DELAY = 1000; // 1 second
-
-    async function executeWithNonceRetry<T>(fn: () => Promise<T>): Promise<T> {
-      let lastError: Error | null = null;
-
-      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        try {
-          return await fn();
-        } catch (error: unknown) {
-          lastError = error as Error;
-          const errorMsg =
-            error instanceof Error ? error.message : String(error);
-          const isRetryable =
-            errorMsg.includes("nonce too low") ||
-            errorMsg.includes("NONCE_TOO_LOW") ||
-            errorMsg.includes("replacement transaction underpriced") ||
-            errorMsg.includes("UNDERPRICED");
-
-          if (!isRetryable) throw error;
-
-          const delay = Math.random() * BASE_DELAY * Math.pow(2, attempt);
-          logger.warn(`Payout nonce retry ${attempt + 1}/${MAX_RETRIES}`, {
-            delay,
-            error: errorMsg,
-          });
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
-
-      throw lastError;
-    }
-
     if (driverPayouts.length > 0) {
       try {
         // Escrow contract address
@@ -405,7 +373,10 @@ async function getCronHandler(req: NextRequest) {
         });
 
         /**
-         * Execute a single tip release with timeout protection
+         * Execute a single tip release with nonce lease pattern.
+         *
+         * Uses reserveNonce → writeContract → confirmNonce/releaseNonce flow
+         * to prevent nonce burn when transactions fail before broadcast.
          */
         const executeTipRelease = async (payout: {
           address: string;
@@ -419,19 +390,21 @@ async function getCronHandler(req: NextRequest) {
 
           if (timeRemaining <= 0) return false;
 
-          return executeWithNonceRetry(async () => {
+          // Reserve a nonce with lease tracking
+          const lease = await nonceManager.reserveNonce(
+            base.id,
+            resolverAccount.address,
+            publicClient,
+          );
+
+          try {
+            const { gasPrice } = await getDynamicGasPrice(publicClient);
+
             // Mark as releasing first (idempotency)
             await getDb()
               .update(orders)
               .set({ escrowStatus: "releasing" })
               .where(eq(orders.id, payout.orderId));
-
-            const nonce = await nonceManager.getNextNonce(
-              base.id,
-              resolverAccount.address,
-              publicClient,
-            );
-            const { gasPrice } = await getDynamicGasPrice(publicClient);
 
             // Call escrow.releaseTip(orderId, driver) with timeout protection
             const timeoutPromise = new Promise<never>((_, reject) =>
@@ -446,11 +419,14 @@ async function getCronHandler(req: NextRequest) {
                 args: [payout.orderId, payout.address as Address],
                 account: resolverAccount,
                 chain: base,
-                nonce,
+                nonce: lease.nonce,
                 gasPrice,
               }),
               timeoutPromise,
             ]);
+
+            // Success: confirm the lease and save tx hash
+            await nonceManager.confirmNonce(lease);
 
             logger.info("Tip release submitted", {
               orderId: payout.orderId,
@@ -458,11 +434,10 @@ async function getCronHandler(req: NextRequest) {
               tipAmount: payout.tipAmount,
               currency: payout.currency,
               txHash: hash,
-              nonce,
+              nonce: lease.nonce,
               gasPrice: gasPrice.toString(),
             });
 
-            // Save the tx hash and mark as released
             await getDb()
               .update(orders)
               .set({
@@ -473,18 +448,17 @@ async function getCronHandler(req: NextRequest) {
               .where(eq(orders.id, payout.orderId));
 
             return true;
-          }).catch(async (error: unknown) => {
+          } catch (error: unknown) {
             const errorMsg =
               error instanceof Error ? error.message : String(error);
+
             if (errorMsg === "RPC_TIMEOUT") {
               logger.warn(
                 "RPC call timed out, checking on-chain status before marking failed",
                 { orderId: payout.orderId },
               );
 
-              // CRITICAL FIX: On RPC timeout, check on-chain for TipReleased event
-              // before marking as failed. If the tx was actually broadcast, we don't
-              // want to mark it as failed and risk a duplicate payout on next run.
+              // Check on-chain for TipReleased event before marking failed
               try {
                 const logs = await publicClient.getLogs({
                   address: ESCROW_CONTRACT_ADDRESS,
@@ -508,6 +482,7 @@ async function getCronHandler(req: NextRequest) {
                     "On-chain check shows tip was released despite RPC timeout",
                     { orderId: payout.orderId },
                   );
+                  await nonceManager.confirmNonce(lease);
                   await getDb()
                     .update(orders)
                     .set({ escrowStatus: "released" })
@@ -527,24 +502,116 @@ async function getCronHandler(req: NextRequest) {
                 );
               }
 
-              // No on-chain release found - mark as failed (safe to retry next run)
+              // No on-chain release found — the transaction was likely never
+              // broadcast. Release the nonce lease so it can be reused.
+              const releaseResult = await nonceManager.releaseNonce(lease);
+              if ("reason" in releaseResult) {
+                logger.warn("Nonce release failed after timeout", {
+                  orderId: payout.orderId,
+                  reason: releaseResult.reason,
+                  leaseNonce: lease.nonce,
+                });
+              }
+
               await getDb()
                 .update(orders)
                 .set({ escrowStatus: "failed" })
                 .where(eq(orders.id, payout.orderId));
             } else {
-              logger.error("Failed to release tip", {
+              // Non-timeout error: check if it's retryable before releasing nonce
+              const isRetryable =
+                errorMsg.includes("nonce too low") ||
+                errorMsg.includes("NONCE_TOO_LOW") ||
+                errorMsg.includes("replacement transaction underpriced") ||
+                errorMsg.includes("UNDERPRICED");
+
+              if (isRetryable) {
+                // Nonce conflict means another instance may have used this nonce.
+                // Don't release it — let the retry get a fresh nonce.
+                logger.warn("Retryable nonce error, keeping lease for retry", {
+                  orderId: payout.orderId,
+                  error: errorMsg,
+                });
+                // Re-throw to trigger the retry loop
+                throw error;
+              }
+
+              // Non-retryable error: release the nonce lease
+              logger.error("Failed to release tip (non-retryable)", {
                 orderId: payout.orderId,
                 error: errorMsg,
               });
-              // Mark as failed
+              const releaseResult = await nonceManager.releaseNonce(lease);
+              if ("reason" in releaseResult) {
+                logger.warn("Nonce release failed after non-retryable error", {
+                  orderId: payout.orderId,
+                  reason: releaseResult.reason,
+                  leaseNonce: lease.nonce,
+                });
+              }
+
               await getDb()
                 .update(orders)
                 .set({ escrowStatus: "failed" })
                 .where(eq(orders.id, payout.orderId));
             }
             return false;
-          });
+          }
+        };
+
+        /**
+         * Execute a single tip release with retry support.
+         * Each retry gets a fresh nonce lease, so released nonces from
+         * previous attempts are properly rolled back.
+         */
+        const executeTipReleaseWithRetry = async (payout: {
+          address: string;
+          tipAmount: string;
+          currency: string;
+          orderId: string;
+        }): Promise<boolean> => {
+          const MAX_RETRIES = 3;
+          const BASE_DELAY = 1000;
+
+          for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            try {
+              return await executeTipRelease(payout);
+            } catch (error: unknown) {
+              const errorMsg =
+                error instanceof Error ? error.message : String(error);
+              const isRetryable =
+                errorMsg.includes("nonce too low") ||
+                errorMsg.includes("NONCE_TOO_LOW") ||
+                errorMsg.includes("replacement transaction underpriced") ||
+                errorMsg.includes("UNDERPRICED");
+
+              if (!isRetryable || attempt === MAX_RETRIES - 1) {
+                // Non-retryable error or last attempt — let executeTipRelease
+                // handle the nonce release and DB state
+                logger.error(
+                  `Payout failed after ${attempt + 1}/${MAX_RETRIES} attempts`,
+                  {
+                    orderId: payout.orderId,
+                    error: errorMsg,
+                    isRetryable,
+                  },
+                );
+                return false;
+              }
+
+              // Retryable error — the nonce lease was already released in
+              // executeTipRelease, so we can safely get a fresh one on retry
+              const delay = Math.random() * BASE_DELAY * Math.pow(2, attempt);
+              logger.warn(`Payout retry ${attempt + 1}/${MAX_RETRIES}`, {
+                delay,
+                orderId: payout.orderId,
+                error: errorMsg,
+              });
+              await new Promise((resolve) => setTimeout(resolve, delay));
+            }
+          }
+
+          return false;
         };
 
         // Process in batches of 5 to avoid overwhelming the RPC and manage timeout risk
@@ -581,7 +648,7 @@ async function getCronHandler(req: NextRequest) {
 
           // Execute batch in parallel with Promise.allSettled
           const results = await Promise.allSettled(
-            batch.map((payout) => executeTipRelease(payout)),
+            batch.map((payout) => executeTipReleaseWithRetry(payout)),
           );
 
           // Count successful executions
@@ -672,7 +739,7 @@ export const GET = withServerlessTimeout(
     }
   }),
   8000,
-) as any;
+) as unknown as typeof GET;
 
 export const POST = withServerlessTimeout(
   withCronAuth(async (req: NextRequest) => {
@@ -700,4 +767,4 @@ export const POST = withServerlessTimeout(
     }
   }),
   8000,
-) as any;
+) as unknown as typeof POST;

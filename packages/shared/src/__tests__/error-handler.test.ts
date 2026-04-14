@@ -14,6 +14,7 @@ import {
   withTimeout,
   settleAll,
 } from "../error-handler";
+import { withUnifiedApiHandler } from "../middleware/api-error-wrapper";
 import {
   AppError,
   ValidationError,
@@ -56,7 +57,7 @@ function createMockRequest(headers?: Record<string, string>) {
 /**
  * Mock NextResponse
  */
-function createMockResponse(data: unknown, status: number = 200) {
+function _createMockResponse(data: unknown, status: number = 200) {
   return {
     status,
     json: vi.fn(async () => data),
@@ -73,12 +74,10 @@ describe("Error Handler", () => {
   });
 
   // ============================================================================
-  // withUnifiedApiHandler - DISABLED: Requires Next.js integration test setup
-  // These tests need to be moved to a separate integration test file with proper
-  // Next.js environment mocking.
+  // withUnifiedApiHandler
   // ============================================================================
 
-  describe.skip("withUnifiedApiHandler", () => {
+  describe("withUnifiedApiHandler", () => {
     it("should return success response for successful handler", async () => {
       const handler = vi.fn().mockResolvedValue({
         json: vi.fn(),
@@ -174,8 +173,9 @@ describe("Error Handler", () => {
       expect(response.status).toBe(500);
       const jsonBody = await response.json();
       expect(jsonBody.success).toBe(false);
-      expect(jsonBody.error.code).toBe("INTERNAL_ERROR");
-      expect(jsonBody.error.message).toBe("Unexpected database error");
+      // Generic Error maps to EXECUTION_FAILED with safe default message
+      expect(jsonBody.error.code).toBe("EXECUTION_FAILED");
+      expect(jsonBody.error.message).toBe("An unexpected error occurred");
     });
 
     it("should include stack trace when enabled in development", async () => {
@@ -223,7 +223,7 @@ describe("Error Handler", () => {
       const jsonBody = await response.json();
       expect(jsonBody.traceId).toBe("trace-456");
     });
-  }); // end describe.skip("withUnifiedApiHandler")
+  }); // end describe("withUnifiedApiHandler")
 
   // ============================================================================
   // formatError

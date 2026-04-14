@@ -4,10 +4,12 @@ import { Logger } from "@repo/shared/logger";
 import {
   getPublicClient,
   getEscrowResolverAddress,
+  // nonceManager,
 } from "@repo/shared/utils/wallet-provider";
 import {
   syncNonceFromChain,
   checkNonceSyncStatus,
+  reconcileExpiredLeases,
 } from "@repo/shared/utils/nonce-tracker";
 import { formatError, formatSuccess } from "@repo/shared/error-handler";
 import { base } from "viem/chains";
@@ -48,7 +50,18 @@ async function postHandler(_req: NextRequest) {
     const publicClient = await getPublicClient(chainId);
     const resolverAddress = await getEscrowResolverAddress();
 
-    // Check sync status
+    // Step 1: Reconcile expired leases first
+    const leaseReconciliation = await reconcileExpiredLeases(
+      chainId,
+      resolverAddress,
+      publicClient,
+    );
+
+    logger.info("Expired lease reconciliation completed", {
+      ...leaseReconciliation,
+    });
+
+    // Step 2: Check sync status
     const syncStatus = await checkNonceSyncStatus(
       chainId,
       resolverAddress,
@@ -57,7 +70,7 @@ async function postHandler(_req: NextRequest) {
 
     logger.info("Nonce sync status check", { ...syncStatus });
 
-    if (syncStatus.isSynced) {
+    if (syncStatus.isSynced && !leaseReconciliation.syncNeeded) {
       return NextResponse.json(
         formatSuccess({
           message: "Nonce tracker is already in sync",
@@ -65,13 +78,14 @@ async function postHandler(_req: NextRequest) {
           resolverAddress,
           trackedNonce: syncStatus.trackedNonce,
           onChainNonce: syncStatus.onChainNonce,
+          expiredLeasesCleaned: leaseReconciliation.expiredLeasesCleaned,
           synced: true,
           timestamp: new Date().toISOString(),
         }),
       );
     }
 
-    // Sync needed - reset tracker to on-chain value
+    // Sync needed — either from drift or expired lease reconciliation
     const syncedNonce = await syncNonceFromChain(
       chainId,
       resolverAddress,
@@ -92,6 +106,8 @@ async function postHandler(_req: NextRequest) {
         previousTrackedNonce: syncStatus.trackedNonce,
         syncedNonce,
         onChainNonce: syncStatus.onChainNonce,
+        expiredLeasesCleaned: leaseReconciliation.expiredLeasesCleaned,
+        leaseSyncNeeded: leaseReconciliation.syncNeeded,
         syncReason: syncStatus.reason,
         timestamp: new Date().toISOString(),
       }),

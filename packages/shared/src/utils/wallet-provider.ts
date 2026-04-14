@@ -32,6 +32,10 @@ import {
   resetNonce,
   syncNonceFromChain,
   checkNonceSyncStatus,
+  reserveNonce,
+  confirmNonce,
+  releaseNonce,
+  reconcileExpiredLeases,
 } from "./nonce-tracker";
 export {
   createTracedPublicClient,
@@ -265,7 +269,9 @@ export async function getDynamicGasPrice<
  * @returns Estimated gas limit with buffer
  */
 export async function estimateTransactionGas(params: {
-  publicClient: { estimateGas: (args: any) => Promise<bigint> };
+  publicClient: {
+    estimateGas: (args: Record<string, unknown>) => Promise<bigint>;
+  };
   account: { address: `0x${string}` };
   to: `0x${string}`;
   data: `0x${string}`;
@@ -289,6 +295,15 @@ export const nonceManager = {
     publicClient: PublicClient,
     startNonce?: number,
   ) => getNextNonce(chainId, address, publicClient, startNonce),
+  reserveNonce: async (
+    chainId: number,
+    address: string,
+    publicClient: PublicClient,
+    startNonce?: number,
+  ) => reserveNonce(chainId, address, publicClient, startNonce),
+  confirmNonce,
+  releaseNonce,
+  reconcileExpiredLeases,
   peekNonce,
   resetNonce,
   syncNonceFromChain,

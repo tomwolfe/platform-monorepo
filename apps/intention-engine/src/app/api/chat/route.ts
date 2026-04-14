@@ -371,20 +371,11 @@ export const POST = withUnifiedApiHandler(async (req: Request) => {
   const lastInteractionContext = await (async () => {
     if (clerkId) {
       try {
-        const { getLastInteractionContextByClerkId } =
-          await import("@/lib/intent");
-        return await getLastInteractionContextByClerkId(clerkId);
+        const { loadUserInteractionContext } =
+          await import("@/lib/context-persistence");
+        return await loadUserInteractionContext(clerkId);
       } catch (err) {
         logger.warn("Failed to retrieve last interaction context by clerkId", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    } else if (userIp !== "anonymous") {
-      try {
-        const { getLastInteractionContext } = await import("@/lib/intent");
-        return await getLastInteractionContext(userIp);
-      } catch (err) {
-        logger.warn("Failed to retrieve last interaction context", {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -565,18 +556,16 @@ export const POST = withUnifiedApiHandler(async (req: Request) => {
           });
 
           // Contextual Memory: Save the interaction context for future pronoun resolution
-          if (userId) {
-            const { saveInteractionContextByClerkId, saveInteractionContext } =
-              await import("@/lib/intent");
-            if (clerkId) {
-              await saveInteractionContextByClerkId(
-                clerkId,
-                intent,
-                auditLogId,
-              );
-            } else if (userIp !== "anonymous") {
-              await saveInteractionContext(userIp, intent, auditLogId);
-            }
+          if (clerkId) {
+            const { saveUserInteractionContext } =
+              await import("@/lib/context-persistence");
+            await saveUserInteractionContext(clerkId, {
+              intentType: intent.type,
+              rawText: intent.explanation || "",
+              parameters: intent.parameters || {},
+              timestamp: new Date().toISOString(),
+              executionId: auditLogId,
+            });
           }
         } catch (err) {
           logger.error("Failed to update final audit log", {
@@ -644,18 +633,16 @@ export const POST = withUnifiedApiHandler(async (req: Request) => {
           });
 
           // Contextual Memory: Save the interaction context for future pronoun resolution
-          if (userId) {
-            const { saveInteractionContextByClerkId, saveInteractionContext } =
-              await import("@/lib/intent");
-            if (clerkId) {
-              await saveInteractionContextByClerkId(
-                clerkId,
-                intent,
-                auditLogId,
-              );
-            } else if (userIp !== "anonymous") {
-              await saveInteractionContext(userIp, intent, auditLogId);
-            }
+          if (clerkId) {
+            const { saveUserInteractionContext } =
+              await import("@/lib/context-persistence");
+            await saveUserInteractionContext(clerkId, {
+              intentType: intent.type,
+              rawText: intent.explanation || "",
+              parameters: intent.parameters || {},
+              timestamp: new Date().toISOString(),
+              executionId: auditLogId,
+            });
           }
         } catch (err) {
           logger.error("Failed to update final audit log after fallback", {

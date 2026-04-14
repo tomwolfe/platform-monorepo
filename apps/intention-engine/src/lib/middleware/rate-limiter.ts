@@ -9,6 +9,7 @@
 
 export {
   RateLimiterService,
+  rateLimitMiddleware,
   DEFAULT_LIMITS,
   type RateLimitConfig,
   type EndpointRateLimitConfig,

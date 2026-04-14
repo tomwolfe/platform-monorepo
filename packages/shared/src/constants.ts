@@ -2,10 +2,27 @@
  * Centralized Constants
  *
  * Single source of truth for magic strings, chain IDs, error codes, and configuration constants.
+ * This file is a LEAF NODE — it has ZERO internal imports from @repo/shared.
  * Prevents duplication across services and ensures consistency.
  *
- * @see Task 6: Centralize Magic Strings
+ * @see T1: Resolve Circularities & Constants
  */
+
+// ============================================================================
+// SERVICE NAMESPACES (moved from redis.ts to break circular dependencies)
+// ============================================================================
+
+/**
+ * Service Namespace Enum
+ * Enforces namespace isolation across all services.
+ * Moved here from redis.ts to ensure constants.ts remains a leaf node.
+ */
+export enum ServiceNamespace {
+  IE = "ie", // Intention Engine
+  OD = "od", // Open Delivery
+  TS = "ts", // Table Stack
+  SHARED = "shared",
+}
 
 // ============================================================================
 // CHAIN IDS
@@ -224,4 +241,64 @@ export const ABLY_CHANNELS = {
   NERVOUS_SYSTEM_DELIVERY_UPDATES: "nervous-system:delivery-updates",
   /** Per-restaurant dashboard channel template (use with restaurantId) */
   RESTAURANT_TEMPLATE: "restaurant:", // usage: `${ABLY_CHANNELS.RESTAURANT_TEMPLATE}${id}`
+} as const;
+
+// ============================================================================
+// SERVICE URLS (moved from services.ts to break circular dependencies)
+// ============================================================================
+
+/**
+ * Get the URL for a service based on environment (cluster vs localhost).
+ * Pure function with no internal imports.
+ */
+export function getServiceUrl(
+  serviceName: string,
+  defaultPort: number,
+): string {
+  const envVarName = `${serviceName.toUpperCase()}_URL`;
+  if (process.env[envVarName]) {
+    return process.env[envVarName]!;
+  }
+
+  const clusterEnv = process.env.CLUSTER_ENV === "true";
+  if (clusterEnv) {
+    // Internal K8s/Docker DNS: http://service-name:port
+    return `http://${serviceName.toLowerCase().replace("_", "-")}:${defaultPort}`;
+  }
+
+  return `http://localhost:${defaultPort}`;
+}
+
+/**
+ * Centralized service URL registry.
+ * Moved here from services.ts to ensure constants.ts remains a leaf node.
+ */
+export const SERVICES = {
+  INTENTION_ENGINE: {
+    get URL() {
+      return getServiceUrl("INTENTION_ENGINE", 3000);
+    },
+    get API_URL() {
+      return `${this.URL}/api`;
+    },
+  },
+  TABLESTACK: {
+    get URL() {
+      return getServiceUrl("TABLESTACK", 3005);
+    },
+    get API_URL() {
+      return `${this.URL}/api/v1`;
+    },
+    get MCP_URL() {
+      return `${this.URL}/api/mcp`;
+    },
+  },
+  OPENDELIVERY: {
+    get URL() {
+      return getServiceUrl("OPENDELIVERY", 3001);
+    },
+    get MCP_URL() {
+      return `${this.URL}/api/mcp`;
+    },
+  },
 } as const;

@@ -14,9 +14,14 @@ import {
 } from "@repo/database";
 import { and, eq, gte, or, sql } from "@repo/database";
 import { addMinutes, parseISO } from "date-fns";
-import { ConflictError, AppError } from "@repo/shared/errors";
 import { Logger } from "@repo/shared";
 import { getRedisClient, ServiceNamespace } from "@repo/shared/redis";
+import {
+  Result,
+  ok,
+  err,
+  errWithCode,
+} from "@repo/shared/errors/result-pattern";
 import crypto from "crypto";
 
 const logger = new Logger({ serviceName: "reservation-service" });
@@ -324,11 +329,26 @@ export class ReservationService {
   }
 
   /**
-   * Create a new reservation with atomic transaction handling
+   * Create a new reservation with atomic transaction handling.
+   * Returns Result<CreateReservationResult> instead of throwing.
    */
   async createReservation(
     input: CreateReservationInput,
-  ): Promise<CreateReservationResult> {
+  ): Promise<Result<CreateReservationResult>> {
+    try {
+      return await this.#createReservationImpl(input);
+    } catch (error) {
+      return err(error);
+    }
+  }
+
+  /**
+   * Internal implementation of createReservation.
+   * Kept separate so the public method can wrap it with try/catch.
+   */
+  async #createReservationImpl(
+    input: CreateReservationInput,
+  ): Promise<Result<CreateReservationResult>> {
     const db = getDb();
     const {
       restaurantId,
@@ -347,7 +367,7 @@ export class ReservationService {
     });
 
     if (!restaurant) {
-      throw new AppError("NOT_FOUND", "Restaurant not found", 404, {
+      return errWithCode("NOT_FOUND", "Restaurant not found", 404, {
         restaurantId,
       });
     }
@@ -411,8 +431,10 @@ export class ReservationService {
         `);
 
         if (!cteResult || cteResult.length === 0) {
-          throw new ConflictError(
+          return errWithCode(
+            "CONFLICT",
             "No suitable tables available for this time and party size",
+            409,
           );
         }
 
@@ -454,8 +476,10 @@ export class ReservationService {
 
         if (!hasTablesToCheck && !assignedTableId) {
           // No tables to check and no assigned table — this is a logic error
-          throw new ConflictError(
+          return errWithCode(
+            "CONFLICT",
             "No table specified. Either tableId or combinedTableIds must be provided.",
+            409,
           );
         }
 
@@ -495,7 +519,11 @@ export class ReservationService {
         });
 
         if (conflict) {
-          throw new ConflictError("One or more tables are no longer available");
+          return errWithCode(
+            "CONFLICT",
+            "One or more tables are no longer available",
+            409,
+          );
         }
       }
 
@@ -538,11 +566,11 @@ export class ReservationService {
       return { newReservation, profile };
     });
 
-    return {
+    return ok({
       reservation: result.newReservation,
       profile: result.profile,
       isShadow,
-    };
+    });
   }
 
   /**
@@ -582,9 +610,10 @@ export class ReservationService {
   }
 
   /**
-   * Cancel a reservation
+   * Cancel a reservation.
+   * Returns Result<void> instead of throwing.
    */
-  async cancelReservation(reservationId: string): Promise<void> {
+  async cancelReservation(reservationId: string): Promise<Result<void>> {
     const db = getDb();
 
     const reservation = await db.query.restaurantReservations.findFirst({
@@ -592,19 +621,17 @@ export class ReservationService {
     });
 
     if (!reservation) {
-      throw new AppError("NOT_FOUND", "Reservation not found", 404, {
+      return errWithCode("NOT_FOUND", "Reservation not found", 404, {
         reservationId,
       });
     }
 
     if (reservation.status === "cancelled") {
-      throw new AppError(
+      return errWithCode(
         "ALREADY_CANCELLED",
         "Reservation already cancelled",
         400,
-        {
-          reservationId,
-        },
+        { reservationId },
       );
     }
 
@@ -615,14 +642,17 @@ export class ReservationService {
         endTime: new Date(),
       })
       .where(eq(restaurantReservations.id, reservationId));
+
+    return ok(undefined);
   }
 
   /**
-   * Get restaurant details by ID
+   * Get restaurant details by ID.
+   * Returns Result<typeof restaurants.$inferSelect> instead of throwing.
    */
   async getRestaurant(
     restaurantId: string,
-  ): Promise<typeof restaurants.$inferSelect> {
+  ): Promise<Result<typeof restaurants.$inferSelect>> {
     const db = getDb();
 
     const restaurant = await db.query.restaurants.findFirst({
@@ -630,12 +660,12 @@ export class ReservationService {
     });
 
     if (!restaurant) {
-      throw new AppError("NOT_FOUND", "Restaurant not found", 404, {
+      return errWithCode("NOT_FOUND", "Restaurant not found", 404, {
         restaurantId,
       });
     }
 
-    return restaurant;
+    return ok(restaurant);
   }
 
   /**

@@ -63,11 +63,17 @@ export const createMockTransaction = () => ({
 export type MockTransaction = ReturnType<typeof createMockTransaction>;
 
 /**
+ * Mock sql function for database setup
+ */
+export const sql = vi.fn((str: string) => str);
+
+/**
  * Database mock factory
  * Returns a fully mocked database instance
  */
 export function createMockDatabase() {
   return {
+    sql,
     getDb: vi.fn(() => ({
       query: {
         restaurants: mockRestaurantsQuery,

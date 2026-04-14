@@ -1,19 +1,10 @@
 import { Redis } from "@upstash/redis";
 import { AppConfig } from "./config";
 import { Logger } from "./logger";
+// Re-export ServiceNamespace from constants for backward compatibility
+export { ServiceNamespace } from "./constants";
 
 const logger = new Logger({ serviceName: "shared-redis" });
-
-/**
- * Service Namespace Enum
- * Enforces namespace isolation across all services
- */
-export enum ServiceNamespace {
-  IE = "ie", // Intention Engine
-  OD = "od", // Open Delivery
-  TS = "ts", // Table Stack
-  SHARED = "shared",
-}
 
 /**
  * Get the prefix for a service namespace

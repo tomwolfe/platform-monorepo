@@ -22,6 +22,11 @@ export const mockRedisClient = {
   lrange: vi.fn(() => Promise.resolve([])),
   expire: vi.fn(() => Promise.resolve(1)),
   nx: vi.fn(() => Promise.resolve(true)),
+  keys: vi.fn(() => Promise.resolve([])),
+  scan: vi.fn(() => Promise.resolve([])),
+  hset: vi.fn(() => Promise.resolve(1)),
+  hget: vi.fn(() => Promise.resolve(null)),
+  hgetall: vi.fn(() => Promise.resolve({})),
 };
 
 /**
@@ -44,7 +49,39 @@ export const MockAppConfig = {
   getEscrowContractAddress: vi.fn(() => null),
   isPaymentDisabled: vi.fn(() => false),
   getSlippageBps: vi.fn(() => 100),
+  getOpenDeliveryMcpUrl: vi.fn(() => "http://localhost:3002/api/mcp"),
+  getTableStackMcpUrl: vi.fn(() => "http://localhost:3001/api/mcp"),
 };
+
+/**
+ * Mock ServiceNamespace enum
+ */
+export const ServiceNamespace = {
+  IE: "ie",
+  OD: "od",
+  TS: "ts",
+  SHARED: "shared",
+  CACHE: "cache",
+};
+
+/**
+ * Mock AppError class
+ */
+export class AppError extends Error {
+  public code: string;
+  public statusCode: number;
+
+  constructor(
+    message: string,
+    code: string = "APP_ERROR",
+    statusCode: number = 500,
+  ) {
+    super(message);
+    this.name = "AppError";
+    this.code = code;
+    this.statusCode = statusCode;
+  }
+}
 
 /**
  * Mock constants
@@ -84,6 +121,11 @@ export const EIP712_RESERVATION_TYPES = {
 export const DEADLINE_TOLERANCE_SECONDS = 5 * 60;
 
 /**
+ * Mock sql function for database setup
+ */
+export const sql = vi.fn((str: string) => str);
+
+/**
  * Shared package mock factory
  */
 export function createMockShared() {
@@ -95,10 +137,47 @@ export function createMockShared() {
     tryAcquireReplayProcessingLock: vi.fn(),
     isReplayAllowed: vi.fn(),
     getRedisClient: vi.fn(() => mockRedisClient),
+    ServiceNamespace,
+    AppError,
+    sql,
     CHAIN_IDS,
     ERROR_CODES,
     EIP712_DOMAIN,
     EIP712_RESERVATION_TYPES,
     DEADLINE_TOLERANCE_SECONDS,
+    // Mock RealtimeService
+    RealtimeService: {
+      publish: vi.fn(),
+      publishStreamingStatusUpdate: vi.fn(),
+      publishStatusUpdate: vi.fn(),
+    },
+    // Mock QStashService
+    QStashService: {
+      triggerNextStep: vi.fn().mockResolvedValue("qstash-msg-id"),
+    },
+    // Mock failover policy
+    createFailoverPolicyEngine: vi.fn().mockReturnValue({
+      shouldFailover: vi.fn().mockReturnValue(false),
+      getFailoverAction: vi.fn().mockReturnValue(null),
+      evaluate: vi.fn().mockResolvedValue({ action: "continue" }),
+    }),
+    FailoverPolicyEngine: class MockFailoverPolicyEngine {},
+    // Mock LLM triage
+    getLLMFailureTriageService: vi.fn().mockReturnValue({
+      analyzeFailure: vi.fn().mockResolvedValue({ recoverable: false }),
+      triage: vi.fn().mockResolvedValue({ action: "retry", confidence: 0.8 }),
+    }),
+    // Mock memory client
+    getMemoryClient: vi.fn(() => ({
+      saveStateWithOCC: vi
+        .fn()
+        .mockResolvedValue({ success: true, version: 2, attempts: 0 }),
+    })),
+    // Mock NormalizationService
+    NormalizationService: class MockNormalizationService {
+      validateToolParameters = vi
+        .fn()
+        .mockReturnValue({ success: true, errors: [], rawInput: {} });
+    },
   };
 }

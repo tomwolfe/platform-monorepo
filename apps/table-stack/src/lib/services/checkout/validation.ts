@@ -19,7 +19,9 @@ import {
   DEADLINE_TOLERANCE_SECONDS,
   CHAIN_IDS,
   ERROR_CODES,
+  AppError,
 } from "@repo/shared";
+import type { ErrorCode } from "@repo/shared/errors";
 
 // ============================================================================
 // EIP-712 DOMAIN & TYPES
@@ -78,14 +80,20 @@ export { DEADLINE_TOLERANCE_SECONDS };
 // CHECKOUT ERROR
 // ============================================================================
 
-export class CheckoutError extends Error {
+/**
+ * Checkout Error
+ * Now extends AppError to integrate with the shared error hierarchy.
+ * This ensures CheckoutError is properly handled by isAppError() checks
+ * and Result pattern utilities.
+ */
+export class CheckoutError extends AppError {
   constructor(
     message: string,
-    public readonly statusCode: number,
-    public readonly code: string,
-    public readonly details?: Record<string, unknown>,
+    statusCode: number,
+    code: ErrorCode,
+    details?: Record<string, unknown>,
   ) {
-    super(message);
+    super(code, message, statusCode, details);
     this.name = "CheckoutError";
   }
 }

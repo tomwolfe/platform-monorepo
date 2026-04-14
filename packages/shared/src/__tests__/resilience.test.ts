@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { Redis } from "@upstash/redis";
 import {
   CircuitBreaker,
   CircuitBreakerOpenError,
@@ -19,6 +20,23 @@ import {
   getReplayGuard,
   createReplayGuard,
 } from "../middleware/web3-replay-guard";
+
+// ============================================================================
+// TEST HELPERS
+// ============================================================================
+
+/**
+ * Create a mock Redis client with proper typing
+ */
+function createMockRedis(
+  overrides: Partial<Record<string, ReturnType<typeof vi.fn>>> = {},
+): Redis {
+  return {
+    set: vi.fn().mockResolvedValue("OK"),
+    get: vi.fn().mockResolvedValue(null),
+    ...overrides,
+  } as unknown as Redis;
+}
 
 // ============================================================================
 // CIRCUIT BREAKER TESTS
@@ -225,7 +243,7 @@ describe("CircuitBreaker", () => {
       for (let i = 0; i < 5; i++) {
         try {
           await circuitWithIgnored.execute(async () => {
-            const error = new Error("Client error") as any;
+            const error = new Error("Client error") as Error & { code: string };
             error.code = "CLIENT_ERROR";
             throw error;
           });
@@ -267,20 +285,12 @@ describe("IdempotencyService", () => {
     });
 
     it("should be constructable with Redis client", () => {
-      const mockRedis = {
-        set: vi.fn().mockResolvedValue("OK"),
-        get: vi.fn().mockResolvedValue(null),
-      };
-      const service = new IdempotencyService(mockRedis as any);
+      const service = new IdempotencyService(createMockRedis());
       expect(service).toBeInstanceOf(IdempotencyService);
     });
 
     it("should accept optional config", () => {
-      const mockRedis = {
-        set: vi.fn().mockResolvedValue("OK"),
-        get: vi.fn().mockResolvedValue(null),
-      };
-      const service = new IdempotencyService(mockRedis as any, {
+      const service = new IdempotencyService(createMockRedis(), {
         userId: "user-123",
         defaultTtlSeconds: 3600,
         enableCausalKey: true,
@@ -291,28 +301,25 @@ describe("IdempotencyService", () => {
 
   describe("isDuplicate", () => {
     it("should return false when redis.set succeeds (new key)", async () => {
-      const mockRedis = {
-        set: vi.fn().mockResolvedValue("OK"),
-      };
-      const service = new IdempotencyService(mockRedis as any);
+      const mockSet = vi.fn().mockResolvedValue("OK");
+      const service = new IdempotencyService(createMockRedis({ set: mockSet }));
 
       const result = await service.isDuplicate("key1", "action1");
 
       expect(result).toBe(false);
       // Key format is idempotency:{routeName}:{key} (routeName defaults to "unknown")
       // Value is "processing" (two-phase commit pattern)
+      // Uses processingTtlSeconds (default 30s) not defaultTtlSeconds
       expect(mockRedis.set).toHaveBeenCalledWith(
         expect.stringContaining("idempotency:unknown:key1"),
         "processing",
-        { nx: true, ex: 86400 },
+        { nx: true, ex: 30 },
       );
     });
 
     it("should return true when redis.set returns null (duplicate)", async () => {
-      const mockRedis = {
-        set: vi.fn().mockResolvedValue(null),
-      };
-      const service = new IdempotencyService(mockRedis as any);
+      const mockSet = vi.fn().mockResolvedValue(null);
+      const service = new IdempotencyService(createMockRedis({ set: mockSet }));
 
       const result = await service.isDuplicate("key1", "action1");
 
@@ -320,12 +327,13 @@ describe("IdempotencyService", () => {
     });
 
     it("should use custom TTL from config", async () => {
-      const mockRedis = {
-        set: vi.fn().mockResolvedValue("OK"),
-      };
-      const service = new IdempotencyService(mockRedis as any, {
-        defaultTtlSeconds: 3600,
-      });
+      const mockSet = vi.fn().mockResolvedValue("OK");
+      const service = new IdempotencyService(
+        createMockRedis({ set: mockSet }),
+        {
+          processingTtlSeconds: 3600,
+        },
+      );
 
       await service.isDuplicate("key1", "action1");
 
@@ -339,10 +347,7 @@ describe("IdempotencyService", () => {
 
   describe("getKey", () => {
     it("should return a key string", async () => {
-      const mockRedis = {
-        set: vi.fn().mockResolvedValue("OK"),
-      };
-      const service = new IdempotencyService(mockRedis as any);
+      const service = new IdempotencyService(createMockRedis());
 
       const key = await service.getKey("key1", "action1");
 
@@ -354,10 +359,7 @@ describe("IdempotencyService", () => {
 
   describe("withCausalContext", () => {
     it("should return a new IdempotencyService instance", () => {
-      const mockRedis = {
-        set: vi.fn().mockResolvedValue("OK"),
-      };
-      const service = new IdempotencyService(mockRedis as any);
+      const service = new IdempotencyService(createMockRedis());
 
       const childService = service.withCausalContext("parent-123", 42);
 
@@ -368,10 +370,7 @@ describe("IdempotencyService", () => {
 
   describe("getCausalContext", () => {
     it("should return causal context object", () => {
-      const mockRedis = {
-        set: vi.fn().mockResolvedValue("OK"),
-      };
-      const service = new IdempotencyService(mockRedis as any, {
+      const service = new IdempotencyService(createMockRedis(), {
         enableCausalKey: true,
         parentIntentId: "parent-123",
         lamportTimestamp: 42,

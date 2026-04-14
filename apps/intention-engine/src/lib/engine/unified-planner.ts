@@ -15,12 +15,12 @@
  * @see Phase 2.1: Collapse Architectural Complexity
  */
 
-import { z } from "zod";
-import { randomUUID } from "crypto";
+import { z as _z } from "zod";
+import { randomUUID as _randomUUID } from "crypto";
 import {
   Intent,
   Plan,
-  PlanSchema,
+  PlanSchema as _PlanSchema,
   PlanStep,
   PlanConstraints,
   PlanConstraintsSchema,
@@ -29,19 +29,27 @@ import {
   TraceEntrySchema,
   EngineErrorSchema,
 } from "./types";
-import { generateStructured, type GenerateStructuredResult } from "./llm";
-import type { ToolExecutor } from "./workflow-machine";
+import {
+  generateStructured,
+  type GenerateStructuredResult as _GenerateStructuredResult,
+} from "./llm";
+import type { ToolExecutor, WorkflowResult } from "./workflow-machine";
 import {
   DEFAULT_PLAN_CONSTRAINTS,
   RawPlanSchema,
+  RawPlan,
   convertRawPlanToPlan,
   validatePlanConstraints,
   validateMergeRule,
   buildPlanningPrompt,
   PlannerContext as PlannerHelpersContext,
 } from "./planner-helpers";
-import { PARAMETER_ALIASES } from "@repo/mcp-protocol";
-import { Logger } from "@repo/shared";
+import { PARAMETER_ALIASES as _PARAMETER_ALIASES } from "@repo/mcp-protocol";
+import {
+  Logger,
+  validateLLMOutput,
+  LlmValidationError as _LlmValidationError,
+} from "@repo/shared";
 
 const logger = new Logger({ serviceName: "intention-engine" });
 
@@ -201,12 +209,14 @@ export function verifyPlan(
 
 // ============================================================================
 // GENERATE RAW PLAN
+// Uses generateStructured for LLM calls with validateLLMOutput
+// for post-processing validation with Zod-based repair loop.
 // ============================================================================
 
 async function generateRawPlan(
   intent: Intent,
   context: PlanningContext,
-): Promise<any> {
+): Promise<RawPlan> {
   const constraints = { ...DEFAULT_PLAN_CONSTRAINTS, ...context.constraints };
   const systemPrompt = buildPlanningPrompt({
     available_tools: context.available_tools,
@@ -256,7 +266,19 @@ async function generateRawPlan(
     timeoutMs: 30000,
   });
 
-  return result.data;
+  // Post-process with validateLLMOutput for additional Zod-based repair loop
+  // This catches any LLM "jitter" that slipped through generateStructured
+  const validatedResult = await validateLLMOutput(
+    JSON.stringify(result.data),
+    RawPlanSchema,
+    {
+      maxRetries: 1,
+      modelId: "planning-model-v1",
+      logger,
+    },
+  );
+
+  return validatedResult;
 }
 
 // ============================================================================
@@ -284,11 +306,12 @@ export async function generatePlan(
 
     // LIVE STATE GATE: Check operational state before planning for BOOKING intents
     // If target restaurant table status is 'occupied' or 'dirty', suggest delivery alternative
-    let liveStateConstraint = "";
+    let _liveStateConstraint = "";
     if (intent.type === "ACTION" || intent.type === "SCHEDULE") {
-      const intentParams = intent.parameters as Record<string, any>;
+      const intentParams = intent.parameters as Record<string, unknown>;
       const restaurantId =
-        intentParams.restaurant_id || intentParams.restaurantId;
+        (intentParams.restaurant_id as string | undefined) ||
+        (intentParams.restaurantId as string | undefined);
 
       if (restaurantId) {
         try {
@@ -299,8 +322,10 @@ export async function generatePlan(
           });
 
           if (liveState && typeof liveState === "object") {
+            const stateRecord = liveState as Record<string, unknown>;
             const tableStatus =
-              (liveState as any).table_status || (liveState as any).status;
+              (stateRecord.table_status as string) ||
+              (stateRecord.status as string);
             if (
               tableStatus === "occupied" ||
               tableStatus === "dirty" ||
@@ -472,7 +497,7 @@ export function validatePlan(
 export async function executePlan(
   plan: FrozenPlan,
   context: PlanningContext = {},
-): Promise<{ success: boolean; error?: string; result?: any }> {
+): Promise<{ success: boolean; error?: string; result?: WorkflowResult }> {
   if (!plan.is_frozen) {
     return { success: false, error: "Plan must be frozen before execution" };
   }
@@ -658,7 +683,7 @@ export async function generatePlanWithRepair(
     // Check if it's a validation error
     const errorCode =
       error instanceof Error && "code" in error
-        ? (error as any).code
+        ? ((error as Record<string, unknown>).code as string | undefined)
         : undefined;
     const isValidationError =
       errorCode === "PLAN_VALIDATION_FAILED" ||
@@ -676,7 +701,7 @@ export async function generatePlanWithRepair(
     // Attempt 2: Repair generation with error feedback
     const repairFeedback = `The previous plan generation failed validation with the following error:
 ${errorMessage}
-${error instanceof Error && "details" in error ? `Details: ${JSON.stringify((error as any).details)}` : ""}
+${error instanceof Error && "details" in error ? `Details: ${JSON.stringify((error as Record<string, unknown>).details)}` : ""}
 
 Please correct the plan and ensure it strictly follows the schema and constraints.
 Original Intent: ${intent.rawText}

@@ -14,6 +14,32 @@ const MAX_QSTASH_HOP_COUNT = 5;
 const BATCH_SIZE = 2;
 
 // ============================================================================
+// DURABLE EXECUTION PATTERN
+//
+// This service uses a QStash-based self-trigger pattern for serverless durability,
+// which is different from the yield-and-resume pattern used in WorkflowMachine.
+//
+// ## Strategy Comparison:
+// - WorkflowMachine: Uses yield-and-resume with Redis checkpointing (stateful)
+// - PayoutVerification: Uses QStash message queue with hop-count limiting (stateless)
+//
+// ## Why QStash Self-Trigger?
+// The payout verification is naturally batch-oriented:
+// 1. Each order verification is independent (no saga compensation needed)
+// 2. QStash provides reliable delivery with built-in retry
+// 3. Hop-count header prevents infinite loops without external state
+// 4. No checkpoint needed - progress is tracked via DB state (escrowStatus)
+//
+// This is more efficient than yield-and-resume for this use case because:
+// - No Redis checkpoint overhead
+// - Natural parallelism (batches can run concurrently)
+// - Serverless timeout is handled by queueing, not state serialization
+//
+// @see T6: Durable Execution Formalization - Audit Roadmap
+// @see packages/shared/src/services/durable-executor.ts (BaseDurableExecutor)
+// ============================================================================
+
+// ============================================================================
 // TYPES
 // ============================================================================
 

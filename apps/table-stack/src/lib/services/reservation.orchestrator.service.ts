@@ -15,16 +15,19 @@
 
 import {
   IdempotencyService,
-  IDEMPOTENCY_KEY_HEADER,
+  IDEMPOTENCY_KEY_HEADER as _IDEMPOTENCY_KEY_HEADER,
   getRedisClient,
   ServiceNamespace,
   Logger,
 } from "@repo/shared";
-import { ConflictError } from "@repo/shared/errors";
+import { ConflictError as _ConflictError } from "@repo/shared/errors";
+import type { Result as _Result } from "@repo/shared/errors/result-pattern";
 import { reservationService } from "../reservation-service";
+import type { CreateReservationResult } from "../reservation-service";
 import { shadowRestaurantService } from "./shadow-restaurant";
 import { postExecutionNotificationService } from "./post-execution-notifications";
 import { TableStackError } from "../error-factory";
+import { unwrapResult } from "@repo/shared/errors/result-pattern";
 
 const logger = new Logger({ serviceName: "reservation-orchestrator" });
 
@@ -205,7 +208,7 @@ export class ReservationOrchestratorService {
       }
 
       // Step 3: Create reservation (with retry)
-      const result = await this.createReservation({
+      const reservationResult = await this.createReservation({
         restaurantId: targetRestaurantId,
         tableId,
         combinedTableIds,
@@ -215,10 +218,15 @@ export class ReservationOrchestratorService {
         startTime,
         metadata,
       });
+      const result = unwrapResult<CreateReservationResult>(reservationResult);
       dbCommitted = true;
 
       // Step 4: Fetch restaurant details for notifications
-      const restaurant = await this.getRestaurant(targetRestaurantId);
+      const restaurantResult = await this.getRestaurant(targetRestaurantId);
+      const restaurant =
+        unwrapResult<typeof import("@repo/database").restaurants.$inferSelect>(
+          restaurantResult,
+        );
 
       // Step 5: Dispatch post-execution notifications (email + cache invalidation)
       // This is async and best-effort - the reservation is already committed

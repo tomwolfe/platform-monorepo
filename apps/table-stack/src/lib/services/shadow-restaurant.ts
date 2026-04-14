@@ -4,7 +4,27 @@
  * Handles find-or-create logic for shadow restaurant discovery.
  * Extracted from ReservationOrchestrator to follow Single Responsibility Principle.
  *
+ * ## Discovery State Machine
+ *
+ * Shadow restaurants represent unclaimed restaurant profiles created during
+ * the reservation discovery flow. The state transitions are:
+ *
+ * 1. **Unclaimed Shadow** (`isShadow=true, isClaimed=false`): Created when a
+ *    user makes a reservation at a restaurant not yet on the platform.
+ *    The restaurant receives a notification email with a claim token.
+ *
+ * 2. **Claimed Shadow** (`isShadow=true, isClaimed=true`): Restaurant owner
+ *    clicks the claim link and completes onboarding. The shadow profile
+ *    is converted to a full restaurant profile.
+ *
+ * 3. **Converted** (`isShadow=false, isClaimed=true`): After claim completion,
+ *    the `isShadow` flag is cleared and the restaurant gains full platform access.
+ *
+ * Shadow restaurants use a special `ownerId: "shadow"` and API key prefix
+ * `ts_shadow_` to distinguish them from regular restaurants.
+ *
  * @see T3: Decompose Orchestrators - Audit Roadmap
+ * @see T7: Dead Code & Metadata Audit
  */
 
 import { getDb, restaurants, or, eq } from "@repo/database";
